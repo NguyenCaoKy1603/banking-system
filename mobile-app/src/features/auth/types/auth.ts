@@ -28,3 +28,22 @@ export type RegisterRequest = {
   phoneNumber: string;
   password: string;
 };
+
+export type AuthUser = {
+  id: string;
+  fullName: string;
+  email: string;
+  phoneNumber: string;
+  createdAt: string;
+};
+
+export type LoginResponse = {
+  accessToken: string;
+  refreshToken: string;
+  expiresInSeconds: number;
+  user: AuthUser;
+};
+
+export type RegisterResponse = {
+  user: AuthUser;
+};
