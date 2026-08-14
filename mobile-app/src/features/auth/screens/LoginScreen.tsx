@@ -1,4 +1,5 @@
 import { Link } from "expo-router";
+import { useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -13,10 +14,35 @@ import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import type { LoginFieldErrors, LoginFormValues } from "@/features/auth/types/auth";
+import { validateLoginForm } from "@/features/auth/validation/authValidation";
 import { colors, spacing } from "@/theme";
+
+const initialValues: LoginFormValues = {
+  email: "",
+  password: "",
+};
 
 export function LoginScreen() {
   const { startDemoSession } = useAuth();
+  const [values, setValues] = useState<LoginFormValues>(initialValues);
+  const [errors, setErrors] = useState<LoginFieldErrors>({});
+
+  function updateField(field: keyof LoginFormValues, value: string) {
+    setValues((currentValues) => ({ ...currentValues, [field]: value }));
+    setErrors((currentErrors) => ({ ...currentErrors, [field]: undefined }));
+  }
+
+  function handleDemoSession() {
+    const result = validateLoginForm(values);
+
+    setValues(result.values);
+    setErrors(result.errors);
+
+    if (result.isValid) {
+      startDemoSession();
+    }
+  }
 
   return (
     <Screen>
@@ -38,20 +64,28 @@ export function LoginScreen() {
 
           <View style={styles.form}>
             <TextField
+              accessibilityLabel="Email đăng nhập"
               autoCapitalize="none"
               autoComplete="email"
+              error={errors.email}
               keyboardType="email-address"
               label="Email"
+              onChangeText={(value) => updateField("email", value)}
               placeholder="Nhập email"
+              value={values.email}
             />
             <TextField
+              accessibilityLabel="Mật khẩu đăng nhập"
               autoCapitalize="none"
               autoComplete="current-password"
+              error={errors.password}
               label="Mật khẩu"
+              onChangeText={(value) => updateField("password", value)}
               placeholder="Nhập mật khẩu"
               secureTextEntry
+              value={values.password}
             />
-            <PrimaryButton label="Vào bản demo" onPress={startDemoSession} />
+            <PrimaryButton label="Vào bản demo" onPress={handleDemoSession} />
           </View>
 
           <View style={styles.footer}>
@@ -64,7 +98,9 @@ export function LoginScreen() {
           </View>
 
           <View style={styles.notice}>
-            <Text style={styles.noticeText}>Chế độ phát triển – chưa kết nối API</Text>
+            <Text style={styles.noticeText}>
+              Phiên điều hướng thử nghiệm – chưa xác thực với Backend.
+            </Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

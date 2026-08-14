@@ -1,6 +1,7 @@
 import { Link } from "expo-router";
 import { useState } from "react";
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,10 +14,40 @@ import {
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
+import type {
+  RegisterFieldErrors,
+  RegisterFormValues,
+} from "@/features/auth/types/auth";
+import { validateRegisterForm } from "@/features/auth/validation/authValidation";
 import { colors, spacing } from "@/theme";
 
+const initialValues: RegisterFormValues = {
+  fullName: "",
+  email: "",
+  phoneNumber: "",
+  password: "",
+  confirmPassword: "",
+};
+
 export function RegisterScreen() {
-  const [showBackendNotice, setShowBackendNotice] = useState(false);
+  const [values, setValues] = useState<RegisterFormValues>(initialValues);
+  const [errors, setErrors] = useState<RegisterFieldErrors>({});
+
+  function updateField(field: keyof RegisterFormValues, value: string) {
+    setValues((currentValues) => ({ ...currentValues, [field]: value }));
+    setErrors((currentErrors) => ({ ...currentErrors, [field]: undefined }));
+  }
+
+  function handleRegister() {
+    const result = validateRegisterForm(values);
+
+    setValues(result.values);
+    setErrors(result.errors);
+
+    if (result.isValid) {
+      Alert.alert("Thông báo", "Form hợp lệ nhưng Backend chưa được kết nối.");
+    }
+  }
 
   return (
     <Screen>
@@ -38,44 +69,60 @@ export function RegisterScreen() {
 
           <View style={styles.form}>
             <TextField
+              accessibilityLabel="Họ và tên đăng ký"
               autoCapitalize="words"
               autoComplete="name"
+              error={errors.fullName}
               label="Họ và tên"
+              onChangeText={(value) => updateField("fullName", value)}
               placeholder="Nhập họ và tên"
+              value={values.fullName}
             />
             <TextField
+              accessibilityLabel="Email đăng ký"
+              autoCapitalize="none"
+              autoComplete="email"
+              error={errors.email}
+              keyboardType="email-address"
+              label="Email"
+              onChangeText={(value) => updateField("email", value)}
+              placeholder="Nhập email"
+              value={values.email}
+            />
+            <TextField
+              accessibilityLabel="Số điện thoại đăng ký"
               autoComplete="tel"
+              error={errors.phoneNumber}
               keyboardType="phone-pad"
               label="Số điện thoại"
+              onChangeText={(value) => updateField("phoneNumber", value)}
               placeholder="Nhập số điện thoại"
+              value={values.phoneNumber}
             />
             <TextField
+              accessibilityLabel="Mật khẩu đăng ký"
               autoCapitalize="none"
               autoComplete="new-password"
+              error={errors.password}
               label="Mật khẩu"
+              onChangeText={(value) => updateField("password", value)}
               placeholder="Nhập mật khẩu"
               secureTextEntry
+              value={values.password}
             />
             <TextField
+              accessibilityLabel="Xác nhận mật khẩu đăng ký"
               autoCapitalize="none"
               autoComplete="new-password"
+              error={errors.confirmPassword}
               label="Xác nhận mật khẩu"
+              onChangeText={(value) => updateField("confirmPassword", value)}
               placeholder="Nhập lại mật khẩu"
               secureTextEntry
+              value={values.confirmPassword}
             />
-            <PrimaryButton
-              label="Đăng ký"
-              onPress={() => setShowBackendNotice(true)}
-            />
+            <PrimaryButton label="Đăng ký" onPress={handleRegister} />
           </View>
-
-          {showBackendNotice ? (
-            <View accessibilityLiveRegion="polite" style={styles.notice}>
-              <Text style={styles.noticeText}>
-                Backend chưa được kết nối. Chưa có yêu cầu đăng ký nào được gửi.
-              </Text>
-            </View>
-          ) : null}
 
           <Link href="./login" replace asChild>
             <Pressable accessibilityRole="link" hitSlop={8} style={styles.backLink}>
@@ -121,19 +168,6 @@ const styles = StyleSheet.create({
   },
   form: {
     gap: spacing.md,
-  },
-  notice: {
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: spacing.md,
-    backgroundColor: colors.surface,
-  },
-  noticeText: {
-    color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: "center",
   },
   backLink: {
     alignSelf: "center",

@@ -4,17 +4,30 @@ import { colors, spacing } from "@/theme";
 
 type TextFieldProps = TextInputProps & {
   label: string;
+  error?: string;
 };
 
-export function TextField({ label, style, ...inputProps }: TextFieldProps) {
+export function TextField({
+  accessibilityLabel,
+  error,
+  label,
+  style,
+  ...inputProps
+}: TextFieldProps) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
       <TextInput
+        accessibilityLabel={accessibilityLabel ?? label}
         placeholderTextColor={colors.muted}
-        style={[styles.input, style]}
+        style={[styles.input, error ? styles.inputError : null, style]}
         {...inputProps}
       />
+      {error ? (
+        <Text accessibilityLiveRegion="polite" style={styles.error}>
+          {error}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -37,5 +50,13 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     color: colors.text,
     fontSize: 16,
+  },
+  inputError: {
+    borderColor: colors.danger,
+  },
+  error: {
+    color: colors.danger,
+    fontSize: 13,
+    lineHeight: 18,
   },
 });
