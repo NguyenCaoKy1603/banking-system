@@ -1,6 +1,7 @@
 # Verification report M0–M4 và M8
 
 Ngày kiểm tra: 2026-08-15
+Backend evidence checkpoint: `72f1bbd60dcb786a90fb6e8c7dae4602b57e55a8`
 
 ## Phạm vi đã đối chiếu
 

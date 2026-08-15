@@ -3,6 +3,7 @@
 Ngày lập: 2026-08-15
 Phạm vi: M0–M4, M8 và Card mock bonus
 Trạng thái: **Local reference pass; device/release gates còn mở**
+Backend verification checkpoint: `72f1bbd60dcb786a90fb6e8c7dae4602b57e55a8`
 
 ## Kết quả đã chạy
 

@@ -3,6 +3,7 @@
 Ngày kiểm tra: 2026-08-15
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
 Trạng thái: **In-memory và PostgreSQL persistent sandbox pass; relational production adapter vẫn là DRAFT**
+Commit kiểm thử: `72f1bbd60dcb786a90fb6e8c7dae4602b57e55a8`
 
 ## Đã kiểm chứng local
 

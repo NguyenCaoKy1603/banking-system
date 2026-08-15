@@ -2,6 +2,8 @@
 
 ## Đã kiểm chứng local
 
+Backend evidence checkpoint: `72f1bbd60dcb786a90fb6e8c7dae4602b57e55a8`.
+
 - Mobile lint, type-check và 27 suite/143 test đạt; coverage đạt 95.45% statements/lines, 93.35% branches và 97.87% functions trên nhóm domain/validation/presentation/storage/navigation được thu thập; coverage gate tối thiểu là 80% statements/lines, 75% branches và 80% functions.
 - Backend reference type-check, build, 37 test definition (37 pass, gồm 2 PostgreSQL persistence tests) và 8 critical HTTP flow đạt; database boundary validator đạt 16 bảng/invariant.
 - Backend correctness đã có quote snapshot/one-time, beneficiary fingerprint, UUID-compatible IDs, exact route, registration/step-up rate limit, reconciliation formula và outbox retry threshold.
