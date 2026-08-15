@@ -18,7 +18,7 @@ Backend evidence checkpoint: `595afc3` (`Harden database and OpenAPI quality gat
 
 ## Chưa đủ điều kiện đóng milestone
 
-- M0: baseline tài liệu, evidence rules, device evidence và hai commit checkpoint đã có; working tree vẫn còn thay đổi/new files của Mobile và Savings chưa commit nên chưa thể coi là clean checkpoint của toàn workspace.
+- M0: baseline tài liệu, evidence rules, device evidence và checkpoint Git sạch `aa0e3de` đã có; owner review/push vẫn còn.
 - M1–M4 và M8: critical flow đã chạy trên Android emulator cho login/MFA, account detail, hiện/sao chép số tài khoản đầy đủ, eKYC, beneficiary, QR manual fallback, M4 transfer và M8 notification deep link; chưa có full device matrix, thiết bị thật hoặc staging partner.
 - M2: eKYC thật/API KYC và test data staging chưa có; phần hiện tại là mock có chủ đích.
 - M4: transfer, beneficiary CRUD và QR manual fallback đã có bằng chứng Maestro trên emulator; QR camera/permission, transfer pending/restart/resume và lifecycle native vẫn chưa có bằng chứng thiết bị.

@@ -30,7 +30,7 @@ Backend verification checkpoint: `595afc3` (`Harden database and OpenAPI quality
 - Đã có APK release local, package/checksum và log Maestro trên emulator; chưa có video cold start/crash-resume, camera thật hoặc biometric prompt thật.
 - Transfer kill app trước/sau submit và session restore sau force-stop chưa có kết quả native lặp lại; riêng credit pending → restart → resume đã pass bằng flow dedicated.
 - Chưa có staging URL/partner integration đã phê duyệt.
-- Handoff Git cuối chưa được commit trong phiên này: workspace còn thay đổi/new files của Mobile, Savings và Credit; cần commit theo quy trình của nhóm rồi mới coi là clone sạch tái hiện toàn bộ diff cuối.
+- Handoff Git: checkpoint `aa0e3de` đã commit toàn bộ source/workflow/contract/tài liệu trong phạm vi; clone sạch đã chạy `npm ci` và các gate chính. Chưa push/PR trong phiên này.
 - Chưa có kết quả usability/accessibility với người dùng và chưa có approver cho 14 cảnh báo High.
 
 ## Kết luận

@@ -1,7 +1,7 @@
 # Verification report M0–M4 và M8
 
 Ngày kiểm tra: 2026-08-15
-Backend evidence checkpoint: `595afc3` (`Harden database and OpenAPI quality gates`)
+Evidence checkpoint: `aa0e3de` (`Implement banking sandbox milestones and M7 credit flow`)
 
 ## Phạm vi đã đối chiếu
 

@@ -2,17 +2,18 @@
 
 Ngày ghi nhận: 2026-08-15
 Nhánh: `feature/mobile-authentication`
-Base commit quan sát: `418116d`
+Checkpoint commit: `aa0e3de` (`Implement banking sandbox milestones and M7 credit flow`)
 
 ## Trạng thái
 
-**CHƯA TẠO checkpoint Git sạch.** Workspace hiện có nhiều thay đổi staged/unstaged và file mới thuộc phạm vi triển khai M0–M5/M8. Vì quy tắc ownership yêu cầu bảo toàn thay đổi hiện có, task này không tự ý stage, commit hoặc reset các file.
+**ĐÃ TẠO checkpoint Git sạch.** Backend, workflow, contract, lockfile, Mobile, Maestro flow và tài liệu triển khai đã được commit. `artifacts/`, native generated folder và `.env` local bị loại khỏi commit.
 
-## Cách chốt checkpoint sau khi owner review
+Clone sạch đã được kiểm tra bằng `npm ci`: backend 53/53 test với PostgreSQL 16 tạm, critical HTTP 8/8, database/OpenAPI validator đạt; Mobile lint/typecheck, 36 suite/166 test, OpenAPI 36 path, 8 Maestro flow syntax và web export 32 route đạt. APK/emulator evidence được ghi riêng trong device report; đây vẫn là reference sandbox, chưa phải release production.
 
-1. Review diff và loại credential/local `.env` khỏi vùng commit.
-2. Chạy lại test report và kiểm tra `git diff --check`.
-3. Commit theo quyết định của owner, ví dụ `mvp-demo-v1`.
-4. Gắn commit hash vào release manifest, test report và evidence device.
+## Việc cần làm sau checkpoint
+
+1. Owner review commit `aa0e3de` và quyết định có push/PR hay không.
+2. Gắn checksum APK và commit hash vào release manifest khi có release candidate được phê duyệt.
+3. Chỉ mở preview/pilot sau khi xử lý dependency High, thiết bị thật, staging, signing và legal/compliance.
 
 APK không được coi là artifact của checkpoint này cho tới khi được build từ một commit sạch và có checksum.
