@@ -60,23 +60,60 @@ for (const schemaName of [
   }
 }
 
-for (const marker of [
-  'segments[1] === "register"',
-  'segments[1] === "login"',
-  'segments[1] === "verify"',
-  'segments[1] === "refresh"',
-  'segments[1] === "logout"',
-  'segments[1] === "logout-all"',
-  'segments[1] === "control-policy"',
-  'segments[0] === "notifications"',
-  'segments[0] === "fraud-reports"',
-  'segments[0] === "accounts"',
-  'segments[0] === "beneficiaries"',
-  'segments[0] === "transfers"',
-]) {
-  if (!backendHttp.includes(marker)) {
-    throw new Error(`Reference backend route marker missing: ${marker}`);
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const methodGuard = (method) => `request.method === "${method}"`;
+const segmentGuard = (index, value) => `segments[${index}] === "${value}"`;
+
+const routeContracts = [
+  ["POST", "/auth/register", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "register")]],
+  ["POST", "/auth/login", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "login")]],
+  ["POST", "/auth/verify", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "verify")]],
+  ["POST", "/auth/refresh", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "refresh")]],
+  ["POST", "/auth/logout", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "logout")]],
+  ["POST", "/auth/logout-all", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "logout-all")]],
+  ["GET", "/mobile/control-policy", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "mobile"), segmentGuard(1, "control-policy")]],
+  ["GET", "/notifications", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "notifications")]],
+  ["POST", "/notifications/{notificationId}/read", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "notifications"), segmentGuard(2, "read")]],
+  ["POST", "/fraud-reports", [methodGuard("POST"), "segments.length === 1", segmentGuard(0, "fraud-reports")]],
+  ["GET", "/accounts", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "accounts")]],
+  ["GET", "/accounts/{accountId}/transactions", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "accounts"), segmentGuard(2, "transactions")]],
+  ["GET", "/accounts/{accountId}/transactions/{transactionId}", [methodGuard("GET"), "segments.length === 4", segmentGuard(0, "accounts"), segmentGuard(2, "transactions")]],
+  ["GET", "/beneficiaries", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "beneficiaries")]],
+  ["POST", "/beneficiaries", [methodGuard("POST"), "segments.length === 1", segmentGuard(0, "beneficiaries")]],
+  ["PATCH", "/beneficiaries/{beneficiaryId}", [methodGuard("PATCH"), "segments.length === 2", segmentGuard(0, "beneficiaries")]],
+  ["DELETE", "/beneficiaries/{beneficiaryId}", [methodGuard("DELETE"), "segments.length === 2", segmentGuard(0, "beneficiaries")]],
+  ["GET", "/beneficiaries/{beneficiaryId}", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "beneficiaries")]],
+  ["POST", "/transfers/quote", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "transfers"), segmentGuard(1, "quote")]],
+  ["POST", "/transfers", [methodGuard("POST"), "segments.length === 1", segmentGuard(0, "transfers")]],
+  ["GET", "/transfers/{transferId}", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "transfers")]],
+];
+
+for (const [method, routePath, fragments] of routeContracts) {
+  const operation = document.paths?.[routePath]?.[method.toLowerCase()];
+  if (!operation?.operationId) {
+    throw new Error(`Missing OpenAPI operationId for ${method} ${routePath}.`);
   }
+  const sourcePattern = fragments
+    .map((fragment) => escapeRegExp(fragment))
+    .join("[\\s\\S]{0,180}");
+  if (!new RegExp(sourcePattern).test(backendHttp)) {
+    throw new Error(
+      `Reference backend exact route guard missing for ${method} ${routePath}.`,
+    );
+  }
+}
+
+const notificationSchema = document.components?.schemas?.Notification;
+if (
+  !notificationSchema?.required?.includes("resourceAccountId") ||
+  !notificationSchema?.properties?.resourceAccountId
+) {
+  throw new Error(
+    "Notification schema must require resourceAccountId for safe transaction deep links.",
+  );
 }
 
 const submitTransfer = document.paths["/transfers"].post;
@@ -100,4 +137,6 @@ if (document.components?.parameters?.DeviceId?.name !== "X-Device-ID") {
   throw new Error("The contract must define X-Device-ID device binding.");
 }
 
-console.log(`OpenAPI draft valid: ${requiredPaths.length} required paths, examples and reference route markers included.`);
+console.log(
+  `OpenAPI draft valid: ${requiredPaths.length} required paths, ${routeContracts.length} exact method/segment guards, examples and notification target contract verified.`,
+);
