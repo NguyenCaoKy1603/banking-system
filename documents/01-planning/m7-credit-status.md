@@ -25,7 +25,7 @@ Không có phê duyệt tín dụng thật, CIC, scoring, processor/acquirer, PA
 
 ## Cap nhat xac nhan cuoi - 2026-08-15
 
-- Backend local khong co `DATABASE_URL`: 53 test, 49 pass va 4 skip PostgreSQL; voi PostgreSQL 16 tam thoi: 53/53 pass, migration 001–003 va live schema validator dat, critical HTTP 8/8.
+- Backend local khong co `DATABASE_URL`: 54 test, 50 pass va 4 skip PostgreSQL; voi PostgreSQL 16 tam thoi: 54/54 pass, migration 001–003 va live schema validator dat, critical HTTP 8/8.
 - Mobile: typecheck, lint, 36 suite/166 test, OpenAPI 36 path, Maestro syntax 8 flow, web export 32 route va release config deu dat.
 - So tai khoan: danh sach chi tra so che; Home va Account Detail goi `GET /accounts/{accountId}/number` khi bam `Hien day du` hoac `Sao chep`, sau do hien/clipboard dung toan bo chuoi so.
 - Maestro 2.8.0 va ADB da duoc dung tren `Pixel_7_API_35`: flow M0–M4/M8, credit payment va credit pending → stop/launch → resume deu pass. Thiet bi that, camera/biometric native va staging van mo.

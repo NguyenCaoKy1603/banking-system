@@ -5,7 +5,7 @@
 Backend evidence checkpoint: `595afc3` (`Harden database and OpenAPI quality gates`).
 
 - Mobile lint, type-check và 36 suite/166 test đạt; các coverage gate trước đó vẫn đạt trên nhóm domain/validation/presentation/storage/navigation; coverage không được chạy lại trong lượt cuối.
-- Backend reference type-check, build, 53 test definition và 8 critical HTTP flow đạt; không có database thật thì 4 test PostgreSQL được skip, còn bằng chứng PostgreSQL 16 tạm thời đạt 53/53; database boundary validator đạt cấu trúc SQL + live PostgreSQL 27 bảng/invariant.
+- Backend reference type-check, build, 54 test definition và 8 critical HTTP flow đạt; không có database thật thì 4 test PostgreSQL được skip, còn bằng chứng PostgreSQL 16 tạm thời đạt 54/54; database boundary validator đạt cấu trúc SQL + live PostgreSQL 27 bảng/invariant.
 - Backend correctness đã có quote snapshot/one-time, beneficiary fingerprint, UUID-compatible IDs, exact route, registration/step-up rate limit, reconciliation formula và outbox retry threshold.
 - Persistent PostgreSQL snapshot adapter, migration runner và CI service đã được thêm; integration test chỉ chạy khi có `DATABASE_URL`.
 - OpenAPI validation, Maestro syntax validation, Expo native config và web export đều đã chạy lại sau các route hiện tại; hiện có 36 path OpenAPI, 8 flow Maestro hợp lệ và 32 static route. Critical flow M0–M4/M8, credit payment và credit pending-resume đã chạy thành công trên Android emulator.
@@ -39,6 +39,6 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 ## Cap nhat chinh xac sau M7 local verification - 2026-08-15
 
 - M6 Savings va M7 Credit da co reference sandbox implementation; cac dong mo ta cu "chua trien khai" chi la snapshot truoc khi thuc hien.
-- M7 local gate hien tai: Backend 53 test definition (49 pass, 4 PostgreSQL skip; PostgreSQL 16 tam 53/53), Mobile 166/166, OpenAPI 36 path, Maestro syntax 8 flow.
+- M7 local gate hien tai: Backend 54 test definition (50 pass, 4 PostgreSQL skip; PostgreSQL 16 tam 54/54), Mobile 166/166, OpenAPI 36 path, Maestro syntax 8 flow.
 - Home/account detail da cho phep hien va sao chep day du so tai khoan qua API rieng; mat tren Home van chi hien/che so du.
 - Chua dong milestone: relational repository production, transfer lifecycle native day du, physical device, staging/partner integration va production controls. PostgreSQL live, concurrency/restart sandbox va Maestro M7 emulator da co evidence.

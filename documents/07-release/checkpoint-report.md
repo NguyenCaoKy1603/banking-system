@@ -8,7 +8,7 @@ Checkpoint commit: `aa0e3de` (`Implement banking sandbox milestones and M7 credi
 
 **ĐÃ TẠO checkpoint Git sạch.** Backend, workflow, contract, lockfile, Mobile, Maestro flow và tài liệu triển khai đã được commit. `artifacts/`, native generated folder và `.env` local bị loại khỏi commit.
 
-Clone sạch đã được kiểm tra bằng `npm ci`: backend 53/53 test với PostgreSQL 16 tạm, critical HTTP 8/8, database/OpenAPI validator đạt; Mobile lint/typecheck, 36 suite/166 test, OpenAPI 36 path, 8 Maestro flow syntax và web export 32 route đạt. APK/emulator evidence được ghi riêng trong device report; đây vẫn là reference sandbox, chưa phải release production.
+Clone sạch đã được kiểm tra bằng `npm ci`: backend 53/53 test với PostgreSQL 16 tạm tại thời điểm checkpoint, critical HTTP 8/8, database/OpenAPI validator đạt; Mobile lint/typecheck, 36 suite/166 test, OpenAPI 36 path, 8 Maestro flow syntax và web export 32 route đạt. Sau checkpoint, regression bổ sung ngày chốt/tháng nhuận nâng backend hiện tại lên 54/54 với PostgreSQL; APK/emulator evidence được ghi riêng trong device report. Đây vẫn là reference sandbox, chưa phải release production.
 
 ## Việc cần làm sau checkpoint
 

@@ -16,7 +16,7 @@ Ngày kiểm tra: 2026-08-15
 ## Đã kiểm tra local
 
 - Backend typecheck/build: đạt.
-- Backend compiled test suite không có DB: 49 pass, 4 test PostgreSQL skip; trên PostgreSQL container tạm: 53 pass, 0 skip, gồm concurrency và restart savings/credit.
+- Backend compiled test suite không có DB: 50 pass, 4 test PostgreSQL skip; trên PostgreSQL container tạm: 54 pass, 0 skip, gồm concurrency và restart savings/credit.
 - Database source validator: đạt 20 table definitions/invariants; khi không cấu hình `DATABASE_URL`, live check được bỏ qua.
 - PostgreSQL 16 container tạm: migration 001/002, live schema validator và toàn bộ persistence/concurrency/restart test đều đạt; container đã được dọn sau kiểm thử.
 - Mobile lint/typecheck: đạt.

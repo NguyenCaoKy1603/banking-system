@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { BankingSystem } from "../bankingSystem.js";
-import { calculateMinimumPayment, nextStatementCloseAt } from "../credit.js";
+import { addMonthsClamped, calculateMinimumPayment, nextStatementCloseAt } from "../credit.js";
 
 function createSystem(options: ConstructorParameters<typeof BankingSystem>[0] = {}) {
   let now = Date.parse("2026-08-14T00:00:00.000Z");
@@ -27,6 +27,29 @@ test("credit statement schedule closes on the 25th in Asia/Ho_Chi_Minh", () => {
   assert.equal(
     nextStatementCloseAt("2026-08-24T17:00:00.000Z"),
     "2026-09-24T17:00:00.000Z",
+  );
+});
+
+test("credit date helpers handle month-end and leap-year boundaries", () => {
+  assert.equal(
+    addMonthsClamped("2024-01-31T00:00:00.000Z", 1),
+    "2024-02-29T00:00:00.000Z",
+  );
+  assert.equal(
+    addMonthsClamped("2023-01-31T00:00:00.000Z", 1),
+    "2023-02-28T00:00:00.000Z",
+  );
+  assert.equal(
+    addMonthsClamped("2024-02-29T00:00:00.000Z", 12),
+    "2025-02-28T00:00:00.000Z",
+  );
+  assert.equal(
+    nextStatementCloseAt("2024-02-24T16:59:59.999Z"),
+    "2024-02-24T17:00:00.000Z",
+  );
+  assert.equal(
+    nextStatementCloseAt("2024-02-24T17:00:00.000Z"),
+    "2024-03-24T17:00:00.000Z",
   );
 });
 

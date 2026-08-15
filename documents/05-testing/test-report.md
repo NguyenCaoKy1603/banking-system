@@ -16,7 +16,7 @@ Backend verification checkpoint: `595afc3` (`Harden database and OpenAPI quality
 | OpenAPI required paths | Đạt, 36 path bắt buộc |
 | Native E2E | Android emulator `Pixel_7_API_35`: full flow M0–M4, M8 đạt, gồm hiện/sao chép đầy đủ số tài khoản, eKYC mô phỏng, beneficiary, QR manual fallback và notification deep link |
 | Maestro | 8 flow hợp lệ; M0–M4/M8, credit payment và pending-resume chạy thành công trên Android emulator bằng Maestro 2.8.0 |
-| Backend reference | 53 test definition; không có `DATABASE_URL`: 49 pass và 4 skip PostgreSQL; bằng chứng PostgreSQL 16 tạm trước đó: 53/53 pass; seed E2E smoke thành công |
+| Backend reference | 54 test definition; không có `DATABASE_URL`: 50 pass và 4 skip PostgreSQL; bằng chứng PostgreSQL 16 tạm: 54/54 pass; seed E2E smoke thành công |
 | Expo web export | Đạt, 32 static route; dùng URL HTTPS placeholder cho static export vì `.env` local là HTTP sandbox và bị production guard từ chối |
 | Dependency audit | **Không đạt**: 14 High từ `image-size`, chờ risk acceptance/upstream fix |
 
@@ -39,7 +39,7 @@ Các kiểm tra local cùng E2E emulator chứng minh reference implementation c
 
 ## Cap nhat xac nhan cuoi M6/M7 va account reveal - 2026-08-15
 
-- Backend: local khong co `DATABASE_URL` co 53 test, 49 pass va 4 skip; voi PostgreSQL 16 tam thoi co 53/53 pass, migration 001–003, live schema validator va critical HTTP 8/8.
+- Backend: local khong co `DATABASE_URL` co 54 test, 50 pass va 4 skip; voi PostgreSQL 16 tam thoi co 54/54 pass, migration 001–003, live schema validator va critical HTTP 8/8.
 - Mobile: 36 suite/166 test pass; lint, typecheck, OpenAPI 36 path, 8 flow Maestro syntax, web export 32 route va release config deu dat.
 - Credit sandbox da co seed card, sao ke, quote, MFA, idempotency, PENDING resume, ledger/reconciliation va lock/unlock step-up.
 - `seed:e2e` da chay thanh cong tren server sandbox tam: transfer va savings `SUCCEEDED`, Credit card/statement duoc tao; stdout khong chua password/OTP.
