@@ -2,7 +2,7 @@
 
 ## Đã kiểm chứng local
 
-Backend evidence checkpoint: current repository HEAD `a47b6a8`; implementation hardening commit `0f06b77`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
+Backend evidence checkpoint: code/evidence checkpoint `079e9d2`; implementation hardening commit `0f06b77`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
 
 - Mobile lint, type-check và 36 suite/167 test đạt; các coverage gate trước đó vẫn đạt trên nhóm domain/validation/presentation/storage/navigation; coverage không được chạy lại trong lượt cuối.
 - Backend reference type-check, build, 58 test definition và 8 critical HTTP flow đạt; không có database thật thì 4 test PostgreSQL được skip, còn bằng chứng PostgreSQL 16 tạm thời đạt 58/58; database boundary validator đạt cấu trúc SQL + live PostgreSQL 27 bảng/invariant.
@@ -18,7 +18,7 @@ Backend evidence checkpoint: current repository HEAD `a47b6a8`; implementation h
 
 ## Chưa đủ điều kiện đóng milestone
 
-- M0: baseline tài liệu, evidence rules, device evidence và checkpoint Git sạch `aa0e3de` đã có; owner review/push vẫn còn.
+- M0: baseline tài liệu, evidence rules, device evidence và checkpoint Git sạch `079e9d2` đã có; owner review/push vẫn còn.
 - M1–M4 và M8: critical flow đã chạy trên Android emulator cho login/MFA, account detail, hiện/sao chép số tài khoản đầy đủ, eKYC, beneficiary, QR manual fallback, M4 transfer và M8 notification deep link; chưa có full device matrix, thiết bị thật hoặc staging partner.
 - M2: eKYC thật/API KYC và test data staging chưa có; phần hiện tại là mock có chủ đích.
 - M4: transfer, beneficiary CRUD và QR manual fallback đã có bằng chứng Maestro trên emulator; QR camera/permission, transfer pending/restart/resume và lifecycle native vẫn chưa có bằng chứng thiết bị.
@@ -34,11 +34,11 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 - M6 Savings đã có quote/MFA/idempotency/PENDING-resume/maturity, Mobile list/open/detail và notification deep link; flow native emulator đã pass, nhưng chưa đóng vì thiếu repository relational production, thiết bị thật và staging.
 - M7 Credit sandbox đã bắt đầu: thẻ VND cấp sẵn, hạn mức 20.000.000, dư nợ seed 4.000.000, khả dụng 16.000.000, sao kê và thanh toán MINIMUM/FULL/CUSTOM. Không có CIC, processor, PAN/CVV/PIN hoặc tiền thật.
 - OpenAPI draft hiện có 36 path; backend route/schema validator đã bao phủ Cards/Credit. Mobile `/cards` đã chuyển khỏi `cardsMock` sang API Credit draft.
-- Migration `003_credit_sandbox.sql` và policy fields đã có ở mức draft; live Postgres/Maestro/device evidence M7 phải chạy lại sau checkpoint sạch.
+- Migration `003_credit_sandbox.sql` và policy fields đã có ở mức draft; live Postgres/Maestro evidence M7 đã chạy ở checkpoint hiện tại; relational production và device thật vẫn là gate mở.
 
 ## Cap nhat chinh xac sau M7 local verification - 2026-08-15
 
 - M6 Savings va M7 Credit da co reference sandbox implementation; cac dong mo ta cu "chua trien khai" chi la snapshot truoc khi thuc hien.
-- M6/M7 local gate hien tai: Backend 58 test definition (54 pass, 4 PostgreSQL skip; PostgreSQL 16 tam 58/58), Mobile 167/167, OpenAPI 36 path, Maestro syntax 9 flow; M6 savings va M7 credit native flow da co artifact emulator.
+- M6/M7 local gate hien tai: Backend 58 test definition (54 pass, 4 PostgreSQL skip; PostgreSQL 16 tam 58/58), Mobile 36 suite/167 test, OpenAPI 36 path, Maestro syntax 9 flow; M6 savings va M7 credit native flow da co artifact emulator.
 - Home/account detail da cho phep hien va sao chep day du so tai khoan qua API rieng; mat tren Home van chi hien/che so du.
 - Chua dong milestone: relational repository production, transfer lifecycle native day du, physical device, staging/partner integration va production controls. PostgreSQL live, concurrency/restart sandbox va Maestro M7 emulator da co evidence.

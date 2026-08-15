@@ -1,7 +1,7 @@
 # Verification report M0–M4 và M8
 
 Ngày kiểm tra: 2026-08-16
-Evidence checkpoint: `a47b6a8` (`Record M7 verification checkpoint`); implementation hardening `0f06b77`; implementation baseline `aa0e3de`.
+Evidence checkpoint: `079e9d2` (`Verify M6 M7 native flows and account reveal`); implementation hardening `0f06b77`; earlier implementation baseline `aa0e3de`.
 
 ## Phạm vi đã đối chiếu
 

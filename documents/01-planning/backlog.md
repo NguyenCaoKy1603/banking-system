@@ -2,7 +2,7 @@
 
 | Mã | Hạng mục | Owner | Trạng thái hiện tại | Việc còn lại / cổng |
 | --- | --- | --- | --- | --- |
-| M0 | Sẵn sàng dự án | Phối hợp | Baseline và checkpoint Git sạch `aa0e3de` đã có | Owner review/push, board chính thức và evidence thiết bị thật |
+| M0 | Sẵn sàng dự án | Phối hợp | Baseline và checkpoint Git sạch `079e9d2` đã có | Owner review/push, board chính thức và evidence thiết bị thật |
 | M1 | Nền Mobile | Thành viên 2 | Đã kiểm chứng local | Chạy emulator/điện thoại thật và chốt APK toolchain |
 | M2 | Auth và eKYC mô phỏng | Phối hợp | Auth và eKYC mô phỏng đã có local | API KYC thật/test data, forgot/change password nếu được duyệt |
 | M3 | Account, dashboard, history | Thành viên 2 | Account detail, cursor history và filter đã có ở reference local | Device/integration evidence và đối soát staging |

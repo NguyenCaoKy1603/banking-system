@@ -9,7 +9,7 @@
 | R-05 | Dependency `image-size` còn 14 High trong Metro | Cao | CI audit gate fail, không đủ điều kiện pilot | Chờ upstream/đánh giá nâng cấp có kiểm thử; không force fix | Mở |
 | R-06 | Chatbot có nguy cơ hallucination hoặc lộ dữ liệu chéo user | Cao | Rủi ro privacy/safety và sai hướng dẫn nghiệp vụ | RAG, read-only tools, policy, ownership test, eval/fallback | Chưa triển khai |
 | R-07 | Thiếu APK signing, monitoring, backup/restore và incident runbook thật | Cao | Không thể release/rollback có kiểm soát | Owner vận hành cung cấp môi trường và quy trình | Mở |
-| R-08 | Working tree hiện có thay đổi chưa commit từ các phiên trước | Trung bình | Khó chứng minh diff/milestone sạch | Đã tạo checkpoint `aa0e3de`; không commit `.env`/artifact | Đã đóng |
+| R-08 | Working tree hiện có thay đổi chưa commit từ các phiên trước | Trung bình | Khó chứng minh diff/milestone sạch | Đã tạo checkpoint `079e9d2`; không commit `.env`/artifact | Đã đóng |
 | R-09 | Seed/flow native chưa chạy trên thiết bị thật | Cao | Chưa chứng minh camera, biometric, lifecycle, crash-resume và cài trên máy khác | Đã có seed, APK/checksum và Android emulator smoke; cần thiết bị thật, Maestro/device recording và pending resume evidence | Mở |
 | R-10 | Coverage hiện tập trung domain/validation/storage/navigation, chưa có component test cho screen | Trung bình | Có thể bỏ sót lỗi render/accessibility/native interaction | Giữ threshold cho logic; bổ sung React Native component/device test ở M10 | Mở |
 | R-11 | Persistent PostgreSQL adapter mới là JSON snapshot sandbox | Cao | Chưa chứng minh repository relational, migration rollback hoặc production transaction boundary | Chạy CI PostgreSQL; wire relational repository và review trước tiền thật | Mở |
