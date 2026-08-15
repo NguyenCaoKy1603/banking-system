@@ -6,7 +6,7 @@
 | --- | --- | --- | --- |
 | `mobile-app/` | Expo/React Native Mobile, auth, accounts, history, transfer, notifications, fraud, Card mock | Thành viên 2 | Reference flow đã chạy local |
 | `mobile-app/src/app/` | Router, public/authenticated routes và screen entry points | Thành viên 2 | Có Login, Register, Home, Profile, KYC, QR, Beneficiaries, History, Transfer, Notification, Fraud, Transaction Detail, Card list/detail |
-| `mobile-app/src/features/` | Feature services, types, validators, state/domain tests | Thành viên 2 | Có auth, accounts, history, transfers/beneficiaries, KYC, QR, notifications, fraud, control và Card mock |
+| `mobile-app/src/features/` | Feature services, types, validators, state/domain tests | Thành viên 2 | Có auth, accounts, history, transfers/beneficiaries, KYC, QR, notifications, fraud, control, Savings và Credit; Card mock chỉ là fixture legacy |
 | `mobile-app/e2e/maestro/` | Native E2E flow syntax và test IDs | Phối hợp | Có 8 flow; critical M0–M4/M8, credit payment và pending-resume đã chạy trên Android emulator, chưa chạy trên thiết bị thật |
 | `backend/` | Reference HTTP/backend sandbox, PostgreSQL snapshot adapter, core adapter, ledger, audit, outbox | Thành viên 1/reference | Persistent snapshot sandbox; chưa phải relational production |
 | `backend/database/` | Boundary SQL draft và validator | Thành viên 1/reference | Chưa wire vào runtime |
@@ -21,7 +21,7 @@
 ## Khoảng trống cần xác nhận
 
 - Chưa có root planning board/Git PR evidence, thiết bị mục tiêu và staging URL được phê duyệt.
-- Card đã có flow mock/reference; Savings, Credit và Chatbot chưa triển khai; eKYC/QR hiện là flow mô phỏng/reference.
+- Card vẫn có fixture mock/reference; Savings và Credit đã có reference sandbox; Chatbot chưa triển khai; eKYC/QR hiện là flow mô phỏng/reference.
 - Chưa có backend NestJS/PostgreSQL/Redis/LLM production boundary; PostgreSQL snapshot chỉ phục vụ restart/concurrency contract test.
 ## Đồng bộ M6/M7 — 2026-08-15
 

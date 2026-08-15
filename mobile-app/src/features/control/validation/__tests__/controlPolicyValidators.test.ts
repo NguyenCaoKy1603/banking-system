@@ -11,6 +11,13 @@ const policy = {
   savingsAllowlisted: true,
   maxSavingsAmountMinor: "500000000",
   savingsStepUpMethods: ["OTP", "BIOMETRIC"],
+  creditEnabled: true,
+  creditAllowlisted: true,
+  creditPaymentsEnabled: true,
+  cardControlsEnabled: true,
+  maxCreditPaymentAmountMinor: "20000000",
+  creditPaymentStepUpMethods: ["OTP", "BIOMETRIC"],
+  cardUnlockStepUpMethods: ["OTP", "BIOMETRIC"],
   updatedAt: "2026-08-14T00:00:00Z",
 };
 
@@ -26,6 +33,8 @@ describe("control policy validator", () => {
     expect(isControlPolicy({ ...policy, stepUpMethods: ["PASSWORD"] })).toBe(false);
     expect(isControlPolicy({ ...policy, savingsStepUpMethods: [] })).toBe(false);
     expect(isControlPolicy({ ...policy, maxSavingsAmountMinor: "-1" })).toBe(false);
+    expect(isControlPolicy({ ...policy, cardUnlockStepUpMethods: [] })).toBe(false);
+    expect(isControlPolicy({ ...policy, maxCreditPaymentAmountMinor: "-1" })).toBe(false);
     expect(isControlPolicy({ ...policy, updatedAt: "" })).toBe(false);
   });
 });

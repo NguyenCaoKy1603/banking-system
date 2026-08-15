@@ -158,6 +158,7 @@ for (const [label, pattern] of [
   ["credit payment idempotency", /UNIQUE\s*\(\s*customer_id\s*,\s*idempotency_key\s*\)/i],
   ["credit notification type", /notification_type\s+IN\s*\(\s*'TRANSFER'\s*,\s*'SAVINGS'\s*,\s*'CREDIT'\s*,\s*'SECURITY'/i],
   ["credit control policy", /ADD\s+COLUMN\s+credit_enabled\s+boolean/i],
+  ["card unlock step-up policy", /ADD\s+COLUMN\s+card_unlock_step_up_methods\s+text\[\]/i],
 ]) {
   if (!pattern.test(creditSchema)) {
     throw new Error(`Missing credit database invariant: ${label}`);
@@ -287,6 +288,7 @@ async function validateLiveDatabase() {
       ["credit_statements", "version", "int8"],
       ["credit_payment_quotes", "statement_id", "uuid"],
       ["credit_payments", "idempotency_key", "text"],
+      ["control_policy", "card_unlock_step_up_methods", "_text"],
     ]) {
       if (liveColumns.get(`${tableName}.${columnName}`) !== expectedType) {
         throw new Error(

@@ -209,3 +209,22 @@ test("credit card lock is persistent in the exported state and unlock requires s
   assert.throws(() => system.unlockCard(user.id, card.cardId, { method: "OTP", proof: "000000" }), /verification failed/);
   assert.equal(system.unlockCard(user.id, card.cardId, { method: "OTP", proof: "123456" }).status, "ACTIVE");
 });
+
+test("card unlock uses its own configured step-up policy", () => {
+  const { system } = createSystem({
+    creditPaymentStepUpMethods: ["OTP"],
+    cardUnlockStepUpMethods: ["BIOMETRIC"],
+  });
+  const user = register(system, "707");
+  const card = system.listCards(user.id)[0]!;
+  assert.deepEqual(system.getControlPolicy(user.id).cardUnlockStepUpMethods, ["BIOMETRIC"]);
+  system.lockCard(user.id, card.cardId);
+  assert.throws(
+    () => system.unlockCard(user.id, card.cardId, { method: "OTP", proof: "123456" }),
+    /không được bật/,
+  );
+  assert.equal(
+    system.unlockCard(user.id, card.cardId, { method: "BIOMETRIC", proof: "sandbox-biometric" }).status,
+    "ACTIVE",
+  );
+});

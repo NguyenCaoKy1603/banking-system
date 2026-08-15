@@ -29,6 +29,17 @@ type ControlPolicy = {
   allowlisted: boolean;
   maxTransferAmountMinor: string;
   stepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  savingsEnabled: boolean;
+  savingsAllowlisted: boolean;
+  maxSavingsAmountMinor: string;
+  savingsStepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  creditEnabled: boolean;
+  creditAllowlisted: boolean;
+  creditPaymentsEnabled: boolean;
+  cardControlsEnabled: boolean;
+  maxCreditPaymentAmountMinor: string;
+  creditPaymentStepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  cardUnlockStepUpMethods: Array<"OTP" | "BIOMETRIC">;
   updatedAt: string;
 };
 ```

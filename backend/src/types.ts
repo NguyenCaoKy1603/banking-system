@@ -105,6 +105,7 @@ export type ControlPolicy = {
   cardControlsEnabled: boolean;
   maxCreditPaymentAmountMinor: string;
   creditPaymentStepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  cardUnlockStepUpMethods: Array<"OTP" | "BIOMETRIC">;
   updatedAt: string;
 };
 

@@ -1,6 +1,6 @@
 # Backend hardening test report
 
-Ngày kiểm tra: 2026-08-15
+Ngày kiểm tra: 2026-08-16
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
 Trạng thái: **In-memory và PostgreSQL persistent sandbox pass; relational production adapter vẫn là DRAFT**
 Commit kiểm thử: `aa0e3de` (`Implement banking sandbox milestones and M7 credit flow`)
@@ -11,7 +11,7 @@ Commit kiểm thử: `aa0e3de` (`Implement banking sandbox milestones and M7 cre
 | --- | --- |
 | Typecheck/build | Đạt |
 | Database boundary validator | Đạt, kiểm tra cấu trúc SQL và live PostgreSQL: 27 bảng, cột UUID/transfer/notification/savings/credit và constraint chính |
-| Unit + HTTP tests | 54 test definition; không có `DATABASE_URL`: 50 đạt và 4 skip PostgreSQL; PostgreSQL 16 tạm: 54/54 đạt |
+| Unit + HTTP tests | 57 test definition; không có `DATABASE_URL`: 53 đạt và 4 skip PostgreSQL; PostgreSQL 16 tạm: 57/57 đạt |
 | Critical HTTP tests | 8 đạt |
 | Backend dependency audit | 0 vulnerability |
 | Quote correctness | Snapshot beneficiary, one-time quote, idempotent retry |
@@ -25,7 +25,7 @@ Commit kiểm thử: `aa0e3de` (`Implement banking sandbox milestones and M7 cre
 
 ## PostgreSQL gate
 
-Test `persistence.test.ts` dùng `DATABASE_URL`, chạy migration từ database rỗng, kiểm tra restart state, HTTP restart và concurrent submit bằng hai idempotency key khác nhau. Gate local đã chạy với PostgreSQL 16 trong Docker: migration từ database rỗng đạt, chạy lại migration không lỗi, live schema validation đạt, cả 54/54 test đạt và chỉ một request concurrent được debit. Workflow [`backend-quality.yml`](../../.github/workflows/backend-quality.yml) tái hiện cùng gate trên CI service.
+Test `persistence.test.ts` dùng `DATABASE_URL`, chạy migration từ database rỗng, kiểm tra restart state, HTTP restart và concurrent submit bằng hai idempotency key khác nhau. Gate local đã chạy với PostgreSQL 16 trong Docker: migration từ database rỗng đạt, chạy lại migration không lỗi, live schema validation đạt, cả 57/57 test đạt và chỉ một request concurrent được debit. Workflow [`backend-quality.yml`](../../.github/workflows/backend-quality.yml) tái hiện cùng gate trên CI service.
 
 Persistent mode dùng `reference_state_snapshots` JSON checkpoint với advisory transaction lock. Đây là bước trung gian cho sandbox; chưa phải repository relational production.
 
@@ -38,7 +38,7 @@ Persistent mode dùng `reference_state_snapshots` JSON checkpoint với advisory
 ## Cap nhat xac nhan cuoi M7 - 2026-08-15
 
 - Credit test bao phu seed balance/minimum, quote one-time, payment ledger/reconciliation, pending resume, lock/unlock va HTTP idempotency flow.
-- `npm test`: local khong co `DATABASE_URL` 54 test, 50 pass, 4 skip; voi PostgreSQL 16 tam thoi 54/54 pass, bao gom restart/concurrency Credit.
+- `npm test`: local khong co `DATABASE_URL` 57 test, 53 pass, 4 skip; voi PostgreSQL 16 tam thoi 57/57 pass, bao gom restart/concurrency Credit.
 - `npm run test:critical` 8/8; typecheck, build, OpenAPI validator va Backend dependency audit (0 vulnerability) dat.
 - `003_credit_sandbox.sql` da migrate tu database rong; live validator kiem tra 27 table definitions va constraints chinh.
 - `seed:e2e` da chay thanh cong voi MFA sandbox: transfer va savings `SUCCEEDED`, Credit card/statement seed thanh cong; khong in password/OTP.

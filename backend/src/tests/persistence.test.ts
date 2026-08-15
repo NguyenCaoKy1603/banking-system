@@ -5,6 +5,7 @@ import type { Server } from "node:http";
 import test from "node:test";
 
 import {
+  BANKING_SYSTEM_STATE_VERSION,
   BankingSystem,
   type BankingSystemState,
 } from "../bankingSystem.js";
@@ -12,6 +13,40 @@ import { createPersistentBankingServer } from "../http.js";
 import { PostgresSnapshotRepository } from "../postgresSnapshotRepository.js";
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
+
+test("M6 snapshot without credit fields migrates to the current state version", () => {
+  const source = new BankingSystem({ sandboxOtp: "123456" });
+  const user = source.register({
+    fullName: "Legacy Snapshot User",
+    email: `legacy-${randomUUID()}@example.com`,
+    phoneNumber: `09${String(Date.now()).slice(-8)}`,
+    password: "Password1",
+  }).user;
+  const legacy = source.exportState() as BankingSystemState & Record<string, unknown>;
+  delete legacy.stateVersion;
+  delete legacy.creditCards;
+  delete legacy.creditAccounts;
+  delete legacy.creditTransactions;
+  delete legacy.creditStatements;
+  delete legacy.creditQuotes;
+  delete legacy.creditPayments;
+  delete legacy.creditIdempotency;
+  delete legacy.creditSeedPurchases;
+
+  const restored = new BankingSystem({ sandboxOtp: "123456" });
+  restored.importState(legacy as BankingSystemState);
+  assert.equal(restored.exportState().stateVersion, BANKING_SYSTEM_STATE_VERSION);
+  assert.ok(restored.listCards(user.id)[0]);
+});
+
+test("snapshot newer than the runtime is rejected explicitly", () => {
+  const system = new BankingSystem();
+  const state = system.exportState();
+  assert.throws(
+    () => system.importState({ ...state, stateVersion: BANKING_SYSTEM_STATE_VERSION + 1 }),
+    /newer than supported version/,
+  );
+});
 
 test("PostgreSQL snapshot persists users and serializes concurrent transfer submit", {
   skip: !databaseUrl,

@@ -490,7 +490,11 @@ type LoginContext = {
   user: UserRecord | undefined;
 };
 
+export const BANKING_SYSTEM_STATE_VERSION = 2;
+
 export type BankingSystemState = {
+  /** Optional for backwards compatibility with M0-M6 snapshots created before M7. */
+  stateVersion?: number;
   core: InMemoryCoreState;
   users: Array<[string, UserRecord]>;
   accessSessions: Array<[string, AccessSession]>;
@@ -522,6 +526,74 @@ export type BankingSystemState = {
   auditEventStore: AuditEvent[];
   outboxEventStore: OutboxEvent[];
 };
+
+function migrateBankingSystemState(input: BankingSystemState): BankingSystemState {
+  const candidate = input as Partial<BankingSystemState>;
+  const stateVersion = candidate.stateVersion ?? 1;
+  if (!Number.isInteger(stateVersion) || stateVersion < 1) {
+    throw new Error("Banking snapshot state version is invalid.");
+  }
+  if (stateVersion > BANKING_SYSTEM_STATE_VERSION) {
+    throw new Error(
+      `Banking snapshot state version ${stateVersion} is newer than supported version ${BANKING_SYSTEM_STATE_VERSION}.`,
+    );
+  }
+
+  const requiredArrays = [
+    "users",
+    "accessSessions",
+    "authChallenges",
+    "authAttemptWindows",
+    "registrationAttemptWindows",
+    "transferStepUpAttemptWindows",
+    "refreshSessions",
+    "refreshFamilies",
+    "beneficiaries",
+    "notifications",
+    "quotes",
+    "transfers",
+    "idempotency",
+    "auditEventStore",
+    "outboxEventStore",
+  ] as const;
+  if (!candidate.core || requiredArrays.some((key) => !Array.isArray(candidate[key]))) {
+    throw new Error("Banking snapshot state is missing required fields.");
+  }
+
+  return {
+    stateVersion: BANKING_SYSTEM_STATE_VERSION,
+    core: candidate.core,
+    users: candidate.users!,
+    accessSessions: candidate.accessSessions!,
+    authChallenges: candidate.authChallenges!,
+    authAttemptWindows: candidate.authAttemptWindows!,
+    registrationAttemptWindows: candidate.registrationAttemptWindows!,
+    transferStepUpAttemptWindows: candidate.transferStepUpAttemptWindows!,
+    savingsStepUpAttemptWindows: candidate.savingsStepUpAttemptWindows ?? [],
+    creditStepUpAttemptWindows: candidate.creditStepUpAttemptWindows ?? [],
+    refreshSessions: candidate.refreshSessions!,
+    refreshFamilies: candidate.refreshFamilies!,
+    beneficiaries: candidate.beneficiaries!,
+    notifications: candidate.notifications!,
+    quotes: candidate.quotes!,
+    transfers: candidate.transfers!,
+    idempotency: candidate.idempotency!,
+    savingsQuotes: candidate.savingsQuotes ?? [],
+    savingsOpenings: candidate.savingsOpenings ?? [],
+    savingsDeposits: candidate.savingsDeposits ?? [],
+    savingsIdempotency: candidate.savingsIdempotency ?? [],
+    creditCards: candidate.creditCards ?? [],
+    creditAccounts: candidate.creditAccounts ?? [],
+    creditTransactions: candidate.creditTransactions ?? [],
+    creditStatements: candidate.creditStatements ?? [],
+    creditQuotes: candidate.creditQuotes ?? [],
+    creditPayments: candidate.creditPayments ?? [],
+    creditIdempotency: candidate.creditIdempotency ?? [],
+    creditSeedPurchases: candidate.creditSeedPurchases ?? [],
+    auditEventStore: candidate.auditEventStore!,
+    outboxEventStore: candidate.outboxEventStore!,
+  };
+}
 
 function assertEmail(email: string): string {
   const normalized = normalizeEmail(email);
@@ -656,6 +728,7 @@ export class BankingSystem {
       cardControlsEnabled?: boolean;
       maxCreditPaymentAmountMinor?: string;
       creditPaymentStepUpMethods?: StepUpMethod[];
+      cardUnlockStepUpMethods?: StepUpMethod[];
       settleCreditPaymentsImmediately?: boolean;
       savingsProducts?: readonly SavingsProduct[];
       outboxPendingThreshold?: number;
@@ -736,6 +809,10 @@ export class BankingSystem {
       ),
       creditPaymentStepUpMethods: normalizeStepUpMethods(
         options.creditPaymentStepUpMethods,
+        ["OTP", "BIOMETRIC"],
+      ),
+      cardUnlockStepUpMethods: normalizeStepUpMethods(
+        options.cardUnlockStepUpMethods,
         ["OTP", "BIOMETRIC"],
       ),
       updatedAt: nowIso(this.clock),
@@ -1203,7 +1280,7 @@ export class BankingSystem {
     if (card.status !== "LOCKED") {
       throw conflictWithCode("CARD_STATE_INVALID", "Chỉ thẻ đang khóa mới có thể mở.");
     }
-    this.verifyCreditStepUp(userId, stepUp, card.cardId);
+    this.verifyCreditStepUp(userId, stepUp, card.cardId, this.policy.cardUnlockStepUpMethods);
     card.status = "ACTIVE";
     card.updatedAt = nowIso(this.clock);
     this.recordAudit("CREDIT_CARD_UNLOCKED", userId, card.cardId);
@@ -2608,6 +2685,7 @@ export class BankingSystem {
     userId: string,
     stepUp: { method: StepUpMethod; proof: string } | undefined,
     resourceId: string,
+    allowedMethods = this.policy.creditPaymentStepUpMethods,
   ): void {
     const key = `credit-step-up:${userId}`;
     const current = this.creditStepUpAttemptWindows.get(key);
@@ -2626,7 +2704,7 @@ export class BankingSystem {
       this.recordCreditStepUpFailure(key);
       throw invalidRequest("stepUp proof is required.");
     }
-    if (!this.policy.creditPaymentStepUpMethods.includes(stepUp.method)) {
+    if (!allowedMethods.includes(stepUp.method)) {
       throw conflictWithCode("STEP_UP_INVALID", "Phương thức xác thực bước hai không được bật.");
     }
     if (
@@ -2683,6 +2761,7 @@ export class BankingSystem {
     }
 
     return {
+      stateVersion: BANKING_SYSTEM_STATE_VERSION,
       core: this.core.exportState(),
       users: [...this.users.entries()].map(([userId, user]) => [userId, { ...user }]),
       accessSessions: [...this.accessSessions.entries()].map(([hash, session]) => [hash, { ...session }]),
@@ -2758,10 +2837,12 @@ export class BankingSystem {
     };
   }
 
-  importState(state: BankingSystemState): void {
+  importState(rawState: BankingSystemState): void {
     if (!(this.core instanceof InMemoryCoreBanking)) {
       throw new Error("Persistent sandbox requires an InMemoryCoreBanking instance.");
     }
+
+    const state = migrateBankingSystemState(rawState);
 
     this.core.importState(state.core);
     this.users.clear();

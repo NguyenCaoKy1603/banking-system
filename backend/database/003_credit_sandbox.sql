@@ -144,4 +144,9 @@ ALTER TABLE control_policy
     CHECK (
       cardinality(credit_payment_step_up_methods) > 0
       AND credit_payment_step_up_methods <@ ARRAY['OTP', 'BIOMETRIC']::text[]
+    ),
+  ADD COLUMN card_unlock_step_up_methods text[] NOT NULL DEFAULT ARRAY['OTP', 'BIOMETRIC']::text[]
+    CHECK (
+      cardinality(card_unlock_step_up_methods) > 0
+      AND card_unlock_step_up_methods <@ ARRAY['OTP', 'BIOMETRIC']::text[]
     );

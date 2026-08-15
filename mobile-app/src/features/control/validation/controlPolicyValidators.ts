@@ -34,6 +34,18 @@ export function isControlPolicy(value: unknown): value is ControlPolicy {
     Array.isArray(value.savingsStepUpMethods) &&
     value.savingsStepUpMethods.length > 0 &&
     value.savingsStepUpMethods.every(isStepUpMethod) &&
+    typeof value.creditEnabled === "boolean" &&
+    typeof value.creditAllowlisted === "boolean" &&
+    typeof value.creditPaymentsEnabled === "boolean" &&
+    typeof value.cardControlsEnabled === "boolean" &&
+    typeof value.maxCreditPaymentAmountMinor === "string" &&
+    /^(0|[1-9][0-9]*)$/.test(value.maxCreditPaymentAmountMinor) &&
+    Array.isArray(value.creditPaymentStepUpMethods) &&
+    value.creditPaymentStepUpMethods.length > 0 &&
+    value.creditPaymentStepUpMethods.every(isStepUpMethod) &&
+    Array.isArray(value.cardUnlockStepUpMethods) &&
+    value.cardUnlockStepUpMethods.length > 0 &&
+    value.cardUnlockStepUpMethods.every(isStepUpMethod) &&
     isNonEmptyString(value.updatedAt)
   );
 }
