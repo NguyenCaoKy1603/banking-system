@@ -2,10 +2,10 @@
 
 ## Đã kiểm chứng local
 
-Backend evidence checkpoint: `e555b77` (`Fix M8 notification transaction deep link`).
+Backend evidence checkpoint: `595afc3` (`Harden database and OpenAPI quality gates`).
 
 - Mobile lint, type-check và 27 suite/143 test đạt; coverage đạt 95.45% statements/lines, 93.35% branches và 97.87% functions trên nhóm domain/validation/presentation/storage/navigation được thu thập; coverage gate tối thiểu là 80% statements/lines, 75% branches và 80% functions.
-- Backend reference type-check, build, 37 test definition (37 pass, gồm 2 PostgreSQL persistence tests) và 8 critical HTTP flow đạt; database boundary validator đạt 16 bảng/invariant.
+- Backend reference type-check, build, 37 test definition (37 pass, gồm 2 PostgreSQL persistence tests) và 8 critical HTTP flow đạt; database boundary validator đạt cấu trúc SQL + live PostgreSQL 16 bảng/invariant.
 - Backend correctness đã có quote snapshot/one-time, beneficiary fingerprint, UUID-compatible IDs, exact route, registration/step-up rate limit, reconciliation formula và outbox retry threshold.
 - Persistent PostgreSQL snapshot adapter, migration runner và CI service đã được thêm; integration test chỉ chạy khi có `DATABASE_URL`.
 - OpenAPI validation, Maestro syntax validation, Expo native config và web export đều đã chạy lại sau route Card; hiện có 5 flow Maestro hợp lệ và 22 static route.

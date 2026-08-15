@@ -1,7 +1,7 @@
 # Verification report M0–M4 và M8
 
 Ngày kiểm tra: 2026-08-15
-Backend evidence checkpoint: `e555b77` (`Fix M8 notification transaction deep link`)
+Backend evidence checkpoint: `595afc3` (`Harden database and OpenAPI quality gates`)
 
 ## Phạm vi đã đối chiếu
 
@@ -17,7 +17,7 @@ Backend evidence checkpoint: `e555b77` (`Fix M8 notification transaction deep li
 ## Bằng chứng local
 
 - Mobile: lint, typecheck, 27 test suites/143 tests, coverage 95.45% statements và 93.35% branches, OpenAPI 18 required paths, Maestro syntax 5 flows và web export 22 routes đều đạt.
-- Backend reference: typecheck, build, database boundary validation, 37 test definition (37 pass, gồm 2 PostgreSQL persistence tests) và 8 critical HTTP tests; correctness P1/P2, beneficiary fingerprint, quote one-time, reconciliation drift, exact route, async HTTP auth và outbox retry đều có regression test.
+- Backend reference: typecheck, build, database boundary validation source + live PostgreSQL, 37 test definition (37 pass, gồm 2 PostgreSQL persistence tests) và 8 critical HTTP tests; correctness P1/P2, beneficiary fingerprint, quote one-time, reconciliation drift, exact route, async HTTP auth và outbox retry đều có regression test. Clean clone đã lặp lại `npm ci` và các gate backend.
 - Native smoke đã chạy trên Android emulator `Pixel_7_API_35` (Android 15/API 35): cold install/launch, login + server-driven MFA, dashboard/account detail, M4 transfer quote → review → step-up → result và M8 notification detail → transaction deep link đều đã kiểm tra được. Lần chạy đầu phát hiện deep link dùng sai `transferId`; bản vá contract dùng `transactionId` kèm `accountId` và lần chạy lại đã mở đúng transaction detail. Maestro CLI chưa cài; 5 flow chỉ mới qua syntax validation.
 - Chưa có bằng chứng native lặp lại cho kill app trước/sau submit, pending resume sau restart, session restore sau force-stop, QR camera/biometric thật, thiết bị thật hoặc staging partner. Đây vẫn là gate bắt buộc trước preview/pilot.
 - Seed E2E sandbox đã có tại `backend/scripts/seed-e2e.ts`; lần smoke local đã tạo dữ liệu tester/beneficiary/transfer mà không ghi credential vào source.

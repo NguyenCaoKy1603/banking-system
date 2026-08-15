@@ -3,7 +3,7 @@
 Ngày lập: 2026-08-15
 Phạm vi: M0–M4, M8 và Card mock bonus
 Trạng thái: **Local reference pass; device/release gates còn mở**
-Backend verification checkpoint: `e555b77` (`Fix M8 notification transaction deep link`)
+Backend verification checkpoint: `595afc3` (`Harden database and OpenAPI quality gates`)
 
 ## Kết quả đã chạy
 
