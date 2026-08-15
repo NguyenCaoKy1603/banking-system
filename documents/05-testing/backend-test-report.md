@@ -3,7 +3,7 @@
 Ngày kiểm tra: 2026-08-16
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
 Trạng thái: **In-memory và PostgreSQL persistent sandbox pass; relational production adapter vẫn là DRAFT**
-Commit kiểm thử: `aa0e3de` (`Implement banking sandbox milestones and M7 credit flow`)
+Commit kiểm thử: `0f06b77` (`Harden M7 state migration and credit payment flow`)
 
 ## Đã kiểm chứng local
 

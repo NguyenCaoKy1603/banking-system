@@ -1,7 +1,7 @@
 # Verification report M0–M4 và M8
 
 Ngày kiểm tra: 2026-08-16
-Evidence checkpoint: `aa0e3de` (`Implement banking sandbox milestones and M7 credit flow`)
+Evidence checkpoint: `0f06b77` (`Harden M7 state migration and credit payment flow`); implementation baseline `aa0e3de`.
 
 ## Phạm vi đã đối chiếu
 

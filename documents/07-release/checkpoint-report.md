@@ -3,7 +3,7 @@
 Ngày ghi nhận: 2026-08-15
 Nhánh: `feature/mobile-authentication`
 Implementation checkpoint: `aa0e3de` (`Implement banking sandbox milestones and M7 credit flow`)
-Current verification HEAD trước phiên này: `2af2f2f` (`Expand credit date boundary regression coverage`)
+Current verification HEAD: `0f06b77` (`Harden M7 state migration and credit payment flow`); previous verification `2af2f2f` (`Expand credit date boundary regression coverage`)
 
 ## Trạng thái
 

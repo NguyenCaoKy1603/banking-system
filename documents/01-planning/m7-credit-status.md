@@ -20,7 +20,7 @@ Không có phê duyệt tín dụng thật, CIC, scoring, processor/acquirer, PA
 - [x] Kiểm thử restart/concurrency payment; chứng minh không debit hai lần và reconciliation difference bằng 0.
 - [x] Chạy `seed:e2e`, lưu output không chứa secret; transfer và savings đều `SUCCEEDED`, Credit seed có card/statement.
 - [x] Chạy Maestro overview/payment/pending-resume trên Android emulator `Pixel_7_API_35`; thiết bị thật vẫn là gate mở.
-- [x] Rerun regression M0–M4/M8 và cập nhật test report, device evidence và runbook theo bằng chứng local; implementation checkpoint là `aa0e3de`, verification HEAD trước thay đổi này là `2af2f2f`.
+- [x] Rerun regression M0–M4/M8 và cập nhật test report, device evidence và runbook theo bằng chứng local; implementation checkpoint là `aa0e3de`, hardening commit hiện tại là `0f06b77`.
 - [ ] Không đánh dấu production/pilot readiness khi chưa có staging, signing, monitoring, legal/compliance và partner approval.
 
 ## Cập nhật xác nhận cuối - 2026-08-16
