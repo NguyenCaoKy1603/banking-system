@@ -1,0 +1,609 @@
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
+import { randomUUID } from "node:crypto";
+
+import { BankingSystem } from "./bankingSystem.js";
+import { DomainError, invalidRequest, notFound, unauthorized } from "./errors.js";
+import { PostgresSnapshotRepository } from "./postgresSnapshotRepository.js";
+
+const API_PREFIX = "/api/v1";
+const MAX_BODY_BYTES = 1_000_000;
+
+export type HttpOptions = {
+  allowedOrigins?: string[];
+};
+
+function header(request: IncomingMessage, name: string): string | undefined {
+  const value = request.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function getRequestId(request: IncomingMessage): string {
+  return header(request, "x-request-id")?.trim() || `backend-${randomUUID()}`;
+}
+
+function writeResponse(
+  response: ServerResponse,
+  status: number,
+  traceId: string,
+  payload?: unknown,
+): void {
+  response.statusCode = status;
+  response.setHeader("Content-Type", "application/json; charset=utf-8");
+  response.setHeader("X-Request-ID", traceId);
+  if (payload === undefined) {
+    response.end();
+    return;
+  }
+  response.end(JSON.stringify(payload));
+}
+
+function writeError(
+  response: ServerResponse,
+  status: number,
+  traceId: string,
+  error: DomainError,
+): void {
+  writeResponse(response, status, traceId, {
+    code: error.code,
+    message: error.message,
+    fieldErrors: error.fieldErrors,
+    traceId,
+  });
+}
+
+class BufferedResponse {
+  private readonly headers = new Map<string, number | string | string[]>();
+  private body: string | Buffer | undefined;
+  private ended = false;
+  private status = 200;
+
+  constructor(private readonly target: ServerResponse) {}
+
+  set statusCode(value: number) {
+    this.status = value;
+  }
+
+  get statusCode(): number {
+    return this.status;
+  }
+
+  setHeader(name: string, value: number | string | string[]): void {
+    this.headers.set(name, value);
+  }
+
+  get headersSent(): boolean {
+    return this.ended;
+  }
+
+  end(body?: string | Buffer): void {
+    this.body = body;
+    this.ended = true;
+  }
+
+  flush(): void {
+    if (this.target.writableEnded) {
+      return;
+    }
+    this.target.statusCode = this.status;
+    for (const [name, value] of this.headers) {
+      this.target.setHeader(name, value);
+    }
+    this.target.end(this.body);
+  }
+}
+
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  if (request.method === "GET" || request.method === "HEAD") {
+    return undefined;
+  }
+
+  const chunks: Buffer[] = [];
+  let size = 0;
+
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > MAX_BODY_BYTES) {
+      throw invalidRequest("Request body is too large.");
+    }
+    chunks.push(buffer);
+  }
+
+  if (size === 0) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw invalidRequest("Request body must be valid JSON.");
+  }
+}
+
+function requireObject(body: unknown): Record<string, unknown> {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw invalidRequest("Request body must be a JSON object.");
+  }
+  return body as Record<string, unknown>;
+}
+
+function requireBearer(request: IncomingMessage, system: BankingSystem): string {
+  const authorization = header(request, "authorization");
+  if (!authorization?.startsWith("Bearer ")) {
+    throw unauthorized("Access token is required.");
+  }
+  const deviceId = header(request, "x-device-id");
+  if (!deviceId?.trim()) {
+    throw unauthorized("Device binding is required.");
+  }
+  return system.authenticate(authorization.slice("Bearer ".length), deviceId).id;
+}
+
+function requireDeviceId(request: IncomingMessage): string {
+  const deviceId = header(request, "x-device-id");
+  if (!deviceId?.trim()) {
+    throw unauthorized("Device binding is required.");
+  }
+  return deviceId.trim();
+}
+
+function getRateLimitKey(request: IncomingMessage): string {
+  const forwardedFor = header(request, "x-forwarded-for")?.split(",")[0]?.trim();
+  return forwardedFor || request.socket.remoteAddress || "unknown-client";
+}
+
+function pathSegments(pathname: string): string[] {
+  try {
+    return pathname
+      .split("/")
+      .filter(Boolean)
+      .map((segment) => decodeURIComponent(segment));
+  } catch {
+    throw invalidRequest("Path parameter is invalid.");
+  }
+}
+
+function isAuthenticatedRoute(
+  method: string | undefined,
+  segments: readonly string[],
+): boolean {
+  if (!method) {
+    return false;
+  }
+  if (method === "GET" && segments.length === 1 && segments[0] === "notifications") {
+    return true;
+  }
+  if (
+    method === "POST" &&
+    segments.length === 3 &&
+    segments[0] === "notifications" &&
+    segments[2] === "read"
+  ) {
+    return true;
+  }
+  if (method === "POST" && segments.length === 1 && segments[0] === "fraud-reports") {
+    return true;
+  }
+  if (method === "GET" && segments.length === 1 && segments[0] === "accounts") {
+    return true;
+  }
+  if (
+    method === "GET" &&
+    segments.length === 3 &&
+    segments[0] === "accounts" &&
+    segments[2] === "transactions"
+  ) {
+    return true;
+  }
+  if (
+    method === "GET" &&
+    segments.length === 4 &&
+    segments[0] === "accounts" &&
+    segments[2] === "transactions"
+  ) {
+    return true;
+  }
+  if (segments[0] === "beneficiaries") {
+    return (
+      (method === "GET" && (segments.length === 1 || segments.length === 2)) ||
+      (method === "POST" && segments.length === 1) ||
+      (method === "PATCH" && segments.length === 2) ||
+      (method === "DELETE" && segments.length === 2)
+    );
+  }
+  if (method === "POST" && segments.length === 2 && segments[0] === "transfers" && segments[1] === "quote") {
+    return true;
+  }
+  if (method === "POST" && segments.length === 1 && segments[0] === "transfers") {
+    return true;
+  }
+  return method === "GET" && segments.length === 2 && segments[0] === "transfers";
+}
+
+export async function handleRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  system: BankingSystem,
+  options: HttpOptions = {},
+): Promise<void> {
+  const traceId = getRequestId(request);
+  const configuredOrigins = options.allowedOrigins ?? ["*"];
+  const origin = header(request, "origin");
+  if (configuredOrigins.includes("*")) {
+    response.setHeader("Access-Control-Allow-Origin", "*");
+  } else if (origin && configuredOrigins.includes(origin)) {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  response.setHeader("Vary", "Origin");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID");
+  response.setHeader("Access-Control-Allow-Methods", "DELETE,GET,PATCH,POST,OPTIONS");
+
+  if (request.method === "OPTIONS") {
+    writeResponse(response, 204, traceId);
+    return;
+  }
+
+  try {
+    const requestUrl = new URL(request.url ?? "/", "http://localhost");
+    if (request.method === "GET" && requestUrl.pathname === "/healthz") {
+      const health = system.getHealth();
+      writeResponse(response, health.status === "ok" ? 200 : 503, traceId, health);
+      return;
+    }
+
+    if (!requestUrl.pathname.startsWith(API_PREFIX)) {
+      throw notFound("API route not found.");
+    }
+    const routePath = requestUrl.pathname.slice(API_PREFIX.length) || "/";
+    const segments = pathSegments(routePath);
+    const body = await readJson(request);
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "auth" &&
+      segments[1] === "register"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        201,
+        traceId,
+        await system.registerAsync(data as never, getRateLimitKey(request)),
+      );
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "auth" &&
+      segments[1] === "login"
+    ) {
+      const data = requireObject(body);
+      const result = await system.loginAsync(
+        data.email as string,
+        data.password as string,
+        requireDeviceId(request),
+      );
+      writeResponse(
+        response,
+        "accessToken" in result ? 200 : 202,
+        traceId,
+        result,
+      );
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "auth" &&
+      segments[1] === "verify"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.verifyLoginChallenge(
+          data.challengeId as string,
+          data.method as "OTP" | "BIOMETRIC",
+          data.proof as string,
+          requireDeviceId(request),
+        ),
+      );
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "auth" &&
+      segments[1] === "refresh"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.refresh(data.refreshToken as string, requireDeviceId(request)),
+      );
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "auth" &&
+      segments[1] === "logout"
+    ) {
+      const data = requireObject(body);
+      if (!system.revoke(data.refreshToken as string, requireDeviceId(request))) {
+        throw unauthorized("Refresh token is invalid.");
+      }
+      writeResponse(response, 204, traceId);
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "auth" &&
+      segments[1] === "logout-all"
+    ) {
+      const userId = requireBearer(request, system);
+      system.revokeAllSessions(userId);
+      writeResponse(response, 204, traceId);
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 2 &&
+      segments[0] === "mobile" &&
+      segments[1] === "control-policy"
+    ) {
+      const userId = requireBearer(request, system);
+      writeResponse(response, 200, traceId, system.getControlPolicy(userId));
+      return;
+    }
+
+    if (!isAuthenticatedRoute(request.method, segments)) {
+      throw notFound("API route not found.");
+    }
+
+    const userId = requireBearer(request, system);
+
+    if (request.method === "GET" && segments.length === 1 && segments[0] === "notifications") {
+      writeResponse(response, 200, traceId, { items: system.listNotifications(userId) });
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 3 &&
+      segments[0] === "notifications" &&
+      segments[2] === "read"
+    ) {
+      writeResponse(response, 200, traceId, system.markNotificationRead(userId, segments[1]));
+      return;
+    }
+
+    if (request.method === "POST" && segments.length === 1 && segments[0] === "fraud-reports") {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        201,
+        traceId,
+        system.reportFraud(
+          userId,
+          data.accountId as string,
+          data.transactionId as string,
+          data.reason as string,
+        ),
+      );
+      return;
+    }
+
+    if (request.method === "GET" && segments.length === 1 && segments[0] === "accounts") {
+      writeResponse(response, 200, traceId, { accounts: system.listAccounts(userId) });
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 3 &&
+      segments[0] === "accounts" &&
+      segments[2] === "transactions"
+    ) {
+      const limitValue = requestUrl.searchParams.get("limit");
+      const limit = limitValue === null ? undefined : Number(limitValue);
+      const result = system.listTransactions(
+        userId,
+        segments[1],
+        requestUrl.searchParams.get("cursor") ?? undefined,
+        limit,
+      );
+      writeResponse(response, 200, traceId, result);
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 4 &&
+      segments[0] === "accounts" &&
+      segments[2] === "transactions"
+    ) {
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.getTransaction(userId, segments[1], segments[3]),
+      );
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 1 &&
+      segments[0] === "beneficiaries"
+    ) {
+      writeResponse(response, 200, traceId, {
+        items: system.listBeneficiaries(userId),
+      });
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 1 &&
+      segments[0] === "beneficiaries"
+    ) {
+      const data = requireObject(body);
+      writeResponse(response, 201, traceId, {
+        beneficiary: system.createBeneficiary(userId, data as never),
+      });
+      return;
+    }
+
+    if (
+      request.method === "PATCH" &&
+      segments.length === 2 &&
+      segments[0] === "beneficiaries"
+    ) {
+      const data = requireObject(body);
+      writeResponse(response, 200, traceId, {
+        beneficiary: system.renameBeneficiary(
+          userId,
+          segments[1],
+          data.displayName as string,
+        ),
+      });
+      return;
+    }
+
+    if (
+      request.method === "DELETE" &&
+      segments.length === 2 &&
+      segments[0] === "beneficiaries"
+    ) {
+      system.deleteBeneficiary(userId, segments[1]);
+      writeResponse(response, 204, traceId);
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 2 &&
+      segments[0] === "beneficiaries"
+    ) {
+      writeResponse(response, 200, traceId, {
+        beneficiary: system.lookupBeneficiary(userId, segments[1]),
+      });
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "transfers" &&
+      segments[1] === "quote"
+    ) {
+      const data = requireObject(body);
+      writeResponse(response, 200, traceId, system.createQuote(userId, data as never));
+      return;
+    }
+
+    if (request.method === "POST" && segments.length === 1 && segments[0] === "transfers") {
+      const data = requireObject(body);
+      const receipt = system.submitTransfer(
+        userId,
+        header(request, "idempotency-key") ?? "",
+        data as never,
+      );
+      writeResponse(
+        response,
+        receipt.status === "PENDING" ? 202 : 200,
+        traceId,
+        receipt,
+      );
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 2 &&
+      segments[0] === "transfers"
+    ) {
+      writeResponse(response, 200, traceId, system.getTransfer(userId, segments[1]));
+      return;
+    }
+
+    throw notFound("API route not found.");
+  } catch (error: unknown) {
+    if (error instanceof DomainError) {
+      writeError(response, error.status, traceId, error);
+      return;
+    }
+
+    writeError(
+      response,
+      500,
+      traceId,
+      new DomainError(500, "INTERNAL_ERROR", "Unexpected server error."),
+    );
+  }
+}
+
+export function createBankingServer(
+  system = new BankingSystem(),
+  options: HttpOptions = {},
+): Server {
+  return createServer((request, response) => {
+    void handleRequest(request, response, system, options);
+  });
+}
+
+export function createPersistentBankingServer(
+  repository: PostgresSnapshotRepository,
+  system = new BankingSystem(),
+  options: HttpOptions = {},
+): Server {
+  return createServer((request, response) => {
+    const bufferedResponse = new BufferedResponse(response);
+    void repository
+      .withState(system.exportState(), async (state) => {
+        system.importState(state as never);
+        await handleRequest(
+          request,
+          bufferedResponse as unknown as ServerResponse,
+          system,
+          options,
+        );
+        return { result: undefined, nextState: system.exportState() };
+      })
+      .then(() => bufferedResponse.flush())
+      .catch(() => {
+        if (!response.headersSent) {
+          writeError(
+            response,
+            503,
+            getRequestId(request),
+            new DomainError(
+              503,
+              "PERSISTENCE_UNAVAILABLE",
+              "Persistent sandbox is temporarily unavailable.",
+            ),
+          );
+        } else {
+          response.destroy();
+        }
+      });
+  });
+}

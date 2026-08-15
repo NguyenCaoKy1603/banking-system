@@ -1,0 +1,826 @@
+openapi: 3.1.0
+info:
+  title: Banking MVP Accounts and Transfers API
+  version: 0.1.0-draft
+  description: |
+    DRAFT only. This contract requires backend, core-banking partner and
+    legal/compliance approval before any real-money pilot. Authenticated
+    operations also require X-Device-ID for device binding.
+servers:
+  - url: https://api.example.invalid/api/v1
+    description: Placeholder; replace through approved environment configuration.
+tags:
+  - name: Auth
+  - name: Control
+  - name: Notifications
+  - name: Fraud
+  - name: Accounts
+  - name: Transfers
+security:
+  - bearerAuth: []
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Account registered without creating a session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '202':
+          description: Additional authentication step is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthChallengeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshSession
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Rotated access and refresh token pair.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshTokenResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /auth/verify:
+    post:
+      tags: [Auth]
+      operationId: verifyLoginChallenge
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyAuthChallengeRequest'
+      responses:
+        '200':
+          description: Authenticated session after the additional factor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: revokeSession
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '204':
+          description: Refresh-token family revoked; operation is idempotent.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/logout-all:
+    post:
+      tags: [Auth]
+      operationId: revokeAllSessions
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      responses:
+        '204':
+          description: All sessions owned by the authenticated user were revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /mobile/control-policy:
+    get:
+      tags: [Control]
+      operationId: getControlPolicy
+      responses:
+        '200':
+          description: Server-controlled pilot and kill-switch policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControlPolicy'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /notifications:
+    get:
+      tags: [Notifications]
+      operationId: listNotifications
+      responses:
+        '200':
+          description: Notifications visible to the authenticated customer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /notifications/{notificationId}/read:
+    post:
+      tags: [Notifications]
+      operationId: markNotificationRead
+      parameters:
+        - $ref: '#/components/parameters/NotificationId'
+      responses:
+        '200':
+          description: Notification marked as read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /fraud-reports:
+    post:
+      tags: [Fraud]
+      operationId: submitFraudReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FraudReportRequest'
+      responses:
+        '201':
+          description: Fraud report accepted for risk review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudReportResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /accounts:
+    get:
+      tags: [Accounts]
+      operationId: listAccounts
+      responses:
+        '200':
+          description: Accounts visible to the authenticated customer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /accounts/{accountId}/transactions:
+    get:
+      tags: [Accounts]
+      operationId: listTransactions
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Cursor-paginated transaction history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /accounts/{accountId}/transactions/{transactionId}:
+    get:
+      tags: [Accounts]
+      operationId: getTransactionDetail
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/TransactionId'
+      responses:
+        '200':
+          description: Transaction detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /beneficiaries/{beneficiaryId}:
+    parameters:
+      - $ref: '#/components/parameters/BeneficiaryId'
+    get:
+      tags: [Transfers]
+      operationId: lookupBeneficiary
+      responses:
+        '200':
+          description: Beneficiary lookup result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeneficiaryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Transfers]
+      operationId: renameBeneficiary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameBeneficiaryRequest'
+      responses:
+        '200':
+          description: Beneficiary with the updated display name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeneficiaryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+    delete:
+      tags: [Transfers]
+      operationId: deleteBeneficiary
+      responses:
+        '204':
+          description: Beneficiary removed from the authenticated customer's directory.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /beneficiaries:
+    get:
+      tags: [Transfers]
+      operationId: listBeneficiaries
+      responses:
+        '200':
+          description: Beneficiaries visible to the authenticated customer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeneficiariesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Transfers]
+      operationId: createBeneficiary
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBeneficiaryRequest'
+      responses:
+        '201':
+          description: Beneficiary created; raw account number is never returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeneficiaryResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /transfers/quote:
+    post:
+      tags: [Transfers]
+      operationId: quoteTransfer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferQuoteRequest'
+      responses:
+        '200':
+          description: Quote with server-calculated fee and expiry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferQuote'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /transfers:
+    post:
+      tags: [Transfers]
+      operationId: submitTransfer
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitTransferRequest'
+      responses:
+        '200':
+          description: Transfer completed synchronously.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferReceipt'
+        '202':
+          description: Transfer accepted for asynchronous processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferReceipt'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Idempotency key conflict or duplicate request fingerprint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorPayload'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /transfers/{transferId}:
+    get:
+      tags: [Transfers]
+      operationId: getTransfer
+      parameters:
+        - $ref: '#/components/parameters/TransferId'
+      responses:
+        '200':
+          description: Latest server/core-banking transfer status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferReceipt'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    TransactionId:
+      name: transactionId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    BeneficiaryId:
+      name: beneficiaryId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    TransferId:
+      name: transferId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    NotificationId:
+      name: notificationId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    DeviceId:
+      name: X-Device-ID
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Unauthorized:
+      description: Access token missing, expired or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+    Conflict:
+      description: Resource or credential conflict.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+    RateLimited:
+      description: Too many requests.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+    NotFound:
+      description: Resource not found or not visible to the customer.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+    ValidationError:
+      description: Request validation or business rule failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+    ServerError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+  schemas:
+    ApiErrorPayload:
+      type: object
+      required: [code, message, fieldErrors, traceId]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        fieldErrors:
+          oneOf:
+            - type: object
+              additionalProperties:
+                type: string
+            - type: 'null'
+        traceId:
+          type: string
+    AuthUser:
+      type: object
+      required: [id, fullName, email, phoneNumber, createdAt]
+      properties:
+        id: { type: string }
+        fullName: { type: string }
+        email: { type: string, format: email }
+        phoneNumber: { type: string }
+        createdAt: { type: string, format: date-time }
+    RegisterRequest:
+      type: object
+      required: [fullName, email, phoneNumber, password]
+      example:
+        fullName: Example User
+        email: tester@example.com
+        phoneNumber: '0900000000'
+        password: <provided-by-test-secret>
+      properties:
+        fullName: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        phoneNumber: { type: string, minLength: 1 }
+        password: { type: string, minLength: 8, writeOnly: true }
+    RegisterResponse:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: '#/components/schemas/AuthUser' }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      example:
+        email: tester@example.com
+        password: <provided-by-test-secret>
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 1, writeOnly: true }
+    LoginResponse:
+      type: object
+      required: [accessToken, refreshToken, expiresInSeconds, user]
+      properties:
+        accessToken: { type: string, writeOnly: true }
+        refreshToken: { type: string, writeOnly: true }
+        expiresInSeconds: { type: integer, exclusiveMinimum: 0 }
+        user: { $ref: '#/components/schemas/AuthUser' }
+    RefreshTokenRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string, minLength: 1, writeOnly: true }
+    RefreshTokenResponse:
+      allOf:
+        - $ref: '#/components/schemas/LoginResponse'
+    AuthChallengeResponse:
+      type: object
+      required: [challengeId, expiresAt, methods]
+      properties:
+        challengeId: { type: string, minLength: 1 }
+        expiresAt: { type: string, format: date-time }
+        methods:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [OTP, BIOMETRIC] }
+    VerifyAuthChallengeRequest:
+      type: object
+      required: [challengeId, method, proof]
+      example:
+        challengeId: challenge-example
+        method: OTP
+        proof: <provided-by-test-factor>
+      properties:
+        challengeId: { type: string, minLength: 1, writeOnly: true }
+        method: { type: string, enum: [OTP, BIOMETRIC] }
+        proof: { type: string, minLength: 1, writeOnly: true }
+    LogoutRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string, minLength: 1, writeOnly: true }
+    ControlPolicy:
+      type: object
+      required: [configVersion, globalKillSwitch, transfersEnabled, allowlisted, maxTransferAmountMinor, stepUpMethods, updatedAt]
+      properties:
+        configVersion: { type: string }
+        globalKillSwitch: { type: boolean }
+        transfersEnabled: { type: boolean }
+        allowlisted: { type: boolean }
+        maxTransferAmountMinor: { type: string, pattern: '^(0|[1-9][0-9]*)$' }
+        stepUpMethods:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [OTP, BIOMETRIC] }
+        updatedAt: { type: string, format: date-time }
+    Notification:
+      type: object
+      required: [id, type, title, body, resourceId, read, createdAt]
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [TRANSFER, SECURITY] }
+        title: { type: string }
+        body: { type: string }
+        resourceId:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        read: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    NotificationsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+    FraudReportRequest:
+      type: object
+      required: [accountId, transactionId, reason]
+      properties:
+        accountId: { type: string, minLength: 1 }
+        transactionId: { type: string, minLength: 1 }
+        reason: { type: string, minLength: 5 }
+    FraudReportResponse:
+      type: object
+      required: [reportId, status, createdAt]
+      properties:
+        reportId: { type: string }
+        status: { type: string, enum: [RECEIVED] }
+        createdAt: { type: string, format: date-time }
+    Money:
+      type: object
+      required: [currency, amountMinor]
+      additionalProperties: false
+      properties:
+        currency:
+          type: string
+          enum: [VND]
+        amountMinor:
+          type: string
+          pattern: '^(0|[1-9][0-9]*)$'
+    Beneficiary:
+      type: object
+      required: [id, displayName, maskedAccountNumber, bankName, status]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        maskedAccountNumber: { type: string }
+        bankName: { type: string }
+        status: { type: string, enum: [ACTIVE, BLOCKED] }
+    BeneficiaryResponse:
+      type: object
+      required: [beneficiary]
+      properties:
+        beneficiary:
+          $ref: '#/components/schemas/Beneficiary'
+    BeneficiariesResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Beneficiary' }
+    CreateBeneficiaryRequest:
+      type: object
+      required: [displayName, accountNumber, bankName]
+      properties:
+        displayName: { type: string, minLength: 2, maxLength: 80 }
+        accountNumber: { type: string, pattern: '^\\d{6,34}$', writeOnly: true }
+        bankName: { type: string, minLength: 1, maxLength: 120 }
+    RenameBeneficiaryRequest:
+      type: object
+      required: [displayName]
+      properties:
+        displayName: { type: string, minLength: 2, maxLength: 80 }
+    PaymentAccount:
+      type: object
+      required: [id, displayName, maskedNumber, currency, availableBalance, currentBalance, status, updatedAt]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+        maskedNumber: { type: string }
+        currency: { type: string, enum: [VND] }
+        availableBalance: { $ref: '#/components/schemas/Money' }
+        currentBalance: { $ref: '#/components/schemas/Money' }
+        status: { type: string, enum: [ACTIVE, BLOCKED] }
+        updatedAt: { type: string, format: date-time }
+    AccountsResponse:
+      type: object
+      required: [accounts]
+      properties:
+        accounts:
+          type: array
+          items: { $ref: '#/components/schemas/PaymentAccount' }
+    Transaction:
+      type: object
+      required: [id, accountId, direction, amount, fee, status, description, counterpartyName, occurredAt]
+      properties:
+        id: { type: string }
+        accountId: { type: string }
+        direction: { type: string, enum: [CREDIT, DEBIT] }
+        amount: { $ref: '#/components/schemas/Money' }
+        fee: { $ref: '#/components/schemas/Money' }
+        status: { type: string, enum: [PENDING, SUCCEEDED, FAILED, REVERSED] }
+        description: { type: string }
+        counterpartyName:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        occurredAt: { type: string, format: date-time }
+    TransactionPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Transaction' }
+        nextCursor:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+    TransactionDetail:
+      allOf:
+        - $ref: '#/components/schemas/Transaction'
+        - type: object
+          required: [reference, createdAt, completedAt]
+          properties:
+            reference: { type: string }
+            createdAt: { type: string, format: date-time }
+            completedAt:
+              oneOf:
+                - { type: string, format: date-time }
+                - { type: 'null' }
+    TransferQuoteRequest:
+      type: object
+      required: [sourceAccountId, beneficiaryId, amount]
+      example:
+        sourceAccountId: account-example
+        beneficiaryId: beneficiary-example
+        amount:
+          currency: VND
+          amountMinor: '100000'
+      properties:
+        sourceAccountId: { type: string }
+        beneficiaryId: { type: string }
+        amount: { $ref: '#/components/schemas/Money' }
+    TransferQuote:
+      type: object
+      required: [quoteId, sourceAccountId, beneficiary, amount, fee, totalDebit, expiresAt]
+      properties:
+        quoteId: { type: string }
+        sourceAccountId: { type: string }
+        beneficiary: { $ref: '#/components/schemas/Beneficiary' }
+        amount: { $ref: '#/components/schemas/Money' }
+        fee: { $ref: '#/components/schemas/Money' }
+        totalDebit: { $ref: '#/components/schemas/Money' }
+        expiresAt: { type: string, format: date-time }
+    SubmitTransferRequest:
+      type: object
+      required: [quoteId, stepUp]
+      example:
+        quoteId: quote-example
+        stepUp:
+          method: OTP
+          proof: <provided-by-test-factor>
+      properties:
+        quoteId: { type: string }
+        stepUp:
+          type: object
+          required: [method, proof]
+          properties:
+            method: { type: string, enum: [OTP, BIOMETRIC] }
+            proof: { type: string, minLength: 1, writeOnly: true }
+    TransferReceipt:
+      type: object
+      required: [transferId, reference, status, amount, fee, createdAt, updatedAt]
+      properties:
+        transferId: { type: string }
+        reference: { type: string }
+        status: { type: string, enum: [PENDING, SUCCEEDED, FAILED, REVERSED] }
+        amount: { $ref: '#/components/schemas/Money' }
+        fee: { $ref: '#/components/schemas/Money' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }

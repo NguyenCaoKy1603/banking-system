@@ -10,6 +10,7 @@
 - Production bắt buộc sử dụng HTTPS.
 - Request và response có body sử dụng `Content-Type: application/json`.
 - Client gửi `Accept: application/json`.
+- Client gửi `X-Device-ID` là installation ID đã lưu trong SecureStore; backend dùng ID này cho device binding.
 - Không ghi password, access token hoặc refresh token vào log, analytics, crash report hay tracing payload.
 - `createdAt` sử dụng chuỗi thời gian ISO 8601 UTC.
 
@@ -151,7 +152,7 @@ type LoginResponse = {
 {
   "accessToken": "string",
   "refreshToken": "string",
-  "expiresInSeconds": 0,
+  "expiresInSeconds": 900,
   "user": {
     "id": "string",
     "fullName": "string",
@@ -165,25 +166,54 @@ type LoginResponse = {
 ### HTTP status
 
 - `200 OK`: đăng nhập thành công.
+- `202 Accepted`: password đúng nhưng server/risk policy yêu cầu thêm MFA; response chứa `challengeId`, `expiresAt`, `methods` và không chứa token.
 - `400 Bad Request`: request body không đọc được.
 - `401 Unauthorized`: thông tin đăng nhập không hợp lệ.
 - `422 Unprocessable Entity`: validation không đạt.
 - `429 Too Many Requests`: vượt rate limit.
 - `500 Internal Server Error`: lỗi ngoài dự kiến.
 
+### MFA challenge — `POST /auth/verify`
+
+Khi login trả `202`, client gửi `X-Device-ID` và request sau để hoàn tất authentication:
+
+```ts
+type AuthChallengeResponse = {
+  challengeId: string;
+  expiresAt: string;
+  methods: Array<"OTP" | "BIOMETRIC">;
+};
+```
+
+Login `202 Accepted` chỉ trả challenge response và không trả token.
+
+```ts
+type VerifyAuthChallengeRequest = {
+  challengeId: string;
+  method: "OTP" | "BIOMETRIC";
+  proof: string; // opaque provider assertion; không log
+};
+```
+
+`200 OK` trả `LoginResponse`. Challenge phải one-time, có TTL, bind với device và được audit ở server. OTP/provider thật không được hard-code trong mobile; backend/risk engine quyết định policy.
+
 ## 5. Bảo mật và phạm vi Mobile
 
 - Production chỉ gọi API qua HTTPS.
 - Password và token không được ghi log.
-- Checkpoint foundation chỉ parse token từ login response; không lưu token.
-- Token storage, session restoration và Authorization header chưa thuộc checkpoint này.
+- Mobile lưu access token, refresh token và metadata session trong một bản ghi SecureStore nguyên tử trên thiết bị.
+- Mobile gửi access token qua `Authorization: Bearer <token>` cho các API cần xác thực.
+- Mobile gửi `X-Device-ID` để backend thực thi device binding; ID không phải secret và không thay thế authorization.
+- Session restoration và local logout đã thuộc foundation mobile; reference backend đã có server-side revoke và refresh rotation để kiểm chứng contract. Việc bật trên môi trường tiền thật vẫn cần Identity/Backend và legal/compliance phê duyệt.
 
-## 6. Checkpoint sau
+## 6. Session extension và trạng thái phê duyệt
 
-Các endpoint sau chưa thuộc APPROVED v1 của checkpoint hiện tại và sẽ được chốt/triển khai sau:
+Các endpoint session mở rộng đã có reference implementation và mobile integration. Contract chi tiết vẫn ở trạng thái DRAFT cho đến khi Backend/Identity và legal/compliance phê duyệt môi trường tiền thật, xem [auth-session-api-contract.md](./auth-session-api-contract.md):
 
-- Refresh token.
-- Logout.
-- `GET /users/me`.
+- `POST /auth/refresh` — refresh rotation và phát hiện reuse.
+- `POST /auth/logout` — revoke phiên hiện tại.
+- `POST /auth/logout-all` — revoke mọi phiên của user.
+- `POST /auth/verify` — hoàn tất MFA challenge OTP/biometric.
+- `GET /users/me` chưa thuộc scope MVP hiện tại.
 
-Không suy diễn request/response của các endpoint này từ phiên bản contract trước.
+OpenAPI draft accounts/transfers trong [`banking-mvp.openapi.yaml`](./banking-mvp.openapi.yaml) phải được partner phê duyệt trước pilot dùng tiền thật.
