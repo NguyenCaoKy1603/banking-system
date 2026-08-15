@@ -3,7 +3,7 @@
 Ngày lập: 2026-08-16
 Phạm vi: M0–M4, M6–M8 và Card mock bonus
 Trạng thái: **Local reference pass; Android emulator E2E pass; device/staging gates còn mở**
-Backend verification checkpoint: current repository HEAD `0f06b77`; historical backend gate `595afc3` remains referenced in the audit trail.
+Backend verification checkpoint: current repository HEAD `a47b6a8`; implementation hardening `0f06b77`; historical backend gate `595afc3` remains referenced in the audit trail.
 
 ## Kết quả đã chạy
 

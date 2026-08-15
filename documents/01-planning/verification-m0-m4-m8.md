@@ -1,7 +1,7 @@
 # Verification report M0–M4 và M8
 
 Ngày kiểm tra: 2026-08-16
-Evidence checkpoint: `0f06b77` (`Harden M7 state migration and credit payment flow`); implementation baseline `aa0e3de`.
+Evidence checkpoint: `a47b6a8` (`Record M7 verification checkpoint`); implementation hardening `0f06b77`; implementation baseline `aa0e3de`.
 
 ## Phạm vi đã đối chiếu
 
