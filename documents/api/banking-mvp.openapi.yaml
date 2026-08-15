@@ -637,13 +637,17 @@ components:
         updatedAt: { type: string, format: date-time }
     Notification:
       type: object
-      required: [id, type, title, body, resourceId, read, createdAt]
+      required: [id, type, title, body, resourceId, resourceAccountId, read, createdAt]
       properties:
         id: { type: string }
         type: { type: string, enum: [TRANSFER, SECURITY] }
         title: { type: string }
         body: { type: string }
         resourceId:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        resourceAccountId:
           oneOf:
             - { type: string }
             - { type: 'null' }

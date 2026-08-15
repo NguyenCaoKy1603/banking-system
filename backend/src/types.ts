@@ -103,6 +103,7 @@ export type Notification = {
   title: string;
   body: string;
   resourceId: string | null;
+  resourceAccountId: string | null;
   read: boolean;
   createdAt: string;
 };

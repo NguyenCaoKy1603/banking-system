@@ -42,6 +42,7 @@ const requiredFragments = [
   "CREATE TABLE outbox_events",
   "published_at timestamptz",
   "next_attempt_at timestamptz",
+  "resource_account_id uuid",
 ];
 
 for (const fragment of requiredFragments) {

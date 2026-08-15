@@ -381,6 +381,8 @@ test("transfer quote and submit are server-authoritative and idempotent", () => 
   );
   const transaction = system.listTransactions(registered.user.id, account.id).items[0];
   assert.ok(transaction);
+  assert.equal(notification.resourceId, transaction.id);
+  assert.equal(notification.resourceAccountId, account.id);
   const fraudReport = system.reportFraud(
     registered.user.id,
     account.id,

@@ -186,9 +186,16 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
   });
   assert.equal(notificationsResponse.status, 200);
   const notifications = (await notificationsResponse.json()) as {
-    items: Array<{ id: string; read: boolean }>;
+    items: Array<{
+      id: string;
+      read: boolean;
+      resourceId: string | null;
+      resourceAccountId: string | null;
+    }>;
   };
   assert.equal(notifications.items[0]?.read, false);
+  assert.equal(notifications.items[0]?.resourceId, history.items[0]?.id);
+  assert.equal(notifications.items[0]?.resourceAccountId, accounts.accounts[0]?.id);
 
   const markReadResponse = await request(
     `/notifications/${notifications.items[0].id}/read`,

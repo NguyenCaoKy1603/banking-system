@@ -231,6 +231,8 @@ Trả `TransferReceipt` mới nhất. Endpoint là nguồn sự thật để res
 
 `GET /notifications` trả các notification đã được server ghi nhận cho customer. `POST /notifications/{notificationId}/read` đánh dấu notification đã đọc.
 
+Với notification `TRANSFER`, `resourceId` là `transactionId` và `resourceAccountId` là `accountId` để Mobile mở đúng màn hình chi tiết giao dịch. Với notification không có đích điều hướng, cả hai trường này phải là `null`; Mobile không tự suy diễn hoặc dùng `transferId` làm `transactionId`.
+
 `POST /fraud-reports` nhận `accountId`, `transactionId` và `reason`; server phải kiểm tra ownership, ghi immutable audit event và đẩy sự kiện tới fraud/risk workflow. Mobile không coi việc gửi report là bằng chứng đã xử lý gian lận.
 
 ## 11. Quy tắc server bắt buộc trước pilot

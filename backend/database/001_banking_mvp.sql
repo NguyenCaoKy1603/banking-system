@@ -245,6 +245,7 @@ CREATE TABLE notifications (
   title text NOT NULL,
   body text NOT NULL,
   resource_id text,
+  resource_account_id uuid REFERENCES payment_accounts (id),
   is_read boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL
 );

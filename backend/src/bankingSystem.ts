@@ -951,6 +951,7 @@ export class BankingSystem {
       now: nowIso(this.clock),
       settleImmediately: this.settleTransfersImmediately,
     });
+    const transferTarget = this.core.getTransferTarget(userId, receipt.transferId);
     quoteRecord.consumedTransferId = receipt.transferId;
     this.transfers.set(receipt.transferId, { userId, receipt });
     this.idempotency.set(`${userId}:${normalizedKey}`, {
@@ -980,7 +981,8 @@ export class BankingSystem {
         receipt.status === "PENDING"
           ? `Giao dịch ${receipt.reference} đang chờ core banking xử lý.`
           : `Giao dịch ${receipt.reference} đã được ghi nhận.`,
-      resourceId: receipt.transferId,
+      resourceId: transferTarget.transactionId,
+      resourceAccountId: transferTarget.accountId,
       read: false,
       createdAt: receipt.updatedAt,
     });
@@ -1031,6 +1033,7 @@ export class BankingSystem {
       nowIso(this.clock),
     );
     transfer.receipt = transitioned;
+    const transferTarget = this.core.getTransferTarget(userId, transferId);
 
     for (const record of this.idempotency.values()) {
       if (record.userId === userId && record.receipt.transferId === transferId) {
@@ -1053,7 +1056,8 @@ export class BankingSystem {
         status === "SUCCEEDED"
           ? `Giao dịch ${transitioned.reference} đã được ghi nhận.`
           : `Giao dịch ${transitioned.reference} có trạng thái ${status}.`,
-      resourceId: transferId,
+      resourceId: transferTarget.transactionId,
+      resourceAccountId: transferTarget.accountId,
       read: false,
       createdAt: transitioned.updatedAt,
     });
@@ -1228,7 +1232,13 @@ export class BankingSystem {
     }
     this.notifications.clear();
     for (const [userId, items] of state.notifications) {
-      this.notifications.set(userId, items.map((item) => ({ ...item })));
+      this.notifications.set(
+        userId,
+        items.map((item) => ({
+          ...item,
+          resourceAccountId: item.resourceAccountId ?? null,
+        })),
+      );
     }
     this.quotes.clear();
     for (const [quoteId, record] of state.quotes) {

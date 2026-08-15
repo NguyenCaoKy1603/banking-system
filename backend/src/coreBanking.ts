@@ -39,6 +39,11 @@ export type CoreTransferInput = {
 
 export type TerminalTransferStatus = Exclude<TransferStatus, "PENDING">;
 
+export type CoreTransferTarget = {
+  accountId: string;
+  transactionId: string;
+};
+
 export type ReconciliationRow = {
   accountId: string;
   coreAvailableMinor: string;
@@ -78,6 +83,7 @@ export interface CoreBankingPort {
   getPaymentAccount(ownerId: string, accountId: string): PaymentAccount;
   listTransactions(ownerId: string, accountId: string): TransactionDetail[];
   getTransaction(ownerId: string, accountId: string, transactionId: string): TransactionDetail;
+  getTransferTarget(ownerId: string, transferId: string): CoreTransferTarget;
   postTransfer(ownerId: string, input: CoreTransferInput): TransferReceipt;
   settleTransfer(ownerId: string, transferId: string, now: string): TransferReceipt;
   transitionTransfer(
@@ -175,6 +181,18 @@ export class InMemoryCoreBanking implements CoreBankingPort {
     }
 
     return transaction;
+  }
+
+  getTransferTarget(ownerId: string, transferId: string): CoreTransferTarget {
+    const transfer = this.transfers.get(transferId);
+    if (!transfer || transfer.ownerId !== ownerId) {
+      throw notFound("Transfer not found.");
+    }
+
+    return {
+      accountId: transfer.accountId,
+      transactionId: transfer.transactionId,
+    };
   }
 
   postTransfer(ownerId: string, input: CoreTransferInput): TransferReceipt {
