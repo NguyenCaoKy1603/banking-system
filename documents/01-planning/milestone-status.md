@@ -8,7 +8,7 @@ Backend evidence checkpoint: current repository HEAD `a47b6a8`; implementation h
 - Backend reference type-check, build, 57 test definition và 8 critical HTTP flow đạt; không có database thật thì 4 test PostgreSQL được skip, còn bằng chứng PostgreSQL 16 tạm thời đạt 57/57; database boundary validator đạt cấu trúc SQL + live PostgreSQL 27 bảng/invariant.
 - Backend correctness đã có quote snapshot/one-time, beneficiary fingerprint, UUID-compatible IDs, exact route, registration/step-up rate limit, reconciliation formula và outbox retry threshold.
 - Persistent PostgreSQL snapshot adapter, migration runner và CI service đã được thêm; integration test chỉ chạy khi có `DATABASE_URL`.
-- OpenAPI validation, Maestro syntax validation, Expo native config và web export đều đã chạy lại sau các route hiện tại; hiện có 36 path OpenAPI, 8 flow Maestro hợp lệ và 32 static route. Critical flow M0–M4/M8, credit payment và credit pending-resume đã chạy thành công trên Android emulator.
+- OpenAPI validation, Maestro syntax validation, Expo native config và web export đều đã chạy lại sau các route hiện tại; hiện có 36 path OpenAPI, 8 flow Maestro hợp lệ và 32 static route. Critical flow M0–M4/M8, credit payment, credit pending-resume và Credit card lock/restart/unlock đã chạy thành công trên Android emulator.
 - Auth/session/device binding/MFA, accounts/history/detail/filter, transfer quote/step-up/idempotency/pending recovery, notifications và fraud report có reference flow.
 - M2 có eKYC mô phỏng với form, ảnh mẫu và vòng đời DRAFT/PENDING/APPROVED/REJECTED.
 - M4 có transfer flow, danh bạ người nhận CRUD, QR payload validation, camera scanner và manual input fallback.
@@ -22,7 +22,7 @@ Backend evidence checkpoint: current repository HEAD `a47b6a8`; implementation h
 - M1–M4 và M8: critical flow đã chạy trên Android emulator cho login/MFA, account detail, hiện/sao chép số tài khoản đầy đủ, eKYC, beneficiary, QR manual fallback, M4 transfer và M8 notification deep link; chưa có full device matrix, thiết bị thật hoặc staging partner.
 - M2: eKYC thật/API KYC và test data staging chưa có; phần hiện tại là mock có chủ đích.
 - M4: transfer, beneficiary CRUD và QR manual fallback đã có bằng chứng Maestro trên emulator; QR camera/permission, transfer pending/restart/resume và lifecycle native vẫn chưa có bằng chứng thiết bị.
-- M6 và M7: đã có reference sandbox; M7 payment pending → stop/launch → resume đã có flow pass trên emulator. M5 vẫn là mock/fixture, chưa phải API/production card integration; M9 chưa triển khai.
+- M6 và M7: đã có reference sandbox; M7 payment pending → stop/launch → resume và card lock → stop/launch → OTP unlock đã có flow pass trên emulator. M5 vẫn là mock/fixture, chưa phải API/production card integration; M9 chưa triển khai.
 - M10: usability, accessibility, performance và native device regression chưa hoàn tất; audit Mobile còn 14 High; remote CI execution chưa có log trong workspace dù local PostgreSQL gate đã đạt.
 - M11: đã build APK release local và lưu checksum/evidence; chưa có signing, cài đặt ngoài máy phát triển, staging, monitoring và hồ sơ bảo vệ đầy đủ.
 

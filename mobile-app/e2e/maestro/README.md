@@ -40,11 +40,11 @@ maestro test `
 - `critical-transfer-retry.yaml`: quote, step-up, double-tap, pending status và khôi phục sau stop/start app.
 - `critical-fraud-report.yaml`: mở chi tiết giao dịch và gửi fraud report.
 - `critical-m0-m4-m8.yaml`: login, trang chủ với thẻ số dư hiện/che, hiện và sao chép số tài khoản đầy đủ, eKYC mô phỏng, danh bạ người nhận, My QR/QR payload fallback, notification detail và deep link.
-- `critical-card.yaml`: mở danh sách/chi tiết thẻ mock, ẩn/hiện số mô phỏng, khóa thẻ và đổi PIN mô phỏng.
+- `critical-card.yaml`: mở danh sách/chi tiết Credit sandbox, khóa thẻ, stop/launch để kiểm tra trạng thái được giữ lại và mở khóa bằng OTP sandbox.
 - `critical-credit.yaml`: mở thẻ tín dụng sandbox, xem giao dịch/sao kê, tạo quote MINIMUM, MFA step-up và hoàn tất thanh toán.
 - `critical-credit-pending-resume.yaml`: tạo thanh toán PENDING, stop/launch app, mở lại chi tiết và resume đến SUCCEEDED mà không debit lần hai.
 
-Maestro CLI 2.8.0 đã chạy thành công trên Android emulator `Pixel_7_API_35` cho `critical-m0-m4-m8.yaml`, `critical-credit.yaml` và `critical-credit-pending-resume.yaml`. Các run thành công nằm trong `C:\Users\admin\.maestro\tests\2026-08-15_231343`, `2026-08-15_225107` và `2026-08-15_225718`. Bộ thư mục hiện có 8 flow hợp lệ; M0–M4/M8 đã kiểm tra hiện và sao chép số tài khoản đầy đủ sau bản build cuối, còn M7 đã kiểm tra payment và pending → stop/launch → resume. Camera permission, biometric prompt, transfer lifecycle native đầy đủ và thiết bị thật vẫn cần chạy bổ sung.
+Maestro CLI 2.8.0 đã chạy thành công trên Android emulator `Pixel_7_API_35` cho `critical-m0-m4-m8.yaml`, `critical-credit.yaml`, `critical-credit-pending-resume.yaml` và `critical-card.yaml`. Các run thành công gần nhất nằm trong `C:\Users\admin\.maestro\tests\2026-08-16_000105`, `C:\Users\admin\.maestro\tests\2026-08-16_000436`, `C:\Users\admin\.maestro\tests\2026-08-16_000714` và `C:\Users\admin\.maestro\tests\2026-08-16_003018`. Bộ thư mục hiện có 8 flow hợp lệ; M0–M4/M8 đã kiểm tra hiện và sao chép số tài khoản đầy đủ sau bản build cuối, còn M7 đã kiểm tra payment, pending → stop/launch → resume và khóa → restart → mở khóa thẻ bằng OTP. Camera permission, biometric prompt, transfer lifecycle native đầy đủ và thiết bị thật vẫn cần chạy bổ sung.
 
 ## Cap nhat M7
 

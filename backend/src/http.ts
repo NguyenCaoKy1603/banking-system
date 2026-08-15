@@ -517,7 +517,7 @@ export async function handleRequest(
     ) {
       const data = requireObject(body);
       writeResponse(response, 200, traceId, {
-        card: system.unlockCard(userId, segments[1], data.stepUp as never),
+        card: system.unlockCard(userId, segments[1], data as never),
       });
       return;
     }

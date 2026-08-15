@@ -38,6 +38,20 @@ test("HTTP credit sandbox exposes card, statement and idempotent payment flow", 
   assert.equal(cards.items.length, 1);
   const card = cards.items[0]!;
 
+  const lockResponse = await authRequest(`/cards/${card.cardId}/lock`, {
+    method: "POST",
+    body: body({}),
+  });
+  assert.equal(lockResponse.status, 200);
+  assert.equal((await lockResponse.json() as { card: { status: string } }).card.status, "LOCKED");
+
+  const unlockResponse = await authRequest(`/cards/${card.cardId}/unlock`, {
+    method: "POST",
+    body: body({ method: "OTP", proof: "123456" }),
+  });
+  assert.equal(unlockResponse.status, 200);
+  assert.equal((await unlockResponse.json() as { card: { status: string } }).card.status, "ACTIVE");
+
   const accountsResponse = await authRequest("/accounts");
   const accounts = (await accountsResponse.json()) as { accounts: Array<{ id: string }> };
   const statementsResponse = await authRequest(`/credit/accounts/${card.creditAccountId}/statements`);

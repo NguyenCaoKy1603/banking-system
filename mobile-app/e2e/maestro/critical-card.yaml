@@ -30,27 +30,47 @@ appId: ${APP_ID}
     id: profile-cards
 - extendedWaitUntil:
     visible:
-      id: cards-list
-    timeout: 10000
+      id: credit-cards-list
+    timeout: 15000
 - tapOn:
     id: card-first
 - extendedWaitUntil:
     visible:
-      id: card-detail
+      id: credit-card-detail
     timeout: 10000
-- tapOn:
-    id: card-toggle-visibility
 - tapOn:
     id: card-toggle-lock
-- tapOn:
-    id: card-new-pin
-- inputText: 2468
-- tapOn:
-    id: card-confirm-pin
-- inputText: 2468
-- tapOn:
-    id: card-change-pin
+- assertVisible: "Đã khóa"
+- stopApp
+- launchApp
 - extendedWaitUntil:
     visible:
-      id: card-detail
+      id: home-balance-card
+    timeout: 15000
+- tapOn:
+    id: tab-profile
+- tapOn:
+    id: profile-cards
+- extendedWaitUntil:
+    visible:
+      id: credit-cards-list
+    timeout: 15000
+- tapOn:
+    id: card-first
+- extendedWaitUntil:
+    visible:
+      id: credit-card-detail
     timeout: 10000
+- assertVisible: "Đã khóa"
+- scrollUntilVisible:
+    element:
+      id: credit-unlock-code
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: credit-unlock-code
+- inputText: ${TRANSFER_OTP}
+- pressKey: BACK
+- tapOn:
+    id: card-toggle-lock
+- assertVisible: "Thẻ đã được mở khóa sau bước xác thực."

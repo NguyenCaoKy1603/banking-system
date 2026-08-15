@@ -15,7 +15,7 @@ Backend verification checkpoint: current repository HEAD `a47b6a8`; implementati
 | Mobile coverage | 95.58% statements, 93.11% branches, 97.95% functions, 95.58% lines |
 | OpenAPI required paths | Đạt, 36 path bắt buộc |
 | Native E2E | Android emulator `Pixel_7_API_35`: full flow M0–M4, M8 đạt, gồm hiện/sao chép đầy đủ số tài khoản, eKYC mô phỏng, beneficiary, QR manual fallback và notification deep link |
-| Maestro | 8 flow hợp lệ; M0–M4/M8, credit payment và pending-resume chạy thành công trên Android emulator bằng Maestro 2.8.0 |
+| Maestro | 8 flow hợp lệ; M0–M4/M8, credit payment, pending-resume và Credit card lock/restart/unlock chạy thành công trên Android emulator bằng Maestro 2.8.0 |
 | Backend reference | 57 test definition; không có `DATABASE_URL`: 53 pass và 4 skip PostgreSQL; bằng chứng PostgreSQL 16 tạm: 57/57 pass; seed E2E smoke thành công |
 | Expo web export | Đạt, 32 static route; dùng URL HTTPS placeholder cho static export vì `.env` local là HTTP sandbox và bị production guard từ chối |
 | Dependency audit | **Không đạt**: 14 High từ `image-size`, chờ risk acceptance/upstream fix |
@@ -35,7 +35,7 @@ Backend verification checkpoint: current repository HEAD `a47b6a8`; implementati
 
 ## Kết luận
 
-Các kiểm tra local cùng E2E emulator chứng minh reference implementation có thể cài/chạy trong một môi trường Android sandbox và contract boundary, nhưng không chứng minh sẵn sàng pilot. Bằng chứng Maestro mới của flow M0–M4/M8, credit payment và pending-resume lần lượt được lưu tại `C:\Users\admin\.maestro\tests\2026-08-16_000105`, `C:\Users\admin\.maestro\tests\2026-08-16_000436` và `C:\Users\admin\.maestro\tests\2026-08-16_000714`; M11 chỉ được đóng khi có device matrix trên thiết bị được duyệt, native lifecycle E2E đầy đủ, staging approval và quyết định dependency risk.
+Các kiểm tra local cùng E2E emulator chứng minh reference implementation có thể cài/chạy trong một môi trường Android sandbox và contract boundary, nhưng không chứng minh sẵn sàng pilot. Bằng chứng Maestro mới của flow M0–M4/M8, credit payment, pending-resume và Credit card lock/restart/unlock lần lượt được lưu tại `C:\Users\admin\.maestro\tests\2026-08-16_000105`, `C:\Users\admin\.maestro\tests\2026-08-16_000436`, `C:\Users\admin\.maestro\tests\2026-08-16_000714` và `C:\Users\admin\.maestro\tests\2026-08-16_003018`; M11 chỉ được đóng khi có device matrix trên thiết bị được duyệt, native lifecycle E2E đầy đủ, staging approval và quyết định dependency risk.
 
 ## Cap nhat xac nhan cuoi M6/M7 va account reveal - 2026-08-15
 
@@ -45,4 +45,4 @@ Các kiểm tra local cùng E2E emulator chứng minh reference implementation c
 - `seed:e2e` da chay thanh cong tren server sandbox tam: transfer va savings `SUCCEEDED`, Credit card/statement duoc tao; stdout khong chua password/OTP.
 - Account number: list API chi tra masked; `GET /accounts/{accountId}/number` tra full number; Home va Account Detail co nut Hien day du va Sao chep, clipboard nhan dung toan bo chuoi so.
 - Backend dependency audit 0 vulnerability; Mobile con 14 High transitive tu `image-size` trong Expo/Metro. Khong ap dung `npm audit fix --force` vi no de xuat breaking downgrade Expo.
-- Maestro/ADB da chay M7 tren `Pixel_7_API_35`: credit payment va pending → stop/launch → resume deu pass; staging, partner integration va physical-device evidence van mo.
+- Maestro/ADB da chay M7 tren `Pixel_7_API_35`: credit payment, pending → stop/launch → resume va card lock → stop/launch → OTP unlock deu pass; staging, partner integration va physical-device evidence van mo.

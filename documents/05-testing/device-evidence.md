@@ -10,7 +10,7 @@ Dùng bản ghi này cho smoke test local ngày 2026-08-16. Không ghi password,
 | OS version | Android 15, API 35 |
 | Build/install time | 2026-08-15, local time; debug dev-client đã cài để chạy E2E, release APK build completed successfully |
 | API environment | Reference backend local; emulator release build dùng `EXPO_PUBLIC_SANDBOX_HTTP=1`, `EXPO_PUBLIC_API_URL=http://127.0.0.1:5000/api/v1` và `adb reverse tcp:5000 tcp:5000`; production vẫn bắt buộc HTTPS |
-| Maestro version | 2.8.0; 8 flow files passed syntax validation; critical M0–M4/M8, credit payment và credit pending-resume flow đã pass |
+| Maestro version | 2.8.0; 8 flow files passed syntax validation; critical M0–M4/M8, credit payment, credit pending-resume và Credit card lock/restart/unlock flow đã pass |
 | Tester/reviewer | Codex local verification; human device reviewer pending |
 
 ## Required recordings/checks
@@ -24,13 +24,13 @@ Dùng bản ghi này cho smoke test local ngày 2026-08-16. Không ghi password,
 - [ ] Transfer double-tap/retry protection và kill app trước/sau submit cần bổ sung bằng chứng native riêng.
 - [ ] QR camera permission/camera scanning, pending/restart/resume and manual fallback after a native lifecycle interruption.
 - [ ] Real biometric prompt and negative/cancel path.
-- [ ] Card mock lock/unlock, controlled visibility and simulated PIN validation on native device.
+- [x] Credit sandbox card lock/unlock: khóa thẻ, stop/launch giữ trạng thái khóa và mở khóa bằng OTP sandbox trên emulator.
 - [ ] Offline/timeout banner and retry behavior.
 
-Evidence: Maestro run thành công tương ứng nằm tại `C:\Users\admin\.maestro\tests\2026-08-16_000105` (M0–M4/M8, kiểm tra đủ số tài khoản ở Home và Account Detail), `C:\Users\admin\.maestro\tests\2026-08-16_000436` (credit payment) và `C:\Users\admin\.maestro\tests\2026-08-16_000714` (credit pending-resume). No password or OTP is recorded in this report. Physical-device, camera/biometric and staging evidence remain open.
+Evidence: Maestro run thành công tương ứng nằm tại `C:\Users\admin\.maestro\tests\2026-08-16_000105` (M0–M4/M8, kiểm tra đủ số tài khoản ở Home và Account Detail), `C:\Users\admin\.maestro\tests\2026-08-16_000436` (credit payment), `C:\Users\admin\.maestro\tests\2026-08-16_000714` (credit pending-resume) và `C:\Users\admin\.maestro\tests\2026-08-16_003018` (Credit card lock → stop/launch → OTP unlock). No password or OTP is recorded in this report. Physical-device, camera/biometric and staging evidence remain open.
 
 ## Cập nhật xác nhận sau M7 và account reveal - 2026-08-16
 
 - Flow M0–M4–M8 da co them test ID cho nut hien/sao chep so tai khoan tren Home; endpoint rieng tra full number, khong lay tu masked suffix.
-- Maestro hien co 8 flow hop le; `critical-credit.yaml` va `critical-credit-pending-resume.yaml` da chay pass tren `Pixel_7_API_35`.
+- Maestro hien co 8 flow hop le; `critical-credit.yaml`, `critical-credit-pending-resume.yaml` va `critical-card.yaml` da chay pass tren `Pixel_7_API_35`, trong do flow card da kiem tra khoa → restart → mo khoa bang OTP.
 - Ket qua M7 chi bao pham vi Android emulator sandbox. Physical device, camera, biometric va staging/partner integration van mo.
