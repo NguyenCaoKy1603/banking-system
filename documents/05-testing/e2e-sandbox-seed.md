@@ -76,6 +76,8 @@ Khởi động server với `$env:BANKING_SETTLE_IMMEDIATELY = "0"` trước khi
 
 Seed output them `CREDIT_CARD_ID`, `CREDIT_ACCOUNT_ID`, `CREDIT_STATEMENT_ID` va `CREDIT_MINIMUM_AMOUNT_MINOR` de doi chieu sandbox. Flow `critical-credit.yaml` dung `TRANSFER_OTP` cho buoc step-up thanh toan; flow `critical-credit-pending-resume.yaml` can server voi `$env:BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY = "0"` de tao PENDING truoc khi stop/launch app. Cac secret van chi nam trong environment cua nguoi chay.
 
+Để kiểm tra sao kê quá hạn và thông báo deep-link, khởi động một server in-memory sạch với `$env:BANKING_SANDBOX_CREDIT_OVERDUE = "1"`, rồi chạy seed bằng user riêng. Khi seed gọi `/cards`, statement worker sẽ chuyển statement sang `OVERDUE` và phát một notification `CREDIT` trỏ tới `cardId`; gọi lại endpoint không phát thêm notification. Chỉ dùng biến này cho phiên bằng chứng riêng, sau đó khởi động lại backend với giá trị `0` hoặc bỏ biến.
+
 ## Xác nhận seed ngày 2026-08-15
 
 Seed đã chạy thành công trên server sandbox tạm thời với MFA bắt buộc: tạo transfer `SUCCEEDED`, savings `SUCCEEDED` và card/statement Credit. Stdout chỉ chứa ID, trạng thái và payload QR masked; password/OTP không được in ra.

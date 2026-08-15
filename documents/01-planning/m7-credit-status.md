@@ -18,16 +18,16 @@ Không có phê duyệt tín dụng thật, CIC, scoring, processor/acquirer, PA
 
 - [x] Chạy migration 001–004 trên PostgreSQL rỗng và live schema validator; 004 bổ sung policy unlock cho database đã áp dụng 003.
 - [x] Kiểm thử restart/concurrency payment; chứng minh không debit hai lần và reconciliation difference bằng 0.
-- [x] Chạy `seed:e2e`, lưu output không chứa secret; transfer và savings đều `SUCCEEDED`, Credit seed có card/statement.
-- [x] Chạy Maestro overview/payment/pending-resume và card lock → stop/launch → OTP unlock trên Android emulator `Pixel_7_API_35`; artifact card là `C:\Users\admin\.maestro\tests\2026-08-16_003018`; thiết bị thật vẫn là gate mở.
+- [x] Chạy `seed:e2e`, lưu output không chứa secret; transfer và savings đều `SUCCEEDED`, Credit seed có card/statement; seed mode overdue đã tạo notification CREDIT trỏ đúng `cardId`.
+- [x] Chạy Maestro overview/payment/pending-resume, card lock → stop/launch → OTP unlock và overdue notification → card detail trên Android emulator `Pixel_7_API_35`; artifact overview M0–M4/M8 (gồm hiện/sao chép đủ số tài khoản) là `C:\Users\admin\.maestro\tests\2026-08-16_014619`, card là `C:\Users\admin\.maestro\tests\2026-08-16_003018`, overdue là `C:\Users\admin\.maestro\tests\2026-08-16_004626`; thiết bị thật vẫn là gate mở.
 - [x] Rerun regression M0–M4/M8 và cập nhật test report, device evidence và runbook theo bằng chứng local; implementation checkpoint là `aa0e3de`, hardening commit hiện tại là `0f06b77`.
 - [ ] Không đánh dấu production/pilot readiness khi chưa có staging, signing, monitoring, legal/compliance và partner approval.
 
 ## Cập nhật xác nhận cuối - 2026-08-16
 
-- Backend local khong co `DATABASE_URL`: 57 test, 53 pass va 4 skip PostgreSQL; voi PostgreSQL 16 tam thoi: 57/57 pass, migration 001–004 va live schema validator dat, critical HTTP 8/8.
-- Mobile: typecheck, lint, 36 suite/166 test, OpenAPI 36 path, Maestro syntax 8 flow, web export 32 route va release config deu dat.
+- Backend local khong co `DATABASE_URL`: 58 test, 54 pass va 4 skip PostgreSQL; voi PostgreSQL 16 tam thoi: 58/58 pass, migration 001–004 va live schema validator dat, critical HTTP 8/8.
+- Mobile: typecheck, lint, 36 suite/167 test, OpenAPI 36 path, Maestro syntax 9 flow, web export 32 route va release config deu dat.
 - So tai khoan: danh sach chi tra so che; Home va Account Detail goi `GET /accounts/{accountId}/number` khi bam `Hien day du` hoac `Sao chep`, sau do hien/clipboard dung toan bo chuoi so.
-- Maestro 2.8.0 va ADB da duoc dung tren `Pixel_7_API_35`: flow M0–M4/M8, credit payment, credit pending → stop/launch → resume va Credit card lock → stop/launch → OTP unlock deu pass. Thiet bi that, camera/biometric native va staging van mo.
+- Maestro 2.8.0 va ADB da duoc dung tren `Pixel_7_API_35`: flow M0–M4/M8 tren APK hien tai, M6 savings, credit payment, credit pending → stop/launch → resume, Credit card lock → stop/launch → OTP unlock va Credit overdue notification → card detail deu pass. Thiet bi that, camera/biometric native va staging van mo.
 - Backend dependency audit: 0 vulnerability. Mobile con 14 High transitive tu `image-size` trong Expo/Metro; khong ap dung `npm audit fix --force` vi no de xuat breaking downgrade Expo.
 - Persistent sandbox van dung snapshot adapter co state version/migration fallback; repository relational production, seed E2E, device lifecycle va staging/partner approval van la gate mo.

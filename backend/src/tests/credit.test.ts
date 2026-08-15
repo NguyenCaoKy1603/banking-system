@@ -80,6 +80,25 @@ test("statement close is idempotent and emits one credit notification", () => {
   );
 });
 
+test("overdue credit seed emits one notification that targets the card", () => {
+  const { system } = createSystem({ creditOverdueSeed: true });
+  const user = register(system, "708");
+  const card = system.listCards(user.id)[0]!;
+  const account = system.listCreditAccounts(user.id)[0]!;
+  const statement = system.listCreditStatements(user.id, account.creditAccountId).items[0]!;
+
+  assert.equal(statement.status, "OVERDUE");
+  const notifications = system.listNotifications(user.id).filter((notification) => notification.type === "CREDIT");
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.resourceId, card.cardId);
+
+  system.listCards(user.id);
+  assert.equal(
+    system.listNotifications(user.id).filter((notification) => notification.type === "CREDIT").length,
+    1,
+  );
+});
+
 test("credit sandbox seeds a card, statement and server-calculated balances", () => {
   const { system } = createSystem();
   const user = register(system, "701");

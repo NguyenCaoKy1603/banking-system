@@ -657,6 +657,7 @@ export class BankingSystem {
   private readonly settleTransfersImmediately: boolean;
   private readonly settleSavingsImmediately: boolean;
   private readonly settleCreditPaymentsImmediately: boolean;
+  private readonly creditOverdueSeed: boolean;
   private readonly savingsProducts: readonly SavingsProduct[];
   private readonly outboxPendingThreshold: number;
   private readonly users = new Map<string, UserRecord>();
@@ -722,6 +723,7 @@ export class BankingSystem {
       maxSavingsAmountMinor?: string;
       savingsStepUpMethods?: StepUpMethod[];
       settleSavingsImmediately?: boolean;
+      creditOverdueSeed?: boolean;
       creditEnabled?: boolean;
       creditAllowlisted?: boolean;
       creditPaymentsEnabled?: boolean;
@@ -753,6 +755,8 @@ export class BankingSystem {
     this.settleCreditPaymentsImmediately =
       options.settleCreditPaymentsImmediately ??
       process.env.BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY !== "0";
+    this.creditOverdueSeed =
+      options.creditOverdueSeed ?? process.env.BANKING_SANDBOX_CREDIT_OVERDUE === "1";
     this.savingsProducts = (options.savingsProducts ?? DEFAULT_SAVINGS_PRODUCTS).map(
       (product) => ({
         ...product,
@@ -2344,7 +2348,9 @@ export class BankingSystem {
     const creditLimitMinor = BigInt(DEFAULT_CREDIT_LIMIT_MINOR);
     const openingOutstandingMinor = BigInt(DEFAULT_POSTED_OUTSTANDING_MINOR);
     const cycleStartAt = addCreditMonthsClamped(now, -1);
-    const dueAt = addCreditDays(now, CREDIT_STATEMENT_DUE_DAYS);
+    const dueAt = this.creditOverdueSeed
+      ? new Date(this.clock() - 1).toISOString()
+      : addCreditDays(now, CREDIT_STATEMENT_DUE_DAYS);
     const account: CreditAccountRecord = {
       creditAccountId,
       customerId: userId,

@@ -8,9 +8,11 @@ Các flow trong thư mục này dùng Maestro để chạy trên development/pre
 
 - Cài Maestro CLI và có thiết bị/emulator Android hoặc iOS đang kết nối.
 - Có native build với `APP_ID` tương ứng.
+- Với `critical-m0-m4-m8.yaml`, cấp `ACCOUNT_NUMBER` của user sandbox qua environment để flow kiểm tra reveal/copy mà không hardcode số tài khoản vào repository.
 - Backend sandbox có user thử nghiệm, MFA OTP và beneficiary hợp lệ. Có thể chạy `cd ../backend; npm run seed:e2e` để tạo dữ liệu và xuất biến môi trường thay vì lấy ID thủ công; xem [`documents/05-testing/e2e-sandbox-seed.md`](../../../documents/05-testing/e2e-sandbox-seed.md).
 - Với flow transfer pending, chạy backend với `BANKING_SETTLE_IMMEDIATELY=0`.
 - Với flow credit pending-resume, chạy backend với `BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY=0`.
+- Với flow credit overdue notification, chạy backend với `BANKING_SANDBOX_CREDIT_OVERDUE=1` chỉ cho phiên seed riêng; sau khi seed xong có thể tắt biến này cho các phiên demo bình thường.
 
 Ví dụ PowerShell:
 
@@ -40,14 +42,17 @@ maestro test `
 - `critical-transfer-retry.yaml`: quote, step-up, double-tap, pending status và khôi phục sau stop/start app.
 - `critical-fraud-report.yaml`: mở chi tiết giao dịch và gửi fraud report.
 - `critical-m0-m4-m8.yaml`: login, trang chủ với thẻ số dư hiện/che, hiện và sao chép số tài khoản đầy đủ, eKYC mô phỏng, danh bạ người nhận, My QR/QR payload fallback, notification detail và deep link.
+- `critical-savings.yaml`: Home → Tiền gửi → quote/review → step-up OTP → mở khoản → danh sách tiền gửi.
 - `critical-card.yaml`: mở danh sách/chi tiết Credit sandbox, khóa thẻ, stop/launch để kiểm tra trạng thái được giữ lại và mở khóa bằng OTP sandbox.
 - `critical-credit.yaml`: mở thẻ tín dụng sandbox, xem giao dịch/sao kê, tạo quote MINIMUM, MFA step-up và hoàn tất thanh toán.
 - `critical-credit-pending-resume.yaml`: tạo thanh toán PENDING, stop/launch app, mở lại chi tiết và resume đến SUCCEEDED mà không debit lần hai.
+- `critical-credit-overdue-notification.yaml`: mở thông báo sao kê Credit quá hạn và deep-link tới đúng chi tiết thẻ.
 
-Maestro CLI 2.8.0 đã chạy thành công trên Android emulator `Pixel_7_API_35` cho `critical-m0-m4-m8.yaml`, `critical-credit.yaml`, `critical-credit-pending-resume.yaml` và `critical-card.yaml`. Các run thành công gần nhất nằm trong `C:\Users\admin\.maestro\tests\2026-08-16_000105`, `C:\Users\admin\.maestro\tests\2026-08-16_000436`, `C:\Users\admin\.maestro\tests\2026-08-16_000714` và `C:\Users\admin\.maestro\tests\2026-08-16_003018`. Bộ thư mục hiện có 8 flow hợp lệ; M0–M4/M8 đã kiểm tra hiện và sao chép số tài khoản đầy đủ sau bản build cuối, còn M7 đã kiểm tra payment, pending → stop/launch → resume và khóa → restart → mở khóa thẻ bằng OTP. Camera permission, biometric prompt, transfer lifecycle native đầy đủ và thiết bị thật vẫn cần chạy bổ sung.
+Maestro CLI 2.8.0 đã chạy thành công trên Android emulator `Pixel_7_API_35` cho `critical-m0-m4-m8.yaml`, `critical-savings.yaml`, `critical-credit.yaml`, `critical-credit-pending-resume.yaml`, `critical-card.yaml` và `critical-credit-overdue-notification.yaml`. Các run thành công gần nhất nằm trong `C:\Users\admin\.maestro\tests\2026-08-16_014619`, `C:\Users\admin\.maestro\tests\2026-08-16_013045`, `C:\Users\admin\.maestro\tests\2026-08-16_000436`, `C:\Users\admin\.maestro\tests\2026-08-16_000714`, `C:\Users\admin\.maestro\tests\2026-08-16_003018` và `C:\Users\admin\.maestro\tests\2026-08-16_004626`. Bộ thư mục hiện có 9 flow hợp lệ; M0–M4/M8 đã kiểm tra hiện và sao chép số tài khoản đầy đủ trên APK hiện tại, M6 đã kiểm tra quote/review/OTP/mở khoản, còn M7 đã kiểm tra payment, pending → stop/launch → resume, khóa → restart → mở khóa thẻ bằng OTP và thông báo sao kê quá hạn → mở đúng thẻ. Camera permission, biometric prompt, transfer lifecycle native đầy đủ và thiết bị thật vẫn cần chạy bổ sung.
 
 ## Cap nhat M7
 
 - `critical-credit.yaml` kiem tra login MFA, danh sach/chi tiet credit sandbox, giao dich, sao ke, quote MINIMUM, review, step-up OTP va ket qua payment.
 - Flow dung `${TRANSFER_OTP}` cho step-up thanh toan credit vi day la OTP sandbox do backend cap; khong ghi OTP vao flow/repository.
+- `critical-credit-overdue-notification.yaml` dung seed mode `BANKING_SANDBOX_CREDIT_OVERDUE=1` de tao sao ke qua han, sau do kiem tra notification CREDIT deep-link ve `/cards/[cardId]`.
 - M0-M4-M8 flow da them kiem tra `home-toggle-account-number` va `home-copy-account-number`: ket qua mong doi la full number, khong phai 4 so cuoi.

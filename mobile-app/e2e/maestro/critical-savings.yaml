@@ -39,6 +39,11 @@ appId: ${APP_ID}
 - tapOn:
     id: savings-amount
 - inputText: ${SAVINGS_AMOUNT_MINOR}
+- scrollUntilVisible:
+    element:
+      id: savings-create-quote
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     id: savings-create-quote
 - extendedWaitUntil:
@@ -50,6 +55,7 @@ appId: ${APP_ID}
 - tapOn:
     id: savings-step-up-code
 - inputText: ${TRANSFER_OTP}
+- pressKey: BACK
 - tapOn:
     id: savings-submit
 - extendedWaitUntil:

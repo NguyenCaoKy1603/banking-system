@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
@@ -185,6 +185,7 @@ export function OpenSavingsScreen() {
   );
 
   const handleQuote = useCallback(async () => {
+    Keyboard.dismiss();
     if (!sourceAccountId || !selectedProduct) {
       setError("Vui lòng chọn tài khoản nguồn và kỳ hạn.");
       return;
@@ -354,7 +355,7 @@ export function OpenSavingsScreen() {
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Pressable accessibilityRole="button" hitSlop={8} onPress={() => router.back()} style={styles.backButton} testID="savings-open-back">
           <Text style={styles.backLabel}>‹ Quay lại</Text>
         </Pressable>

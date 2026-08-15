@@ -39,7 +39,7 @@ appId: ${APP_ID}
     id: home-toggle-balance
 - tapOn:
     id: home-toggle-account-number
-- assertVisible: "970400000001"
+- assertVisible: ${ACCOUNT_NUMBER}
 - tapOn:
     id: home-copy-account-number
 - tapOn:
@@ -54,7 +54,7 @@ appId: ${APP_ID}
     timeout: 10000
 - tapOn:
     id: account-detail-toggle-number
-- assertVisible: "970400000001"
+- assertVisible: ${ACCOUNT_NUMBER}
 - tapOn:
     id: account-detail-copy-number
 - tapOn:

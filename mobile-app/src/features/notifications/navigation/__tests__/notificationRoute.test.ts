@@ -44,4 +44,18 @@ describe("getNotificationRoute", () => {
       params: { depositId: "deposit-1" },
     });
   });
+
+  it("deep-links credit notifications to the card detail", () => {
+    expect(
+      getNotificationRoute({
+        ...baseNotification,
+        type: "CREDIT",
+        resourceId: "card-1",
+        resourceAccountId: null,
+      }),
+    ).toEqual({
+      pathname: "/cards/[cardId]",
+      params: { cardId: "card-1" },
+    });
+  });
 });

@@ -1,0 +1,58 @@
+appId: ${APP_ID}
+
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: login-email
+    timeout: 90000
+- tapOn:
+    id: login-email
+- inputText: ${TEST_EMAIL}
+- scrollUntilVisible:
+    element:
+      id: login-password
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: login-password
+- inputText: ${TEST_PASSWORD}
+- tapOn:
+    id: login-submit
+- extendedWaitUntil:
+    visible:
+      id: login-mfa-submit
+    timeout: 10000
+- tapOn:
+    id: login-mfa-code
+- inputText: ${MFA_OTP}
+- tapOn:
+    id: login-mfa-submit
+- extendedWaitUntil:
+    visible:
+      id: home-balance-card
+    timeout: 15000
+- tapOn:
+    id: tab-profile
+- tapOn:
+    id: profile-notifications
+- extendedWaitUntil:
+    visible:
+      id: notification-first
+    timeout: 15000
+- tapOn:
+    id: notification-first
+- extendedWaitUntil:
+    visible:
+      id: notification-detail
+    timeout: 10000
+- assertVisible: "CREDIT"
+- assertVisible: "Sao kê thẻ đã quá hạn"
+- tapOn:
+    id: notification-open-target
+- extendedWaitUntil:
+    visible:
+      id: credit-card-detail
+    timeout: 15000
+- assertVisible: "Quá hạn"

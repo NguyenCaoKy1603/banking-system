@@ -42,6 +42,7 @@ const allowedOrigins = (process.env.BANKING_ALLOWED_ORIGINS ?? "")
 async function start(): Promise<void> {
   const system = new BankingSystem({
     settleTransfersImmediately: process.env.BANKING_SETTLE_IMMEDIATELY !== "0",
+    creditOverdueSeed: process.env.BANKING_SANDBOX_CREDIT_OVERDUE === "1",
     authChallengeMethods: readConfiguredMethods(),
   });
   const httpOptions = allowedOrigins.length > 0 ? { allowedOrigins } : undefined;
