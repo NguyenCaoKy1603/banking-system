@@ -2,7 +2,7 @@
 
 ## Đã kiểm chứng local
 
-Backend evidence checkpoint: `595afc3` (`Harden database and OpenAPI quality gates`).
+Backend evidence checkpoint: current repository HEAD `2af2f2f`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
 
 - Mobile lint, type-check và 36 suite/166 test đạt; các coverage gate trước đó vẫn đạt trên nhóm domain/validation/presentation/storage/navigation; coverage không được chạy lại trong lượt cuối.
 - Backend reference type-check, build, 54 test definition và 8 critical HTTP flow đạt; không có database thật thì 4 test PostgreSQL được skip, còn bằng chứng PostgreSQL 16 tạm thời đạt 54/54; database boundary validator đạt cấu trúc SQL + live PostgreSQL 27 bảng/invariant.

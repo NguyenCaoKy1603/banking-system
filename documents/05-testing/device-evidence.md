@@ -5,7 +5,7 @@ Dùng bản ghi này cho smoke test local ngày 2026-08-15. Không ghi password,
 | Trường | Giá trị |
 | --- | --- |
 | Build version/package | `1.0.0` / `com.example.digitalbanking.mobile` (debug dev-client dùng cho E2E; release cũng đã build) |
-| APK SHA-256 | Debug `9D61EE86309FB00713DE001992D3FDD076CD087C51C9624B448247118BC3E74A`; release `24D42715A675634357C61DCEB60A0BAB67BC8D0C5376AF56BD996BECCB02C56D` |
+| APK SHA-256 | Debug `9D61EE86309FB00713DE001992D3FDD076CD087C51C9624B448247118BC3E74A`; release `115E89DD956188E16915774ADADD77AB23A68DB27497E7879C54EFEAD42CFF59` (built from HEAD `2af2f2f`) |
 | Device/emulator model | `Pixel_7_API_35` / `sdk_gphone64_x86_64` / `emulator-5554` |
 | OS version | Android 15, API 35 |
 | Build/install time | 2026-08-15, local time; debug dev-client đã cài để chạy E2E, release APK build completed successfully |

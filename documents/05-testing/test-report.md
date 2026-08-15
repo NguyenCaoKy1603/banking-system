@@ -3,7 +3,7 @@
 Ngày lập: 2026-08-15
 Phạm vi: M0–M4, M8 và Card mock bonus
 Trạng thái: **Local reference pass; Android emulator E2E pass; device/staging gates còn mở**
-Backend verification checkpoint: `595afc3` (`Harden database and OpenAPI quality gates`)
+Backend verification checkpoint: current repository HEAD `2af2f2f`; historical backend gate `595afc3` remains referenced in the audit trail.
 
 ## Kết quả đã chạy
 
@@ -30,7 +30,7 @@ Backend verification checkpoint: `595afc3` (`Harden database and OpenAPI quality
 - Đã có APK release local, package/checksum và log Maestro trên emulator; chưa có video cold start/crash-resume, camera thật hoặc biometric prompt thật.
 - Transfer kill app trước/sau submit và session restore sau force-stop chưa có kết quả native lặp lại; riêng credit pending → restart → resume đã pass bằng flow dedicated.
 - Chưa có staging URL/partner integration đã phê duyệt.
-- Handoff Git: checkpoint `aa0e3de` đã commit toàn bộ source/workflow/contract/tài liệu trong phạm vi; clone sạch đã chạy `npm ci` và các gate chính. Chưa push/PR trong phiên này.
+- Handoff Git: implementation checkpoint `aa0e3de` và follow-up verification commits đã commit toàn bộ source/workflow/contract/tài liệu trong phạm vi; current HEAD `2af2f2f`, clone sạch đã chạy `npm ci` và các gate chính. Chưa push/PR trong phiên này.
 - Chưa có kết quả usability/accessibility với người dùng và chưa có approver cho 14 cảnh báo High.
 
 ## Kết luận

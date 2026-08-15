@@ -2,7 +2,8 @@
 
 Ngày ghi nhận: 2026-08-15
 Nhánh: `feature/mobile-authentication`
-Checkpoint commit: `aa0e3de` (`Implement banking sandbox milestones and M7 credit flow`)
+Implementation checkpoint: `aa0e3de` (`Implement banking sandbox milestones and M7 credit flow`)
+Current verification HEAD: `2af2f2f` (`Expand credit date boundary regression coverage`)
 
 ## Trạng thái
 
@@ -12,8 +13,8 @@ Clone sạch đã được kiểm tra bằng `npm ci`: backend 53/53 test với 
 
 ## Việc cần làm sau checkpoint
 
-1. Owner review commit `aa0e3de` và quyết định có push/PR hay không.
-2. Gắn checksum APK và commit hash vào release manifest khi có release candidate được phê duyệt.
+1. Owner review current HEAD `2af2f2f` và quyết định có push/PR hay không.
+2. Gắn checksum APK và commit hash vào release manifest khi có release candidate được phê duyệt; bản APK sandbox local hiện đã có checksum trong device evidence.
 3. Chỉ mở preview/pilot sau khi xử lý dependency High, thiết bị thật, staging, signing và legal/compliance.
 
-APK không được coi là artifact của checkpoint này cho tới khi được build từ một commit sạch và có checksum.
+APK sandbox local đã được build từ current HEAD `2af2f2f` và có checksum; bản này chưa phải release candidate đã ký và chưa được phê duyệt cho pilot/production.
