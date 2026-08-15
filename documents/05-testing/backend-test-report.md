@@ -3,7 +3,7 @@
 Ngày kiểm tra: 2026-08-15
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
 Trạng thái: **In-memory và PostgreSQL persistent sandbox pass; relational production adapter vẫn là DRAFT**
-Commit kiểm thử: `72f1bbd60dcb786a90fb6e8c7dae4602b57e55a8`
+Commit kiểm thử: `e555b77` (`Fix M8 notification transaction deep link`)
 
 ## Đã kiểm chứng local
 
@@ -21,6 +21,7 @@ Commit kiểm thử: `72f1bbd60dcb786a90fb6e8c7dae4602b57e55a8`
 | Router | Trailing segment bị 404 |
 | Rate limit | Registration và transfer step-up có regression test |
 | Outbox | Retry backoff/attempts và health threshold có regression test |
+| M8 notification target | HTTP và domain test xác nhận `resourceId=transactionId`, `resourceAccountId=accountId`; Mobile route chỉ mở transaction khi đủ cả hai trường |
 
 ## PostgreSQL gate
 

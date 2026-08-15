@@ -2,7 +2,7 @@
 
 ## Đã kiểm chứng local
 
-Backend evidence checkpoint: `72f1bbd60dcb786a90fb6e8c7dae4602b57e55a8`.
+Backend evidence checkpoint: `e555b77` (`Fix M8 notification transaction deep link`).
 
 - Mobile lint, type-check và 27 suite/143 test đạt; coverage đạt 95.45% statements/lines, 93.35% branches và 97.87% functions trên nhóm domain/validation/presentation/storage/navigation được thu thập; coverage gate tối thiểu là 80% statements/lines, 75% branches và 80% functions.
 - Backend reference type-check, build, 37 test definition (37 pass, gồm 2 PostgreSQL persistence tests) và 8 critical HTTP flow đạt; database boundary validator đạt 16 bảng/invariant.
@@ -18,13 +18,13 @@ Backend evidence checkpoint: `72f1bbd60dcb786a90fb6e8c7dae4602b57e55a8`.
 
 ## Chưa đủ điều kiện đóng milestone
 
-- M0: chưa có evidence board/Git/thiết bị và working-tree checkpoint hoàn chỉnh.
-- M1–M4 và M8: chưa có test trên emulator/điện thoại thật và staging partner.
+- M0: baseline tài liệu, evidence rules, device evidence và hai commit checkpoint đã có; working tree vẫn còn các thay đổi Mobile có sẵn chưa thuộc phạm vi commit này nên chưa thể coi là clean checkpoint của toàn workspace.
+- M1–M4 và M8: đã có native smoke trên Android emulator cho login/MFA, account detail, M4 transfer và M8 notification deep link; chưa có full device matrix, thiết bị thật hoặc staging partner.
 - M2: eKYC thật/API KYC và test data staging chưa có; phần hiện tại là mock có chủ đích.
-- M4: QR camera/payload và danh bạ mới được kiểm tra bằng typecheck/web, backend HTTP và syntax; chưa chạy trên thiết bị thật.
+- M4: transfer smoke trên emulator đã đạt; QR camera/permission, beneficiary CRUD đầy đủ và fallback native vẫn chưa có bằng chứng thiết bị.
 - M6, M7 và M9: chưa triển khai theo ưu tiên hiện tại; M5 chỉ là mock bonus, chưa phải API/production card integration.
 - M10: usability, accessibility, performance và native device regression chưa hoàn tất; audit Mobile còn 14 High; remote CI execution chưa có log trong workspace dù local PostgreSQL gate đã đạt.
-- M11: chưa có APK release candidate cài ngoài máy phát triển, signing, staging, monitoring và hồ sơ bảo vệ đầy đủ.
+- M11: mới có APK debug preview cài trên Android emulator và checksum local; chưa có APK release candidate cài ngoài máy phát triển, signing, staging, monitoring và hồ sơ bảo vệ đầy đủ.
 
 ## Quyết định sử dụng snapshot
 
