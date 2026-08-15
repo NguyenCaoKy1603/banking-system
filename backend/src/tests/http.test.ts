@@ -129,8 +129,25 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
   const accountsResponse = await request("/accounts", { headers: authHeaders });
   assert.equal(accountsResponse.status, 200);
   const accounts = (await accountsResponse.json()) as {
-    accounts: Array<{ id: string }>;
+    accounts: Array<{ id: string; maskedNumber: string; accountNumber?: string }>;
   };
+  assert.equal(accounts.accounts[0]?.maskedNumber, "•••• 0001");
+  assert.equal(accounts.accounts[0]?.accountNumber, undefined);
+  const accountNumberResponse = await request(
+    `/accounts/${accounts.accounts[0]?.id}/number`,
+    { headers: authHeaders },
+  );
+  assert.equal(accountNumberResponse.status, 200);
+  const accountNumberPayload = (await accountNumberResponse.json()) as {
+    accountNumber: string;
+  };
+  assert.match(accountNumberPayload.accountNumber, /^\d{12}$/);
+  assert.equal(accountNumberPayload.accountNumber.slice(-4), "0001");
+  const trailingAccountNumberResponse = await request(
+    `/accounts/${accounts.accounts[0]?.id}/number/extra`,
+    { headers: authHeaders },
+  );
+  assert.equal(trailingAccountNumberResponse.status, 404);
   const controlPolicyResponse = await request("/mobile/control-policy", {
     headers: authHeaders,
   });

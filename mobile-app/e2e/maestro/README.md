@@ -1,5 +1,7 @@
 # Native E2E harness
 
+M6: `critical-savings.yaml` kiểm tra Home → Tiền gửi → quote → review → MFA → mở khoản theo idempotency key → danh sách tiền gửi. Khi chạy, đặt `SAVINGS_AMOUNT_MINOR` tối thiểu `1000000`.
+
 Các flow trong thư mục này dùng Maestro để chạy trên development/preview build Android hoặc iOS. Đây là test thật qua UI, không phải unit test và không dùng web export.
 
 ## Điều kiện chạy
@@ -8,6 +10,7 @@ Các flow trong thư mục này dùng Maestro để chạy trên development/pre
 - Có native build với `APP_ID` tương ứng.
 - Backend sandbox có user thử nghiệm, MFA OTP và beneficiary hợp lệ. Có thể chạy `cd ../backend; npm run seed:e2e` để tạo dữ liệu và xuất biến môi trường thay vì lấy ID thủ công; xem [`documents/05-testing/e2e-sandbox-seed.md`](../../../documents/05-testing/e2e-sandbox-seed.md).
 - Với flow transfer pending, chạy backend với `BANKING_SETTLE_IMMEDIATELY=0`.
+- Với flow credit pending-resume, chạy backend với `BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY=0`.
 
 Ví dụ PowerShell:
 
@@ -36,7 +39,15 @@ maestro test `
 - `critical-auth-and-logout.yaml`: login MFA, session entry và logout tất cả thiết bị.
 - `critical-transfer-retry.yaml`: quote, step-up, double-tap, pending status và khôi phục sau stop/start app.
 - `critical-fraud-report.yaml`: mở chi tiết giao dịch và gửi fraud report.
-- `critical-m0-m4-m8.yaml`: login, eKYC mô phỏng, danh bạ người nhận, My QR/QR payload fallback, notification detail và deep link.
+- `critical-m0-m4-m8.yaml`: login, trang chủ với thẻ số dư hiện/che, hiện và sao chép số tài khoản đầy đủ, eKYC mô phỏng, danh bạ người nhận, My QR/QR payload fallback, notification detail và deep link.
 - `critical-card.yaml`: mở danh sách/chi tiết thẻ mock, ẩn/hiện số mô phỏng, khóa thẻ và đổi PIN mô phỏng.
+- `critical-credit.yaml`: mở thẻ tín dụng sandbox, xem giao dịch/sao kê, tạo quote MINIMUM, MFA step-up và hoàn tất thanh toán.
+- `critical-credit-pending-resume.yaml`: tạo thanh toán PENDING, stop/launch app, mở lại chi tiết và resume đến SUCCEEDED mà không debit lần hai.
 
-Maestro CLI chưa được cài trong workspace nên các flow mới chỉ qua syntax validation. Android emulator và PostgreSQL sandbox đã được dùng cho smoke/integration test local, nhưng chưa thay thế việc chạy đầy đủ Maestro trên thiết bị/preview build.
+Maestro CLI 2.8.0 đã chạy thành công trên Android emulator `Pixel_7_API_35` cho `critical-m0-m4-m8.yaml`, `critical-credit.yaml` và `critical-credit-pending-resume.yaml`. Các run thành công nằm trong `C:\Users\admin\.maestro\tests\2026-08-15_231343`, `2026-08-15_225107` và `2026-08-15_225718`. Bộ thư mục hiện có 8 flow hợp lệ; M0–M4/M8 đã kiểm tra hiện và sao chép số tài khoản đầy đủ sau bản build cuối, còn M7 đã kiểm tra payment và pending → stop/launch → resume. Camera permission, biometric prompt, transfer lifecycle native đầy đủ và thiết bị thật vẫn cần chạy bổ sung.
+
+## Cap nhat M7
+
+- `critical-credit.yaml` kiem tra login MFA, danh sach/chi tiet credit sandbox, giao dich, sao ke, quote MINIMUM, review, step-up OTP va ket qua payment.
+- Flow dung `${TRANSFER_OTP}` cho step-up thanh toan credit vi day la OTP sandbox do backend cap; khong ghi OTP vao flow/repository.
+- M0-M4-M8 flow da them kiem tra `home-toggle-account-number` va `home-copy-account-number`: ket qua mong doi la full number, khong phai 4 so cuoi.

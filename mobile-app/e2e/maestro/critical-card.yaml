@@ -1,0 +1,56 @@
+appId: ${APP_ID}
+
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: login-email
+- inputText: ${TEST_EMAIL}
+- tapOn:
+    id: login-password
+- inputText: ${TEST_PASSWORD}
+- tapOn:
+    id: login-submit
+- extendedWaitUntil:
+    visible:
+      id: login-mfa-submit
+    timeout: 10000
+- tapOn:
+    id: login-mfa-code
+- inputText: ${MFA_OTP}
+- tapOn:
+    id: login-mfa-submit
+- extendedWaitUntil:
+    visible:
+      id: home-balance-card
+    timeout: 15000
+- tapOn:
+    id: tab-profile
+- tapOn:
+    id: profile-cards
+- extendedWaitUntil:
+    visible:
+      id: cards-list
+    timeout: 10000
+- tapOn:
+    id: card-first
+- extendedWaitUntil:
+    visible:
+      id: card-detail
+    timeout: 10000
+- tapOn:
+    id: card-toggle-visibility
+- tapOn:
+    id: card-toggle-lock
+- tapOn:
+    id: card-new-pin
+- inputText: 2468
+- tapOn:
+    id: card-confirm-pin
+- inputText: 2468
+- tapOn:
+    id: card-change-pin
+- extendedWaitUntil:
+    visible:
+      id: card-detail
+    timeout: 10000

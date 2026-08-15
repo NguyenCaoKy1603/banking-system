@@ -177,6 +177,72 @@ async function main(): Promise<void> {
     "seed transfer",
   );
 
+  const savingsProducts = requireBody<{
+    items: Array<{ productId: string }>;
+  }>(await request("/savings/products", {}, accessToken), "savings products");
+  const savingsProduct = savingsProducts.items[0];
+  if (!savingsProduct) {
+    throw new Error("Seed has no active savings product.");
+  }
+  const savingsQuote = requireBody<{ quoteId: string }>(
+    await request(
+      "/savings/quotes",
+      {
+        method: "POST",
+        body: json({
+          sourceAccountId: account.id,
+          productId: savingsProduct.productId,
+          principal: { currency: "VND", amountMinor: process.env.E2E_SAVINGS_AMOUNT_MINOR ?? "1000000" },
+          maturityInstruction: "RETURN_PRINCIPAL_AND_INTEREST",
+        }),
+      },
+      accessToken,
+    ),
+    "savings quote",
+  );
+  const savingsOpening = requireBody<{
+    openingId: string;
+    depositId: string | null;
+    status: string;
+  }>(
+    await request(
+      "/savings/deposits",
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": `e2e-savings-seed-${Date.now()}` },
+        body: json({
+          quoteId: savingsQuote.quoteId,
+          stepUp: { method: "OTP", proof: transferOtp },
+        }),
+      },
+      accessToken,
+    ),
+    "savings opening",
+  );
+  if (savingsOpening.status === "PENDING") {
+    const resumed = requireBody<{ depositId: string | null; status: string }>(
+      await request(`/savings/openings/${savingsOpening.openingId}`, {}, accessToken),
+      "savings opening resume",
+    );
+    savingsOpening.depositId = resumed.depositId;
+    savingsOpening.status = resumed.status;
+  }
+
+  const creditCards = requireBody<{
+    items: Array<{ cardId: string; creditAccountId: string; lastFour: string; postedOutstanding: { amountMinor: string }; minimumPaymentRemaining: { amountMinor: string } }>;
+  }>(await request("/cards", {}, accessToken), "credit cards");
+  const creditCard = creditCards.items[0];
+  if (!creditCard) {
+    throw new Error("Seed has no credit sandbox card.");
+  }
+  const creditStatements = requireBody<{
+    items: Array<{ statementId: string; minimumPaymentRemaining: { amountMinor: string } }>;
+  }>(await request(`/credit/accounts/${creditCard.creditAccountId}/statements`, {}, accessToken), "credit statements");
+  const creditStatement = creditStatements.items[0];
+  if (!creditStatement) {
+    throw new Error("Seed has no credit sandbox statement.");
+  }
+
   const qrPayload = JSON.stringify({
     version: 1,
     kind: "RECEIVE_MONEY",
@@ -197,6 +263,12 @@ async function main(): Promise<void> {
     SEEDED_ACCOUNT_ID: account.id,
     SEEDED_TRANSFER_ID: transfer.transferId,
     SEEDED_TRANSFER_STATUS: transfer.status,
+    SEEDED_SAVINGS_DEPOSIT_ID: savingsOpening.depositId ?? "",
+    SEEDED_SAVINGS_STATUS: savingsOpening.status,
+    CREDIT_CARD_ID: creditCard.cardId,
+    CREDIT_ACCOUNT_ID: creditCard.creditAccountId,
+    CREDIT_STATEMENT_ID: creditStatement.statementId,
+    CREDIT_MINIMUM_AMOUNT_MINOR: creditStatement.minimumPaymentRemaining.amountMinor,
     API_BASE_URL: baseUrl,
   };
 

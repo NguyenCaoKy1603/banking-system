@@ -32,6 +32,7 @@ export type PaymentAccount = {
   id: string;
   displayName: string;
   maskedNumber: string;
+  bankName: string;
   currency: Currency;
   availableBalance: Money;
   currentBalance: Money;
@@ -94,12 +95,22 @@ export type ControlPolicy = {
   allowlisted: boolean;
   maxTransferAmountMinor: string;
   stepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  savingsEnabled: boolean;
+  savingsAllowlisted: boolean;
+  maxSavingsAmountMinor: string;
+  savingsStepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  creditEnabled: boolean;
+  creditAllowlisted: boolean;
+  creditPaymentsEnabled: boolean;
+  cardControlsEnabled: boolean;
+  maxCreditPaymentAmountMinor: string;
+  creditPaymentStepUpMethods: Array<"OTP" | "BIOMETRIC">;
   updatedAt: string;
 };
 
 export type Notification = {
   id: string;
-  type: "TRANSFER" | "SECURITY";
+  type: "TRANSFER" | "SAVINGS" | "CREDIT" | "SECURITY";
   title: string;
   body: string;
   resourceId: string | null;

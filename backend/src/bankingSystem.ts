@@ -1,5 +1,6 @@
 import {
   conflict,
+  conflictWithCode,
   invalidRequest,
   notFound,
   rateLimited,
@@ -8,10 +9,80 @@ import {
 import {
   InMemoryCoreBanking,
   type CoreBankingPort,
+  type CreditPaymentReceipt,
+  type CoreSavingsMaturityInput,
   type InMemoryCoreState,
   type TerminalTransferStatus,
 } from "./coreBanking.js";
+import {
+  CREDIT_MINIMUM_PAYMENT_FLOOR_MINOR,
+  CREDIT_POLICY_VERSION,
+  CREDIT_QUOTE_TTL_MS,
+  CREDIT_STATEMENT_DUE_DAYS,
+  DEFAULT_CARD_LAST_FOUR,
+  DEFAULT_CREDIT_LIMIT_MINOR,
+  DEFAULT_POSTED_OUTSTANDING_MINOR,
+  addDays as addCreditDays,
+  addMonthsClamped as addCreditMonthsClamped,
+  calculateAvailableCredit,
+  calculateMinimumPayment,
+  cloneCreditAccount,
+  cloneCreditCard,
+  cloneCreditPayment,
+  cloneCreditQuote,
+  cloneCreditStatement,
+  cloneCreditTransaction,
+  cloneMoney,
+  getStatementStatus,
+  money as creditMoney,
+  newCreditId,
+  nextStatementCloseAt as nextCreditStatementCloseAt,
+  type CardInstrument,
+  type CreditAccount,
+  type CreditAccountRecord,
+  type CreditCard,
+  type CreditCardRecord,
+  type CreditDebtEffect,
+  type CreditIdempotencyRecord,
+  type CreditPayment,
+  type CreditPaymentOption,
+  type CreditPaymentQuote,
+  type CreditPaymentQuoteRecord,
+  type CreditPaymentRecord,
+  type CreditPaymentRequest,
+  type CreditPaymentQuoteRequest,
+  type CreditStatement,
+  type CreditStatementRecord,
+  type CreditStatementStatus,
+  type CreditTransaction,
+  type CreditTransactionRecord,
+  type CreditTransactionStatus,
+  type CreditTransactionType,
+  type CreditCardStatus,
+} from "./credit.js";
 import { parseMoney, toMoney } from "./money.js";
+import {
+  DEFAULT_SAVINGS_PRODUCTS,
+  addMonthsClamped,
+  buildSavingsQuote,
+  calculateActualDays,
+  calculateSavingsInterest,
+  cloneSavingsDeposit,
+  cloneSavingsOpening,
+  cloneSavingsQuote,
+  toPublicSavingsDeposit,
+  toPublicSavingsOpening,
+  toPublicSavingsQuote,
+  type MaturityInstruction,
+  type SavingsDeposit,
+  type SavingsDepositRecord,
+  type SavingsOpening,
+  type SavingsOpeningRecord,
+  type SavingsProduct,
+  type SavingsQuote,
+  type SavingsQuoteRecord,
+  type SavingsTermMonths,
+} from "./savings.js";
 import {
   createId,
   createOpaqueToken,
@@ -77,6 +148,20 @@ type IdempotencyRecord = {
   receipt: TransferReceipt;
 };
 
+type SavingsIdempotencyRecord = {
+  userId: string;
+  fingerprint: string;
+  openingId: string;
+};
+
+type CreditStepUpAttemptWindow = { startedAt: number; attempts: number };
+
+type CreditPurchaseSeed = {
+  userId: string;
+  creditAccountId: string;
+  transactionId: string;
+};
+
 export type AuditEvent = {
   id: string;
   eventType: string;
@@ -126,6 +211,36 @@ export type SubmitTransferRequest = {
     method: "OTP" | "BIOMETRIC";
     proof: string;
   };
+};
+
+export type SavingsQuoteRequest = {
+  sourceAccountId: string;
+  productId: string;
+  principal: Money;
+  maturityInstruction: MaturityInstruction;
+};
+
+export type SubmitSavingsOpeningRequest = {
+  quoteId: string;
+  stepUp: {
+    method: "OTP" | "BIOMETRIC";
+    proof: string;
+  };
+};
+
+export type SavingsListResult = {
+  items: SavingsDeposit[];
+  totalPrincipal: Money;
+};
+
+export type CreditTransactionsResult = {
+  items: CreditTransaction[];
+  nextCursor: string | null;
+};
+
+export type CreditStatementsResult = {
+  items: CreditStatement[];
+  nextCursor: string | null;
 };
 
 type StepUpMethod = "OTP" | "BIOMETRIC";
@@ -262,6 +377,102 @@ function cloneReceipt(receipt: TransferReceipt): TransferReceipt {
   };
 }
 
+function cloneSavingsProduct(product: SavingsProduct): SavingsProduct {
+  return { ...product };
+}
+
+function cloneSavingsListResult(result: SavingsListResult): SavingsListResult {
+  return {
+    totalPrincipal: { ...result.totalPrincipal },
+    items: result.items.map((item) => ({
+      ...item,
+      principal: { ...item.principal },
+      expectedInterest: { ...item.expectedInterest },
+      totalAtMaturity: { ...item.totalAtMaturity },
+    })),
+  };
+}
+
+function parseCreditPaymentOption(value: unknown): CreditPaymentOption {
+  if (value === "MINIMUM" || value === "FULL_STATEMENT" || value === "CUSTOM") {
+    return value;
+  }
+  throw invalidRequest("paymentOption is invalid.", {
+    paymentOption: "paymentOption must be MINIMUM, FULL_STATEMENT or CUSTOM.",
+  });
+}
+
+function toPublicCreditAccount(account: CreditAccountRecord): CreditAccount {
+  const { userId: _userId, customerId: _customerId, ...publicAccount } = account;
+  return cloneCreditAccount(publicAccount);
+}
+
+function toPublicCreditStatement(statement: CreditStatementRecord): CreditStatement {
+  const { userId: _userId, ...publicStatement } = statement;
+  return cloneCreditStatement(publicStatement);
+}
+
+function toPublicCreditPayment(payment: CreditPaymentRecord): CreditPayment {
+  const { userId: _userId, quoteId: _quoteId, cardId: _cardId, creditAccountId: _creditAccountId, refundApplied: _refundApplied, clearingApplied: _clearingApplied, creditApplied: _creditApplied, ...publicPayment } = payment;
+  return cloneCreditPayment(publicPayment);
+}
+
+function toPublicCreditCard(
+  card: CreditCardRecord,
+  account: CreditAccountRecord,
+  statement: CreditStatementRecord | null,
+): CreditCard {
+  const publicCard: CreditCard = {
+    cardId: card.cardId,
+    creditAccountId: card.creditAccountId,
+    displayName: card.displayName,
+    brand: card.brand,
+    maskedNumber: card.maskedNumber,
+    lastFour: card.lastFour,
+    expiryMonth: card.expiryMonth,
+    expiryYear: card.expiryYear,
+    status: card.status,
+    updatedAt: card.updatedAt,
+    creditLimit: account.creditLimit,
+    availableCredit: account.availableCredit,
+    postedOutstanding: account.postedOutstanding,
+    pendingAuthorizations: account.pendingAuthorizations,
+    nextDueAt: statement?.dueAt ?? null,
+    remainingAmountDue: statement?.remainingAmountDue ?? creditMoney(0n),
+    minimumPaymentRemaining: statement?.minimumPaymentRemaining ?? creditMoney(0n),
+    sandbox: true,
+  };
+  return cloneCreditCard(publicCard);
+}
+
+function parseSavingsInstruction(value: unknown): MaturityInstruction {
+  if (
+    value === "RETURN_PRINCIPAL_AND_INTEREST" ||
+    value === "RENEW_PRINCIPAL" ||
+    value === "RENEW_PRINCIPAL_AND_INTEREST"
+  ) {
+    return value;
+  }
+  throw invalidRequest("maturityInstruction is invalid.", {
+    maturityInstruction: "maturityInstruction is invalid.",
+  });
+}
+
+function parseSavingsTerm(value: unknown): SavingsTermMonths {
+  if (value === 1 || value === 3 || value === 6 || value === 12) {
+    return value;
+  }
+  throw invalidRequest("termMonths is invalid.", {
+    termMonths: "termMonths must be 1, 3, 6 or 12.",
+  });
+}
+
+function cloneSavingsOpeningRecord(
+  opening: SavingsOpeningRecord,
+): SavingsOpeningRecord {
+  return cloneSavingsOpening(opening);
+}
+
 type AttemptWindowState = { startedAt: number; attempts: number };
 
 type PreparedRegistration = {
@@ -287,6 +498,8 @@ export type BankingSystemState = {
   authAttemptWindows: Array<[string, AttemptWindowState]>;
   registrationAttemptWindows: Array<[string, AttemptWindowState]>;
   transferStepUpAttemptWindows: Array<[string, AttemptWindowState]>;
+  savingsStepUpAttemptWindows?: Array<[string, AttemptWindowState]>;
+  creditStepUpAttemptWindows?: Array<[string, CreditStepUpAttemptWindow]>;
   refreshSessions: Array<[string, RefreshSession]>;
   refreshFamilies: Array<[string, string[]]>;
   beneficiaries: Array<[string, BeneficiaryRecord[]]>;
@@ -294,6 +507,18 @@ export type BankingSystemState = {
   quotes: Array<[string, QuoteRecord]>;
   transfers: Array<[string, { userId: string; receipt: TransferReceipt }]>;
   idempotency: Array<[string, IdempotencyRecord]>;
+  savingsQuotes?: Array<[string, SavingsQuoteRecord]>;
+  savingsOpenings?: Array<[string, SavingsOpeningRecord]>;
+  savingsDeposits?: Array<[string, SavingsDepositRecord]>;
+  savingsIdempotency?: Array<[string, SavingsIdempotencyRecord]>;
+  creditCards?: Array<[string, CreditCardRecord]>;
+  creditAccounts?: Array<[string, CreditAccountRecord]>;
+  creditTransactions?: Array<[string, CreditTransactionRecord]>;
+  creditStatements?: Array<[string, CreditStatementRecord]>;
+  creditQuotes?: Array<[string, CreditPaymentQuoteRecord]>;
+  creditPayments?: Array<[string, CreditPaymentRecord]>;
+  creditIdempotency?: Array<[string, CreditIdempotencyRecord]>;
+  creditSeedPurchases?: Array<[string, CreditPurchaseSeed]>;
   auditEventStore: AuditEvent[];
   outboxEventStore: OutboxEvent[];
 };
@@ -358,6 +583,9 @@ export class BankingSystem {
   private readonly authChallengeMethods: StepUpMethod[];
   private readonly allowlistPredicate: (userId: string) => boolean;
   private readonly settleTransfersImmediately: boolean;
+  private readonly settleSavingsImmediately: boolean;
+  private readonly settleCreditPaymentsImmediately: boolean;
+  private readonly savingsProducts: readonly SavingsProduct[];
   private readonly outboxPendingThreshold: number;
   private readonly users = new Map<string, UserRecord>();
   private readonly usersByEmail = new Map<string, string>();
@@ -376,6 +604,11 @@ export class BankingSystem {
     string,
     { startedAt: number; attempts: number }
   >();
+  private readonly savingsStepUpAttemptWindows = new Map<
+    string,
+    { startedAt: number; attempts: number }
+  >();
+  private readonly creditStepUpAttemptWindows = new Map<string, CreditStepUpAttemptWindow>();
   private readonly refreshSessions = new Map<string, RefreshSession>();
   private readonly refreshFamilies = new Map<string, Set<string>>();
   private readonly beneficiaries = new Map<string, BeneficiaryRecord[]>();
@@ -383,6 +616,18 @@ export class BankingSystem {
   private readonly quotes = new Map<string, QuoteRecord>();
   private readonly transfers = new Map<string, { userId: string; receipt: TransferReceipt }>();
   private readonly idempotency = new Map<string, IdempotencyRecord>();
+  private readonly savingsQuotes = new Map<string, SavingsQuoteRecord>();
+  private readonly savingsOpenings = new Map<string, SavingsOpeningRecord>();
+  private readonly savingsDeposits = new Map<string, SavingsDepositRecord>();
+  private readonly savingsIdempotency = new Map<string, SavingsIdempotencyRecord>();
+  private readonly creditCards = new Map<string, CreditCardRecord>();
+  private readonly creditAccounts = new Map<string, CreditAccountRecord>();
+  private readonly creditTransactions = new Map<string, CreditTransactionRecord>();
+  private readonly creditStatements = new Map<string, CreditStatementRecord>();
+  private readonly creditQuotes = new Map<string, CreditPaymentQuoteRecord>();
+  private readonly creditPayments = new Map<string, CreditPaymentRecord>();
+  private readonly creditIdempotency = new Map<string, CreditIdempotencyRecord>();
+  private readonly creditSeedPurchases = new Map<string, CreditPurchaseSeed>();
   private readonly policy: ControlPolicy;
 
   constructor(
@@ -400,6 +645,19 @@ export class BankingSystem {
       maxTransferAmountMinor?: string;
       stepUpMethods?: StepUpMethod[];
       settleTransfersImmediately?: boolean;
+      savingsEnabled?: boolean;
+      savingsAllowlisted?: boolean;
+      maxSavingsAmountMinor?: string;
+      savingsStepUpMethods?: StepUpMethod[];
+      settleSavingsImmediately?: boolean;
+      creditEnabled?: boolean;
+      creditAllowlisted?: boolean;
+      creditPaymentsEnabled?: boolean;
+      cardControlsEnabled?: boolean;
+      maxCreditPaymentAmountMinor?: string;
+      creditPaymentStepUpMethods?: StepUpMethod[];
+      settleCreditPaymentsImmediately?: boolean;
+      savingsProducts?: readonly SavingsProduct[];
       outboxPendingThreshold?: number;
     } = {},
   ) {
@@ -418,6 +676,17 @@ export class BankingSystem {
     );
     this.allowlistPredicate = options.allowlist ?? (() => true);
     this.settleTransfersImmediately = options.settleTransfersImmediately ?? true;
+    this.settleSavingsImmediately = options.settleSavingsImmediately ?? true;
+    this.settleCreditPaymentsImmediately =
+      options.settleCreditPaymentsImmediately ??
+      process.env.BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY !== "0";
+    this.savingsProducts = (options.savingsProducts ?? DEFAULT_SAVINGS_PRODUCTS).map(
+      (product) => ({
+        ...product,
+        minAmountMinor: product.minAmountMinor,
+        maxAmountMinor: product.maxAmountMinor,
+      }),
+    );
     this.outboxPendingThreshold =
       options.outboxPendingThreshold ??
       Number(process.env.BANKING_OUTBOX_PENDING_THRESHOLD ?? DEFAULT_OUTBOX_PENDING_THRESHOLD);
@@ -425,7 +694,7 @@ export class BankingSystem {
       throw new Error("outboxPendingThreshold must be a non-negative integer.");
     }
     this.policy = {
-      configVersion: "sandbox-1",
+      configVersion: CREDIT_POLICY_VERSION,
       globalKillSwitch:
         options.globalKillSwitch ?? process.env.BANKING_GLOBAL_KILL_SWITCH === "1",
       transfersEnabled:
@@ -441,6 +710,34 @@ export class BankingSystem {
         "OTP",
         "BIOMETRIC",
       ]),
+      savingsEnabled:
+        options.savingsEnabled ?? process.env.BANKING_SAVINGS_ENABLED !== "0",
+      savingsAllowlisted:
+        options.savingsAllowlisted ?? process.env.BANKING_SAVINGS_ALLOWLIST_ENABLED !== "0",
+      maxSavingsAmountMinor: normalizeTransferLimit(
+        options.maxSavingsAmountMinor ?? process.env.BANKING_MAX_SAVINGS_AMOUNT_MINOR,
+        500_000_000n,
+      ),
+      savingsStepUpMethods: normalizeStepUpMethods(options.savingsStepUpMethods, [
+        "OTP",
+        "BIOMETRIC",
+      ]),
+      creditEnabled:
+        options.creditEnabled ?? process.env.BANKING_CREDIT_ENABLED !== "0",
+      creditAllowlisted:
+        options.creditAllowlisted ?? process.env.BANKING_CREDIT_ALLOWLIST_ENABLED !== "0",
+      creditPaymentsEnabled:
+        options.creditPaymentsEnabled ?? process.env.BANKING_CREDIT_PAYMENTS_ENABLED !== "0",
+      cardControlsEnabled:
+        options.cardControlsEnabled ?? process.env.BANKING_CARD_CONTROLS_ENABLED !== "0",
+      maxCreditPaymentAmountMinor: normalizeTransferLimit(
+        options.maxCreditPaymentAmountMinor ?? process.env.BANKING_MAX_CREDIT_PAYMENT_AMOUNT_MINOR,
+        BigInt(DEFAULT_CREDIT_LIMIT_MINOR),
+      ),
+      creditPaymentStepUpMethods: normalizeStepUpMethods(
+        options.creditPaymentStepUpMethods,
+        ["OTP", "BIOMETRIC"],
+      ),
       updatedAt: nowIso(this.clock),
     };
   }
@@ -496,6 +793,7 @@ export class BankingSystem {
     this.usersByEmail.set(prepared.email, user.id);
     this.usersByPhone.set(prepared.phoneNumber, user.id);
     this.core.createPaymentAccount(user.id, user.createdAt);
+    this.ensureCreditForUser(user.id, user.createdAt);
     this.beneficiaries.set(user.id, [
       {
         id: createId("beneficiary"),
@@ -739,6 +1037,12 @@ export class BankingSystem {
     return this.core.listPaymentAccounts(userId);
   }
 
+  getAccountNumber(userId: string, accountId: string): string {
+    const accountNumber = this.core.getPaymentAccountNumber(userId, accountId);
+    this.recordAudit("ACCOUNT_NUMBER_REVEALED", userId, accountId);
+    return accountNumber;
+  }
+
   listTransactions(
     userId: string,
     accountId: string,
@@ -764,6 +1068,644 @@ export class BankingSystem {
 
   getTransaction(userId: string, accountId: string, transactionId: string): TransactionDetail {
     return this.core.getTransaction(userId, accountId, transactionId);
+  }
+
+  listCards(userId: string): CreditCard[] {
+    this.assertCreditVisible(userId);
+    this.ensureCreditForUser(userId, nowIso(this.clock));
+    this.processCreditStatements(userId);
+    return [...this.creditCards.values()]
+      .filter((card) => card.userId === userId)
+      .sort((left, right) => left.displayName.localeCompare(right.displayName))
+      .map((card) => {
+        const account = this.requireCreditAccount(userId, card.creditAccountId);
+        return toPublicCreditCard(card, account, this.findLatestCreditStatement(card.creditAccountId));
+      });
+  }
+
+  listCreditAccounts(userId: string): CreditAccount[] {
+    this.assertCreditVisible(userId);
+    this.ensureCreditForUser(userId, nowIso(this.clock));
+    this.processCreditStatements(userId);
+    return [...this.creditAccounts.values()]
+      .filter((account) => account.userId === userId)
+      .map(toPublicCreditAccount);
+  }
+
+  getCard(userId: string, cardId: string): {
+    card: CreditCard;
+    creditAccount: CreditAccount;
+    latestStatement: CreditStatement | null;
+  } {
+    this.assertCreditVisible(userId);
+    this.ensureCreditForUser(userId, nowIso(this.clock));
+    this.processCreditStatements(userId);
+    const card = this.requireCard(userId, cardId);
+    const account = this.requireCreditAccount(userId, card.creditAccountId);
+    const latestStatement = this.findLatestCreditStatement(card.creditAccountId);
+    return {
+      card: toPublicCreditCard(card, account, latestStatement),
+      creditAccount: toPublicCreditAccount(account),
+      latestStatement: latestStatement ? toPublicCreditStatement(latestStatement) : null,
+    };
+  }
+
+  getCreditAccount(userId: string, creditAccountId: string): CreditAccount {
+    this.assertCreditVisible(userId);
+    this.ensureCreditForUser(userId, nowIso(this.clock));
+    this.processCreditStatements(userId);
+    return toPublicCreditAccount(this.requireCreditAccount(userId, creditAccountId));
+  }
+
+  listCreditTransactions(
+    userId: string,
+    creditAccountId: string,
+    cursor?: string,
+    limit = 20,
+  ): CreditTransactionsResult {
+    this.assertCreditVisible(userId);
+    this.ensureCreditForUser(userId, nowIso(this.clock));
+    this.processCreditStatements(userId);
+    this.requireCreditAccount(userId, creditAccountId);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw invalidRequest("limit must be an integer between 1 and 100.", {
+        limit: "limit must be between 1 and 100.",
+      });
+    }
+    const offset = decodeCursor(cursor);
+    const all = [...this.creditTransactions.values()]
+      .filter((transaction) => transaction.userId === userId && transaction.creditAccountId === creditAccountId)
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+    const items = all.slice(offset, offset + limit).map((transaction) => {
+      const { userId: _userId, ...publicTransaction } = transaction;
+      return cloneCreditTransaction(publicTransaction);
+    });
+    const nextOffset = offset + items.length;
+    return { items, nextCursor: nextOffset < all.length ? encodeCursor(nextOffset) : null };
+  }
+
+  listCreditStatements(
+    userId: string,
+    creditAccountId: string,
+    cursor?: string,
+    limit = 20,
+  ): CreditStatementsResult {
+    this.assertCreditVisible(userId);
+    this.ensureCreditForUser(userId, nowIso(this.clock));
+    this.processCreditStatements(userId);
+    this.requireCreditAccount(userId, creditAccountId);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw invalidRequest("limit must be an integer between 1 and 100.", {
+        limit: "limit must be between 1 and 100.",
+      });
+    }
+    const offset = decodeCursor(cursor);
+    const all = [...this.creditStatements.values()]
+      .filter((statement) => statement.userId === userId && statement.creditAccountId === creditAccountId)
+      .sort((left, right) => right.issuedAt.localeCompare(left.issuedAt));
+    const items = all.slice(offset, offset + limit).map(toPublicCreditStatement);
+    const nextOffset = offset + items.length;
+    return { items, nextCursor: nextOffset < all.length ? encodeCursor(nextOffset) : null };
+  }
+
+  getCreditStatement(userId: string, creditAccountId: string, statementId: string): CreditStatement {
+    this.assertCreditVisible(userId);
+    this.ensureCreditForUser(userId, nowIso(this.clock));
+    this.processCreditStatements(userId);
+    const account = this.requireCreditAccount(userId, creditAccountId);
+    const statement = this.creditStatements.get(statementId);
+    if (!statement || statement.userId !== userId || statement.creditAccountId !== account.creditAccountId) {
+      throw conflictWithCode("STATEMENT_NOT_FOUND", "Không tìm thấy sao kê tín dụng.");
+    }
+    return toPublicCreditStatement(statement);
+  }
+
+  lockCard(userId: string, cardId: string): CreditCard {
+    this.assertCardControlsAvailable(userId);
+    const card = this.requireCard(userId, cardId);
+    if (card.status === "BLOCKED" || card.status === "EXPIRED" || card.status === "CLOSED") {
+      throw conflictWithCode("CARD_STATE_INVALID", "Thẻ này không thể khóa hoặc mở bằng Mobile.");
+    }
+    card.status = "LOCKED";
+    card.updatedAt = nowIso(this.clock);
+    this.recordAudit("CREDIT_CARD_LOCKED", userId, card.cardId);
+    this.enqueueOutbox("CREDIT_CARD_LOCKED", card.cardId, card.updatedAt);
+    return this.getCard(userId, card.cardId).card;
+  }
+
+  unlockCard(
+    userId: string,
+    cardId: string,
+    stepUp: { method: StepUpMethod; proof: string },
+  ): CreditCard {
+    this.assertCardControlsAvailable(userId);
+    const card = this.requireCard(userId, cardId);
+    if (card.status !== "LOCKED") {
+      throw conflictWithCode("CARD_STATE_INVALID", "Chỉ thẻ đang khóa mới có thể mở.");
+    }
+    this.verifyCreditStepUp(userId, stepUp, card.cardId);
+    card.status = "ACTIVE";
+    card.updatedAt = nowIso(this.clock);
+    this.recordAudit("CREDIT_CARD_UNLOCKED", userId, card.cardId);
+    this.enqueueOutbox("CREDIT_CARD_UNLOCKED", card.cardId, card.updatedAt);
+    return this.getCard(userId, card.cardId).card;
+  }
+
+  createCreditPaymentQuote(
+    userId: string,
+    input: CreditPaymentQuoteRequest,
+  ): CreditPaymentQuote {
+    this.cleanupExpiredState();
+    this.assertCreditPaymentAvailable(userId);
+    this.ensureCreditForUser(userId, nowIso(this.clock));
+    this.processCreditStatements(userId);
+    const sourceAccountId = requireString(input.sourceAccountId, "sourceAccountId");
+    const creditAccountId = requireString(input.creditAccountId, "creditAccountId");
+    const statementId = requireString(input.statementId, "statementId");
+    const paymentOption = parseCreditPaymentOption(input.paymentOption);
+    const sourceAccount = this.core.getPaymentAccount(userId, sourceAccountId);
+    if (sourceAccount.status !== "ACTIVE") {
+      throw conflictWithCode("SOURCE_ACCOUNT_BLOCKED", "Tài khoản nguồn không hoạt động.");
+    }
+    const account = this.requireCreditAccount(userId, creditAccountId);
+    const statement = this.creditStatements.get(statementId);
+    if (!statement || statement.userId !== userId || statement.creditAccountId !== creditAccountId) {
+      throw conflictWithCode("STATEMENT_NOT_FOUND", "Không tìm thấy sao kê tín dụng.");
+    }
+    if (statement.remainingAmountDue.amountMinor === "0") {
+      throw conflictWithCode("STATEMENT_PAID", "Sao kê này đã được thanh toán đủ.");
+    }
+    const remainingMinor = BigInt(statement.remainingAmountDue.amountMinor);
+    let amountMinor: bigint;
+    if (paymentOption === "MINIMUM") {
+      amountMinor = BigInt(statement.minimumPaymentRemaining.amountMinor);
+    } else if (paymentOption === "FULL_STATEMENT") {
+      amountMinor = remainingMinor;
+    } else {
+      if (!input.amount) {
+        throw invalidRequest("amount is required for CUSTOM payment.", { amount: "amount is required." });
+      }
+      amountMinor = parseMoney(input.amount, "amount");
+    }
+    if (amountMinor <= 0n) {
+      throw conflictWithCode("PAYMENT_AMOUNT_INVALID", "Số tiền thanh toán phải lớn hơn 0.");
+    }
+    if (amountMinor > remainingMinor) {
+      throw conflictWithCode("OVERPAYMENT", "Không thể thanh toán vượt dư nợ sao kê.");
+    }
+    if (amountMinor > BigInt(this.policy.maxCreditPaymentAmountMinor)) {
+      throw conflictWithCode("PAYMENT_AMOUNT_INVALID", "Số tiền vượt giới hạn sandbox.");
+    }
+    const card = [...this.creditCards.values()].find(
+      (item) => item.userId === userId && item.creditAccountId === creditAccountId,
+    );
+    if (!card) {
+      throw notFound("Credit card not found.");
+    }
+    const now = nowIso(this.clock);
+    const quote: CreditPaymentQuote = {
+      quoteId: newCreditId(),
+      sourceAccountId,
+      sourceAccountMaskedNumber: sourceAccount.maskedNumber,
+      creditAccountId,
+      cardLastFour: card.lastFour,
+      statementId,
+      statementVersion: statement.version,
+      paymentOption,
+      amount: creditMoney(amountMinor),
+      fee: creditMoney(0n),
+      outstandingBefore: cloneMoney(account.postedOutstanding),
+      outstandingAfter: creditMoney(BigInt(account.postedOutstanding.amountMinor) - amountMinor),
+      minimumPaymentRemainingBefore: cloneMoney(statement.minimumPaymentRemaining),
+      minimumPaymentRemainingAfter: creditMoney(
+        BigInt(statement.minimumPaymentRemaining.amountMinor) - amountMinor > 0n
+          ? BigInt(statement.minimumPaymentRemaining.amountMinor) - amountMinor
+          : 0n,
+      ),
+      terms: "Đây là thanh toán tín dụng sandbox; không phải nghĩa vụ tín dụng thật.",
+      expiresAt: new Date(this.clock() + CREDIT_QUOTE_TTL_MS).toISOString(),
+    };
+    const requestFingerprint = fingerprint({
+      sourceAccountId,
+      creditAccountId,
+      statementId,
+      statementVersion: statement.version,
+      paymentOption,
+      amountMinor: amountMinor.toString(),
+      policyVersion: CREDIT_POLICY_VERSION,
+    });
+    this.creditQuotes.set(quote.quoteId, {
+      ...quote,
+      userId,
+      requestFingerprint,
+      consumedPaymentId: null,
+    });
+    this.recordAudit("CREDIT_PAYMENT_QUOTED", userId, quote.quoteId);
+    return cloneCreditQuote(quote);
+  }
+
+  submitCreditPayment(
+    userId: string,
+    idempotencyKey: string,
+    request: CreditPaymentRequest,
+  ): CreditPayment {
+    this.cleanupExpiredState();
+    this.assertCreditPaymentAvailable(userId);
+    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
+    const quoteId = requireString(request.quoteId, "quoteId");
+    const quote = this.creditQuotes.get(quoteId);
+    if (!quote || quote.userId !== userId) {
+      throw notFound("Credit payment quote not found.");
+    }
+    const existing = this.creditIdempotency.get(`${userId}:${normalizedKey}`);
+    if (existing) {
+      if (existing.fingerprint !== quote.requestFingerprint) {
+        throw conflictWithCode("IDEMPOTENCY_CONFLICT", "Idempotency-Key đã được dùng cho yêu cầu khác.");
+      }
+      const payment = this.creditPayments.get(existing.paymentId);
+      if (!payment) {
+        throw notFound("Credit payment not found.");
+      }
+      return this.getCreditPayment(userId, payment.paymentId);
+    }
+    if (Date.parse(quote.expiresAt) <= this.clock()) {
+      throw conflictWithCode("QUOTE_EXPIRED", "Báo giá thanh toán đã hết hạn.");
+    }
+    if (quote.consumedPaymentId) {
+      throw conflictWithCode("QUOTE_ALREADY_USED", "Báo giá thanh toán đã được sử dụng.");
+    }
+    const statement = this.creditStatements.get(quote.statementId);
+    if (!statement || statement.version !== quote.statementVersion) {
+      throw conflictWithCode("STATEMENT_CHANGED", "Sao kê đã thay đổi; hãy tạo báo giá mới.");
+    }
+    this.verifyCreditStepUp(userId, request.stepUp, quote.quoteId);
+    const card = [...this.creditCards.values()].find(
+      (item) => item.userId === userId && item.creditAccountId === quote.creditAccountId,
+    );
+    if (!card) {
+      throw notFound("Credit card not found.");
+    }
+    const sourceAccount = this.core.getPaymentAccount(userId, quote.sourceAccountId);
+    if (BigInt(sourceAccount.availableBalance.amountMinor) < BigInt(quote.amount.amountMinor)) {
+      throw conflictWithCode("INSUFFICIENT_FUNDS", "Tài khoản nguồn không đủ số dư khả dụng.");
+    }
+    const paymentId = newCreditId();
+    const coreReceipt = this.core.postCreditPayment(userId, {
+      paymentId,
+      creditAccountId: quote.creditAccountId,
+      accountId: quote.sourceAccountId,
+      amountMinor: BigInt(quote.amount.amountMinor),
+      description: `Thanh toán thẻ ${card.lastFour}`,
+      now: nowIso(this.clock),
+      settleImmediately: this.settleCreditPaymentsImmediately,
+    });
+    const payment: CreditPaymentRecord = {
+      paymentId,
+      statementId: quote.statementId,
+      sourceAccountId: quote.sourceAccountId,
+      amount: { ...coreReceipt.amount },
+      reference: coreReceipt.reference,
+      status: coreReceipt.status,
+      failureReason: null,
+      createdAt: coreReceipt.createdAt,
+      updatedAt: coreReceipt.updatedAt,
+      userId,
+      quoteId: quote.quoteId,
+      cardId: card.cardId,
+      creditAccountId: quote.creditAccountId,
+      refundApplied: false,
+      clearingApplied: coreReceipt.status === "SUCCEEDED",
+      creditApplied: false,
+    };
+    this.creditPayments.set(paymentId, payment);
+    this.creditIdempotency.set(`${userId}:${normalizedKey}`, {
+      userId,
+      fingerprint: quote.requestFingerprint,
+      paymentId,
+    });
+    quote.consumedPaymentId = paymentId;
+    const transaction: CreditTransactionRecord = {
+      transactionId: newCreditId(),
+      creditAccountId: quote.creditAccountId,
+      statementId: quote.statementId,
+      type: "PAYMENT",
+      status: payment.status === "SUCCEEDED" ? "POSTED" : "PENDING",
+      description: `Thanh toán thẻ ${card.lastFour}`,
+      merchantName: null,
+      amount: { ...payment.amount },
+      debtEffect: "DECREASE",
+      occurredAt: payment.createdAt,
+      postedAt: payment.status === "SUCCEEDED" ? payment.updatedAt : null,
+      userId,
+    };
+    this.creditTransactions.set(transaction.transactionId, transaction);
+    if (payment.status === "SUCCEEDED") {
+      this.applyCreditPaymentSuccess(payment, statement);
+    }
+    this.recordAudit("CREDIT_PAYMENT_SUBMITTED", userId, paymentId);
+    this.recordAudit(
+      payment.status === "PENDING" ? "CREDIT_PAYMENT_PENDING" : "CREDIT_PAYMENT_SUCCEEDED",
+      userId,
+      paymentId,
+    );
+    this.enqueueOutbox(
+      payment.status === "PENDING" ? "CREDIT_PAYMENT_PENDING" : "CREDIT_PAYMENT_SUCCEEDED",
+      paymentId,
+      payment.updatedAt,
+    );
+    this.notifications.get(userId)?.unshift({
+      id: createId("notification"),
+      type: "CREDIT",
+      title: payment.status === "PENDING" ? "Thanh toán thẻ đang xử lý" : "Thanh toán thẻ thành công",
+      body: payment.status === "PENDING"
+        ? `Thanh toán ${payment.reference} đang được xử lý.`
+        : `Thanh toán ${payment.reference} đã được ghi nhận.`,
+      resourceId: card.cardId,
+      resourceAccountId: quote.sourceAccountId,
+      read: false,
+      createdAt: payment.updatedAt,
+    });
+    return toPublicCreditPayment(payment);
+  }
+
+  getCreditPayment(userId: string, paymentId: string): CreditPayment {
+    const payment = this.creditPayments.get(paymentId);
+    if (!payment || payment.userId !== userId) {
+      throw notFound("Credit payment not found.");
+    }
+    if (payment.status === "PENDING") {
+      this.transitionCreditPayment(userId, paymentId, "SUCCEEDED");
+    }
+    return toPublicCreditPayment(this.creditPayments.get(paymentId)!);
+  }
+
+  failCreditPayment(userId: string, paymentId: string): CreditPayment {
+    return this.transitionCreditPayment(userId, paymentId, "FAILED");
+  }
+
+  reverseCreditPayment(userId: string, paymentId: string): CreditPayment {
+    return this.transitionCreditPayment(userId, paymentId, "REVERSED");
+  }
+
+  listSavingsProducts(userId: string): SavingsProduct[] {
+    this.assertSavingsAvailable(userId);
+    return this.savingsProducts
+      .filter((product) => product.status === "ACTIVE")
+      .map(cloneSavingsProduct);
+  }
+
+  createSavingsQuote(userId: string, input: SavingsQuoteRequest): SavingsQuote {
+    this.cleanupExpiredState();
+    this.assertSavingsAvailable(userId);
+
+    const sourceAccountId = requireString(input.sourceAccountId, "sourceAccountId");
+    const productId = requireString(input.productId, "productId");
+    const principalMinor = parseMoney(input.principal, "principal");
+    const maturityInstruction = parseSavingsInstruction(input.maturityInstruction);
+    const product = this.savingsProducts.find((item) => item.productId === productId);
+    if (!product || product.status !== "ACTIVE") {
+      throw notFound("Savings product not found.");
+    }
+
+    const maxAmountMinor = BigInt(
+      product.maxAmountMinor < this.policy.maxSavingsAmountMinor
+        ? product.maxAmountMinor
+        : this.policy.maxSavingsAmountMinor,
+    );
+    const minAmountMinor = BigInt(product.minAmountMinor);
+    if (principalMinor < minAmountMinor || principalMinor > maxAmountMinor) {
+      throw conflict("Savings principal is outside the sandbox limit.");
+    }
+
+    const account = this.core.getPaymentAccount(userId, sourceAccountId);
+    if (account.status !== "ACTIVE") {
+      throw conflict("The source account is not active.");
+    }
+
+    const openedAt = nowIso(this.clock);
+    const quote = buildSavingsQuote({
+      quoteId: createId("savings-quote"),
+      product,
+      sourceAccountId,
+      sourceAccountMaskedNumber: account.maskedNumber,
+      principalMinor,
+      openedAt,
+      maturityInstruction,
+      expiresAt: new Date(this.clock() + QUOTE_TTL_MS).toISOString(),
+    });
+    this.savingsQuotes.set(quote.quoteId, {
+      ...quote,
+      userId,
+      fingerprint: fingerprint({
+        quoteId: quote.quoteId,
+        sourceAccountId: quote.sourceAccountId,
+        productId: quote.productId,
+        termsVersion: quote.termsVersion,
+        principal: quote.principal,
+        termMonths: quote.termMonths,
+        maturityInstruction: quote.maturityInstruction,
+      }),
+      consumedOpeningId: null,
+    });
+    this.recordAudit("SAVINGS_QUOTED", userId, quote.quoteId);
+    return toPublicSavingsQuote(this.savingsQuotes.get(quote.quoteId)!);
+  }
+
+  submitSavingsOpening(
+    userId: string,
+    idempotencyKey: string,
+    request: SubmitSavingsOpeningRequest,
+  ): SavingsOpening {
+    this.cleanupExpiredState();
+    this.assertSavingsAvailable(userId);
+    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
+    const quoteId = requireString(request.quoteId, "quoteId");
+    const quoteRecord = this.savingsQuotes.get(quoteId);
+    if (!quoteRecord || quoteRecord.userId !== userId) {
+      throw notFound("Savings quote not found.");
+    }
+    const requestFingerprint = fingerprint({
+      quoteId: quoteRecord.quoteId,
+      sourceAccountId: quoteRecord.sourceAccountId,
+      productId: quoteRecord.productId,
+      termsVersion: quoteRecord.termsVersion,
+      principal: quoteRecord.principal,
+      termMonths: quoteRecord.termMonths,
+      maturityInstruction: quoteRecord.maturityInstruction,
+    });
+    const idempotencyMapKey = `${userId}:${normalizedKey}`;
+    const existing = this.savingsIdempotency.get(idempotencyMapKey);
+    if (existing) {
+      if (existing.fingerprint !== requestFingerprint) {
+        throw conflict("Idempotency key was reused with a different request.");
+      }
+      const existingOpening = this.savingsOpenings.get(existing.openingId);
+      if (!existingOpening) {
+        throw notFound("Savings opening not found.");
+      }
+      return toPublicSavingsOpening(existingOpening);
+    }
+
+    if (Date.parse(quoteRecord.expiresAt) <= this.clock()) {
+      throw conflict("Savings quote has expired.");
+    }
+    if (quoteRecord.consumedOpeningId) {
+      throw conflict("Savings quote has already been submitted.");
+    }
+
+    const stepUpRateKey = `savings-step-up:${userId}`;
+    this.assertSavingsStepUpAttemptAllowed(stepUpRateKey);
+    const stepUp = request.stepUp;
+    if (
+      !stepUp ||
+      (stepUp.method !== "OTP" && stepUp.method !== "BIOMETRIC") ||
+      typeof stepUp.proof !== "string" ||
+      !stepUp.proof.trim()
+    ) {
+      this.recordSavingsStepUpFailure(stepUpRateKey);
+      throw invalidRequest("stepUp proof is required.");
+    }
+    if (!this.policy.savingsStepUpMethods.includes(stepUp.method)) {
+      throw conflict("The requested step-up method is not enabled.");
+    }
+    if (
+      (stepUp.method === "OTP" && stepUp.proof !== this.sandboxOtp) ||
+      (stepUp.method === "BIOMETRIC" && stepUp.proof !== "sandbox-biometric")
+    ) {
+      this.recordSavingsStepUpFailure(stepUpRateKey);
+      this.recordAudit("STEP_UP_VERIFICATION_FAILED", userId, quoteRecord.quoteId);
+      throw unauthorized("Step-up verification failed.");
+    }
+    this.savingsStepUpAttemptWindows.delete(stepUpRateKey);
+    this.recordAudit("SAVINGS_STEP_UP_VERIFIED", userId, quoteRecord.quoteId);
+
+    const now = nowIso(this.clock);
+    const openingId = createId("savings-opening");
+    const depositId = createId("savings-deposit");
+    const coreReceipt = this.core.postSavingsOpening(userId, {
+      openingId,
+      depositId,
+      accountId: quoteRecord.sourceAccountId,
+      amountMinor: BigInt(quoteRecord.principal.amountMinor),
+      description: `Mở tiết kiệm ${quoteRecord.productName}`,
+      now,
+      settleImmediately: this.settleSavingsImmediately,
+    });
+    const opening: SavingsOpeningRecord = {
+      openingId,
+      quoteId: quoteRecord.quoteId,
+      depositId,
+      status: coreReceipt.status,
+      reference: coreReceipt.reference,
+      failureReason: null,
+      createdAt: coreReceipt.createdAt,
+      updatedAt: coreReceipt.updatedAt,
+      userId,
+      idempotencyKey: normalizedKey,
+    };
+    this.savingsOpenings.set(openingId, opening);
+    quoteRecord.consumedOpeningId = openingId;
+    this.savingsIdempotency.set(idempotencyMapKey, {
+      userId,
+      fingerprint: requestFingerprint,
+      openingId,
+    });
+
+    if (coreReceipt.status === "SUCCEEDED") {
+      this.createSavingsDepositFromOpening(quoteRecord, opening);
+    }
+    this.recordAudit("SAVINGS_OPENING_SUBMITTED", userId, openingId);
+    this.recordAudit(
+      coreReceipt.status === "PENDING"
+        ? "SAVINGS_OPENING_PENDING"
+        : "SAVINGS_OPENING_SUCCEEDED",
+      userId,
+      openingId,
+    );
+    this.enqueueOutbox(
+      coreReceipt.status === "PENDING"
+        ? "SAVINGS_OPENING_PENDING"
+        : "SAVINGS_OPENING_SUCCEEDED",
+      openingId,
+      coreReceipt.updatedAt,
+    );
+    this.notifications.get(userId)?.unshift({
+      id: createId("notification"),
+      type: "SAVINGS",
+      title:
+        coreReceipt.status === "PENDING"
+          ? "Mở tiết kiệm đang được xử lý"
+          : "Mở tiết kiệm thành công",
+      body:
+        coreReceipt.status === "PENDING"
+          ? `Yêu cầu ${coreReceipt.reference} đang được xử lý.`
+          : `Khoản tiết kiệm ${coreReceipt.reference} đã được ghi nhận.`,
+      resourceId: coreReceipt.status === "PENDING" ? null : depositId,
+      resourceAccountId: quoteRecord.sourceAccountId,
+      read: false,
+      createdAt: coreReceipt.updatedAt,
+    });
+    return toPublicSavingsOpening(opening);
+  }
+
+  getSavingsOpening(userId: string, openingId: string): SavingsOpening {
+    const opening = this.savingsOpenings.get(openingId);
+    if (!opening || opening.userId !== userId) {
+      throw notFound("Savings opening not found.");
+    }
+    if (opening.status === "PENDING") {
+      const receipt = this.core.settleSavingsOpening(
+        userId,
+        opening.openingId,
+        nowIso(this.clock),
+      );
+      opening.status = receipt.status;
+      opening.reference = receipt.reference;
+      opening.updatedAt = receipt.updatedAt;
+      if (receipt.status === "SUCCEEDED") {
+        const quote = this.savingsQuotes.get(opening.quoteId);
+        if (!quote) {
+          throw notFound("Savings quote not found.");
+        }
+        this.createSavingsDepositFromOpening(quote, opening);
+        this.recordAudit("SAVINGS_OPENING_SUCCEEDED", userId, opening.openingId);
+        this.enqueueOutbox("SAVINGS_OPENING_SUCCEEDED", opening.openingId, receipt.updatedAt);
+      }
+    }
+    return toPublicSavingsOpening(opening);
+  }
+
+  listSavingsDeposits(userId: string): SavingsListResult {
+    this.assertSavingsAvailable(userId);
+    this.processSavingsMaturities(userId);
+    const items = [...this.savingsDeposits.values()]
+      .filter((deposit) => deposit.userId === userId)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map(toPublicSavingsDeposit);
+    const totalPrincipal = items
+      .filter((deposit) => deposit.status === "ACTIVE")
+      .reduce((total, deposit) => total + BigInt(deposit.principal.amountMinor), 0n);
+    return cloneSavingsListResult({ items, totalPrincipal: toMoney(totalPrincipal) });
+  }
+
+  getSavingsDeposit(userId: string, depositId: string): SavingsDeposit {
+    this.assertSavingsAvailable(userId);
+    this.processSavingsMaturities(userId);
+    const deposit = this.savingsDeposits.get(depositId);
+    if (!deposit || deposit.userId !== userId) {
+      throw notFound("Savings deposit not found.");
+    }
+    return toPublicSavingsDeposit(deposit);
+  }
+
+  simulateSavingsMaturity(userId: string, depositId: string): SavingsDeposit {
+    const deposit = this.savingsDeposits.get(depositId);
+    if (!deposit || deposit.userId !== userId) {
+      throw notFound("Savings deposit not found.");
+    }
+    deposit.maturityAt = new Date(this.clock() - 1).toISOString();
+    this.processSavingsMaturities(userId);
+    return toPublicSavingsDeposit(this.savingsDeposits.get(depositId)!);
   }
 
   lookupBeneficiary(userId: string, beneficiaryId: string): Beneficiary {
@@ -1072,6 +2014,14 @@ export class BankingSystem {
         userId === undefined
           ? this.policy.allowlisted
           : this.isUserAllowlisted(userId),
+      savingsAllowlisted:
+        userId === undefined
+          ? this.policy.savingsAllowlisted
+          : this.isSavingsUserAllowlisted(userId),
+      creditAllowlisted:
+        userId === undefined
+          ? this.policy.creditAllowlisted
+          : this.policy.creditAllowlisted && this.allowlistPredicate(userId),
     };
   }
 
@@ -1087,11 +2037,14 @@ export class BankingSystem {
       const hasMismatch = reconciliation.some(
         (row) => row.differenceMinor !== "0",
       );
+      const hasCreditMismatch = this.reconcileCredit().some(
+        (row) => row.differenceMinor !== "0",
+      );
       const reconciliationStatus = hasMismatch ? "mismatch" : "ok";
       return {
-        status: hasMismatch || outboxStatus === "degraded" ? "degraded" : "ok",
+        status: hasMismatch || hasCreditMismatch || outboxStatus === "degraded" ? "degraded" : "ok",
         checkedAt: nowIso(this.clock),
-        reconciliation: reconciliationStatus,
+        reconciliation: hasMismatch || hasCreditMismatch ? "mismatch" : reconciliationStatus,
         outbox: outboxStatus,
         pendingOutboxEvents,
       };
@@ -1134,6 +2087,586 @@ export class BankingSystem {
     return ready.map((event) => ({ ...event }));
   }
 
+  private createSavingsDepositFromOpening(
+    quote: SavingsQuoteRecord,
+    opening: SavingsOpeningRecord,
+  ): SavingsDepositRecord {
+    const existing = this.savingsDeposits.get(opening.depositId ?? "");
+    if (existing) {
+      return existing;
+    }
+    if (!opening.depositId) {
+      throw invalidRequest("Savings opening is missing a deposit identifier.");
+    }
+    const deposit: SavingsDepositRecord = {
+      depositId: opening.depositId,
+      productId: quote.productId,
+      productName: quote.productName,
+      termsVersion: quote.termsVersion,
+      termMonths: quote.termMonths,
+      principal: { ...quote.principal },
+      annualRateBasisPoints: quote.annualRateBasisPoints,
+      expectedInterest: { ...quote.expectedInterest },
+      totalAtMaturity: { ...quote.totalAtMaturity },
+      openedAt: quote.openedAt,
+      maturityAt: quote.maturityAt,
+      maturityInstruction: quote.maturityInstruction,
+      sourceAccountMaskedNumber: quote.sourceAccountMaskedNumber,
+      status: "ACTIVE",
+      reference: opening.reference ?? `SAV-${opening.openingId.slice(-12).toUpperCase()}`,
+      updatedAt: opening.updatedAt,
+      renewedDepositId: null,
+      userId: opening.userId,
+      sourceAccountId: quote.sourceAccountId,
+      openingId: opening.openingId,
+    };
+    this.savingsDeposits.set(deposit.depositId, deposit);
+    return deposit;
+  }
+
+  private processSavingsMaturities(userId: string): void {
+    const now = this.clock();
+    const dueDeposits = [...this.savingsDeposits.values()].filter(
+      (deposit) =>
+        deposit.userId === userId &&
+        deposit.status === "ACTIVE" &&
+        Date.parse(deposit.maturityAt) <= now,
+    );
+    for (const deposit of dueDeposits) {
+      const principalMinor = BigInt(deposit.principal.amountMinor);
+      const interestMinor = BigInt(deposit.expectedInterest.amountMinor);
+      const renews = deposit.maturityInstruction !== "RETURN_PRINCIPAL_AND_INTEREST";
+      const newDepositId = renews ? createId("savings-deposit") : undefined;
+      const newPrincipalMinor = renews
+        ? deposit.maturityInstruction === "RENEW_PRINCIPAL"
+          ? principalMinor
+          : principalMinor + interestMinor
+        : 0n;
+      const creditToPaymentMinor =
+        deposit.maturityInstruction === "RETURN_PRINCIPAL_AND_INTEREST"
+          ? principalMinor + interestMinor
+          : deposit.maturityInstruction === "RENEW_PRINCIPAL"
+            ? interestMinor
+            : 0n;
+      const maturityInput: CoreSavingsMaturityInput = {
+        depositId: deposit.depositId,
+        newDepositId,
+        accountId: deposit.sourceAccountId,
+        principalMinor,
+        interestMinor,
+        creditToPaymentMinor,
+        newSavingsPrincipalMinor: newPrincipalMinor,
+        now: nowIso(this.clock),
+        description: "Tất toán tiền gửi tiết kiệm sandbox",
+      };
+      const receipt = this.core.postSavingsMaturity(userId, maturityInput);
+
+      deposit.status = renews ? "CLOSED" : "MATURED";
+      deposit.renewedDepositId = newDepositId ?? null;
+      deposit.updatedAt = receipt.occurredAt;
+      if (newDepositId) {
+        const openedAt = deposit.maturityAt;
+        const maturityAt = addMonthsClamped(openedAt, deposit.termMonths);
+        const interestDays = calculateActualDays(openedAt, maturityAt);
+        const renewedInterestMinor = calculateSavingsInterest(
+          newPrincipalMinor,
+          deposit.annualRateBasisPoints,
+          interestDays,
+        );
+        this.savingsDeposits.set(newDepositId, {
+          ...deposit,
+          depositId: newDepositId,
+          principal: toMoney(newPrincipalMinor),
+          expectedInterest: toMoney(renewedInterestMinor),
+          totalAtMaturity: toMoney(newPrincipalMinor + renewedInterestMinor),
+          openedAt,
+          maturityAt,
+          status: "ACTIVE",
+          reference: `SAV-${newDepositId.slice(-12).toUpperCase()}`,
+          updatedAt: receipt.occurredAt,
+          renewedDepositId: null,
+          openingId: deposit.openingId,
+        });
+      }
+
+      this.recordAudit("SAVINGS_MATURED", userId, deposit.depositId);
+      this.enqueueOutbox("SAVINGS_MATURED", deposit.depositId, receipt.occurredAt);
+      this.notifications.get(userId)?.unshift({
+        id: createId("notification"),
+        type: "SAVINGS",
+        title: renews ? "Tiền gửi đã được tái tục" : "Tiền gửi đã đáo hạn",
+        body: renews
+          ? `Khoản ${deposit.reference} đã được tái tục theo chỉ thị đã chọn.`
+          : `Khoản ${deposit.reference} đã chuyển tiền về tài khoản thanh toán.`,
+        resourceId: newDepositId ?? deposit.depositId,
+        resourceAccountId: deposit.sourceAccountId,
+        read: false,
+        createdAt: receipt.occurredAt,
+      });
+    }
+  }
+
+  private assertCreditVisible(userId: string): void {
+    if (
+      this.policy.globalKillSwitch ||
+      !this.policy.creditEnabled ||
+      !this.policy.creditAllowlisted ||
+      !this.allowlistPredicate(userId)
+    ) {
+      throw conflictWithCode("CREDIT_DISABLED", "Tính năng tín dụng sandbox đang tạm dừng.");
+    }
+  }
+
+  private assertCreditPaymentAvailable(userId: string): void {
+    this.assertCreditVisible(userId);
+    if (!this.policy.creditPaymentsEnabled) {
+      throw conflictWithCode("CREDIT_DISABLED", "Thanh toán tín dụng sandbox đang tạm dừng.");
+    }
+  }
+
+  private assertCardControlsAvailable(userId: string): void {
+    this.assertCreditVisible(userId);
+    if (!this.policy.cardControlsEnabled) {
+      throw conflictWithCode("CARD_CONTROLS_DISABLED", "Quản lý trạng thái thẻ đang tạm dừng.");
+    }
+  }
+
+  private requireCard(userId: string, cardId: string): CreditCardRecord {
+    const card = this.creditCards.get(requireString(cardId, "cardId"));
+    if (!card || card.userId !== userId) {
+      throw notFound("Credit card not found.");
+    }
+    return card;
+  }
+
+  private requireCreditAccount(userId: string, creditAccountId: string): CreditAccountRecord {
+    const account = this.creditAccounts.get(requireString(creditAccountId, "creditAccountId"));
+    if (!account || account.userId !== userId) {
+      throw conflictWithCode("CREDIT_ACCOUNT_NOT_FOUND", "Không tìm thấy tài khoản tín dụng.");
+    }
+    return account;
+  }
+
+  private findLatestCreditStatement(creditAccountId: string): CreditStatementRecord | null {
+    return (
+      [...this.creditStatements.values()]
+        .filter((statement) => statement.creditAccountId === creditAccountId)
+        .sort((left, right) => right.issuedAt.localeCompare(left.issuedAt))[0] ?? null
+    );
+  }
+
+  private ensureCreditForUser(userId: string, now: string): void {
+    const existing = [...this.creditAccounts.values()].some((account) => account.userId === userId);
+    if (existing) {
+      return;
+    }
+    const creditAccountId = newCreditId();
+    const cardId = newCreditId();
+    const statementId = newCreditId();
+    const transactionId = newCreditId();
+    const creditLimitMinor = BigInt(DEFAULT_CREDIT_LIMIT_MINOR);
+    const openingOutstandingMinor = BigInt(DEFAULT_POSTED_OUTSTANDING_MINOR);
+    const cycleStartAt = addCreditMonthsClamped(now, -1);
+    const dueAt = addCreditDays(now, CREDIT_STATEMENT_DUE_DAYS);
+    const account: CreditAccountRecord = {
+      creditAccountId,
+      customerId: userId,
+      currency: "VND",
+      creditLimit: creditMoney(creditLimitMinor),
+      postedOutstanding: creditMoney(openingOutstandingMinor),
+      pendingAuthorizations: creditMoney(0n),
+      availableCredit: creditMoney(
+        calculateAvailableCredit(creditLimitMinor, openingOutstandingMinor, 0n),
+      ),
+      nextStatementAt: nextCreditStatementCloseAt(now),
+      status: "ACTIVE",
+      version: 1,
+      updatedAt: now,
+      userId,
+    };
+    const card: CreditCardRecord = {
+      cardId,
+      creditAccountId,
+      displayName: "Thẻ tín dụng sandbox",
+      brand: "VISA",
+      maskedNumber: `•••• ${DEFAULT_CARD_LAST_FOUR}`,
+      lastFour: DEFAULT_CARD_LAST_FOUR,
+      expiryMonth: 12,
+      expiryYear: 30,
+      status: "ACTIVE",
+      updatedAt: now,
+      userId,
+    };
+    const transaction: CreditTransactionRecord = {
+      transactionId,
+      creditAccountId,
+      statementId,
+      type: "PURCHASE",
+      status: "POSTED",
+      description: "Dư nợ seed tín dụng sandbox",
+      merchantName: "Merchant sandbox",
+      amount: creditMoney(openingOutstandingMinor),
+      debtEffect: "INCREASE",
+      occurredAt: addCreditDays(now, -5),
+      postedAt: addCreditDays(now, -5),
+      userId,
+    };
+    const statement: CreditStatementRecord = {
+      statementId,
+      creditAccountId,
+      cycleStartAt,
+      cycleEndAt: now,
+      issuedAt: now,
+      dueAt,
+      openingBalance: creditMoney(0n),
+      purchaseTotal: creditMoney(openingOutstandingMinor),
+      refundTotal: creditMoney(0n),
+      feeTotal: creditMoney(0n),
+      interestTotal: creditMoney(0n),
+      closingBalance: creditMoney(openingOutstandingMinor),
+      remainingAmountDue: creditMoney(openingOutstandingMinor),
+      minimumPaymentDue: creditMoney(calculateMinimumPayment(openingOutstandingMinor)),
+      minimumPaymentRemaining: creditMoney(calculateMinimumPayment(openingOutstandingMinor)),
+      paidAmount: creditMoney(0n),
+      status: "ISSUED",
+      version: 1,
+      items: [cloneCreditTransaction(transaction)],
+      payments: [],
+      userId,
+    };
+    this.core.seedCreditPurchase(creditAccountId, openingOutstandingMinor, now);
+    this.creditAccounts.set(creditAccountId, account);
+    this.creditCards.set(cardId, card);
+    this.creditTransactions.set(transactionId, transaction);
+    this.creditStatements.set(statementId, statement);
+    this.creditSeedPurchases.set(creditAccountId, {
+      userId,
+      creditAccountId,
+      transactionId,
+    });
+    this.recordAudit("CREDIT_ACCOUNT_SEEDED", userId, creditAccountId);
+  }
+
+  private refreshCreditStatementStatus(statement: CreditStatementRecord): void {
+    const nextStatus = getStatementStatus(
+      BigInt(statement.remainingAmountDue.amountMinor),
+      BigInt(statement.paidAmount.amountMinor),
+      statement.dueAt,
+      this.clock(),
+    );
+    if (nextStatus === statement.status) {
+      return;
+    }
+    const previousStatus = statement.status;
+    statement.status = nextStatus;
+    statement.version += 1;
+    if (nextStatus === "OVERDUE" && previousStatus !== "OVERDUE") {
+      const card = [...this.creditCards.values()].find(
+        (item) => item.creditAccountId === statement.creditAccountId && item.userId === statement.userId,
+      );
+      if (card) {
+        const occurredAt = nowIso(this.clock);
+        this.notifications.get(statement.userId)?.unshift({
+          id: createId("notification"),
+          type: "CREDIT",
+          title: "Sao kê thẻ đã quá hạn",
+          body: `Sao kê ${statement.statementId.slice(-8)} còn nghĩa vụ thanh toán trong sandbox.`,
+          resourceId: card.cardId,
+          resourceAccountId: null,
+          read: false,
+          createdAt: occurredAt,
+        });
+        this.enqueueOutbox("CREDIT_STATEMENT_OVERDUE", statement.statementId, occurredAt);
+      }
+    }
+  }
+
+  private processCreditStatements(userId: string): void {
+    this.ensureCreditForUser(userId, nowIso(this.clock));
+    const now = this.clock();
+    for (const account of [...this.creditAccounts.values()].filter((item) => item.userId === userId)) {
+      for (let iteration = 0; iteration < 24 && Date.parse(account.nextStatementAt) <= now; iteration += 1) {
+        const cycleEndAt = account.nextStatementAt;
+        const previous = this.findLatestCreditStatement(account.creditAccountId);
+        const cycleStartAt = previous?.cycleEndAt ?? addCreditMonthsClamped(cycleEndAt, -1);
+        const items = [...this.creditTransactions.values()].filter(
+          (transaction) =>
+            transaction.userId === userId &&
+            transaction.creditAccountId === account.creditAccountId &&
+            transaction.statementId === null &&
+            transaction.status === "POSTED" &&
+            transaction.postedAt !== null &&
+            Date.parse(transaction.postedAt) > Date.parse(cycleStartAt) &&
+            Date.parse(transaction.postedAt) <= Date.parse(cycleEndAt),
+        );
+        const purchaseTotal = items
+          .filter((item) => item.type === "PURCHASE" || item.debtEffect === "INCREASE")
+          .reduce((total, item) => total + BigInt(item.amount.amountMinor), 0n);
+        const refundTotal = items
+          .filter((item) => item.type === "REFUND" || item.debtEffect === "DECREASE")
+          .reduce((total, item) => total + BigInt(item.amount.amountMinor), 0n);
+        const feeTotal = items
+          .filter((item) => item.type === "FEE")
+          .reduce((total, item) => total + BigInt(item.amount.amountMinor), 0n);
+        const interestTotal = items
+          .filter((item) => item.type === "INTEREST")
+          .reduce((total, item) => total + BigInt(item.amount.amountMinor), 0n);
+        const openingBalance = previous
+          ? BigInt(previous.remainingAmountDue.amountMinor)
+          : BigInt(account.postedOutstanding.amountMinor);
+        const calculatedClosingBalance = openingBalance + purchaseTotal + feeTotal + interestTotal - refundTotal;
+        const closingBalance = calculatedClosingBalance > 0n ? calculatedClosingBalance : 0n;
+        const statement: CreditStatementRecord = {
+          statementId: newCreditId(),
+          creditAccountId: account.creditAccountId,
+          cycleStartAt,
+          cycleEndAt,
+          issuedAt: cycleEndAt,
+          dueAt: addCreditDays(cycleEndAt, CREDIT_STATEMENT_DUE_DAYS),
+          openingBalance: creditMoney(openingBalance),
+          purchaseTotal: creditMoney(purchaseTotal),
+          refundTotal: creditMoney(refundTotal),
+          feeTotal: creditMoney(feeTotal),
+          interestTotal: creditMoney(interestTotal),
+          closingBalance: creditMoney(closingBalance),
+          remainingAmountDue: creditMoney(closingBalance),
+          minimumPaymentDue: creditMoney(calculateMinimumPayment(closingBalance)),
+          minimumPaymentRemaining: creditMoney(calculateMinimumPayment(closingBalance)),
+          paidAmount: creditMoney(0n),
+          status: closingBalance > 0n ? "ISSUED" : "PAID",
+          version: 1,
+          items: items.map((item) => {
+            item.statementId = statement.statementId;
+            return cloneCreditTransaction(item);
+          }),
+          payments: [],
+          userId,
+        };
+        this.creditStatements.set(statement.statementId, statement);
+        account.nextStatementAt = nextCreditStatementCloseAt(cycleEndAt);
+        account.version += 1;
+        account.updatedAt = cycleEndAt;
+        const card = [...this.creditCards.values()].find(
+          (item) => item.userId === userId && item.creditAccountId === account.creditAccountId,
+        );
+        if (card) {
+          const occurredAt = cycleEndAt;
+          this.notifications.get(userId)?.unshift({
+            id: createId("notification"),
+            type: "CREDIT",
+            title: "Sao kê thẻ tín dụng đã phát hành",
+            body: `Sao kê ${statement.statementId.slice(-8)} đã sẵn sàng trong sandbox.`,
+            resourceId: card.cardId,
+            resourceAccountId: null,
+            read: false,
+            createdAt: occurredAt,
+          });
+          this.enqueueOutbox("CREDIT_STATEMENT_ISSUED", statement.statementId, occurredAt);
+        }
+      }
+    }
+    for (const statement of [...this.creditStatements.values()].filter((item) => item.userId === userId)) {
+      this.refreshCreditStatementStatus(statement);
+    }
+  }
+
+  private applyCreditPaymentSuccess(
+    payment: CreditPaymentRecord,
+    statement: CreditStatementRecord,
+  ): void {
+    if (payment.creditApplied) {
+      return;
+    }
+    const account = this.requireCreditAccount(payment.userId, statement.creditAccountId);
+    const amountMinor = BigInt(payment.amount.amountMinor);
+    const currentOutstanding = BigInt(account.postedOutstanding.amountMinor);
+    account.postedOutstanding = creditMoney(currentOutstanding - amountMinor);
+    account.availableCredit = creditMoney(
+      calculateAvailableCredit(
+        BigInt(account.creditLimit.amountMinor),
+        currentOutstanding - amountMinor,
+        BigInt(account.pendingAuthorizations.amountMinor),
+      ),
+    );
+    account.version += 1;
+    account.updatedAt = payment.updatedAt;
+    const remaining = BigInt(statement.remainingAmountDue.amountMinor) - amountMinor;
+    const minimumRemaining = BigInt(statement.minimumPaymentRemaining.amountMinor) - amountMinor;
+    statement.remainingAmountDue = creditMoney(remaining > 0n ? remaining : 0n);
+    statement.minimumPaymentRemaining = creditMoney(minimumRemaining > 0n ? minimumRemaining : 0n);
+    statement.paidAmount = creditMoney(BigInt(statement.paidAmount.amountMinor) + amountMinor);
+    statement.version += 1;
+    statement.status = getStatementStatus(
+      BigInt(statement.remainingAmountDue.amountMinor),
+      BigInt(statement.paidAmount.amountMinor),
+      statement.dueAt,
+      this.clock(),
+    );
+    const paymentIndex = statement.payments.findIndex((item) => item.paymentId === payment.paymentId);
+    const publicPayment = toPublicCreditPayment(payment);
+    if (paymentIndex >= 0) statement.payments[paymentIndex] = publicPayment;
+    else statement.payments.push(publicPayment);
+    const paymentTransaction = [...this.creditTransactions.values()].find(
+      (item) => item.paymentId === payment.paymentId,
+    );
+    if (paymentTransaction) {
+      paymentTransaction.status = "POSTED";
+      paymentTransaction.postedAt = payment.updatedAt;
+    }
+    payment.creditApplied = true;
+  }
+
+  private applyCreditPaymentReversal(payment: CreditPaymentRecord): void {
+    if (!payment.creditApplied) {
+      return;
+    }
+    const account = this.requireCreditAccount(payment.userId, payment.creditAccountId);
+    const amountMinor = BigInt(payment.amount.amountMinor);
+    const currentOutstanding = BigInt(account.postedOutstanding.amountMinor);
+    account.postedOutstanding = creditMoney(currentOutstanding + amountMinor);
+    account.availableCredit = creditMoney(
+      calculateAvailableCredit(
+        BigInt(account.creditLimit.amountMinor),
+        currentOutstanding + amountMinor,
+        BigInt(account.pendingAuthorizations.amountMinor),
+      ),
+    );
+    account.version += 1;
+    account.updatedAt = payment.updatedAt;
+    const statement = this.creditStatements.get(payment.statementId);
+    if (statement) {
+      statement.remainingAmountDue = creditMoney(BigInt(statement.remainingAmountDue.amountMinor) + amountMinor);
+      const paidAfterReversal = BigInt(statement.paidAmount.amountMinor) - amountMinor;
+      statement.paidAmount = creditMoney(paidAfterReversal > 0n ? paidAfterReversal : 0n);
+      const minimumRemaining = BigInt(statement.minimumPaymentRemaining.amountMinor) + amountMinor;
+      statement.minimumPaymentRemaining = creditMoney(
+        minimumRemaining < BigInt(statement.minimumPaymentDue.amountMinor)
+          ? minimumRemaining
+          : BigInt(statement.minimumPaymentDue.amountMinor),
+      );
+      statement.version += 1;
+      statement.status = getStatementStatus(
+        BigInt(statement.remainingAmountDue.amountMinor),
+        BigInt(statement.paidAmount.amountMinor),
+        statement.dueAt,
+        this.clock(),
+      );
+      statement.payments = statement.payments.filter((item) => item.paymentId !== payment.paymentId);
+    }
+    payment.creditApplied = false;
+  }
+
+  private transitionCreditPayment(
+    userId: string,
+    paymentId: string,
+    status: Exclude<CreditPayment["status"], "PENDING">,
+  ): CreditPayment {
+    const payment = this.creditPayments.get(paymentId);
+    if (!payment || payment.userId !== userId) {
+      throw notFound("Credit payment not found.");
+    }
+    const isReversal = payment.status === "SUCCEEDED" && status === "REVERSED";
+    if (payment.status !== "PENDING" && !isReversal) {
+      if (payment.status === status) return toPublicCreditPayment(payment);
+      throw conflictWithCode("PAYMENT_STATE_INVALID", "Thanh toán tín dụng đã ở trạng thái kết thúc.");
+    }
+    const receipt = isReversal
+      ? this.core.transitionCreditPayment(userId, paymentId, "REVERSED", nowIso(this.clock))
+      : status === "SUCCEEDED"
+        ? this.core.settleCreditPayment(userId, paymentId, nowIso(this.clock))
+        : this.core.transitionCreditPayment(userId, paymentId, status, nowIso(this.clock));
+    payment.status = receipt.status;
+    payment.updatedAt = receipt.updatedAt;
+    payment.failureReason = receipt.status === "FAILED" ? "SANDBOX_SETTLEMENT_FAILED" : null;
+    const statement = this.creditStatements.get(payment.statementId);
+    if (!statement) {
+      throw notFound("Credit statement not found.");
+    }
+    if (receipt.status === "SUCCEEDED") {
+      this.applyCreditPaymentSuccess(payment, statement);
+    } else if (receipt.status === "REVERSED") {
+      this.applyCreditPaymentReversal(payment);
+    }
+    const paymentTransaction = [...this.creditTransactions.values()].find(
+      (item) => item.paymentId === payment.paymentId,
+    );
+    if (paymentTransaction) {
+      paymentTransaction.status =
+        receipt.status === "SUCCEEDED"
+          ? "POSTED"
+          : receipt.status === "FAILED"
+            ? "DECLINED"
+            : "REVERSED";
+      paymentTransaction.postedAt = receipt.status === "SUCCEEDED" ? receipt.updatedAt : paymentTransaction.postedAt;
+    }
+    this.recordAudit(`CREDIT_PAYMENT_${receipt.status}`, userId, paymentId);
+    this.enqueueOutbox(`CREDIT_PAYMENT_${receipt.status}`, paymentId, receipt.updatedAt);
+    return toPublicCreditPayment(payment);
+  }
+
+  private verifyCreditStepUp(
+    userId: string,
+    stepUp: { method: StepUpMethod; proof: string } | undefined,
+    resourceId: string,
+  ): void {
+    const key = `credit-step-up:${userId}`;
+    const current = this.creditStepUpAttemptWindows.get(key);
+    if (current && this.clock() - current.startedAt < AUTH_RATE_LIMIT_WINDOW_MS && current.attempts >= TRANSFER_STEP_UP_RATE_LIMIT_MAX_ATTEMPTS) {
+      throw rateLimited("Too many credit payment step-up attempts.");
+    }
+    if (current && this.clock() - current.startedAt >= AUTH_RATE_LIMIT_WINDOW_MS) {
+      this.creditStepUpAttemptWindows.delete(key);
+    }
+    if (
+      !stepUp ||
+      (stepUp.method !== "OTP" && stepUp.method !== "BIOMETRIC") ||
+      typeof stepUp.proof !== "string" ||
+      !stepUp.proof.trim()
+    ) {
+      this.recordCreditStepUpFailure(key);
+      throw invalidRequest("stepUp proof is required.");
+    }
+    if (!this.policy.creditPaymentStepUpMethods.includes(stepUp.method)) {
+      throw conflictWithCode("STEP_UP_INVALID", "Phương thức xác thực bước hai không được bật.");
+    }
+    if (
+      (stepUp.method === "OTP" && stepUp.proof !== this.sandboxOtp) ||
+      (stepUp.method === "BIOMETRIC" && stepUp.proof !== "sandbox-biometric")
+    ) {
+      this.recordCreditStepUpFailure(key);
+      this.recordAudit("CREDIT_STEP_UP_VERIFICATION_FAILED", userId, resourceId);
+      throw unauthorized("Step-up verification failed.");
+    }
+    this.creditStepUpAttemptWindows.delete(key);
+    this.recordAudit("CREDIT_STEP_UP_VERIFIED", userId, resourceId);
+  }
+
+  private recordCreditStepUpFailure(key: string): void {
+    const current = this.creditStepUpAttemptWindows.get(key);
+    if (!current || this.clock() - current.startedAt >= AUTH_RATE_LIMIT_WINDOW_MS) {
+      this.creditStepUpAttemptWindows.set(key, { startedAt: this.clock(), attempts: 1 });
+      return;
+    }
+    current.attempts += 1;
+    if (current.attempts >= TRANSFER_STEP_UP_RATE_LIMIT_MAX_ATTEMPTS) {
+      throw rateLimited("Too many credit payment step-up attempts.");
+    }
+  }
+
+  private assertSavingsAvailable(userId: string): void {
+    if (
+      this.policy.globalKillSwitch ||
+      !this.policy.savingsEnabled ||
+      !this.isSavingsUserAllowlisted(userId)
+    ) {
+      throw conflict("Savings sandbox is temporarily unavailable.");
+    }
+  }
+
+  private isSavingsUserAllowlisted(userId: string): boolean {
+    return this.policy.savingsAllowlisted && this.allowlistPredicate(userId);
+  }
+
   markOutboxPublished(eventId: string): OutboxEvent {
     const event = this.outboxEventStore.find((item) => item.id === eventId);
     if (!event) {
@@ -1157,6 +2690,8 @@ export class BankingSystem {
       authAttemptWindows: [...this.authAttemptWindows.entries()].map(([key, window]) => [key, { ...window }]),
       registrationAttemptWindows: [...this.registrationAttemptWindows.entries()].map(([key, window]) => [key, { ...window }]),
       transferStepUpAttemptWindows: [...this.transferStepUpAttemptWindows.entries()].map(([key, window]) => [key, { ...window }]),
+      savingsStepUpAttemptWindows: [...this.savingsStepUpAttemptWindows.entries()].map(([key, window]) => [key, { ...window }]),
+      creditStepUpAttemptWindows: [...this.creditStepUpAttemptWindows.entries()].map(([key, window]) => [key, { ...window }]),
       refreshSessions: [...this.refreshSessions.entries()].map(([hash, session]) => [hash, { ...session }]),
       refreshFamilies: [...this.refreshFamilies.entries()].map(([familyId, tokenHashes]) => [familyId, [...tokenHashes]]),
       beneficiaries: [...this.beneficiaries.entries()].map(([userId, items]) => [
@@ -1179,6 +2714,45 @@ export class BankingSystem {
         key,
         { ...record, receipt: cloneReceipt(record.receipt) },
       ]),
+      savingsQuotes: [...this.savingsQuotes.entries()].map(([quoteId, record]) => [
+        quoteId,
+        cloneSavingsQuote(record),
+      ]),
+      savingsOpenings: [...this.savingsOpenings.entries()].map(([openingId, record]) => [
+        openingId,
+        cloneSavingsOpeningRecord(record),
+      ]),
+      savingsDeposits: [...this.savingsDeposits.entries()].map(([depositId, record]) => [
+        depositId,
+        cloneSavingsDeposit(record),
+      ]),
+      savingsIdempotency: [...this.savingsIdempotency.entries()].map(([key, record]) => [
+        key,
+        { ...record },
+      ]),
+      creditCards: [...this.creditCards.entries()].map(([cardId, record]) => [cardId, { ...record }]),
+      creditAccounts: [...this.creditAccounts.entries()].map(([accountId, record]) => [
+        accountId,
+        { ...record, ...cloneCreditAccount(record) },
+      ]),
+      creditTransactions: [...this.creditTransactions.entries()].map(([transactionId, record]) => [
+        transactionId,
+        { ...record, ...cloneCreditTransaction(record) },
+      ]),
+      creditStatements: [...this.creditStatements.entries()].map(([statementId, record]) => [
+        statementId,
+        { ...record, ...cloneCreditStatement(record) },
+      ]),
+      creditQuotes: [...this.creditQuotes.entries()].map(([quoteId, record]) => [
+        quoteId,
+        { ...record, ...cloneCreditQuote(record) },
+      ]),
+      creditPayments: [...this.creditPayments.entries()].map(([paymentId, record]) => [
+        paymentId,
+        { ...record, ...cloneCreditPayment(record) },
+      ]),
+      creditIdempotency: [...this.creditIdempotency.entries()].map(([key, record]) => [key, { ...record }]),
+      creditSeedPurchases: [...this.creditSeedPurchases.entries()].map(([key, record]) => [key, { ...record }]),
       auditEventStore: this.auditEventStore.map((event) => ({ ...event })),
       outboxEventStore: this.outboxEventStore.map((event) => ({ ...event })),
     };
@@ -1217,6 +2791,14 @@ export class BankingSystem {
     this.transferStepUpAttemptWindows.clear();
     for (const [key, window] of state.transferStepUpAttemptWindows) {
       this.transferStepUpAttemptWindows.set(key, { ...window });
+    }
+    this.savingsStepUpAttemptWindows.clear();
+    for (const [key, window] of state.savingsStepUpAttemptWindows ?? []) {
+      this.savingsStepUpAttemptWindows.set(key, { ...window });
+    }
+    this.creditStepUpAttemptWindows.clear();
+    for (const [key, window] of state.creditStepUpAttemptWindows ?? []) {
+      this.creditStepUpAttemptWindows.set(key, { ...window });
     }
     this.refreshSessions.clear();
     for (const [hash, session] of state.refreshSessions) {
@@ -1257,6 +2839,54 @@ export class BankingSystem {
         ...record,
         receipt: cloneReceipt(record.receipt),
       });
+    }
+    this.savingsQuotes.clear();
+    for (const [quoteId, record] of state.savingsQuotes ?? []) {
+      this.savingsQuotes.set(quoteId, cloneSavingsQuote(record));
+    }
+    this.savingsOpenings.clear();
+    for (const [openingId, record] of state.savingsOpenings ?? []) {
+      this.savingsOpenings.set(openingId, cloneSavingsOpeningRecord(record));
+    }
+    this.savingsDeposits.clear();
+    for (const [depositId, record] of state.savingsDeposits ?? []) {
+      this.savingsDeposits.set(depositId, cloneSavingsDeposit(record));
+    }
+    this.savingsIdempotency.clear();
+    for (const [key, record] of state.savingsIdempotency ?? []) {
+      this.savingsIdempotency.set(key, { ...record });
+    }
+    this.creditCards.clear();
+    for (const [cardId, record] of state.creditCards ?? []) {
+      this.creditCards.set(cardId, { ...record });
+    }
+    this.creditAccounts.clear();
+    for (const [accountId, record] of state.creditAccounts ?? []) {
+      this.creditAccounts.set(accountId, { ...record, ...cloneCreditAccount(record) });
+    }
+    this.creditTransactions.clear();
+    for (const [transactionId, record] of state.creditTransactions ?? []) {
+      this.creditTransactions.set(transactionId, { ...record, ...cloneCreditTransaction(record) });
+    }
+    this.creditStatements.clear();
+    for (const [statementId, record] of state.creditStatements ?? []) {
+      this.creditStatements.set(statementId, { ...record, ...cloneCreditStatement(record) });
+    }
+    this.creditQuotes.clear();
+    for (const [quoteId, record] of state.creditQuotes ?? []) {
+      this.creditQuotes.set(quoteId, { ...record, ...cloneCreditQuote(record) });
+    }
+    this.creditPayments.clear();
+    for (const [paymentId, record] of state.creditPayments ?? []) {
+      this.creditPayments.set(paymentId, { ...record, ...cloneCreditPayment(record) });
+    }
+    this.creditIdempotency.clear();
+    for (const [key, record] of state.creditIdempotency ?? []) {
+      this.creditIdempotency.set(key, { ...record });
+    }
+    this.creditSeedPurchases.clear();
+    for (const [key, record] of state.creditSeedPurchases ?? []) {
+      this.creditSeedPurchases.set(key, { ...record });
     }
     this.auditEventStore.length = 0;
     this.auditEventStore.push(...state.auditEventStore.map((event) => ({ ...event })));
@@ -1319,6 +2949,28 @@ export class BankingSystem {
       }
     }
     return rows;
+  }
+
+  reconcileCredit(): Array<{
+    creditAccountId: string;
+    storedOutstandingMinor: string;
+    expectedOutstandingMinor: string;
+    differenceMinor: string;
+  }> {
+    return [...this.creditAccounts.values()].map((account) => {
+      const stored = BigInt(account.postedOutstanding.amountMinor);
+      const expected = -this.core.getLedgerNetBalance(`credit-receivable:${account.creditAccountId}`);
+      const difference = stored - expected;
+      if (difference !== 0n) {
+        this.recordAudit("CREDIT_RECONCILIATION_MISMATCH", null, account.creditAccountId);
+      }
+      return {
+        creditAccountId: account.creditAccountId,
+        storedOutstandingMinor: stored.toString(),
+        expectedOutstandingMinor: expected.toString(),
+        differenceMinor: difference.toString(),
+      };
+    });
   }
 
   private issueTokenPair(
@@ -1418,6 +3070,11 @@ export class BankingSystem {
         this.transferStepUpAttemptWindows.delete(key);
       }
     }
+    for (const [key, window] of this.savingsStepUpAttemptWindows) {
+      if (now - window.startedAt >= AUTH_RATE_LIMIT_WINDOW_MS) {
+        this.savingsStepUpAttemptWindows.delete(key);
+      }
+    }
   }
 
   private normalizeDeviceId(deviceId: string | undefined): string {
@@ -1487,6 +3144,35 @@ export class BankingSystem {
 
     if (window.attempts >= TRANSFER_STEP_UP_RATE_LIMIT_MAX_ATTEMPTS) {
       throw rateLimited("Too many transfer step-up attempts.");
+    }
+  }
+
+  private assertSavingsStepUpAttemptAllowed(key: string): void {
+    const window = this.savingsStepUpAttemptWindows.get(key);
+    if (!window) {
+      return;
+    }
+    if (this.clock() - window.startedAt >= AUTH_RATE_LIMIT_WINDOW_MS) {
+      this.savingsStepUpAttemptWindows.delete(key);
+      return;
+    }
+    if (window.attempts >= TRANSFER_STEP_UP_RATE_LIMIT_MAX_ATTEMPTS) {
+      throw rateLimited("Too many savings step-up attempts.");
+    }
+  }
+
+  private recordSavingsStepUpFailure(key: string): void {
+    const current = this.savingsStepUpAttemptWindows.get(key);
+    if (!current || this.clock() - current.startedAt >= AUTH_RATE_LIMIT_WINDOW_MS) {
+      this.savingsStepUpAttemptWindows.set(key, {
+        startedAt: this.clock(),
+        attempts: 1,
+      });
+      return;
+    }
+    current.attempts += 1;
+    if (current.attempts >= TRANSFER_STEP_UP_RATE_LIMIT_MAX_ATTEMPTS) {
+      throw rateLimited("Too many savings step-up attempts.");
     }
   }
 

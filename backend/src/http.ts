@@ -196,6 +196,14 @@ function isAuthenticatedRoute(
     method === "GET" &&
     segments.length === 3 &&
     segments[0] === "accounts" &&
+    segments[2] === "number"
+  ) {
+    return true;
+  }
+  if (
+    method === "GET" &&
+    segments.length === 3 &&
+    segments[0] === "accounts" &&
     segments[2] === "transactions"
   ) {
     return true;
@@ -222,7 +230,72 @@ function isAuthenticatedRoute(
   if (method === "POST" && segments.length === 1 && segments[0] === "transfers") {
     return true;
   }
-  return method === "GET" && segments.length === 2 && segments[0] === "transfers";
+  if (method === "GET" && segments.length === 2 && segments[0] === "transfers") {
+    return true;
+  }
+  if (method === "GET" && segments.length === 2 && segments[0] === "savings" && segments[1] === "products") {
+    return true;
+  }
+  if (method === "GET" && segments.length === 1 && segments[0] === "cards") {
+    return true;
+  }
+  if (method === "GET" && segments.length === 2 && segments[0] === "cards") {
+    return true;
+  }
+  if (
+    method === "POST" &&
+    segments.length === 3 &&
+    segments[0] === "cards" &&
+    (segments[2] === "lock" || segments[2] === "unlock")
+  ) {
+    return true;
+  }
+  if (method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "accounts") {
+    return true;
+  }
+  if (method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "accounts") {
+    return true;
+  }
+  if (
+    method === "GET" &&
+    segments.length === 4 &&
+    segments[0] === "credit" &&
+    segments[1] === "accounts" &&
+    (segments[3] === "transactions" || segments[3] === "statements")
+  ) {
+    return true;
+  }
+  if (
+    method === "GET" &&
+    segments.length === 5 &&
+    segments[0] === "credit" &&
+    segments[1] === "accounts" &&
+    segments[3] === "statements"
+  ) {
+    return true;
+  }
+  if (method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "payment-quotes") {
+    return true;
+  }
+  if (method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "payments") {
+    return true;
+  }
+  if (method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "payments") {
+    return true;
+  }
+  if (method === "POST" && segments.length === 2 && segments[0] === "savings" && segments[1] === "quotes") {
+    return true;
+  }
+  if (method === "POST" && segments.length === 2 && segments[0] === "savings" && segments[1] === "deposits") {
+    return true;
+  }
+  if (method === "GET" && segments.length === 2 && segments[0] === "savings" && segments[1] === "deposits") {
+    return true;
+  }
+  if (method === "GET" && segments.length === 3 && segments[0] === "savings" && segments[1] === "openings") {
+    return true;
+  }
+  return method === "GET" && segments.length === 3 && segments[0] === "savings" && segments[1] === "deposits";
 }
 
 export async function handleRequest(
@@ -416,6 +489,142 @@ export async function handleRequest(
       return;
     }
 
+    if (request.method === "GET" && segments.length === 1 && segments[0] === "cards") {
+      writeResponse(response, 200, traceId, { items: system.listCards(userId) });
+      return;
+    }
+
+    if (request.method === "GET" && segments.length === 2 && segments[0] === "cards") {
+      writeResponse(response, 200, traceId, system.getCard(userId, segments[1]));
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 3 &&
+      segments[0] === "cards" &&
+      segments[2] === "lock"
+    ) {
+      writeResponse(response, 200, traceId, { card: system.lockCard(userId, segments[1]) });
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 3 &&
+      segments[0] === "cards" &&
+      segments[2] === "unlock"
+    ) {
+      const data = requireObject(body);
+      writeResponse(response, 200, traceId, {
+        card: system.unlockCard(userId, segments[1], data.stepUp as never),
+      });
+      return;
+    }
+
+    if (request.method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "accounts") {
+      writeResponse(response, 200, traceId, { items: system.listCreditAccounts(userId) });
+      return;
+    }
+
+    if (request.method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "accounts") {
+      writeResponse(response, 200, traceId, system.getCreditAccount(userId, segments[2]));
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 4 &&
+      segments[0] === "credit" &&
+      segments[1] === "accounts" &&
+      segments[3] === "transactions"
+    ) {
+      const limitValue = requestUrl.searchParams.get("limit");
+      const limit = limitValue === null ? undefined : Number(limitValue);
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.listCreditTransactions(
+          userId,
+          segments[2],
+          requestUrl.searchParams.get("cursor") ?? undefined,
+          limit,
+        ),
+      );
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 4 &&
+      segments[0] === "credit" &&
+      segments[1] === "accounts" &&
+      segments[3] === "statements"
+    ) {
+      const limitValue = requestUrl.searchParams.get("limit");
+      const limit = limitValue === null ? undefined : Number(limitValue);
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.listCreditStatements(
+          userId,
+          segments[2],
+          requestUrl.searchParams.get("cursor") ?? undefined,
+          limit,
+        ),
+      );
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 5 &&
+      segments[0] === "credit" &&
+      segments[1] === "accounts" &&
+      segments[3] === "statements"
+    ) {
+      writeResponse(response, 200, traceId, {
+        statement: system.getCreditStatement(userId, segments[2], segments[4]),
+      });
+      return;
+    }
+
+    if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "payment-quotes") {
+      const data = requireObject(body);
+      writeResponse(response, 200, traceId, system.createCreditPaymentQuote(userId, data as never));
+      return;
+    }
+
+    if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "payments") {
+      const data = requireObject(body);
+      const payment = system.submitCreditPayment(
+        userId,
+        header(request, "idempotency-key") ?? "",
+        data as never,
+      );
+      writeResponse(response, payment.status === "PENDING" ? 202 : 200, traceId, payment);
+      return;
+    }
+
+    if (request.method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "payments") {
+      writeResponse(response, 200, traceId, system.getCreditPayment(userId, segments[2]));
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 3 &&
+      segments[0] === "accounts" &&
+      segments[2] === "number"
+    ) {
+      writeResponse(response, 200, traceId, {
+        accountNumber: system.getAccountNumber(userId, segments[1]),
+      });
+      return;
+    }
+
     if (
       request.method === "GET" &&
       segments.length === 3 &&
@@ -446,6 +655,75 @@ export async function handleRequest(
         traceId,
         system.getTransaction(userId, segments[1], segments[3]),
       );
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 2 &&
+      segments[0] === "savings" &&
+      segments[1] === "products"
+    ) {
+      writeResponse(response, 200, traceId, {
+        items: system.listSavingsProducts(userId),
+      });
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "savings" &&
+      segments[1] === "quotes"
+    ) {
+      const data = requireObject(body);
+      writeResponse(response, 200, traceId, system.createSavingsQuote(userId, data as never));
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "savings" &&
+      segments[1] === "deposits"
+    ) {
+      const data = requireObject(body);
+      const opening = system.submitSavingsOpening(
+        userId,
+        header(request, "idempotency-key") ?? "",
+        data as never,
+      );
+      writeResponse(response, opening.status === "PENDING" ? 202 : 200, traceId, opening);
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 3 &&
+      segments[0] === "savings" &&
+      segments[1] === "openings"
+    ) {
+      writeResponse(response, 200, traceId, system.getSavingsOpening(userId, segments[2]));
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 2 &&
+      segments[0] === "savings" &&
+      segments[1] === "deposits"
+    ) {
+      writeResponse(response, 200, traceId, system.listSavingsDeposits(userId));
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 3 &&
+      segments[0] === "savings" &&
+      segments[1] === "deposits"
+    ) {
+      writeResponse(response, 200, traceId, system.getSavingsDeposit(userId, segments[2]));
       return;
     }
 

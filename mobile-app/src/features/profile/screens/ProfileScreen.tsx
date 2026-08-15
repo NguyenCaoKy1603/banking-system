@@ -1,4 +1,6 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useState } from "react";
+import { useRouter } from "expo-router";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
@@ -6,25 +8,101 @@ import { useAuth } from "@/features/auth/context/AuthContext";
 import { colors, spacing } from "@/theme";
 
 export function ProfileScreen() {
-  const { endDemoSession } = useAuth();
+  const router = useRouter();
+  const { logout, logoutAll, session } = useAuth();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | undefined>();
+
+  async function handleLogout() {
+    setIsLoggingOut(true);
+    setLogoutError(undefined);
+
+    try {
+      await logout();
+    } catch {
+      setLogoutError("Không thể xóa phiên trên thiết bị. Vui lòng thử lại.");
+    } finally {
+      setIsLoggingOut(false);
+    }
+  }
+
+  async function handleLogoutAll() {
+    setIsLoggingOut(true);
+    setLogoutError(undefined);
+
+    try {
+      await logoutAll();
+    } catch {
+      setLogoutError("Không thể xóa các phiên trên thiết bị. Vui lòng thử lại.");
+    } finally {
+      setIsLoggingOut(false);
+    }
+  }
 
   return (
     <Screen style={styles.screen}>
-      <View style={styles.content}>
+      <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <Text style={styles.eyebrow}>HỒ SƠ</Text>
           <Text style={styles.title}>Thông tin cá nhân</Text>
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.emptyState}>Chưa có dữ liệu hồ sơ</Text>
-          <Text style={styles.description}>
-            Thông tin người dùng sẽ được lấy từ Backend sau khi API được kết nối.
-          </Text>
+          <Text style={styles.name}>{session?.user.fullName ?? "Người dùng"}</Text>
+          <Text style={styles.email}>{session?.user.email ?? ""}</Text>
+          <Text style={styles.description}>Phiên đăng nhập được lưu bảo mật trên thiết bị.</Text>
         </View>
 
-        <PrimaryButton label="Kết thúc phiên demo" onPress={endDemoSession} />
-      </View>
+        {logoutError ? (
+          <Text accessibilityLiveRegion="polite" style={styles.error}>
+            {logoutError}
+          </Text>
+        ) : null}
+
+        <PrimaryButton
+          label="Thông báo giao dịch"
+          onPress={() => router.push("/notifications")}
+          testID="profile-notifications"
+        />
+
+        <PrimaryButton
+          label="Hồ sơ định danh eKYC mô phỏng"
+          onPress={() => router.push("/kyc")}
+          testID="profile-kyc"
+        />
+
+        <PrimaryButton
+          label="Mã QR nhận tiền"
+          onPress={() => router.push("/qr")}
+          testID="profile-qr"
+        />
+
+        <PrimaryButton
+          label="Danh bạ người nhận"
+          onPress={() => router.push("/beneficiaries")}
+          testID="profile-beneficiaries"
+        />
+
+        <PrimaryButton
+          label="Thẻ của tôi"
+          onPress={() => router.push("/cards")}
+          testID="profile-cards"
+        />
+
+        <PrimaryButton
+          disabled={isLoggingOut}
+          label={isLoggingOut ? "Đang đăng xuất..." : "Đăng xuất"}
+          onPress={handleLogout}
+          testID="logout-current-device"
+        />
+
+        <PrimaryButton
+          disabled={isLoggingOut}
+          label="Đăng xuất mọi thiết bị"
+          onPress={handleLogoutAll}
+          testID="logout-all-devices"
+        />
+      </ScrollView>
     </Screen>
   );
 }
@@ -34,11 +112,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   content: {
-    flex: 1,
     width: "100%",
     maxWidth: 720,
     padding: spacing.lg,
     gap: spacing.xl,
+    alignSelf: "center",
   },
   header: {
     gap: spacing.xs,
@@ -55,7 +133,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   card: {
-    flex: 1,
     minHeight: 180,
     justifyContent: "center",
     gap: spacing.sm,
@@ -65,14 +142,23 @@ const styles = StyleSheet.create({
     borderRadius: spacing.md,
     backgroundColor: colors.surface,
   },
-  emptyState: {
+  name: {
     color: colors.text,
     fontSize: 20,
-    fontWeight: "600",
+    fontWeight: "700",
+  },
+  email: {
+    color: colors.muted,
+    fontSize: 15,
   },
   description: {
     color: colors.muted,
     fontSize: 15,
     lineHeight: 22,
+  },
+  error: {
+    color: colors.danger,
+    fontSize: 14,
+    lineHeight: 20,
   },
 });

@@ -1,0 +1,110 @@
+name: Mobile app quality
+
+on:
+  push:
+    paths:
+      - "mobile-app/**"
+      - "backend/**"
+      - "documents/**"
+      - ".github/workflows/mobile-app-quality.yml"
+  pull_request:
+    paths:
+      - "mobile-app/**"
+      - "backend/**"
+      - "documents/**"
+      - ".github/workflows/mobile-app-quality.yml"
+
+defaults:
+  run:
+    working-directory: mobile-app
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Dependency security audit (release gate)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Validate OpenAPI contract
+        run: npm run validate:openapi
+
+      - name: Validate native E2E flow definitions
+        run: npm run validate:e2e
+
+      - name: Validate release configuration
+        run: npm run validate:release
+
+      - name: Generate Expo Router types
+        run: npm run generate:routes
+
+      - name: Validate Expo native configuration
+        run: npx expo config --type public > expo-config.json
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test -- --runInBand
+
+      - name: Coverage threshold
+        run: npm run test:coverage -- --runInBand
+
+      - name: Web export smoke test
+        env:
+          EXPO_PUBLIC_API_URL: https://ci.example.invalid/api/v1
+        run: npm run export:web
+
+  backend-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate database boundary schema
+        run: npm run validate:database
+
+      - name: Dependency security audit (release gate)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build backend artifact
+        run: npm run build
+
+      - name: Unit and HTTP contract tests
+        run: npm test
+
+      - name: Critical API integration flow
+        run: npm run test:critical

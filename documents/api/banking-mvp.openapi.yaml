@@ -16,6 +16,8 @@ tags:
   - name: Fraud
   - name: Accounts
   - name: Transfers
+  - name: Savings
+  - name: Credit
 security:
   - bearerAuth: []
 paths:
@@ -231,6 +233,23 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/ServerError'
+  /accounts/{accountId}/number:
+    get:
+      tags: [Accounts]
+      operationId: revealAccountNumber
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Full payment account number for the authenticated account owner.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountNumberResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /accounts/{accountId}/transactions:
     get:
       tags: [Accounts]
@@ -441,6 +460,362 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /savings/products:
+    get:
+      tags: [Savings]
+      operationId: listSavingsProducts
+      responses:
+        '200':
+          description: Active VND fixed-term savings products in the sandbox.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SavingsProduct' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /savings/quotes:
+    post:
+      tags: [Savings]
+      operationId: quoteSavings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavingsQuoteRequest'
+      responses:
+        '200':
+          description: Server-calculated immutable rate and maturity snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavingsQuote'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /savings/deposits:
+    get:
+      tags: [Savings]
+      operationId: listSavingsDeposits
+      responses:
+        '200':
+          description: Savings deposits and backend-calculated active principal total.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavingsDepositsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Savings]
+      operationId: submitSavingsOpening
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitSavingsOpeningRequest'
+      responses:
+        '200':
+          description: Savings opening completed synchronously.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavingsOpening'
+        '202':
+          description: Savings opening accepted for asynchronous processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavingsOpening'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /savings/openings/{openingId}:
+    get:
+      tags: [Savings]
+      operationId: getSavingsOpening
+      parameters:
+        - $ref: '#/components/parameters/SavingsOpeningId'
+      responses:
+        '200':
+          description: Latest savings opening status for resume after timeout or restart.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavingsOpening'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /savings/deposits/{depositId}:
+    get:
+      tags: [Savings]
+      operationId: getSavingsDeposit
+      parameters:
+        - $ref: '#/components/parameters/SavingsDepositId'
+      responses:
+        '200':
+          description: Savings deposit detail with server rate and maturity snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavingsDeposit'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /cards:
+    get:
+      tags: [Credit]
+      operationId: listCreditCards
+      responses:
+        '200':
+          description: Seeded credit card instruments with server-calculated credit summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditCardsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /cards/{cardId}:
+    get:
+      tags: [Credit]
+      operationId: getCreditCard
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      responses:
+        '200':
+          description: Credit card, account and latest statement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditCardDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /cards/{cardId}/lock:
+    post:
+      tags: [Credit]
+      operationId: lockCreditCard
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      responses:
+        '200':
+          description: Card locked without payment capability.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditCardResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /cards/{cardId}/unlock:
+    post:
+      tags: [Credit]
+      operationId: unlockCreditCard
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreditStepUpRequest'
+      responses:
+        '200':
+          description: Card unlocked after sandbox step-up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditCardResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /credit/accounts:
+    get:
+      tags: [Credit]
+      operationId: listCreditAccounts
+      responses:
+        '200':
+          description: Credit accounts owned by the authenticated customer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditAccountsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /credit/accounts/{creditAccountId}:
+    get:
+      tags: [Credit]
+      operationId: getCreditAccount
+      parameters:
+        - $ref: '#/components/parameters/CreditAccountId'
+      responses:
+        '200':
+          description: Credit account snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditAccount'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /credit/accounts/{creditAccountId}/transactions:
+    get:
+      tags: [Credit]
+      operationId: listCreditTransactions
+      parameters:
+        - $ref: '#/components/parameters/CreditAccountId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Cursor-paginated credit transactions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditTransactionsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /credit/accounts/{creditAccountId}/statements:
+    get:
+      tags: [Credit]
+      operationId: listCreditStatements
+      parameters:
+        - $ref: '#/components/parameters/CreditAccountId'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Cursor-paginated immutable statement snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditStatementsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /credit/accounts/{creditAccountId}/statements/{statementId}:
+    get:
+      tags: [Credit]
+      operationId: getCreditStatement
+      parameters:
+        - $ref: '#/components/parameters/CreditAccountId'
+        - $ref: '#/components/parameters/StatementId'
+      responses:
+        '200':
+          description: Statement detail with transaction and payment snapshots.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditStatementResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /credit/payment-quotes:
+    post:
+      tags: [Credit]
+      operationId: createCreditPaymentQuote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreditPaymentQuoteRequest'
+      responses:
+        '200':
+          description: Server-calculated credit payment quote.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditPaymentQuote'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /credit/payments:
+    post:
+      tags: [Credit]
+      operationId: submitCreditPayment
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 16
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreditPaymentRequest'
+      responses:
+        '200':
+          description: Credit payment completed synchronously.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditPayment'
+        '202':
+          description: Credit payment accepted for asynchronous processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditPayment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /credit/payments/{paymentId}:
+    get:
+      tags: [Credit]
+      operationId: getCreditPayment
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: Credit payment status/receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditPayment'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -482,6 +857,69 @@ components:
       schema:
         type: string
         minLength: 1
+    SavingsOpeningId:
+      name: openingId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    SavingsDepositId:
+      name: depositId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    CardId:
+      name: cardId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CreditAccountId:
+      name: creditAccountId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    StatementId:
+      name: statementId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    PaymentId:
+      name: paymentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
     DeviceId:
       name: X-Device-ID
       in: header
@@ -623,7 +1061,7 @@ components:
         refreshToken: { type: string, minLength: 1, writeOnly: true }
     ControlPolicy:
       type: object
-      required: [configVersion, globalKillSwitch, transfersEnabled, allowlisted, maxTransferAmountMinor, stepUpMethods, updatedAt]
+      required: [configVersion, globalKillSwitch, transfersEnabled, allowlisted, maxTransferAmountMinor, stepUpMethods, savingsEnabled, savingsAllowlisted, maxSavingsAmountMinor, savingsStepUpMethods, creditEnabled, creditAllowlisted, creditPaymentsEnabled, cardControlsEnabled, maxCreditPaymentAmountMinor, creditPaymentStepUpMethods, updatedAt]
       properties:
         configVersion: { type: string }
         globalKillSwitch: { type: boolean }
@@ -634,13 +1072,29 @@ components:
           type: array
           minItems: 1
           items: { type: string, enum: [OTP, BIOMETRIC] }
+        savingsEnabled: { type: boolean }
+        savingsAllowlisted: { type: boolean }
+        maxSavingsAmountMinor: { type: string, pattern: '^(0|[1-9][0-9]*)$' }
+        savingsStepUpMethods:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [OTP, BIOMETRIC] }
+        creditEnabled: { type: boolean }
+        creditAllowlisted: { type: boolean }
+        creditPaymentsEnabled: { type: boolean }
+        cardControlsEnabled: { type: boolean }
+        maxCreditPaymentAmountMinor: { type: string, pattern: '^(0|[1-9][0-9]*)$' }
+        creditPaymentStepUpMethods:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [OTP, BIOMETRIC] }
         updatedAt: { type: string, format: date-time }
     Notification:
       type: object
       required: [id, type, title, body, resourceId, resourceAccountId, read, createdAt]
       properties:
         id: { type: string }
-        type: { type: string, enum: [TRANSFER, SECURITY] }
+        type: { type: string, enum: [TRANSFER, SAVINGS, CREDIT, SECURITY] }
         title: { type: string }
         body: { type: string }
         resourceId:
@@ -721,11 +1175,12 @@ components:
         displayName: { type: string, minLength: 2, maxLength: 80 }
     PaymentAccount:
       type: object
-      required: [id, displayName, maskedNumber, currency, availableBalance, currentBalance, status, updatedAt]
+      required: [id, displayName, maskedNumber, bankName, currency, availableBalance, currentBalance, status, updatedAt]
       properties:
         id: { type: string }
         displayName: { type: string }
         maskedNumber: { type: string }
+        bankName: { type: string, minLength: 1, maxLength: 120 }
         currency: { type: string, enum: [VND] }
         availableBalance: { $ref: '#/components/schemas/Money' }
         currentBalance: { $ref: '#/components/schemas/Money' }
@@ -738,6 +1193,14 @@ components:
         accounts:
           type: array
           items: { $ref: '#/components/schemas/PaymentAccount' }
+    AccountNumberResponse:
+      type: object
+      required: [accountNumber]
+      properties:
+        accountNumber:
+          type: string
+          pattern: '^\d{6,34}$'
+          example: '970400000001'
     Transaction:
       type: object
       required: [id, accountId, direction, amount, fee, status, description, counterpartyName, occurredAt]
@@ -828,3 +1291,346 @@ components:
         fee: { $ref: '#/components/schemas/Money' }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+    SavingsProduct:
+      type: object
+      required: [productId, name, termMonths, annualRateBasisPoints, currency, minAmountMinor, maxAmountMinor, status, termsVersion]
+      properties:
+        productId: { type: string }
+        name: { type: string }
+        termMonths: { type: integer, enum: [1, 3, 6, 12] }
+        annualRateBasisPoints: { type: integer, minimum: 0 }
+        currency: { type: string, enum: [VND] }
+        minAmountMinor: { type: string, pattern: '^(0|[1-9][0-9]*)$' }
+        maxAmountMinor: { type: string, pattern: '^(0|[1-9][0-9]*)$' }
+        status: { type: string, enum: [ACTIVE, INACTIVE] }
+        termsVersion: { type: string }
+    SavingsQuoteRequest:
+      type: object
+      required: [sourceAccountId, productId, principal, maturityInstruction]
+      example:
+        sourceAccountId: account-example
+        productId: savings-vnd-3m
+        principal:
+          currency: VND
+          amountMinor: '1000000'
+        maturityInstruction: RETURN_PRINCIPAL_AND_INTEREST
+      properties:
+        sourceAccountId: { type: string, minLength: 1 }
+        productId: { type: string, minLength: 1 }
+        principal: { $ref: '#/components/schemas/Money' }
+        maturityInstruction:
+          type: string
+          enum: [RETURN_PRINCIPAL_AND_INTEREST, RENEW_PRINCIPAL, RENEW_PRINCIPAL_AND_INTEREST]
+    SavingsQuote:
+      type: object
+      required: [quoteId, productId, productName, termsVersion, termMonths, sourceAccountId, sourceAccountMaskedNumber, principal, annualRateBasisPoints, interestDays, expectedInterest, totalAtMaturity, openedAt, maturityAt, maturityInstruction, expiresAt]
+      properties:
+        quoteId: { type: string }
+        productId: { type: string }
+        productName: { type: string }
+        termsVersion: { type: string }
+        termMonths: { type: integer, enum: [1, 3, 6, 12] }
+        sourceAccountId: { type: string }
+        sourceAccountMaskedNumber: { type: string }
+        principal: { $ref: '#/components/schemas/Money' }
+        annualRateBasisPoints: { type: integer, minimum: 0 }
+        interestDays: { type: integer, minimum: 1 }
+        expectedInterest: { $ref: '#/components/schemas/Money' }
+        totalAtMaturity: { $ref: '#/components/schemas/Money' }
+        openedAt: { type: string, format: date-time }
+        maturityAt: { type: string, format: date-time }
+        maturityInstruction:
+          type: string
+          enum: [RETURN_PRINCIPAL_AND_INTEREST, RENEW_PRINCIPAL, RENEW_PRINCIPAL_AND_INTEREST]
+        expiresAt: { type: string, format: date-time }
+    SubmitSavingsOpeningRequest:
+      type: object
+      required: [quoteId, stepUp]
+      example:
+        quoteId: savings-quote-example
+        stepUp:
+          method: OTP
+          proof: <provided-by-test-factor>
+      properties:
+        quoteId: { type: string, minLength: 1 }
+        stepUp:
+          type: object
+          required: [method, proof]
+          properties:
+            method: { type: string, enum: [OTP, BIOMETRIC] }
+            proof: { type: string, minLength: 1, writeOnly: true }
+    SavingsOpening:
+      type: object
+      required: [openingId, quoteId, depositId, status, reference, failureReason, createdAt, updatedAt]
+      properties:
+        openingId: { type: string }
+        quoteId: { type: string }
+        depositId:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        status: { type: string, enum: [PENDING, SUCCEEDED, FAILED, REVERSED] }
+        reference:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        failureReason:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    SavingsDeposit:
+      type: object
+      required: [depositId, productId, productName, termsVersion, termMonths, principal, annualRateBasisPoints, expectedInterest, totalAtMaturity, openedAt, maturityAt, maturityInstruction, sourceAccountMaskedNumber, status, reference, updatedAt, renewedDepositId]
+      properties:
+        depositId: { type: string }
+        productId: { type: string }
+        productName: { type: string }
+        termsVersion: { type: string }
+        termMonths: { type: integer, enum: [1, 3, 6, 12] }
+        principal: { $ref: '#/components/schemas/Money' }
+        annualRateBasisPoints: { type: integer, minimum: 0 }
+        expectedInterest: { $ref: '#/components/schemas/Money' }
+        totalAtMaturity: { $ref: '#/components/schemas/Money' }
+        openedAt: { type: string, format: date-time }
+        maturityAt: { type: string, format: date-time }
+        maturityInstruction:
+          type: string
+          enum: [RETURN_PRINCIPAL_AND_INTEREST, RENEW_PRINCIPAL, RENEW_PRINCIPAL_AND_INTEREST]
+        sourceAccountMaskedNumber: { type: string }
+        status: { type: string, enum: [ACTIVE, MATURED, CLOSED] }
+        reference: { type: string }
+        updatedAt: { type: string, format: date-time }
+        renewedDepositId:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+    SavingsDepositsResponse:
+      type: object
+      required: [items, totalPrincipal]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SavingsDeposit' }
+        totalPrincipal: { $ref: '#/components/schemas/Money' }
+    CreditStepUpRequest:
+      type: object
+      required: [method, proof]
+      example:
+        method: OTP
+        proof: <provided-by-test-factor>
+      properties:
+        method: { type: string, enum: [OTP, BIOMETRIC] }
+        proof: { type: string, minLength: 1, writeOnly: true }
+    CreditCard:
+      type: object
+      required: [cardId, creditAccountId, displayName, brand, maskedNumber, lastFour, expiryMonth, expiryYear, status, updatedAt, creditLimit, availableCredit, postedOutstanding, pendingAuthorizations, nextDueAt, remainingAmountDue, minimumPaymentRemaining, sandbox]
+      properties:
+        cardId: { type: string, format: uuid }
+        creditAccountId: { type: string, format: uuid }
+        displayName: { type: string }
+        brand: { type: string, enum: [VISA, MASTERCARD] }
+        maskedNumber: { type: string }
+        lastFour: { type: string, pattern: '^\d{4}$' }
+        expiryMonth: { type: integer, minimum: 1, maximum: 12 }
+        expiryYear: { type: integer, minimum: 0 }
+        status: { type: string, enum: [ACTIVE, LOCKED, BLOCKED, EXPIRED, CLOSED] }
+        updatedAt: { type: string, format: date-time }
+        creditLimit: { $ref: '#/components/schemas/Money' }
+        availableCredit: { $ref: '#/components/schemas/Money' }
+        postedOutstanding: { $ref: '#/components/schemas/Money' }
+        pendingAuthorizations: { $ref: '#/components/schemas/Money' }
+        nextDueAt:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: 'null' }
+        remainingAmountDue: { $ref: '#/components/schemas/Money' }
+        minimumPaymentRemaining: { $ref: '#/components/schemas/Money' }
+        sandbox: { type: boolean, const: true }
+    CreditCardResponse:
+      type: object
+      required: [card]
+      properties:
+        card: { $ref: '#/components/schemas/CreditCard' }
+    CreditCardDetailResponse:
+      type: object
+      required: [card, creditAccount, latestStatement]
+      properties:
+        card: { $ref: '#/components/schemas/CreditCard' }
+        creditAccount: { $ref: '#/components/schemas/CreditAccount' }
+        latestStatement:
+          oneOf:
+            - { $ref: '#/components/schemas/CreditStatement' }
+            - { type: 'null' }
+    CreditCardsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CreditCard' }
+    CreditAccount:
+      type: object
+      required: [creditAccountId, currency, creditLimit, postedOutstanding, pendingAuthorizations, availableCredit, nextStatementAt, status, version, updatedAt]
+      properties:
+        creditAccountId: { type: string, format: uuid }
+        currency: { type: string, enum: [VND] }
+        creditLimit: { $ref: '#/components/schemas/Money' }
+        postedOutstanding: { $ref: '#/components/schemas/Money' }
+        pendingAuthorizations: { $ref: '#/components/schemas/Money' }
+        availableCredit: { $ref: '#/components/schemas/Money' }
+        nextStatementAt: { type: string, format: date-time }
+        status: { type: string, enum: [ACTIVE, FROZEN, CLOSED] }
+        version: { type: integer, minimum: 0 }
+        updatedAt: { type: string, format: date-time }
+    CreditAccountsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CreditAccount' }
+    CreditTransaction:
+      type: object
+      required: [transactionId, creditAccountId, statementId, type, status, description, merchantName, amount, debtEffect, occurredAt, postedAt]
+      properties:
+        transactionId: { type: string, format: uuid }
+        creditAccountId: { type: string, format: uuid }
+        statementId:
+          oneOf:
+            - { type: string, format: uuid }
+            - { type: 'null' }
+        type: { type: string, enum: [PURCHASE, REFUND, PAYMENT, FEE, INTEREST, ADJUSTMENT] }
+        status: { type: string, enum: [PENDING, POSTED, REVERSED, DECLINED] }
+        description: { type: string }
+        merchantName:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        amount: { $ref: '#/components/schemas/Money' }
+        debtEffect: { type: string, enum: [INCREASE, DECREASE, NONE] }
+        occurredAt: { type: string, format: date-time }
+        postedAt:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: 'null' }
+    CreditTransactionsResponse:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CreditTransaction' }
+        nextCursor:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+    CreditPayment:
+      type: object
+      required: [paymentId, statementId, sourceAccountId, amount, reference, status, failureReason, createdAt, updatedAt]
+      properties:
+        paymentId: { type: string, format: uuid }
+        statementId: { type: string, format: uuid }
+        sourceAccountId: { type: string, format: uuid }
+        amount: { $ref: '#/components/schemas/Money' }
+        reference: { type: string }
+        status: { type: string, enum: [PENDING, SUCCEEDED, FAILED, REVERSED] }
+        failureReason:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreditStatement:
+      type: object
+      required: [statementId, creditAccountId, cycleStartAt, cycleEndAt, issuedAt, dueAt, openingBalance, purchaseTotal, refundTotal, feeTotal, interestTotal, closingBalance, remainingAmountDue, minimumPaymentDue, minimumPaymentRemaining, paidAmount, status, version, items, payments]
+      properties:
+        statementId: { type: string, format: uuid }
+        creditAccountId: { type: string, format: uuid }
+        cycleStartAt: { type: string, format: date-time }
+        cycleEndAt: { type: string, format: date-time }
+        issuedAt: { type: string, format: date-time }
+        dueAt: { type: string, format: date-time }
+        openingBalance: { $ref: '#/components/schemas/Money' }
+        purchaseTotal: { $ref: '#/components/schemas/Money' }
+        refundTotal: { $ref: '#/components/schemas/Money' }
+        feeTotal: { $ref: '#/components/schemas/Money' }
+        interestTotal: { $ref: '#/components/schemas/Money' }
+        closingBalance: { $ref: '#/components/schemas/Money' }
+        remainingAmountDue: { $ref: '#/components/schemas/Money' }
+        minimumPaymentDue: { $ref: '#/components/schemas/Money' }
+        minimumPaymentRemaining: { $ref: '#/components/schemas/Money' }
+        paidAmount: { $ref: '#/components/schemas/Money' }
+        status: { type: string, enum: [ISSUED, PARTIALLY_PAID, PAID, OVERDUE] }
+        version: { type: integer, minimum: 1 }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CreditTransaction' }
+        payments:
+          type: array
+          items: { $ref: '#/components/schemas/CreditPayment' }
+    CreditStatementResponse:
+      type: object
+      required: [statement]
+      properties:
+        statement: { $ref: '#/components/schemas/CreditStatement' }
+    CreditStatementsResponse:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CreditStatement' }
+        nextCursor:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+    CreditPaymentQuoteRequest:
+      type: object
+      required: [sourceAccountId, creditAccountId, statementId, paymentOption]
+      example:
+        sourceAccountId: account-example
+        creditAccountId: credit-account-example
+        statementId: statement-example
+        paymentOption: MINIMUM
+      properties:
+        sourceAccountId: { type: string, format: uuid }
+        creditAccountId: { type: string, format: uuid }
+        statementId: { type: string, format: uuid }
+        paymentOption: { type: string, enum: [MINIMUM, FULL_STATEMENT, CUSTOM] }
+        amount:
+          oneOf:
+            - { $ref: '#/components/schemas/Money' }
+            - { type: 'null' }
+    CreditPaymentQuote:
+      type: object
+      required: [quoteId, sourceAccountId, sourceAccountMaskedNumber, creditAccountId, cardLastFour, statementId, statementVersion, paymentOption, amount, fee, outstandingBefore, outstandingAfter, minimumPaymentRemainingBefore, minimumPaymentRemainingAfter, terms, expiresAt]
+      properties:
+        quoteId: { type: string, format: uuid }
+        sourceAccountId: { type: string, format: uuid }
+        sourceAccountMaskedNumber: { type: string }
+        creditAccountId: { type: string, format: uuid }
+        cardLastFour: { type: string, pattern: '^\d{4}$' }
+        statementId: { type: string, format: uuid }
+        statementVersion: { type: integer, minimum: 1 }
+        paymentOption: { type: string, enum: [MINIMUM, FULL_STATEMENT, CUSTOM] }
+        amount: { $ref: '#/components/schemas/Money' }
+        fee: { $ref: '#/components/schemas/Money' }
+        outstandingBefore: { $ref: '#/components/schemas/Money' }
+        outstandingAfter: { $ref: '#/components/schemas/Money' }
+        minimumPaymentRemainingBefore: { $ref: '#/components/schemas/Money' }
+        minimumPaymentRemainingAfter: { $ref: '#/components/schemas/Money' }
+        terms: { type: string }
+        expiresAt: { type: string, format: date-time }
+    CreditPaymentRequest:
+      type: object
+      required: [quoteId, stepUp]
+      example:
+        quoteId: credit-quote-example
+        stepUp:
+          method: OTP
+          proof: <provided-by-test-factor>
+      properties:
+        quoteId: { type: string, format: uuid }
+        stepUp: { $ref: '#/components/schemas/CreditStepUpRequest' }

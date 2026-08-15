@@ -1,47 +1,223 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import * as Clipboard from "expo-clipboard";
+import { useFocusEffect, useRouter } from "expo-router";
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
+import { getAccountNumber, listAccounts } from "@/features/accounts/services/accountsApi";
+import type { PaymentAccount } from "@/features/accounts/types/account";
+import { useAuth } from "@/features/auth/context/AuthContext";
+import { BalanceCard } from "@/features/home/components/BalanceCard";
+import { HomeHeader } from "@/features/home/components/HomeHeader";
+import { QuickActionTile } from "@/features/home/components/QuickActionTile";
+import { ApiError } from "@/services/api/ApiError";
 import { colors, spacing } from "@/theme";
 
-const actions = ["Chuyển tiền", "Quét QR", "Lịch sử"] as const;
+function getErrorMessage(error: unknown): string {
+  return error instanceof ApiError
+    ? error.message
+    : "Không thể tải dữ liệu tài khoản. Vui lòng thử lại.";
+}
 
 export function HomeScreen() {
+  const router = useRouter();
+  const { deviceId, refreshAccessToken, session } = useAuth();
+  const accessToken = session?.accessToken ?? null;
+  const auth = useMemo(
+    () => ({ accessToken, deviceId, refreshAccessToken }),
+    [accessToken, deviceId, refreshAccessToken],
+  );
+  const [account, setAccount] = useState<PaymentAccount | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | undefined>();
+  const [isSessionExpired, setIsSessionExpired] = useState(false);
+  const [isBalanceVisible, setIsBalanceVisible] = useState(false);
+  const [isAccountNumberVisible, setIsAccountNumberVisible] = useState(false);
+  const [revealedAccountNumber, setRevealedAccountNumber] = useState<string | null>(null);
+  const [isAccountNumberLoading, setIsAccountNumberLoading] = useState(false);
+  const [isCopyingAccountNumber, setIsCopyingAccountNumber] = useState(false);
+
+  const loadAccounts = useCallback(async () => {
+    setIsBalanceVisible(false);
+    setIsAccountNumberVisible(false);
+    setRevealedAccountNumber(null);
+
+    if (!accessToken) {
+      setAccount(null);
+      setError(undefined);
+      setIsSessionExpired(true);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(undefined);
+    setIsSessionExpired(false);
+
+    try {
+      const response = await listAccounts(auth);
+      setAccount(response.accounts[0] ?? null);
+    } catch (requestError: unknown) {
+      setAccount(null);
+      setIsSessionExpired(requestError instanceof ApiError && requestError.status === 401);
+      setError(getErrorMessage(requestError));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [accessToken, auth]);
+
+  const revealAccountNumber = useCallback(async (): Promise<string | null> => {
+    if (!account) {
+      return null;
+    }
+
+    if (revealedAccountNumber) {
+      return revealedAccountNumber;
+    }
+
+    setIsAccountNumberLoading(true);
+    try {
+      const response = await getAccountNumber(account.id, auth);
+      setRevealedAccountNumber(response.accountNumber);
+      return response.accountNumber;
+    } catch (requestError: unknown) {
+      Alert.alert("Không thể hiện số tài khoản", getErrorMessage(requestError));
+      return null;
+    } finally {
+      setIsAccountNumberLoading(false);
+    }
+  }, [account, auth, revealedAccountNumber]);
+
+  const handleToggleAccountNumber = useCallback(async () => {
+    if (isAccountNumberLoading) {
+      return;
+    }
+    if (isAccountNumberVisible) {
+      setIsAccountNumberVisible(false);
+      return;
+    }
+    const fullAccountNumber = await revealAccountNumber();
+    if (fullAccountNumber) {
+      setIsAccountNumberVisible(true);
+    }
+  }, [isAccountNumberLoading, isAccountNumberVisible, revealAccountNumber]);
+
+  const handleCopyAccountNumber = useCallback(async () => {
+    if (isCopyingAccountNumber || isAccountNumberLoading) {
+      return;
+    }
+    setIsCopyingAccountNumber(true);
+    try {
+      const fullAccountNumber = await revealAccountNumber();
+      if (!fullAccountNumber) {
+        return;
+      }
+      await Clipboard.setStringAsync(fullAccountNumber);
+      setIsAccountNumberVisible(true);
+      Alert.alert("Đã sao chép", "Số tài khoản đầy đủ đã được sao chép.");
+    } catch {
+      Alert.alert("Không thể sao chép", "Vui lòng thử lại.");
+    } finally {
+      setIsCopyingAccountNumber(false);
+    }
+  }, [isAccountNumberLoading, isCopyingAccountNumber, revealAccountNumber]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadAccounts();
+    }, [loadAccounts]),
+  );
+
+  const fullName = session?.user.fullName?.trim() || "bạn";
+
   return (
     <Screen style={styles.screen}>
-      <View style={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>TỔNG QUAN</Text>
-          <Text style={styles.title}>Ngân hàng số</Text>
+      <ScrollView contentContainerStyle={styles.content}>
+        <HomeHeader
+          fullName={fullName}
+          onMenu={() => router.push("/profile")}
+          onNotifications={() => router.push("/notifications")}
+        />
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Số dư tài khoản thanh toán</Text>
+          {isLoading ? (
+            <View style={styles.stateCard} testID="home-account-loading">
+              <ActivityIndicator color={colors.primary} size="large" />
+              <Text style={styles.stateText}>Đang tải số dư...</Text>
+            </View>
+          ) : isSessionExpired ? (
+            <View style={styles.stateCard} testID="home-session-expired">
+              <Text style={styles.stateTitle}>Phiên đăng nhập đã hết hạn</Text>
+              <Text style={styles.stateText}>Vui lòng đăng nhập lại để xem tài khoản.</Text>
+              <PrimaryButton
+                label="Đăng nhập lại"
+                onPress={() => router.replace("/login")}
+                testID="home-login-again"
+              />
+            </View>
+          ) : error ? (
+            <View style={styles.stateCard} testID="home-account-error">
+              <Text style={styles.stateTitle}>Không thể kết nối</Text>
+              <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+                {error}
+              </Text>
+              <PrimaryButton label="Thử lại" onPress={loadAccounts} testID="home-account-retry" />
+            </View>
+          ) : account ? (
+            <BalanceCard
+              account={account}
+              isBalanceVisible={isBalanceVisible}
+              isAccountNumberVisible={isAccountNumberVisible}
+              isAccountNumberLoading={isAccountNumberLoading}
+              isCopyingAccountNumber={isCopyingAccountNumber}
+              revealedAccountNumber={revealedAccountNumber}
+              onPress={() =>
+                router.push({ pathname: "/account/[accountId]", params: { accountId: account.id } })
+              }
+              onToggleBalance={() => setIsBalanceVisible((current) => !current)}
+              onToggleAccountNumber={() => void handleToggleAccountNumber()}
+              onCopyAccountNumber={() => void handleCopyAccountNumber()}
+            />
+          ) : (
+            <View style={styles.stateCard} testID="home-account-empty">
+              <Text style={styles.stateTitle}>Chưa có tài khoản thanh toán</Text>
+              <Text style={styles.stateText}>Tài khoản sẽ xuất hiện khi được cấp từ hệ thống.</Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Tài khoản</Text>
-          <View style={styles.accountCard}>
-            <Text style={styles.cardLabel}>Tài khoản thanh toán</Text>
-            <Text style={styles.emptyState}>Chưa có dữ liệu</Text>
+          <View style={styles.sectionHeadingRow}>
+            <Text style={styles.sectionTitle}>Dịch vụ nhanh</Text>
+            <Text style={styles.sectionHint}>Sandbox đồ án</Text>
+          </View>
+          <View style={styles.quickActions}>
+            <QuickActionTile
+              icon="↗"
+              onPress={() => router.push("/transfer")}
+              subtitle="Thực hiện ngay"
+              testID="quick-transfer"
+              title="Chuyển tiền"
+            />
+            <QuickActionTile
+              icon="◫"
+              onPress={() => router.push("/savings")}
+              subtitle="Dữ liệu sandbox"
+              testID="quick-deposit"
+              title="Tiền gửi"
+            />
+            <QuickActionTile
+              icon="▣"
+              onPress={() => router.push("/cards")}
+              subtitle="Dữ liệu sandbox"
+              testID="quick-cards"
+              title="Thẻ tín dụng"
+            />
           </View>
         </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Thao tác nhanh</Text>
-          <View style={styles.actions}>
-            {actions.map((action) => (
-              <View key={action} style={styles.actionCard}>
-                <View style={styles.actionIndicator} />
-                <Text style={styles.actionLabel}>{action}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-
-        <View style={styles.statusCard}>
-          <View style={styles.statusDot} />
-          <View style={styles.statusContent}>
-            <Text style={styles.statusLabel}>Trạng thái hệ thống</Text>
-            <Text style={styles.statusText}>Backend chưa kết nối</Text>
-          </View>
-        </View>
-      </View>
+      </ScrollView>
     </Screen>
   );
 }
@@ -51,103 +227,61 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   content: {
+    flexGrow: 1,
     width: "100%",
     maxWidth: 720,
+    alignSelf: "center",
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.xl,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
     gap: spacing.xl,
-  },
-  header: {
-    gap: spacing.xs,
-  },
-  eyebrow: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 32,
-    fontWeight: "700",
   },
   section: {
     gap: spacing.sm,
   },
+  sectionHeadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
+  },
   sectionTitle: {
     color: colors.text,
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 18,
+    fontWeight: "800",
   },
-  accountCard: {
-    minHeight: 132,
-    justifyContent: "space-between",
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: spacing.md,
-    backgroundColor: colors.surface,
-  },
-  cardLabel: {
+  sectionHint: {
     color: colors.muted,
-    fontSize: 14,
-  },
-  emptyState: {
-    color: colors.text,
-    fontSize: 22,
+    fontSize: 12,
     fontWeight: "600",
   },
-  actions: {
+  quickActions: {
     flexDirection: "row",
     gap: spacing.sm,
   },
-  actionCard: {
-    flex: 1,
-    minHeight: 96,
-    justifyContent: "space-between",
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: spacing.md,
-    backgroundColor: colors.surface,
-  },
-  actionIndicator: {
-    width: spacing.lg,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.primary,
-  },
-  actionLabel: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  statusCard: {
-    flexDirection: "row",
-    alignItems: "center",
+  stateCard: {
+    minHeight: 150,
+    justifyContent: "center",
     gap: spacing.md,
-    padding: spacing.md,
+    padding: spacing.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: spacing.md,
+    borderRadius: 20,
     backgroundColor: colors.surface,
   },
-  statusDot: {
-    width: spacing.sm,
-    height: spacing.sm,
-    borderRadius: spacing.xs,
-    backgroundColor: colors.danger,
-  },
-  statusContent: {
-    gap: spacing.xs,
-  },
-  statusLabel: {
-    color: colors.muted,
-    fontSize: 12,
-  },
-  statusText: {
+  stateTitle: {
     color: colors.text,
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  stateText: {
+    color: colors.muted,
     fontSize: 14,
-    fontWeight: "600",
+    lineHeight: 20,
+  },
+  errorText: {
+    color: colors.danger,
+    fontSize: 14,
+    lineHeight: 20,
   },
 });

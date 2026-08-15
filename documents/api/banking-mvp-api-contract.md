@@ -69,6 +69,7 @@ type PaymentAccount = {
   id: string;
   displayName: string;
   maskedNumber: string;
+  bankName: string;
   currency: "VND";
   availableBalance: Money;
   currentBalance: Money;
@@ -81,7 +82,23 @@ type AccountsResponse = {
 };
 ```
 
-## 5. GET `/accounts/{accountId}/transactions`
+Account detail trên Mobile chỉ hiển thị `displayName`, nhãn trạng thái nghiệp vụ, hai số dư, `maskedNumber`, tên chủ tài khoản từ phiên đăng nhập, `bankName` và `currency`. `id` chỉ dùng để gọi API/điều hướng nội bộ và không được render; access token, device ID, PIN, OTP, password, ledger journal ID và metadata backend không thuộc dữ liệu hiển thị.
+
+## 5. GET `/accounts/{accountId}/number`
+
+Endpoint reveal riêng cho chủ tài khoản đã xác thực. Số tài khoản đầy đủ không nằm trong response của `GET /accounts`; Mobile chỉ gọi endpoint này khi người dùng bấm `Hiện` hoặc `Sao chép`.
+
+### Response `200 OK`
+
+```ts
+type AccountNumberResponse = {
+  accountNumber: string; // digits only, 6-34 digits
+};
+```
+
+Server phải kiểm tra bearer token, device binding và ownership trước khi trả số đầy đủ. Không ghi số tài khoản vào log, telemetry hoặc audit payload; audit chỉ lưu sự kiện reveal và `accountId`.
+
+## 6. GET `/accounts/{accountId}/transactions`
 
 Trả lịch sử giao dịch theo cursor.
 
@@ -121,7 +138,7 @@ type TransactionDetail = Transaction & {
 };
 ```
 
-## 6. Beneficiary directory
+## 7. Beneficiary directory
 
 `GET /beneficiaries` trả danh bạ người nhận của customer hiện tại:
 
@@ -153,7 +170,7 @@ type BeneficiaryResponse = {
 };
 ```
 
-## 7. POST `/transfers/quote`
+## 8. POST `/transfers/quote`
 
 Tạo báo giá có thời hạn trước khi submit chuyển tiền.
 
@@ -183,7 +200,7 @@ type TransferQuote = {
 
 Quote hết hạn hoặc sai currency/amount phải bị server từ chối; client không tự tính phí để submit.
 
-## 8. POST `/transfers`
+## 9. POST `/transfers`
 
 Submit một quote sau step-up authentication.
 
@@ -223,11 +240,11 @@ type TransferReceipt = {
 
 `PENDING` là kết quả hợp lệ. Mobile phải truy vấn trạng thái sau crash/restart thay vì hiển thị thành công.
 
-## 9. GET `/transfers/{transferId}`
+## 10. GET `/transfers/{transferId}`
 
 Trả `TransferReceipt` mới nhất. Endpoint là nguồn sự thật để resume giao dịch đang xử lý.
 
-## 10. Notifications và fraud reporting
+## 11. Notifications và fraud reporting
 
 `GET /notifications` trả các notification đã được server ghi nhận cho customer. `POST /notifications/{notificationId}/read` đánh dấu notification đã đọc.
 
@@ -235,7 +252,7 @@ Với notification `TRANSFER`, `resourceId` là `transactionId` và `resourceAcc
 
 `POST /fraud-reports` nhận `accountId`, `transactionId` và `reason`; server phải kiểm tra ownership, ghi immutable audit event và đẩy sự kiện tới fraud/risk workflow. Mobile không coi việc gửi report là bằng chứng đã xử lý gian lận.
 
-## 11. Quy tắc server bắt buộc trước pilot
+## 12. Quy tắc server bắt buộc trước pilot
 
 - Authorization, hạn mức, velocity/risk rule và step-up policy phải thực thi ở server.
 - Core banking là nguồn sự thật; transfer service dùng adapter, không tự làm ledger thứ hai.
@@ -243,3 +260,7 @@ Với notification `TRANSFER`, `resourceId` là `transactionId` và `resourceAcc
 - Dùng outbox để phát notification và reconciliation để đối soát với core banking.
 - Không trả token, password, step-up proof hoặc dữ liệu nhạy cảm trong log/analytics.
 - Contract chính thức phải được partner và legal/compliance review trước khi chuyển trạng thái từ DRAFT sang APPROVED.
+
+## Account number reveal clarification - 2026-08-15
+
+Danh sach tai khoan va Home mac dinh chi hien `maskedNumber`. Khi nguoi dung chu dong bam `Hien day du` hoac `Sao chep`, Mobile goi `GET /accounts/{accountId}/number` de nhan va dung full account number tam thoi; khong suy dien full number tu 4 so cuoi va khong luu vao session. Endpoint nay khong tra UUID/noi dung ky thuat.

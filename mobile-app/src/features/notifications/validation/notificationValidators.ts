@@ -16,7 +16,7 @@ export function isNotification(value: unknown): value is Notification {
   return (
     isRecord(value) &&
     isNonEmptyString(value.id) &&
-    (value.type === "TRANSFER" || value.type === "SECURITY") &&
+    (value.type === "TRANSFER" || value.type === "SAVINGS" || value.type === "CREDIT" || value.type === "SECURITY") &&
     isNonEmptyString(value.title) &&
     isNonEmptyString(value.body) &&
     (typeof value.resourceId === "string" || value.resourceId === null) &&

@@ -44,6 +44,32 @@ export type LoginResponse = {
   user: AuthUser;
 };
 
+export type AuthChallengeMethod = "OTP" | "BIOMETRIC";
+
+export type AuthChallengeResponse = {
+  challengeId: string;
+  expiresAt: string;
+  methods: AuthChallengeMethod[];
+};
+
+export type LoginResult = LoginResponse | AuthChallengeResponse;
+
+export type VerifyAuthChallengeRequest = {
+  challengeId: string;
+  method: AuthChallengeMethod;
+  proof: string;
+};
+
+export type RefreshTokenRequest = {
+  refreshToken: string;
+};
+
+export type RefreshTokenResponse = LoginResponse;
+
+export type LogoutRequest = {
+  refreshToken: string;
+};
+
 export type RegisterResponse = {
   user: AuthUser;
 };

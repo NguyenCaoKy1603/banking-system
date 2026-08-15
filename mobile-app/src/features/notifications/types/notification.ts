@@ -1,4 +1,4 @@
-export type NotificationType = "TRANSFER" | "SECURITY";
+export type NotificationType = "TRANSFER" | "SAVINGS" | "CREDIT" | "SECURITY";
 
 export type Notification = {
   id: string;

@@ -1,23 +1,46 @@
 import { ApiError } from "@/services/api/ApiError";
 import { apiConfig } from "@/services/api/config";
 import type { ApiErrorPayload } from "@/services/api/types";
+import { recordTelemetryEvent } from "@/services/telemetry/safeTelemetry";
 
-type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-type RequestOptions = {
+export type RequestAuth = {
+  accessToken?: string | null;
+  deviceId?: string | null;
+  refreshAccessToken?: () => Promise<string | null>;
+};
+
+export type RequestOptions = {
   method?: HttpMethod;
   body?: unknown;
+  auth?: RequestAuth;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  requestId?: string;
+  idempotencyKey?: string;
+  retryOnUnauthorized?: boolean;
 };
 
 type ResponseValidator<ResponseBody> = (
   payload: unknown,
 ) => payload is ResponseBody;
 
+const DEFAULT_TIMEOUT_MS = 15_000;
+let requestSequence = 0;
+let refreshPromise: Promise<string | null> | null = null;
+
 function buildUrl(baseUrl: string, path: string) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
   const normalizedPath = path.replace(/^\/+/, "");
 
   return `${normalizedBaseUrl}/${normalizedPath}`;
+}
+
+function createRequestId(): string {
+  requestSequence += 1;
+  return `mobile-${Date.now().toString(36)}-${requestSequence.toString(36)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,6 +75,31 @@ function createInvalidResponseError(status: number) {
   });
 }
 
+function createTimeoutError() {
+  return new ApiError({
+    status: null,
+    code: "TIMEOUT",
+    message: "Yêu cầu đến máy chủ đã hết thời gian chờ.",
+  });
+}
+
+function createAbortedError() {
+  return new ApiError({
+    status: null,
+    code: "REQUEST_ABORTED",
+    message: "Yêu cầu đã được hủy.",
+  });
+}
+
+function reportApiFailure(method: HttpMethod, error: ApiError): void {
+  recordTelemetryEvent("api_request_failed", {
+    method,
+    status: error.status,
+    code: error.code,
+    traceId: error.traceId,
+  });
+}
+
 async function parseJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
@@ -60,20 +108,104 @@ async function parseJson(response: Response): Promise<unknown> {
   }
 }
 
+function createAbortState(signal: AbortSignal | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  let didTimeout = false;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+  const abortFromCaller = () => controller.abort();
+
+  if (signal?.aborted) {
+    controller.abort();
+  } else if (signal) {
+    signal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+
+  if (!controller.signal.aborted) {
+    timeoutHandle = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, timeoutMs);
+  }
+
+  return {
+    controller,
+    didTimeout: () => didTimeout,
+    cleanup: () => {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
+      signal?.removeEventListener("abort", abortFromCaller);
+    },
+  };
+}
+
+async function refreshAccessTokenSingleFlight(
+  refreshAccessToken: () => Promise<string | null>,
+): Promise<string | null> {
+  if (!refreshPromise) {
+    refreshPromise = Promise.resolve()
+      .then(refreshAccessToken)
+      .then((token) => (typeof token === "string" && token.trim() ? token : null))
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+
+  return refreshPromise;
+}
+
+function validateRequestOptions(options: RequestOptions): void {
+  if (options.timeoutMs !== undefined) {
+    if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) {
+      throw new RangeError("timeoutMs phải là số hữu hạn lớn hơn 0.");
+    }
+  }
+}
+
 export async function requestJson<ResponseBody>(
   path: string,
   options: RequestOptions = {},
   validateResponse?: ResponseValidator<ResponseBody>,
 ): Promise<ResponseBody> {
-  const { body, method = "GET" } = options;
+  validateRequestOptions(options);
+
+  const {
+    auth,
+    body,
+    headers: customHeaders,
+    idempotencyKey,
+    method = "GET",
+    requestId = createRequestId(),
+    retryOnUnauthorized = true,
+    signal,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+  } = options;
   const headers: Record<string, string> = {
     Accept: "application/json",
+    ...customHeaders,
+    "X-Request-ID": requestId,
   };
+  const accessToken = auth?.accessToken?.trim();
+  const deviceId = auth?.deviceId?.trim();
 
-  if (body !== undefined) {
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
+  if (deviceId) {
+    headers["X-Device-ID"] = deviceId;
+  }
+
+  if (body !== undefined && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
 
+  if (idempotencyKey?.trim()) {
+    headers["Idempotency-Key"] = idempotencyKey.trim();
+  }
+
+  const abortState = createAbortState(signal, timeoutMs);
   let response: Response;
 
   try {
@@ -81,37 +213,96 @@ export async function requestJson<ResponseBody>(
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: abortState.controller.signal,
     });
   } catch (error: unknown) {
     if (error instanceof ApiError) {
+      reportApiFailure(method, error);
       throw error;
     }
 
-    throw new ApiError({
+    if (abortState.didTimeout()) {
+      const timeoutError = createTimeoutError();
+      reportApiFailure(method, timeoutError);
+      throw timeoutError;
+    }
+
+    if (abortState.controller.signal.aborted) {
+      const abortedError = createAbortedError();
+      reportApiFailure(method, abortedError);
+      throw abortedError;
+    }
+
+    const networkError = new ApiError({
       status: null,
       code: "NETWORK_ERROR",
       message: "Không thể kết nối đến máy chủ.",
     });
+    reportApiFailure(method, networkError);
+    throw networkError;
+  } finally {
+    abortState.cleanup();
   }
 
-  const payload = await parseJson(response);
+  if (
+    response.status === 401 &&
+    retryOnUnauthorized &&
+    auth?.refreshAccessToken
+  ) {
+    const refreshedAccessToken = await refreshAccessTokenSingleFlight(
+      auth.refreshAccessToken,
+    );
+
+    if (refreshedAccessToken) {
+      return requestJson<ResponseBody>(
+        path,
+        {
+          ...options,
+          auth: {
+            ...auth,
+            accessToken: refreshedAccessToken,
+          },
+          requestId,
+          retryOnUnauthorized: false,
+        },
+        validateResponse,
+      );
+    }
+  }
+
+  let payload: unknown;
+
+  try {
+    payload = response.status === 204 ? null : await parseJson(response);
+  } catch (error: unknown) {
+    if (error instanceof ApiError) {
+      reportApiFailure(method, error);
+    }
+    throw error;
+  }
 
   if (!response.ok) {
     if (!isApiErrorPayload(payload)) {
-      throw createInvalidResponseError(response.status);
+      const invalidResponseError = createInvalidResponseError(response.status);
+      reportApiFailure(method, invalidResponseError);
+      throw invalidResponseError;
     }
 
-    throw new ApiError({
+    const apiError = new ApiError({
       status: response.status,
       code: payload.code,
       message: payload.message,
       fieldErrors: payload.fieldErrors,
       traceId: payload.traceId,
     });
+    reportApiFailure(method, apiError);
+    throw apiError;
   }
 
   if (validateResponse && !validateResponse(payload)) {
-    throw createInvalidResponseError(response.status);
+    const invalidResponseError = createInvalidResponseError(response.status);
+    reportApiFailure(method, invalidResponseError);
+    throw invalidResponseError;
   }
 
   return payload as ResponseBody;

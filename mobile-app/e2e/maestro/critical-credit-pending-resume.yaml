@@ -1,0 +1,108 @@
+appId: ${APP_ID}
+
+---
+- launchApp:
+    clearState: true
+- tapOn:
+    id: login-email
+- inputText: ${TEST_EMAIL}
+- tapOn:
+    id: login-password
+- inputText: ${TEST_PASSWORD}
+- tapOn:
+    id: login-submit
+- extendedWaitUntil:
+    visible:
+      id: login-mfa-submit
+    timeout: 10000
+- tapOn:
+    id: login-mfa-code
+- inputText: ${MFA_OTP}
+- tapOn:
+    id: login-mfa-submit
+- extendedWaitUntil:
+    visible:
+      id: home-balance-card
+    timeout: 15000
+- tapOn:
+    id: tab-profile
+- tapOn:
+    id: profile-cards
+- extendedWaitUntil:
+    visible:
+      id: credit-cards-list
+    timeout: 15000
+- tapOn:
+    id: card-first
+- extendedWaitUntil:
+    visible:
+      id: credit-card-detail
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: credit-open-payment
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: credit-open-payment
+- extendedWaitUntil:
+    visible:
+      id: credit-payment-input
+    timeout: 15000
+- tapOn:
+    id: credit-option-MINIMUM
+- tapOn:
+    id: credit-create-quote
+- extendedWaitUntil:
+    visible:
+      id: credit-payment-review
+    timeout: 10000
+- tapOn:
+    id: credit-review-confirm
+- extendedWaitUntil:
+    visible:
+      id: credit-payment-step-up
+    timeout: 10000
+- tapOn:
+    id: credit-step-up-code
+- inputText: ${TRANSFER_OTP}
+- pressKey: BACK
+- tapOn:
+    id: credit-submit-payment
+- extendedWaitUntil:
+    visible:
+      id: credit-payment-result
+    timeout: 30000
+- assertVisible: "Đang xử lý"
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: home-balance-card
+    timeout: 15000
+- tapOn:
+    id: tab-profile
+- tapOn:
+    id: profile-cards
+- extendedWaitUntil:
+    visible:
+      id: credit-cards-list
+    timeout: 15000
+- tapOn:
+    id: card-first
+- extendedWaitUntil:
+    visible:
+      id: credit-card-detail
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: credit-open-payment
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: credit-open-payment
+- extendedWaitUntil:
+    visible:
+      id: credit-payment-result
+    timeout: 30000
+- assertVisible: "Thành công"

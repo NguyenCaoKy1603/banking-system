@@ -1,4 +1,4 @@
-import { Link } from "expo-router";
+import { Link, useRouter } from "expo-router";
 import { useState } from "react";
 import {
   Alert,
@@ -14,11 +14,13 @@ import {
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
+import { useAuth } from "@/features/auth/context/AuthContext";
 import type {
   RegisterFieldErrors,
   RegisterFormValues,
 } from "@/features/auth/types/auth";
 import { validateRegisterForm } from "@/features/auth/validation/authValidation";
+import { ApiError } from "@/services/api/ApiError";
 import { colors, spacing } from "@/theme";
 
 const initialValues: RegisterFormValues = {
@@ -30,22 +32,60 @@ const initialValues: RegisterFormValues = {
 };
 
 export function RegisterScreen() {
+  const router = useRouter();
+  const { register } = useAuth();
   const [values, setValues] = useState<RegisterFormValues>(initialValues);
   const [errors, setErrors] = useState<RegisterFieldErrors>({});
+  const [serverError, setServerError] = useState<string | undefined>();
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   function updateField(field: keyof RegisterFormValues, value: string) {
     setValues((currentValues) => ({ ...currentValues, [field]: value }));
     setErrors((currentErrors) => ({ ...currentErrors, [field]: undefined }));
+    setServerError(undefined);
   }
 
-  function handleRegister() {
+  async function handleRegister() {
     const result = validateRegisterForm(values);
 
     setValues(result.values);
     setErrors(result.errors);
+    setServerError(undefined);
 
-    if (result.isValid) {
-      Alert.alert("Thông báo", "Form hợp lệ nhưng Backend chưa được kết nối.");
+    if (!result.isValid) {
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      await register({
+        fullName: result.values.fullName,
+        email: result.values.email,
+        phoneNumber: result.values.phoneNumber,
+        password: result.values.password,
+      });
+
+      Alert.alert(
+        "Đăng ký thành công",
+        "Bạn có thể sử dụng thông tin vừa đăng ký để đăng nhập.",
+        [{ text: "Đăng nhập", onPress: () => router.replace("/login") }],
+      );
+    } catch (error: unknown) {
+      if (error instanceof ApiError) {
+        setErrors({
+          fullName: error.fieldErrors?.fullName,
+          email: error.fieldErrors?.email,
+          phoneNumber: error.fieldErrors?.phoneNumber,
+          password: error.fieldErrors?.password,
+          confirmPassword: error.fieldErrors?.confirmPassword,
+        });
+        setServerError(error.message);
+      } else {
+        setServerError("Đăng ký không thành công. Vui lòng thử lại.");
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -63,7 +103,7 @@ export function RegisterScreen() {
             <Text style={styles.eyebrow}>TÀI KHOẢN MỚI</Text>
             <Text style={styles.title}>Đăng ký</Text>
             <Text style={styles.description}>
-              Biểu mẫu này mới là phần giao diện và chưa gửi dữ liệu đi đâu.
+              Tạo tài khoản để đăng nhập vào hệ thống.
             </Text>
           </View>
 
@@ -76,6 +116,7 @@ export function RegisterScreen() {
               label="Họ và tên"
               onChangeText={(value) => updateField("fullName", value)}
               placeholder="Nhập họ và tên"
+              testID="register-full-name"
               value={values.fullName}
             />
             <TextField
@@ -87,6 +128,7 @@ export function RegisterScreen() {
               label="Email"
               onChangeText={(value) => updateField("email", value)}
               placeholder="Nhập email"
+              testID="register-email"
               value={values.email}
             />
             <TextField
@@ -97,6 +139,7 @@ export function RegisterScreen() {
               label="Số điện thoại"
               onChangeText={(value) => updateField("phoneNumber", value)}
               placeholder="Nhập số điện thoại"
+              testID="register-phone"
               value={values.phoneNumber}
             />
             <TextField
@@ -108,6 +151,7 @@ export function RegisterScreen() {
               onChangeText={(value) => updateField("password", value)}
               placeholder="Nhập mật khẩu"
               secureTextEntry
+              testID="register-password"
               value={values.password}
             />
             <TextField
@@ -119,9 +163,20 @@ export function RegisterScreen() {
               onChangeText={(value) => updateField("confirmPassword", value)}
               placeholder="Nhập lại mật khẩu"
               secureTextEntry
+              testID="register-confirm-password"
               value={values.confirmPassword}
             />
-            <PrimaryButton label="Đăng ký" onPress={handleRegister} />
+            {serverError ? (
+              <Text accessibilityLiveRegion="polite" style={styles.serverError}>
+                {serverError}
+              </Text>
+            ) : null}
+            <PrimaryButton
+              disabled={isSubmitting}
+              label={isSubmitting ? "Đang đăng ký..." : "Đăng ký"}
+              onPress={handleRegister}
+              testID="register-submit"
+            />
           </View>
 
           <Link href="./login" replace asChild>
@@ -177,5 +232,10 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: 14,
     fontWeight: "600",
+  },
+  serverError: {
+    color: colors.danger,
+    fontSize: 14,
+    lineHeight: 20,
   },
 });

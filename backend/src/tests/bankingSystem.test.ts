@@ -529,6 +529,7 @@ test("runtime customer and account IDs are UUID-compatible", () => {
   const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   assert.match(registered.user.id, uuidPattern);
   assert.match(account.id, uuidPattern);
+  assert.equal(account.bankName, "Ngân hàng reference");
 });
 
 test("reconciliation reports core minus ledger difference", () => {
@@ -870,8 +871,8 @@ test("audit and outbox reads cannot mutate internal event history", () => {
   assert.ok(auditSnapshot);
   (auditSnapshot as { eventType: string }).eventType = "TAMPERED";
 
-  assert.equal(system.auditEvents[0]?.eventType, "USER_REGISTERED");
-  assert.equal(system.auditEvents.length, 1);
+  assert.equal(system.auditEvents.find((event) => event.eventType === "USER_REGISTERED")?.eventType, "USER_REGISTERED");
+  assert.equal(system.auditEvents.length, 2);
   assert.equal(system.outboxEvents.length, 0);
   assert.equal(registered.user.email, "immutable-audit@example.com");
 });

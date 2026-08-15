@@ -71,3 +71,11 @@ Khởi động server với `$env:BANKING_SETTLE_IMMEDIATELY = "0"` trước khi
 - `E2E_PASSWORD` chỉ tồn tại trong shell/secret của môi trường test, không commit vào repository.
 - Seed output chỉ dùng cho local/preview sandbox; không dùng OTP sandbox hoặc account ID này cho staging/production.
 - Chạy lại từ trạng thái sạch bằng cách restart in-memory backend; không coi đây là persistence test.
+
+## M7 credit
+
+Seed output them `CREDIT_CARD_ID`, `CREDIT_ACCOUNT_ID`, `CREDIT_STATEMENT_ID` va `CREDIT_MINIMUM_AMOUNT_MINOR` de doi chieu sandbox. Flow `critical-credit.yaml` dung `TRANSFER_OTP` cho buoc step-up thanh toan; flow `critical-credit-pending-resume.yaml` can server voi `$env:BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY = "0"` de tao PENDING truoc khi stop/launch app. Cac secret van chi nam trong environment cua nguoi chay.
+
+## Xác nhận seed ngày 2026-08-15
+
+Seed đã chạy thành công trên server sandbox tạm thời với MFA bắt buộc: tạo transfer `SUCCEEDED`, savings `SUCCEEDED` và card/statement Credit. Stdout chỉ chứa ID, trạng thái và payload QR masked; password/OTP không được in ra.

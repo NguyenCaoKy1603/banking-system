@@ -1,6 +1,14 @@
-import { login, register } from "@/features/auth/services/authApi";
+import {
+  login,
+  refreshSession,
+  revokeAllSessions,
+  register,
+  revokeSession,
+  verifyLoginChallenge,
+} from "@/features/auth/services/authApi";
 import type {
   AuthUser,
+  AuthChallengeResponse,
   LoginRequest,
   LoginResponse,
   RegisterFormValues,
@@ -87,6 +95,118 @@ beforeEach(() => {
 });
 
 describe("authApi", () => {
+  it("refreshes a rotated token pair", async () => {
+    const response: LoginResponse = {
+      accessToken: "access-token-2",
+      refreshToken: "refresh-token-2",
+      expiresInSeconds: 900,
+      user: authUser,
+    };
+    fetchMock.mockResolvedValueOnce(createJsonResponse(response, 200));
+
+    await expect(refreshSession("refresh-token")).resolves.toEqual(response);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/auth/refresh`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ refreshToken: "refresh-token" }),
+      }),
+    );
+  });
+
+  it("sends the device binding header when configured", async () => {
+    const response: LoginResponse = {
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresInSeconds: 900,
+      user: authUser,
+    };
+    fetchMock.mockResolvedValueOnce(createJsonResponse(response, 200));
+
+    await login(loginRequest, {
+      deviceId: "00000000-0000-4000-8000-000000000001",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/auth/login`,
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "X-Device-ID": "00000000-0000-4000-8000-000000000001",
+        }),
+      }),
+    );
+  });
+
+  it("accepts a server-driven MFA challenge and verifies it", async () => {
+    const challenge: AuthChallengeResponse = {
+      challengeId: "challenge-1",
+      expiresAt: "2026-08-14T00:05:00Z",
+      methods: ["OTP"],
+    };
+    fetchMock.mockResolvedValueOnce(createJsonResponse(challenge, 202));
+
+    await expect(login(loginRequest)).resolves.toEqual(challenge);
+
+    const response: LoginResponse = {
+      accessToken: "access-token-mfa",
+      refreshToken: "refresh-token-mfa",
+      expiresInSeconds: 900,
+      user: authUser,
+    };
+    fetchMock.mockResolvedValueOnce(createJsonResponse(response, 200));
+
+    await expect(
+      verifyLoginChallenge({
+        challengeId: "challenge-1",
+        method: "OTP",
+        proof: "654321",
+      }),
+    ).resolves.toEqual(response);
+  });
+
+  it("accepts a 204 response when revoking a session", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(null, 204));
+
+    await expect(revokeSession("refresh-token")).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/auth/logout`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ refreshToken: "refresh-token" }),
+      }),
+    );
+  });
+
+  it("revokes all sessions using the authenticated device-bound session", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(null, 204));
+
+    await expect(
+      revokeAllSessions({
+        accessToken: "access-token",
+        deviceId: "device-1",
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/auth/logout-all`,
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer access-token",
+          "X-Device-ID": "device-1",
+        }),
+      }),
+    );
+  });
+
+  it("rejects empty refresh tokens before making a request", async () => {
+    await expect(refreshSession(" ")).rejects.toThrow(TypeError);
+    await expect(revokeSession(" ")).rejects.toThrow(TypeError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("gửi request đăng nhập đến đúng URL với method, header và body JSON", async () => {
     const response: LoginResponse = {
       accessToken: "access-token",
@@ -98,14 +218,19 @@ describe("authApi", () => {
 
     await login(loginRequest);
 
-    expect(fetchMock).toHaveBeenCalledWith(`${API_BASE_URL}/auth/login`, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(loginRequest),
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/auth/login`,
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Request-ID": expect.any(String),
+        }),
+        body: JSON.stringify(loginRequest),
+        signal: expect.anything(),
+      }),
+    );
   });
 
   it("gửi request đăng ký đúng URL và không gửi confirmPassword", async () => {
@@ -114,14 +239,19 @@ describe("authApi", () => {
 
     await register(registerFormValues);
 
-    expect(fetchMock).toHaveBeenCalledWith(`${API_BASE_URL}/auth/register`, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(registerRequestBody),
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/auth/register`,
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-Request-ID": expect.any(String),
+        }),
+        body: JSON.stringify(registerRequestBody),
+        signal: expect.anything(),
+      }),
+    );
 
     const requestOptions = fetchMock.mock.calls[0]?.[1];
     expect(typeof requestOptions?.body).toBe("string");
@@ -165,6 +295,58 @@ describe("authApi", () => {
       status: 200,
       code: "INVALID_RESPONSE",
       message: "Phản hồi từ máy chủ không đúng định dạng mong đợi.",
+    });
+  });
+
+  it.each([
+    ["token rỗng", { accessToken: "" }],
+    ["refresh token rỗng", { refreshToken: "" }],
+    ["expiry bằng 0", { expiresInSeconds: 0 }],
+    ["expiry âm", { expiresInSeconds: -1 }],
+  ])("từ chối LoginResponse có %s", async (_caseName, override) => {
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse(
+        {
+          accessToken: "access-token",
+          refreshToken: "refresh-token",
+          expiresInSeconds: 900,
+          user: authUser,
+          ...override,
+        },
+        200,
+      ),
+    );
+
+    const error = await expectApiError(login(loginRequest));
+
+    expect(error).toMatchObject({
+      status: 200,
+      code: "INVALID_RESPONSE",
+    });
+  });
+
+  it.each([
+    ["id user rỗng", { id: "" }],
+    ["email user sai định dạng", { email: "invalid-email" }],
+    ["thời gian user không hợp lệ", { createdAt: "not-a-date" }],
+  ])("từ chối LoginResponse có %s", async (_caseName, userOverride) => {
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse(
+        {
+          accessToken: "access-token",
+          refreshToken: "refresh-token",
+          expiresInSeconds: 900,
+          user: { ...authUser, ...userOverride },
+        },
+        200,
+      ),
+    );
+
+    const error = await expectApiError(login(loginRequest));
+
+    expect(error).toMatchObject({
+      status: 200,
+      code: "INVALID_RESPONSE",
     });
   });
 

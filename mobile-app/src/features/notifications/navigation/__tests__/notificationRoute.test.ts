@@ -30,4 +30,18 @@ describe("getNotificationRoute", () => {
       }),
     ).toBe("/profile");
   });
+
+  it("deep-links savings notifications to the deposit detail", () => {
+    expect(
+      getNotificationRoute({
+        ...baseNotification,
+        type: "SAVINGS",
+        resourceId: "deposit-1",
+        resourceAccountId: "account-1",
+      }),
+    ).toEqual({
+      pathname: "/savings/[depositId]",
+      params: { depositId: "deposit-1" },
+    });
+  });
 });

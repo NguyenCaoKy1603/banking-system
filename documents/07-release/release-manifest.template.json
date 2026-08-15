@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0-preview.1",
+  "package": "com.example.digitalbanking.mobile",
+  "profile": "preview",
+  "apiEnvironment": "preview",
+  "artifact": "artifacts/mobile-app-preview.apk",
+  "sha256": "TO_BE_GENERATED",
+  "builtAt": "TO_BE_GENERATED",
+  "devices": [],
+  "testReport": "../05-testing/test-report.md",
+  "deviceEvidence": "../05-testing/device-evidence.md",
+  "owner": "TO_BE_FILLED",
+  "rollbackTarget": "TO_BE_FILLED"
+}

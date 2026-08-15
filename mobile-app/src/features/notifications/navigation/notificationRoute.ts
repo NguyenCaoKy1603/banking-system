@@ -5,6 +5,14 @@ export type NotificationRoute =
       pathname: "/transaction/[transactionId]";
       params: { accountId: string; transactionId: string };
     }
+  | {
+      pathname: "/savings/[depositId]";
+      params: { depositId: string };
+    }
+  | {
+      pathname: "/cards/[cardId]";
+      params: { cardId: string };
+    }
   | "/profile";
 
 export function getNotificationRoute(
@@ -21,6 +29,20 @@ export function getNotificationRoute(
         accountId: notification.resourceAccountId,
         transactionId: notification.resourceId,
       },
+    };
+  }
+
+  if (notification.type === "SAVINGS" && notification.resourceId) {
+    return {
+      pathname: "/savings/[depositId]",
+      params: { depositId: notification.resourceId },
+    };
+  }
+
+  if (notification.type === "CREDIT" && notification.resourceId) {
+    return {
+      pathname: "/cards/[cardId]",
+      params: { cardId: notification.resourceId },
     };
   }
 

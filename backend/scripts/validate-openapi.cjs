@@ -26,6 +26,7 @@ const requiredPaths = [
   "/notifications/{notificationId}/read",
   "/fraud-reports",
   "/accounts",
+  "/accounts/{accountId}/number",
   "/accounts/{accountId}/transactions",
   "/accounts/{accountId}/transactions/{transactionId}",
   "/beneficiaries",
@@ -33,6 +34,23 @@ const requiredPaths = [
   "/transfers/quote",
   "/transfers",
   "/transfers/{transferId}",
+  "/savings/products",
+  "/savings/quotes",
+  "/savings/deposits",
+  "/savings/openings/{openingId}",
+  "/savings/deposits/{depositId}",
+  "/cards",
+  "/cards/{cardId}",
+  "/cards/{cardId}/lock",
+  "/cards/{cardId}/unlock",
+  "/credit/accounts",
+  "/credit/accounts/{creditAccountId}",
+  "/credit/accounts/{creditAccountId}/transactions",
+  "/credit/accounts/{creditAccountId}/statements",
+  "/credit/accounts/{creditAccountId}/statements/{statementId}",
+  "/credit/payment-quotes",
+  "/credit/payments",
+  "/credit/payments/{paymentId}",
 ];
 
 for (const requiredPath of requiredPaths) {
@@ -54,6 +72,11 @@ for (const schemaName of [
   "VerifyAuthChallengeRequest",
   "TransferQuoteRequest",
   "SubmitTransferRequest",
+  "SavingsQuoteRequest",
+  "SubmitSavingsOpeningRequest",
+  "CreditStepUpRequest",
+  "CreditPaymentQuoteRequest",
+  "CreditPaymentRequest",
 ]) {
   if (!document.components?.schemas?.[schemaName]?.example) {
     throw new Error(`Missing non-secret example for schema: ${schemaName}`);
@@ -79,6 +102,7 @@ const routeContracts = [
   ["POST", "/notifications/{notificationId}/read", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "notifications"), segmentGuard(2, "read")]],
   ["POST", "/fraud-reports", [methodGuard("POST"), "segments.length === 1", segmentGuard(0, "fraud-reports")]],
   ["GET", "/accounts", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "accounts")]],
+  ["GET", "/accounts/{accountId}/number", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "accounts"), segmentGuard(2, "number")]],
   ["GET", "/accounts/{accountId}/transactions", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "accounts"), segmentGuard(2, "transactions")]],
   ["GET", "/accounts/{accountId}/transactions/{transactionId}", [methodGuard("GET"), "segments.length === 4", segmentGuard(0, "accounts"), segmentGuard(2, "transactions")]],
   ["GET", "/beneficiaries", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "beneficiaries")]],
@@ -89,6 +113,24 @@ const routeContracts = [
   ["POST", "/transfers/quote", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "transfers"), segmentGuard(1, "quote")]],
   ["POST", "/transfers", [methodGuard("POST"), "segments.length === 1", segmentGuard(0, "transfers")]],
   ["GET", "/transfers/{transferId}", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "transfers")]],
+  ["GET", "/savings/products", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "savings"), segmentGuard(1, "products")]],
+  ["POST", "/savings/quotes", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "savings"), segmentGuard(1, "quotes")]],
+  ["POST", "/savings/deposits", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "savings"), segmentGuard(1, "deposits")]],
+  ["GET", "/savings/openings/{openingId}", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "savings"), segmentGuard(1, "openings")]],
+  ["GET", "/savings/deposits", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "savings"), segmentGuard(1, "deposits")]],
+  ["GET", "/savings/deposits/{depositId}", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "savings"), segmentGuard(1, "deposits")]],
+  ["GET", "/cards", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "cards")]],
+  ["GET", "/cards/{cardId}", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "cards")]],
+  ["POST", "/cards/{cardId}/lock", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "cards"), segmentGuard(2, "lock")]],
+  ["POST", "/cards/{cardId}/unlock", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "cards"), segmentGuard(2, "unlock")]],
+  ["GET", "/credit/accounts", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "credit"), segmentGuard(1, "accounts")]],
+  ["GET", "/credit/accounts/{creditAccountId}", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "credit"), segmentGuard(1, "accounts")]],
+  ["GET", "/credit/accounts/{creditAccountId}/transactions", [methodGuard("GET"), "segments.length === 4", segmentGuard(0, "credit"), segmentGuard(1, "accounts"), segmentGuard(3, "transactions")]],
+  ["GET", "/credit/accounts/{creditAccountId}/statements", [methodGuard("GET"), "segments.length === 4", segmentGuard(0, "credit"), segmentGuard(1, "accounts"), segmentGuard(3, "statements")]],
+  ["GET", "/credit/accounts/{creditAccountId}/statements/{statementId}", [methodGuard("GET"), "segments.length === 5", segmentGuard(0, "credit"), segmentGuard(1, "accounts"), segmentGuard(3, "statements")]],
+  ["POST", "/credit/payment-quotes", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "credit"), segmentGuard(1, "payment-quotes")]],
+  ["POST", "/credit/payments", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "credit"), segmentGuard(1, "payments")]],
+  ["GET", "/credit/payments/{paymentId}", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "credit"), segmentGuard(1, "payments")]],
 ];
 
 for (const [method, routePath, fragments] of routeContracts) {
@@ -122,6 +164,20 @@ if (!submitTransfer.parameters?.some((parameter) => parameter.name === "Idempote
 }
 if (!submitTransfer.responses?.["200"] || !submitTransfer.responses?.["202"]) {
   throw new Error("POST /transfers must document synchronous and pending responses.");
+}
+const submitSavings = document.paths["/savings/deposits"].post;
+if (!submitSavings.parameters?.some((parameter) => parameter.name === "Idempotency-Key" && parameter.required === true)) {
+  throw new Error("POST /savings/deposits must require Idempotency-Key.");
+}
+if (!submitSavings.responses?.["200"] || !submitSavings.responses?.["202"]) {
+  throw new Error("POST /savings/deposits must document synchronous and pending responses.");
+}
+const submitCreditPayment = document.paths["/credit/payments"].post;
+if (!submitCreditPayment.parameters?.some((parameter) => parameter.name === "Idempotency-Key" && parameter.required === true)) {
+  throw new Error("POST /credit/payments must require Idempotency-Key.");
+}
+if (!submitCreditPayment.responses?.["200"] || !submitCreditPayment.responses?.["202"]) {
+  throw new Error("POST /credit/payments must document synchronous and pending responses.");
 }
 const loginResponses = document.paths["/auth/login"].post?.responses;
 if (!loginResponses?.["200"] || !loginResponses?.["202"]) {

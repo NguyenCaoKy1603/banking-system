@@ -38,6 +38,10 @@ export function conflict(message: string): DomainError {
   return new DomainError(409, "CONFLICT", message);
 }
 
+export function conflictWithCode(code: string, message: string): DomainError {
+  return new DomainError(409, code, message);
+}
+
 export function rateLimited(message = "Too many requests."): DomainError {
   return new DomainError(429, "RATE_LIMITED", message);
 }
