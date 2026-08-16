@@ -8,6 +8,7 @@ import { TextField } from "@/components/ui/TextField";
 import { listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import { createOtpChallenge } from "@/features/auth/services/otpApi";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
 import { getControlPolicy } from "@/features/control/services/controlPolicyApi";
 import type { ControlPolicy } from "@/features/control/types/controlPolicy";
@@ -86,6 +87,7 @@ export function OpenSavingsScreen() {
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   const [stepUpMethod, setStepUpMethod] = useState<"OTP" | "BIOMETRIC">("OTP");
   const [stepUpProof, setStepUpProof] = useState("");
+  const [savingsChallengeId, setSavingsChallengeId] = useState<string | null>(null);
   const [step, setStep] = useState<OpenSavingsStep>("input");
   const [isLoading, setIsLoading] = useState(true);
   const [isRestoringIntent, setIsRestoringIntent] = useState(true);
@@ -158,6 +160,11 @@ export function OpenSavingsScreen() {
           await clearSavingsIntent();
         }
       } else {
+        const challenge = await createOtpChallenge(
+          { purpose: "SAVINGS_OPENING", resourceId: intent.quote.quoteId },
+          auth,
+        );
+        setSavingsChallengeId(challenge.challengeId);
         setStep("stepUp");
       }
     } catch (requestError: unknown) {
@@ -244,6 +251,12 @@ export function OpenSavingsScreen() {
     try {
       const nextKey = idempotencyKey ?? createSavingsIntentId();
       await saveSavingsIntent({ userId, idempotencyKey: nextKey, quote, createdAt: Date.now() });
+      const challenge = await createOtpChallenge(
+        { purpose: "SAVINGS_OPENING", resourceId: quote.quoteId },
+        auth,
+      );
+      setSavingsChallengeId(challenge.challengeId);
+      setStepUpProof("");
       setIdempotencyKey(nextKey);
       setStep("stepUp");
     } catch (storageError: unknown) {
@@ -251,12 +264,13 @@ export function OpenSavingsScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [idempotencyKey, isQuoteExpired, quote, userId]);
+  }, [auth, idempotencyKey, isQuoteExpired, quote, userId]);
 
   const handleEditInput = useCallback(() => {
     setQuote(null);
     setOpening(null);
     setIdempotencyKey(null);
+    setSavingsChallengeId(null);
     setStepUpProof("");
     setError(undefined);
     setStep("input");
@@ -280,7 +294,14 @@ export function OpenSavingsScreen() {
     setError(undefined);
     try {
       const response = await submitSavingsOpening(
-        { quoteId: quote.quoteId, stepUp: { method: stepUpMethod, proof: stepUpProof } },
+        {
+          quoteId: quote.quoteId,
+          stepUp: {
+            method: stepUpMethod,
+            proof: stepUpProof,
+            challengeId: savingsChallengeId ?? undefined,
+          },
+        },
         { auth, idempotencyKey },
       );
       setOpening(response);
@@ -303,7 +324,7 @@ export function OpenSavingsScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [auth, idempotencyKey, isQuoteExpired, quote, stepUpMethod, stepUpProof, userId]);
+  }, [auth, idempotencyKey, isQuoteExpired, quote, savingsChallengeId, stepUpMethod, stepUpProof, userId]);
 
   const handleBiometric = useCallback(async () => {
     setIsSubmitting(true);

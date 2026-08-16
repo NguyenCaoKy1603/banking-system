@@ -4,6 +4,7 @@ import type {
   LoginResult,
   LogoutRequest,
   RegisterRequest,
+  RegisterResult,
   RegisterResponse,
   RefreshTokenRequest,
   RefreshTokenResponse,
@@ -13,6 +14,7 @@ import {
   isAuthChallengeResponse,
   isLoginResponse,
   isRegisterResponse,
+  isRegisterResult,
   isRefreshTokenResponse,
 } from "@/features/auth/services/authResponseValidators";
 import { requestJson, type RequestAuth } from "@/services/api/httpClient";
@@ -73,7 +75,7 @@ export function verifyLoginChallenge(
 export function register(
   request: RegisterRequest,
   options: AuthRequestOptions = {},
-): Promise<RegisterResponse> {
+): Promise<RegisterResult> {
   const body: RegisterRequest = {
     fullName: request.fullName,
     email: request.email,
@@ -81,11 +83,26 @@ export function register(
     password: request.password,
   };
 
-  return requestJson<RegisterResponse>("/auth/register", {
+  return requestJson<RegisterResult>("/auth/register", {
     method: "POST",
     body,
     headers: createDeviceHeaders(options),
-  }, isRegisterResponse);
+  }, isRegisterResult);
+}
+
+export function verifyRegistrationChallenge(
+  request: VerifyAuthChallengeRequest,
+  options: AuthRequestOptions = {},
+): Promise<RegisterResponse> {
+  return requestJson<RegisterResponse>(
+    "/auth/register/verify",
+    {
+      method: "POST",
+      body: request,
+      headers: createDeviceHeaders(options),
+    },
+    isRegisterResponse,
+  );
 }
 
 export async function refreshSession(
@@ -130,6 +147,7 @@ export const authApi = {
   login,
   verifyLoginChallenge,
   register,
+  verifyRegistrationChallenge,
   refreshSession,
   revokeSession,
   revokeAllSessions,

@@ -27,6 +27,31 @@ export type CreditDebtEffect = "INCREASE" | "DECREASE" | "NONE";
 export type CreditStatementStatus = "ISSUED" | "PARTIALLY_PAID" | "PAID" | "OVERDUE";
 export type CreditPaymentStatus = "PENDING" | "SUCCEEDED" | "FAILED" | "REVERSED";
 export type CreditPaymentOption = "MINIMUM" | "FULL_STATEMENT" | "CUSTOM";
+export type CreditApplicationStatus =
+  | "PENDING_ACTIVATION"
+  | "ACTIVE"
+  | "REJECTED";
+
+export type CreditApplication = {
+  applicationId: string;
+  requestedLimit: Money;
+  approvedLimit: Money | null;
+  status: CreditApplicationStatus;
+  decisionReason: string | null;
+  creditAccountId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreditApplicationRequest = {
+  requestedLimit?: Money;
+  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string };
+};
+
+export type CreditApplicationRecord = CreditApplication & {
+  userId: string;
+  requestFingerprint: string;
+};
 
 export type CardInstrument = {
   cardId: string;

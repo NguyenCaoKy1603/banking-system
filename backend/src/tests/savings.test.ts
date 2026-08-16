@@ -7,6 +7,8 @@ import {
   calculateSavingsInterest,
 } from "../savings.js";
 
+const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
+
 function createSystem(options: ConstructorParameters<typeof BankingSystem>[0] = {}) {
   let now = Date.parse("2026-08-14T00:00:00.000Z");
   const system = new BankingSystem({
@@ -23,12 +25,21 @@ function createSystem(options: ConstructorParameters<typeof BankingSystem>[0] = 
 }
 
 function register(system: BankingSystem, email = "savings@example.com") {
-  return system.register({
+  const user = system.register({
     fullName: "Savings User",
     email,
     phoneNumber: `09${String(Math.floor(Math.random() * 1_000_000_00)).padStart(8, "0")}`,
     password: "Password1",
   }).user;
+  const account = system.listAccounts(user.id)[0];
+  assert.ok(account);
+  const accountNumber = system.getAccountNumber(user.id, account.id);
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, `savings-funding-${email}`, {
+    recipientAccountNumber: accountNumber,
+    amount: { currency: "VND", amountMinor: "10000000" },
+    reason: "test fixture funding",
+  });
+  return user;
 }
 
 test("savings interest uses actual days, floor and month-end clamping", () => {

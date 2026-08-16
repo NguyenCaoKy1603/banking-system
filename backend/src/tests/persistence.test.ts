@@ -36,7 +36,7 @@ test("M6 snapshot without credit fields migrates to the current state version", 
   const restored = new BankingSystem({ sandboxOtp: "123456" });
   restored.importState(legacy as BankingSystemState);
   assert.equal(restored.exportState().stateVersion, BANKING_SYSTEM_STATE_VERSION);
-  assert.ok(restored.listCards(user.id)[0]);
+  assert.deepEqual(restored.listCards(user.id), []);
 });
 
 test("snapshot newer than the runtime is rejected explicitly", () => {

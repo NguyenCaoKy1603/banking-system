@@ -4,6 +4,8 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { addMonthsClamped, calculateMinimumPayment, nextStatementCloseAt } from "../credit.js";
 
+const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
+
 function createSystem(options: ConstructorParameters<typeof BankingSystem>[0] = {}) {
   let now = Date.parse("2026-08-14T00:00:00.000Z");
   const system = new BankingSystem({ ...options, clock: () => now, sandboxOtp: "123456" });
@@ -11,12 +13,21 @@ function createSystem(options: ConstructorParameters<typeof BankingSystem>[0] = 
 }
 
 function register(system: BankingSystem, suffix: string) {
-  return system.register({
+  const user = system.register({
     fullName: "Credit Sandbox User",
     email: `credit-${suffix}@example.com`,
     phoneNumber: `0912345${suffix.padStart(3, "0")}`,
     password: "Password1",
   }).user;
+  const paymentAccount = system.listAccounts(user.id)[0];
+  assert.ok(paymentAccount);
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, `credit-funding-${suffix}`, {
+    recipientAccountNumber: system.getAccountNumber(user.id, paymentAccount.id),
+    amount: { currency: "VND", amountMinor: "10000000" },
+    reason: "test fixture funding",
+  });
+  system.seedCreditSandbox(SANDBOX_OPERATOR_KEY, user.id);
+  return user;
 }
 
 test("credit statement schedule closes on the 25th in Asia/Ho_Chi_Minh", () => {
@@ -172,7 +183,7 @@ test("pending credit payment resumes without a second source debit", () => {
   const resumed = system.getCreditPayment(user.id, pending.paymentId);
   assert.equal(resumed.status, "SUCCEEDED");
   assert.equal(system.listAccounts(user.id)[0]!.availableBalance.amountMinor, "9800000");
-  assert.equal(system.listTransactions(user.id, source.id).items.length, 1);
+  assert.equal(system.listTransactions(user.id, source.id).items.length, 2);
   assert.equal(system.getCreditAccount(user.id, account.creditAccountId).postedOutstanding.amountMinor, "3800000");
 });
 

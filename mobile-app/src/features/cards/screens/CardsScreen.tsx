@@ -76,7 +76,11 @@ export function CardsScreen({ showBackButton = true }: CardsScreenProps) {
             <PrimaryButton label="Thử lại" onPress={loadCards} testID="credit-cards-retry" />
           </View>
         ) : cards.length === 0 ? (
-          <View style={styles.stateCard} testID="credit-cards-empty"><Text style={styles.emptyText}>Chưa có thẻ trong sandbox.</Text></View>
+          <View style={styles.stateCard} testID="credit-cards-empty">
+            <Text style={styles.emptyText}>Chưa có thẻ trong sandbox.</Text>
+            <Text style={styles.description}>Bạn cần đăng ký và xác nhận kích hoạt trước khi thẻ xuất hiện.</Text>
+            <PrimaryButton label="Đăng ký thẻ tín dụng sandbox" onPress={() => router.push("/cards/apply")} testID="credit-apply-open" />
+          </View>
         ) : (
           <View style={styles.listCard} testID="credit-cards-list">
             {cards.map((card, index) => (

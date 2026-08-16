@@ -52,3 +52,9 @@ export function isRefreshTokenResponse(
 export function isRegisterResponse(payload: unknown): payload is RegisterResponse {
   return isRecord(payload) && isAuthUser(payload.user);
 }
+
+export function isRegisterResult(
+  payload: unknown,
+): payload is RegisterResponse | AuthChallengeResponse {
+  return isRegisterResponse(payload) || isAuthChallengeResponse(payload);
+}

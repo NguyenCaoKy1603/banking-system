@@ -5,8 +5,38 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer } from "../http.js";
 
+const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
+
+async function completeRegistration(
+  request: (path: string, init?: RequestInit) => Promise<Response>,
+  deviceId: string,
+): Promise<{ user: { id: string } }> {
+  const begin = await request("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      fullName: "Credit HTTP User",
+      email: "credit-http@example.com",
+      phoneNumber: "0900000091",
+      password: "Password1",
+    }),
+  });
+  assert.equal(begin.status, 202);
+  const challenge = (await begin.json()) as { challengeId: string };
+  const otpResponse = await request(`/sandbox/otp/${challenge.challengeId}`, {
+    headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY },
+  });
+  const otp = (await otpResponse.json()) as { otp: string };
+  const verified = await request("/auth/register/verify", {
+    method: "POST",
+    body: JSON.stringify({ challengeId: challenge.challengeId, proof: otp.otp }),
+  });
+  assert.equal(verified.status, 201);
+  return (await verified.json()) as { user: { id: string } };
+}
+
 test("HTTP credit sandbox exposes card, statement and idempotent payment flow", async (t) => {
-  const server = createBankingServer(new BankingSystem({ sandboxOtp: "123456" }));
+  const system = new BankingSystem({ sandboxOtp: "123456" });
+  const server = createBankingServer(system);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -19,11 +49,8 @@ test("HTTP credit sandbox exposes card, statement and idempotent payment flow", 
   });
   const body = (value: unknown) => JSON.stringify(value);
 
-  const register = await request("/auth/register", {
-    method: "POST",
-    body: body({ fullName: "Credit HTTP User", email: "credit-http@example.com", phoneNumber: "0900000091", password: "Password1" }),
-  });
-  assert.equal(register.status, 201);
+  const registered = await completeRegistration(request, deviceId);
+  system.seedCreditSandbox(SANDBOX_OPERATOR_KEY, registered.user.id);
   const login = await request("/auth/login", {
     method: "POST",
     body: body({ email: "credit-http@example.com", password: "Password1" }),
@@ -54,6 +81,11 @@ test("HTTP credit sandbox exposes card, statement and idempotent payment flow", 
 
   const accountsResponse = await authRequest("/accounts");
   const accounts = (await accountsResponse.json()) as { accounts: Array<{ id: string }> };
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, "credit-http-funding", {
+    recipientAccountNumber: system.getAccountNumber(registered.user.id, accounts.accounts[0]!.id),
+    amount: { currency: "VND", amountMinor: "10000000" },
+    reason: "test fixture funding",
+  });
   const statementsResponse = await authRequest(`/credit/accounts/${card.creditAccountId}/statements`);
   const statements = (await statementsResponse.json()) as { items: Array<{ statementId: string; minimumPaymentRemaining: { amountMinor: string } }> };
   const statement = statements.items[0]!;

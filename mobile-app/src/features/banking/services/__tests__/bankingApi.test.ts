@@ -31,6 +31,7 @@ const account = {
   bankName: "Ngân hàng reference",
   currency: "VND",
   availableBalance: { currency: "VND", amountMinor: "100000" },
+  heldAmount: { currency: "VND", amountMinor: "0" },
   currentBalance: { currency: "VND", amountMinor: "100000" },
   status: "ACTIVE",
   updatedAt: "2026-08-14T00:00:00Z",

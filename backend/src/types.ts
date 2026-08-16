@@ -151,7 +151,7 @@ export type ControlPolicy = {
 
 export type Notification = {
   id: string;
-  type: "TRANSFER" | "SAVINGS" | "CREDIT" | "SECURITY";
+  type: "TRANSFER" | "SANDBOX_FUNDING" | "SAVINGS" | "CREDIT" | "SECURITY";
   title: string;
   body: string;
   resourceId: string | null;

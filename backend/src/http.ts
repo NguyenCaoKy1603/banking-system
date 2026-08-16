@@ -270,6 +270,14 @@ function isAuthenticatedRoute(
   if (method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "accounts") {
     return true;
   }
+  if (
+    (method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") ||
+    (method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") ||
+    (method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "applications") ||
+    (method === "POST" && segments.length === 4 && segments[0] === "credit" && segments[1] === "applications" && segments[3] === "activate")
+  ) {
+    return true;
+  }
   if (method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "accounts") {
     return true;
   }
@@ -397,9 +405,36 @@ export async function handleRequest(
       const data = requireObject(body);
       writeResponse(
         response,
+        202,
+        traceId,
+        await system.beginRegistrationAsync(
+          data as never,
+          getRateLimitKey(request),
+          requireDeviceId(request),
+        ),
+      );
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 3 &&
+      segments[0] === "auth" &&
+      segments[1] === "register" &&
+      segments[2] === "verify"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
         201,
         traceId,
-        await system.registerAsync(data as never, getRateLimitKey(request)),
+        await Promise.resolve(
+          system.verifyRegistrationChallenge(
+            data.challengeId as string,
+            data.proof as string,
+            requireDeviceId(request),
+          ),
+        ),
       );
       return;
     }
@@ -579,6 +614,55 @@ export async function handleRequest(
 
     if (request.method === "GET" && segments.length === 1 && segments[0] === "cards") {
       writeResponse(response, 200, traceId, { items: system.listCards(userId) });
+      return;
+    }
+
+    if (request.method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") {
+      writeResponse(response, 200, traceId, { items: system.listCreditApplications(userId) });
+      return;
+    }
+
+    if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        201,
+        traceId,
+        system.submitCreditApplication(
+          userId,
+          header(request, "idempotency-key") ?? "",
+          data as never,
+          requireDeviceId(request),
+        ),
+      );
+      return;
+    }
+
+    if (request.method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "applications") {
+      writeResponse(response, 200, traceId, system.getCreditApplication(userId, segments[2]));
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 4 &&
+      segments[0] === "credit" &&
+      segments[1] === "applications" &&
+      segments[3] === "activate"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.activateCreditApplication(
+          userId,
+          segments[2],
+          header(request, "idempotency-key") ?? "",
+          data as never,
+          requireDeviceId(request),
+        ),
+      );
       return;
     }
 

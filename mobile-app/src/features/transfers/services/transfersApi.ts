@@ -5,6 +5,7 @@ import type {
   BeneficiariesResponse,
   BeneficiaryResponse,
   CreateBeneficiaryRequest,
+  InternalRecipientLookupResponse,
   RenameBeneficiaryRequest,
   SubmitTransferRequest,
   TransferQuote,
@@ -42,7 +43,11 @@ function validateMoney(value: Money, fieldName: string): void {
 
 function validateQuoteRequest(request: TransferQuoteRequest): void {
   requireResourceId(request.sourceAccountId, "sourceAccountId");
-  requireResourceId(request.beneficiaryId, "beneficiaryId");
+  const hasBeneficiary = Boolean(request.beneficiaryId?.trim());
+  const hasLookup = Boolean(request.lookupId?.trim());
+  if (hasBeneficiary === hasLookup) {
+    throw new TypeError("Cần đúng một beneficiaryId hoặc lookupId.");
+  }
   validateMoney(request.amount, "amount");
 }
 
@@ -65,9 +70,6 @@ function validateBeneficiaryInput(request: CreateBeneficiaryRequest): void {
   }
   if (!/^\d{6,34}$/.test(request.accountNumber.replace(/\s+/g, ""))) {
     throw new TypeError("accountNumber ph\u1ea3i c\u00f3 t\u1eeb 6 \u0111\u1ebfn 34 ch\u1eef s\u1ed1.");
-  }
-  if (!request.bankName.trim()) {
-    throw new TypeError("bankName kh\u00f4ng \u0111\u01b0\u1ee3c \u0111\u1ec3 tr\u1ed1ng.");
   }
 }
 
@@ -133,6 +135,42 @@ export function lookupBeneficiary(
   );
 }
 
+export function lookupInternalRecipient(
+  accountNumber: string,
+  auth: RequestAuth,
+): Promise<InternalRecipientLookupResponse> {
+  const normalized = accountNumber.replace(/\s+/g, "");
+  if (!/^\d{6,34}$/.test(normalized)) {
+    throw new TypeError("accountNumber phải có từ 6 đến 34 chữ số.");
+  }
+  return requestJson<InternalRecipientLookupResponse>(
+    "/internal-recipients/lookup",
+    { method: "POST", body: { accountNumber: normalized }, auth },
+    (payload): payload is InternalRecipientLookupResponse => {
+      if (!payload || typeof payload !== "object" || !("recipient" in payload)) {
+        return false;
+      }
+      const recipient = (payload as { recipient?: unknown }).recipient;
+      if (!recipient || typeof recipient !== "object") {
+        return false;
+      }
+      const value = recipient as Record<string, unknown>;
+      return (
+        typeof value.lookupId === "string" &&
+        value.lookupId.trim().length > 0 &&
+        typeof value.accountHolderName === "string" &&
+        value.accountHolderName.trim().length > 0 &&
+        typeof value.maskedAccountNumber === "string" &&
+        value.maskedAccountNumber.trim().length > 0 &&
+        typeof value.bankName === "string" &&
+        value.bankName.trim().length > 0 &&
+        (value.status === "ACTIVE" || value.status === "BLOCKED") &&
+        typeof value.expiresAt === "string"
+      );
+    },
+  );
+}
+
 export function quoteTransfer(
   request: TransferQuoteRequest,
   auth: RequestAuth,
@@ -188,4 +226,5 @@ export const transfersApi = {
   quoteTransfer,
   submitTransfer,
   getTransfer,
+  lookupInternalRecipient,
 };

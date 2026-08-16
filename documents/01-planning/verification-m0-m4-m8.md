@@ -1,5 +1,7 @@
 # Verification report M0–M4 và M8
 
+> Lưu ý 2026-08-17: báo cáo này ghi bằng chứng snapshot cũ. Code hiện hành trên branch `codex/mini-core-banking-sandbox` đã giữ M0–M4/M8 và đổi registration/transfer sang clean sandbox; cần chạy lại device flow trên APK mới. Bảng trạng thái canonical nằm tại [`mini-core-sandbox-status.md`](mini-core-sandbox-status.md).
+
 Ngày kiểm tra: 2026-08-16
 Evidence checkpoint: `079e9d2` (`Verify M6 M7 native flows and account reveal`); implementation hardening `0f06b77`; earlier implementation baseline `aa0e3de`.
 

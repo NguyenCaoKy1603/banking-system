@@ -1,5 +1,7 @@
 # Backend hardening test report
 
+> Cập nhật hiện hành 2026-08-17: trên branch `codex/mini-core-banking-sandbox`, suite hiện có 65 test, 61 đạt và 4 skip PostgreSQL khi chưa có `DATABASE_URL`; Mini Core regression 7/7 đạt. Các số liệu PostgreSQL pass trong phần lịch sử là checkpoint trước branch này.
+
 Ngày kiểm tra: 2026-08-16
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
 Trạng thái: **In-memory và PostgreSQL persistent sandbox pass; relational production adapter vẫn là DRAFT**

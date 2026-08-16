@@ -165,7 +165,6 @@ test("sandbox OTP is dynamic, scoped and single-use", () => {
   const contextFingerprint = fingerprint({
     quoteId: quote.quoteId,
     amountMinor: quote.amount.amountMinor,
-    destinationAccountId: system.listAccounts(bob.id)[0]!.id,
   });
   const challenge = system.createOtpChallenge(
     alice.id,
@@ -187,4 +186,86 @@ test("sandbox OTP is dynamic, scoped and single-use", () => {
   );
   assert.equal(system.listAccounts(alice.id)[0]?.currentBalance.amountMinor, "7999000");
   assert.equal(account.id, system.listAccounts(alice.id)[0]?.id);
+});
+
+test("HTTP-style registration creates no account before OTP and only one after verification", async () => {
+  const system = new BankingSystem({ sandboxOperatorKey: "operator-registration" });
+  const challenge = await system.beginRegistrationAsync(
+    {
+      fullName: "Registration Candidate",
+      email: "registration-candidate@example.com",
+      phoneNumber: "0900000051",
+      password: "Password1",
+    },
+    "registration-client",
+    "registration-device",
+  );
+  assert.equal(system.listAccounts("not-created-yet").length, 0);
+  const otp = system.getSandboxOtp("operator-registration", challenge.challengeId);
+  const result = system.verifyRegistrationChallenge(
+    challenge.challengeId,
+    otp,
+    "registration-device",
+  );
+  assert.equal(system.listAccounts(result.user.id).length, 1);
+  assert.equal(system.listAccounts(result.user.id)[0]?.currentBalance.amountMinor, "0");
+  assert.throws(() =>
+    system.verifyRegistrationChallenge(challenge.challengeId, otp, "registration-device"),
+  );
+});
+
+test("savings pending state holds funds without changing current balance", () => {
+  const system = new BankingSystem({
+    sandboxOperatorKey: "operator-savings",
+    sandboxOtp: "123456",
+    settleSavingsImmediately: false,
+  });
+  const user = register(system, "alice-savings-hold", "0900000061");
+  const account = system.listAccounts(user.id)[0]!;
+  system.fundSandbox("operator-savings", "fund-savings-hold", {
+    recipientAccountNumber: accountNumber(system, user.id),
+    amount: { currency: "VND", amountMinor: "10000000" },
+    reason: "Cáº¥p tiá»n kiá»ƒm thá»­",
+  });
+  const product = system.listSavingsProducts(user.id)[0]!;
+  const quote = system.createSavingsQuote(user.id, {
+    sourceAccountId: account.id,
+    productId: product.productId,
+    principal: { currency: "VND", amountMinor: "1000000" },
+    maturityInstruction: "RETURN_PRINCIPAL_AND_INTEREST",
+  });
+  const pending = system.submitSavingsOpening(user.id, "savings-hold-1", {
+    quoteId: quote.quoteId,
+    stepUp: { method: "OTP", proof: "123456" },
+  });
+  assert.equal(pending.status, "PENDING");
+  assert.equal(system.listAccounts(user.id)[0]?.currentBalance.amountMinor, "10000000");
+  assert.equal(system.listAccounts(user.id)[0]?.availableBalance.amountMinor, "9000000");
+  assert.equal(system.listAccounts(user.id)[0]?.heldAmount.amountMinor, "1000000");
+  assert.equal(system.reconcile().every((row) => row.differenceMinor === "0"), true);
+  const resumed = system.getSavingsOpening(user.id, pending.openingId);
+  assert.equal(resumed.status, "SUCCEEDED");
+  assert.equal(system.listAccounts(user.id)[0]?.currentBalance.amountMinor, "9000000");
+  assert.equal(system.listAccounts(user.id)[0]?.heldAmount.amountMinor, "0");
+});
+
+test("credit requires explicit application and activation", () => {
+  const system = new BankingSystem({ sandboxOtp: "123456" });
+  const user = register(system, "alice-credit-application", "0900000071");
+  assert.deepEqual(system.listCards(user.id), []);
+  const application = system.submitCreditApplication(user.id, "credit-application-1", {
+    requestedLimit: { currency: "VND", amountMinor: "20000000" },
+    stepUp: { method: "OTP", proof: "123456" },
+  });
+  assert.equal(application.status, "PENDING_ACTIVATION");
+  assert.deepEqual(system.listCards(user.id), []);
+  const activated = system.activateCreditApplication(
+    user.id,
+    application.applicationId,
+    "credit-activation-1",
+    { stepUp: { method: "OTP", proof: "123456" } },
+  );
+  assert.equal(activated.status, "ACTIVE");
+  assert.equal(system.listCards(user.id).length, 1);
+  assert.equal(system.listCreditAccounts(user.id)[0]?.postedOutstanding.amountMinor, "0");
 });

@@ -28,10 +28,12 @@ import {
 } from "@/services/security/biometricAuth";
 import {
   lookupBeneficiary,
+  lookupInternalRecipient,
   quoteTransfer,
   submitTransfer,
   getTransfer,
 } from "@/features/transfers/services/transfersApi";
+import { createOtpChallenge } from "@/features/auth/services/otpApi";
 import type {
   Beneficiary,
   TransferQuote,
@@ -84,11 +86,14 @@ export function TransferScreen() {
   const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [sourceAccountId, setSourceAccountId] = useState<string | null>(null);
   const [beneficiaryId, setBeneficiaryId] = useState(initialBeneficiaryId);
+  const [recipientAccountNumber, setRecipientAccountNumber] = useState("");
+  const [recipientLookupId, setRecipientLookupId] = useState<string | null>(null);
   const [beneficiary, setBeneficiary] = useState<Beneficiary | null>(null);
   const [amountMinor, setAmountMinor] = useState("");
   const [quote, setQuote] = useState<TransferQuote | null>(null);
   const [stepUpMethod, setStepUpMethod] = useState<StepUpMethod>("OTP");
   const [stepUpProof, setStepUpProof] = useState("");
+  const [transferChallengeId, setTransferChallengeId] = useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<TransferReceipt | null>(null);
   const [step, setStep] = useState<TransferStep>("beneficiary");
@@ -172,6 +177,7 @@ export function TransferScreen() {
       setQuote(intent.quote);
       setBeneficiary(intent.quote.beneficiary);
       setBeneficiaryId(intent.quote.beneficiary.id);
+      setRecipientLookupId(null);
       setSourceAccountId(intent.quote.sourceAccountId);
       setAmountMinor(intent.quote.amount.amountMinor);
       setIdempotencyKey(intent.idempotencyKey);
@@ -185,6 +191,11 @@ export function TransferScreen() {
           await clearTransferIntent();
         }
       } else {
+        const challenge = await createOtpChallenge(
+          { purpose: "TRANSFER", resourceId: intent.quote.quoteId },
+          auth,
+        );
+        setTransferChallengeId(challenge.challengeId);
         setStep("stepUp");
       }
     } catch (requestError: unknown) {
@@ -199,8 +210,8 @@ export function TransferScreen() {
   }, [restoreTransferIntent]);
 
   const handleLookupBeneficiary = useCallback(async () => {
-    if (!beneficiaryId.trim()) {
-      setError("Mã người nhận là bắt buộc.");
+    if (!beneficiaryId.trim() && !recipientAccountNumber.trim()) {
+      setError("Nhập số tài khoản người nhận hoặc chọn người nhận đã lưu.");
       return;
     }
 
@@ -208,6 +219,26 @@ export function TransferScreen() {
     setError(undefined);
 
     try {
+      if (recipientAccountNumber.trim()) {
+        const response = await lookupInternalRecipient(recipientAccountNumber, auth);
+        if (response.recipient.status !== "ACTIVE") {
+          setError("Tài khoản người nhận hiện không khả dụng.");
+          return;
+        }
+        setRecipientLookupId(response.recipient.lookupId);
+        setBeneficiaryId("");
+        setBeneficiary({
+          id: response.recipient.lookupId,
+          displayName: response.recipient.accountHolderName,
+          accountHolderName: response.recipient.accountHolderName,
+          maskedAccountNumber: response.recipient.maskedAccountNumber,
+          bankName: response.recipient.bankName,
+          status: response.recipient.status,
+        });
+        setStep("amount");
+        return;
+      }
+
       const response = await lookupBeneficiary(beneficiaryId, auth);
 
       if (response.beneficiary.status !== "ACTIVE") {
@@ -216,13 +247,14 @@ export function TransferScreen() {
       }
 
       setBeneficiary(response.beneficiary);
+      setRecipientLookupId(null);
       setStep("amount");
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
     } finally {
       setIsSubmitting(false);
     }
-  }, [auth, beneficiaryId]);
+  }, [auth, beneficiaryId, recipientAccountNumber]);
 
   const handleCreateQuote = useCallback(async () => {
     if (!sourceAccountId) {
@@ -264,7 +296,9 @@ export function TransferScreen() {
       const response = await quoteTransfer(
         {
           sourceAccountId,
-          beneficiaryId: beneficiary.id,
+          ...(recipientLookupId
+            ? { lookupId: recipientLookupId }
+            : { beneficiaryId: beneficiary.id }),
           amount: { currency: "VND", amountMinor: normalizedAmount },
         },
         auth,
@@ -276,7 +310,7 @@ export function TransferScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [amountMinor, auth, beneficiary, controlPolicy, sourceAccountId]);
+  }, [amountMinor, auth, beneficiary, controlPolicy, recipientLookupId, sourceAccountId]);
 
   const handleContinueToStepUp = useCallback(async () => {
     if (!quote) {
@@ -301,6 +335,12 @@ export function TransferScreen() {
         quote,
         createdAt: Date.now(),
       });
+      const challenge = await createOtpChallenge(
+        { purpose: "TRANSFER", resourceId: quote.quoteId },
+        auth,
+      );
+      setTransferChallengeId(challenge.challengeId);
+      setStepUpProof("");
       setIdempotencyKey(nextIdempotencyKey);
       setStep("stepUp");
     } catch (storageError: unknown) {
@@ -308,7 +348,7 @@ export function TransferScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [idempotencyKey, quote, userId]);
+  }, [auth, idempotencyKey, quote, userId]);
 
   const handleSubmitTransfer = useCallback(async () => {
     if (!quote || !idempotencyKey) {
@@ -328,7 +368,11 @@ export function TransferScreen() {
       const response = await submitTransfer(
         {
           quoteId: quote.quoteId,
-          stepUp: { method: stepUpMethod, proof: stepUpProof },
+          stepUp: {
+            method: stepUpMethod,
+            proof: stepUpProof,
+            challengeId: transferChallengeId ?? undefined,
+          },
         },
         { auth, idempotencyKey },
       );
@@ -353,7 +397,7 @@ export function TransferScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [auth, idempotencyKey, quote, stepUpMethod, stepUpProof, userId]);
+  }, [auth, idempotencyKey, quote, stepUpMethod, stepUpProof, transferChallengeId, userId]);
 
   const handleBiometricStepUp = useCallback(async () => {
     setIsSubmitting(true);
@@ -456,18 +500,24 @@ export function TransferScreen() {
               testID="transfer-open-beneficiaries"
             />
             <TextField
-              accessibilityLabel="Mã người nhận"
+              accessibilityLabel="Số tài khoản người nhận"
               autoCapitalize="none"
               error={error}
-              label="Mã người nhận"
+              keyboardType="number-pad"
+              label="Số tài khoản người nhận"
               onChangeText={(value) => {
-                setBeneficiaryId(value);
+                setRecipientAccountNumber(value.replace(/\D/g, ""));
+                setBeneficiaryId("");
+                setRecipientLookupId(null);
                 setError(undefined);
               }}
-              placeholder="Nhập mã người nhận"
+              placeholder="Nhập đủ 6–34 chữ số"
               testID="transfer-beneficiary-id"
-              value={beneficiaryId}
+              value={recipientAccountNumber}
             />
+            {beneficiaryId ? (
+              <Text style={styles.description}>Người nhận đã lưu: {beneficiary?.displayName ?? beneficiaryId}</Text>
+            ) : null}
             <PrimaryButton
               disabled={isSubmitting}
               label={isSubmitting ? "Đang tra cứu..." : "Tiếp tục"}
@@ -516,6 +566,10 @@ export function TransferScreen() {
                 <Text style={styles.summaryLabel}>Người nhận</Text>
                 <Text style={styles.summaryValue}>{quote?.beneficiary.displayName}</Text>
               </View>
+            <Text style={styles.description}>
+              {beneficiary?.accountHolderName ?? beneficiary?.maskedAccountNumber}
+              {beneficiary?.bankName ? ` · ${beneficiary.bankName}` : ""}
+            </Text>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Số tiền</Text>
                 <Text style={styles.summaryValue}>

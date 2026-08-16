@@ -5,6 +5,9 @@ import { isMoney } from "@/features/banking/validation/moneyValidators";
 import type {
   CreditAccount,
   CreditAccountsResponse,
+  CreditApplication,
+  CreditApplicationsResponse,
+  CreditApplicationRequest,
   CreditCard,
   CreditCardDetailResponse,
   CreditCardsResponse,
@@ -19,6 +22,8 @@ import type {
 import {
   isCreditAccountResponse,
   isCreditAccountsResponse,
+  isCreditApplication,
+  isCreditApplicationsResponse,
   isCreditCardDetailResponse,
   isCreditCardResponse,
   isCreditCardsResponse,
@@ -107,7 +112,7 @@ export function lockCreditCard(cardId: string, auth: RequestAuth): Promise<{ car
 
 export function unlockCreditCard(
   cardId: string,
-  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string },
+  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string },
   auth: RequestAuth,
 ): Promise<{ card: CreditCard }> {
   if (!stepUp.proof.trim()) throw new TypeError("stepUp.proof không được để trống.");
@@ -120,6 +125,44 @@ export function unlockCreditCard(
 
 export function listCreditAccounts(auth: RequestAuth): Promise<CreditAccountsResponse> {
   return requestJson("/credit/accounts", { auth }, isCreditAccountsResponse);
+}
+
+export function listCreditApplications(auth: RequestAuth): Promise<CreditApplicationsResponse> {
+  return requestJson("/credit/applications", { auth }, isCreditApplicationsResponse);
+}
+
+export function submitCreditApplication(
+  request: CreditApplicationRequest,
+  options: { auth: RequestAuth; idempotencyKey: string },
+): Promise<CreditApplication> {
+  validateStepUp({ quoteId: "credit-application", stepUp: request.stepUp });
+  if (!options.idempotencyKey.trim()) {
+    throw new TypeError("idempotencyKey khÃ´ng Ä‘Æ°á»£c Ä‘á»ƒ trá»‘ng.");
+  }
+  if (request.requestedLimit !== undefined) {
+    validateMoney(request.requestedLimit, "requestedLimit");
+  }
+  return requestJson(
+    "/credit/applications",
+    { method: "POST", body: request, auth: options.auth, idempotencyKey: options.idempotencyKey },
+    isCreditApplication,
+  );
+}
+
+export function activateCreditApplication(
+  applicationId: string,
+  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string },
+  options: { auth: RequestAuth; idempotencyKey: string },
+): Promise<CreditApplication> {
+  validateStepUp({ quoteId: applicationId, stepUp });
+  if (!options.idempotencyKey.trim()) {
+    throw new TypeError("idempotencyKey khÃ´ng Ä‘Æ°á»£c Ä‘á»ƒ trá»‘ng.");
+  }
+  return requestJson(
+    `/credit/applications/${requireResourceId(applicationId, "applicationId")}/activate`,
+    { method: "POST", body: { stepUp }, auth: options.auth, idempotencyKey: options.idempotencyKey },
+    isCreditApplication,
+  );
 }
 
 export function getCreditAccount(creditAccountId: string, auth: RequestAuth): Promise<CreditAccount> {
@@ -199,6 +242,9 @@ export const creditApi = {
   lockCreditCard,
   unlockCreditCard,
   listCreditAccounts,
+  listCreditApplications,
+  submitCreditApplication,
+  activateCreditApplication,
   getCreditAccount,
   listCreditTransactions,
   listCreditStatements,

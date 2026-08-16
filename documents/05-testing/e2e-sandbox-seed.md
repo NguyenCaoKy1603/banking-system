@@ -1,5 +1,7 @@
 # E2E sandbox seed
 
+> Cập nhật 2026-08-17: seed hiện dùng registration hai bước, Sandbox Funding operator, recipient account thật và credit application → activation. Nếu chưa có `E2E_BENEFICIARY_ACCOUNT`, cần cấp `E2E_RECIPIENT_PASSWORD` (kèm email/phone tùy chọn) để seed tự tạo người nhận; không còn số tài khoản mặc định giả.
+
 `backend` có lệnh `npm run seed:e2e` để chuẩn bị dữ liệu cho các flow Maestro mà không phải tự lấy ID bằng tay.
 
 ## Chạy lại từ trạng thái sạch

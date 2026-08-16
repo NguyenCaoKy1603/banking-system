@@ -5,6 +5,9 @@ import { BankingSystem } from "../bankingSystem.js";
 import { InMemoryCoreBanking } from "../coreBanking.js";
 import type { LoginResponse, LoginResult } from "../types.js";
 
+const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
+let fixtureSequence = 0;
+
 function requireTokenPair(result: LoginResult): LoginResponse {
   assert.ok("accessToken" in result);
   return result;
@@ -23,6 +26,40 @@ function createSystem() {
       now += ms;
     },
   };
+}
+
+function getAccountNumber(system: BankingSystem, userId: string): string {
+  const account = system.listAccounts(userId)[0];
+  assert.ok(account);
+  return system.getAccountNumber(userId, account.id);
+}
+
+function prepareTransferFixture(system: BankingSystem, userId: string) {
+  const account = system.listAccounts(userId)[0];
+  assert.ok(account);
+  fixtureSequence += 1;
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, `fixture-funding-${fixtureSequence}`, {
+    recipientAccountNumber: getAccountNumber(system, userId),
+    amount: { currency: "VND", amountMinor: "10000000" },
+    reason: "test fixture funding",
+  });
+
+  let beneficiary = system.listBeneficiaries(userId)[0];
+  if (!beneficiary) {
+    const recipient = system.register({
+      fullName: "Transfer Recipient",
+      email: `transfer-recipient-${fixtureSequence}@example.com`,
+      phoneNumber: `098${String(10000000 + fixtureSequence).slice(-7)}`,
+      password: "Password1",
+    }).user;
+    beneficiary = system.createBeneficiary(userId, {
+      displayName: "Người nhận sandbox",
+      accountNumber: getAccountNumber(system, recipient.id),
+      bankName: "Reference Bank",
+    });
+  }
+
+  return { account, beneficiary };
 }
 
 test("auth refresh rotates token and detects reuse", () => {
@@ -56,32 +93,46 @@ test("beneficiary directory supports create, rename and delete with audit events
     phoneNumber: "0912345688",
     password: "Password1",
   });
+  const firstRecipient = system.register({
+    fullName: "First Recipient",
+    email: "beneficiary-recipient-a@example.com",
+    phoneNumber: "0912345689",
+    password: "Password1",
+  }).user;
+  const secondRecipient = system.register({
+    fullName: "Second Recipient",
+    email: "beneficiary-recipient-b@example.com",
+    phoneNumber: "0912345690",
+    password: "Password1",
+  }).user;
+  const firstAccountNumber = getAccountNumber(system, firstRecipient.id);
+  const secondAccountNumber = getAccountNumber(system, secondRecipient.id);
 
   const created = system.createBeneficiary(registered.user.id, {
     displayName: "Gia đình",
-    accountNumber: "1234 5678 9012",
+    accountNumber: firstAccountNumber,
     bankName: "Reference Bank",
   });
   assert.equal(created.displayName, "Gia đình");
-  assert.equal(created.maskedAccountNumber, "•••• 9012");
-  assert.equal(system.listBeneficiaries(registered.user.id).length, 2);
+  assert.equal(created.maskedAccountNumber, `•••• ${firstAccountNumber.slice(-4)}`);
+  assert.equal(system.listBeneficiaries(registered.user.id).length, 1);
 
   const sameSuffixDifferentAccount = system.createBeneficiary(
     registered.user.id,
     {
       displayName: "Khác ngân hàng số",
-      accountNumber: "999900009012",
+      accountNumber: secondAccountNumber,
       bankName: "Reference Bank",
     },
   );
-  assert.equal(sameSuffixDifferentAccount.maskedAccountNumber, "•••• 9012");
-  assert.equal(system.listBeneficiaries(registered.user.id).length, 3);
+  assert.equal(sameSuffixDifferentAccount.maskedAccountNumber, `•••• ${secondAccountNumber.slice(-4)}`);
+  assert.equal(system.listBeneficiaries(registered.user.id).length, 2);
 
   assert.throws(
     () =>
       system.createBeneficiary(registered.user.id, {
         displayName: "Trùng",
-        accountNumber: "123456789012",
+        accountNumber: firstAccountNumber,
         bankName: "Reference Bank",
       }),
     /already exists/,
@@ -338,10 +389,7 @@ test("transfer quote and submit are server-authoritative and idempotent", () => 
     phoneNumber: "0912345678",
     password: "Password1",
   });
-  const account = system.listAccounts(registered.user.id)[0];
-  const beneficiary = system.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
 
   const quote = system.createQuote(registered.user.id, {
     sourceAccountId: account.id,
@@ -364,7 +412,7 @@ test("transfer quote and submit are server-authoritative and idempotent", () => 
   );
 
   assert.deepEqual(retryReceipt, firstReceipt);
-  assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 1);
+  assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 2);
   assert.equal(system.listAccounts(registered.user.id)[0]?.availableBalance.amountMinor, "9899000");
   assert.equal(system.reconcile()[0]?.differenceMinor, "0");
   assert.ok(system.auditEvents.some((event) => event.eventType === "TRANSFER_SUCCEEDED"));
@@ -379,7 +427,9 @@ test("transfer quote and submit are server-authoritative and idempotent", () => 
     system.markNotificationRead(registered.user.id, notification.id).read,
     true,
   );
-  const transaction = system.listTransactions(registered.user.id, account.id).items[0];
+  const transaction = system
+    .listTransactions(registered.user.id, account.id)
+    .items.find((item) => item.kind === "TRANSFER");
   assert.ok(transaction);
   assert.equal(notification.resourceId, transaction.id);
   assert.equal(notification.resourceAccountId, account.id);
@@ -400,10 +450,7 @@ test("quote snapshots beneficiary name and can be consumed only once", () => {
     phoneNumber: "0912345700",
     password: "Password1",
   });
-  const account = system.listAccounts(registered.user.id)[0];
-  const beneficiary = system.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
 
   const quote = system.createQuote(registered.user.id, {
     sourceAccountId: account.id,
@@ -417,10 +464,10 @@ test("quote snapshots beneficiary name and can be consumed only once", () => {
     quoteId: quote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
-  assert.equal(
-    system.listTransactions(registered.user.id, account.id).items[0]?.counterpartyName,
-    "Người nhận sandbox",
-  );
+  const transferTransaction = system
+    .listTransactions(registered.user.id, account.id)
+    .items.find((item) => item.kind === "TRANSFER");
+  assert.equal(transferTransaction?.counterpartyName, "Người nhận sandbox");
   assert.deepEqual(
     system.submitTransfer(registered.user.id, "quote-once-1", {
       quoteId: quote.quoteId,
@@ -436,7 +483,7 @@ test("quote snapshots beneficiary name and can be consumed only once", () => {
       }),
     /already been submitted/,
   );
-  assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 1);
+  assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 2);
 });
 
 test("transfer step-up applies a bounded rate limit and resets after the window", () => {
@@ -447,10 +494,7 @@ test("transfer step-up applies a bounded rate limit and resets after the window"
     phoneNumber: "0912345703",
     password: "Password1",
   });
-  const account = system.listAccounts(registered.user.id)[0];
-  const beneficiary = system.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
   const quote = system.createQuote(registered.user.id, {
     sourceAccountId: account.id,
     beneficiaryId: beneficiary.id,
@@ -488,10 +532,7 @@ test("outbox retry metadata and pending threshold are observable", () => {
     phoneNumber: "0912345704",
     password: "Password1",
   });
-  const account = thresholdSystem.listAccounts(registered.user.id)[0];
-  const beneficiary = thresholdSystem.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(thresholdSystem, registered.user.id);
   const quote = thresholdSystem.createQuote(registered.user.id, {
     sourceAccountId: account.id,
     beneficiaryId: beneficiary.id,
@@ -510,6 +551,9 @@ test("outbox retry metadata and pending threshold are observable", () => {
   assert.equal(event.attempts, 1);
   assert.equal(thresholdSystem.retryOutbox().length, 0);
   thresholdSystem.markOutboxPublished(event.id);
+  for (const pendingEvent of thresholdSystem.outboxEvents) {
+    thresholdSystem.markOutboxPublished(pendingEvent.id);
+  }
   const recovered = thresholdSystem.getHealth();
   assert.equal(recovered.status, "ok");
   assert.equal(recovered.pendingOutboxEvents, 0);
@@ -543,6 +587,11 @@ test("reconciliation reports core minus ledger difference", () => {
   });
   const account = system.listAccounts(registered.user.id)[0];
   assert.ok(account);
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, "reconciliation-funding", {
+    recipientAccountNumber: getAccountNumber(system, registered.user.id),
+    amount: { currency: "VND", amountMinor: "10000000" },
+    reason: "test fixture funding",
+  });
 
   core.ledger.append({
     journalId: "reconciliation-drift",
@@ -582,10 +631,7 @@ test("pending transfer can be recovered and settled without a second debit", () 
     phoneNumber: "0912345682",
     password: "Password1",
   });
-  const account = system.listAccounts(registered.user.id)[0];
-  const beneficiary = system.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
 
   const quote = system.createQuote(registered.user.id, {
     sourceAccountId: account.id,
@@ -599,8 +645,11 @@ test("pending transfer can be recovered and settled without a second debit", () 
 
   assert.equal(pending.status, "PENDING");
   assert.equal(system.getTransfer(registered.user.id, pending.transferId).status, "PENDING");
-  assert.equal(system.listTransactions(registered.user.id, account.id).items[0]?.status, "PENDING");
-  assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 1);
+  assert.equal(
+    system.listTransactions(registered.user.id, account.id).items.find((item) => item.kind === "TRANSFER")?.status,
+    "PENDING",
+  );
+  assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 2);
 
   const settled = system.settleTransfer(registered.user.id, pending.transferId);
   assert.equal(settled.status, "SUCCEEDED");
@@ -611,7 +660,7 @@ test("pending transfer can be recovered and settled without a second debit", () 
     }).status,
     "SUCCEEDED",
   );
-  assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 1);
+  assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 2);
   assert.equal(system.reconcile()[0]?.differenceMinor, "0");
 });
 
@@ -626,10 +675,7 @@ test("pending transfer failure and reversal release the reserved balance", () =>
     phoneNumber: "0912345686",
     password: "Password1",
   });
-  const account = system.listAccounts(registered.user.id)[0];
-  const beneficiary = system.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
 
   const quote = system.createQuote(registered.user.id, {
     sourceAccountId: account.id,
@@ -654,7 +700,8 @@ test("pending transfer failure and reversal release the reserved balance", () =>
     quoteId: secondQuote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
-  const reversed = system.reverseTransfer(registered.user.id, secondPending.transferId);
+  const secondSucceeded = system.settleTransfer(registered.user.id, secondPending.transferId);
+  const reversed = system.reverseTransfer(registered.user.id, secondSucceeded.transferId);
   assert.equal(reversed.status, "REVERSED");
   assert.equal(system.listAccounts(registered.user.id)[0]?.availableBalance.amountMinor, "10000000");
   assert.equal(system.reconcile()[0]?.differenceMinor, "0");
@@ -668,10 +715,7 @@ test("same idempotency key with a different quote is rejected", () => {
     phoneNumber: "0912345678",
     password: "Password1",
   });
-  const account = system.listAccounts(registered.user.id)[0];
-  const beneficiary = system.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
   const quoteA = system.createQuote(registered.user.id, {
     sourceAccountId: account.id,
     beneficiaryId: beneficiary.id,
@@ -706,10 +750,7 @@ test("expired quote cannot be submitted", () => {
     phoneNumber: "0912345678",
     password: "Password1",
   });
-  const account = system.listAccounts(registered.user.id)[0];
-  const beneficiary = system.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
   const quote = system.createQuote(registered.user.id, {
     sourceAccountId: account.id,
     beneficiaryId: beneficiary.id,
@@ -736,10 +777,7 @@ test("server kill switch blocks quote creation", () => {
     phoneNumber: "0912345679",
     password: "Password1",
   });
-  const account = system.listAccounts(registered.user.id)[0];
-  const beneficiary = system.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
 
   assert.throws(
     () =>
@@ -760,10 +798,7 @@ test("server control policy rejects a disabled step-up method", () => {
     phoneNumber: "0912345683",
     password: "Password1",
   });
-  const account = system.listAccounts(registered.user.id)[0];
-  const beneficiary = system.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
   assert.deepEqual(system.getControlPolicy().stepUpMethods, ["OTP"]);
 
   const quote = system.createQuote(registered.user.id, {
@@ -806,14 +841,14 @@ test("server control policy enforces a per-user allowlist", () => {
   assert.equal(allowedPolicy.allowlisted, true);
   assert.equal(blockedPolicy.allowlisted, false);
 
-  const allowedAccount = system.listAccounts(allowed.user.id)[0];
-  const allowedBeneficiary = system.listBeneficiaries(allowed.user.id)[0];
-  const blockedAccount = system.listAccounts(blocked.user.id)[0];
-  const blockedBeneficiary = system.listBeneficiaries(blocked.user.id)[0];
-  assert.ok(allowedAccount);
-  assert.ok(allowedBeneficiary);
-  assert.ok(blockedAccount);
-  assert.ok(blockedBeneficiary);
+  const { account: allowedAccount, beneficiary: allowedBeneficiary } = prepareTransferFixture(
+    system,
+    allowed.user.id,
+  );
+  const { account: blockedAccount, beneficiary: blockedBeneficiary } = prepareTransferFixture(
+    system,
+    blocked.user.id,
+  );
 
   assert.doesNotThrow(() =>
     system.createQuote(allowed.user.id, {
@@ -841,10 +876,7 @@ test("server control policy enforces the configured transfer limit", () => {
     phoneNumber: "0912345690",
     password: "Password1",
   });
-  const account = system.listAccounts(registered.user.id)[0];
-  const beneficiary = system.listBeneficiaries(registered.user.id)[0];
-  assert.ok(account);
-  assert.ok(beneficiary);
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
   assert.equal(system.getControlPolicy().maxTransferAmountMinor, "100000");
 
   assert.throws(
@@ -872,7 +904,7 @@ test("audit and outbox reads cannot mutate internal event history", () => {
   (auditSnapshot as { eventType: string }).eventType = "TAMPERED";
 
   assert.equal(system.auditEvents.find((event) => event.eventType === "USER_REGISTERED")?.eventType, "USER_REGISTERED");
-  assert.equal(system.auditEvents.length, 2);
+  assert.equal(system.auditEvents.length, 1);
   assert.equal(system.outboxEvents.length, 0);
   assert.equal(registered.user.email, "immutable-audit@example.com");
 });

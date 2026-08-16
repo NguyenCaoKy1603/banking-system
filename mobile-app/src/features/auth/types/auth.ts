@@ -50,6 +50,15 @@ export type AuthChallengeResponse = {
   challengeId: string;
   expiresAt: string;
   methods: AuthChallengeMethod[];
+  purpose?:
+    | "REGISTRATION_VERIFY"
+    | "LOGIN"
+    | "TRANSFER"
+    | "SAVINGS_OPENING"
+    | "CREDIT_APPLICATION"
+    | "CARD_ACTIVATION"
+    | "CREDIT_PAYMENT"
+    | "CARD_UNLOCK";
 };
 
 export type LoginResult = LoginResponse | AuthChallengeResponse;
@@ -73,3 +82,5 @@ export type LogoutRequest = {
 export type RegisterResponse = {
   user: AuthUser;
 };
+
+export type RegisterResult = RegisterResponse | AuthChallengeResponse;

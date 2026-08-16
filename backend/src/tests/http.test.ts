@@ -5,6 +5,38 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer } from "../http.js";
 
+const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
+
+async function completeRegistration(
+  request: (path: string, init?: RequestInit) => Promise<Response>,
+  deviceId: string,
+  input: { fullName: string; email: string; phoneNumber: string; password: string },
+): Promise<{ user: { id: string } }> {
+  const begin = await request("/auth/register", {
+    method: "POST",
+    headers: { "X-Device-ID": deviceId },
+    body: JSON.stringify(input),
+  });
+  assert.equal(begin.status, 202);
+  const challenge = (await begin.json()) as { challengeId: string };
+  const otpResponse = await request(`/sandbox/otp/${challenge.challengeId}`, {
+    headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY },
+  });
+  assert.equal(otpResponse.status, 200);
+  const otp = (await otpResponse.json()) as { otp: string };
+  const verified = await request("/auth/register/verify", {
+    method: "POST",
+    headers: { "X-Device-ID": deviceId },
+    body: JSON.stringify({
+      challengeId: challenge.challengeId,
+      method: "OTP",
+      proof: otp.otp,
+    }),
+  });
+  assert.equal(verified.status, 201);
+  return (await verified.json()) as { user: { id: string } };
+}
+
 test("health endpoint reports reconciliation and outbox readiness", async (t) => {
   const server = createBankingServer(new BankingSystem());
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -98,18 +130,12 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  const registerResponse = await request("/auth/register", {
-    method: "POST",
-    headers: deviceHeaders,
-    body: json({
-      fullName: "HTTP User",
-      email: "http@example.com",
-      phoneNumber: "0900000000",
-      password: "Password1",
-    }),
+  const registered = await completeRegistration(request, deviceHeaders["X-Device-ID"], {
+    fullName: "HTTP User",
+    email: "http@example.com",
+    phoneNumber: "0900000000",
+    password: "Password1",
   });
-  assert.equal(registerResponse.status, 201);
-  const registered = (await registerResponse.json()) as { user: { id: string } };
 
   const loginResponse = await request("/auth/login", {
     method: "POST",
@@ -158,9 +184,27 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
   };
   assert.equal(controlPolicy.globalKillSwitch, false);
   assert.equal(controlPolicy.transfersEnabled, true);
-  const beneficiaryId = system.listBeneficiaries(registered.user.id)[0]?.id;
   assert.ok(accounts.accounts[0]?.id);
-  assert.ok(beneficiaryId);
+  const sourceAccountNumber = accountNumberPayload.accountNumber;
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, "http-transfer-funding", {
+    recipientAccountNumber: sourceAccountNumber,
+    amount: { currency: "VND", amountMinor: "10000000" },
+    reason: "test fixture funding",
+  });
+  const recipient = system.register({
+    fullName: "HTTP Recipient",
+    email: "http-recipient@example.com",
+    phoneNumber: "0900000005",
+    password: "Password1",
+  }).user;
+  const recipientAccount = system.listAccounts(recipient.id)[0];
+  assert.ok(recipientAccount);
+  const beneficiary = system.createBeneficiary(registered.user.id, {
+    displayName: "HTTP Recipient",
+    accountNumber: system.getAccountNumber(recipient.id, recipientAccount.id),
+    bankName: "Reference Bank",
+  });
+  const beneficiaryId = beneficiary.id;
 
   const quoteResponse = await request("/transfers/quote", {
     method: "POST",
@@ -302,18 +346,12 @@ test("HTTP transfer reports pending status for asynchronous settlement", async (
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  const registerResponse = await request("/auth/register", {
-    method: "POST",
-    headers: { "X-Device-ID": deviceId },
-    body: json({
-      fullName: "Pending HTTP User",
-      email: "pending-http@example.com",
-      phoneNumber: "0900000003",
-      password: "Password1",
-    }),
+  const registered = await completeRegistration(request, deviceId, {
+    fullName: "Pending HTTP User",
+    email: "pending-http@example.com",
+    phoneNumber: "0900000003",
+    password: "Password1",
   });
-  assert.equal(registerResponse.status, 201);
-  const registered = (await registerResponse.json()) as { user: { id: string } };
 
   const loginResponse = await request("/auth/login", {
     method: "POST",
@@ -331,9 +369,26 @@ test("HTTP transfer reports pending status for asynchronous settlement", async (
   const accounts = (await accountsResponse.json()) as {
     accounts: Array<{ id: string }>;
   };
-  const beneficiaryId = system.listBeneficiaries(registered.user.id)[0]?.id;
   assert.ok(accounts.accounts[0]?.id);
-  assert.ok(beneficiaryId);
+  const recipient = system.register({
+    fullName: "Pending HTTP Recipient",
+    email: "pending-http-recipient@example.com",
+    phoneNumber: "0900000006",
+    password: "Password1",
+  }).user;
+  const recipientAccount = system.listAccounts(recipient.id)[0];
+  assert.ok(recipientAccount);
+  const sourceAccountNumber = system.getAccountNumber(registered.user.id, accounts.accounts[0].id);
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, "pending-http-funding", {
+    recipientAccountNumber: sourceAccountNumber,
+    amount: { currency: "VND", amountMinor: "10000000" },
+    reason: "test fixture funding",
+  });
+  const beneficiaryId = system.createBeneficiary(registered.user.id, {
+    displayName: "Pending HTTP Recipient",
+    accountNumber: system.getAccountNumber(recipient.id, recipientAccount.id),
+    bankName: "Reference Bank",
+  }).id;
 
   const quoteResponse = await request("/transfers/quote", {
     method: "POST",
@@ -389,15 +444,11 @@ test("HTTP API supports beneficiary directory CRUD without exposing raw account 
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  await request("/auth/register", {
-    method: "POST",
-    headers: { "X-Device-ID": deviceId },
-    body: json({
-      fullName: "Beneficiary HTTP User",
-      email: "beneficiary-http@example.com",
-      phoneNumber: "0900000004",
-      password: "Password1",
-    }),
+  await completeRegistration(request, deviceId, {
+    fullName: "Beneficiary HTTP User",
+    email: "beneficiary-http@example.com",
+    phoneNumber: "0900000004",
+    password: "Password1",
   });
   const loginResponse = await request("/auth/login", {
     method: "POST",
@@ -415,14 +466,24 @@ test("HTTP API supports beneficiary directory CRUD without exposing raw account 
   const initialList = (await listResponse.json()) as {
     items: Array<{ id: string; maskedAccountNumber: string }>;
   };
-  assert.equal(initialList.items.length, 1);
+  assert.equal(initialList.items.length, 0);
+
+  const recipient = system.register({
+    fullName: "Beneficiary HTTP Recipient",
+    email: "beneficiary-http-recipient@example.com",
+    phoneNumber: "0900000007",
+    password: "Password1",
+  }).user;
+  const recipientAccount = system.listAccounts(recipient.id)[0];
+  assert.ok(recipientAccount);
+  const recipientAccountNumber = system.getAccountNumber(recipient.id, recipientAccount.id);
 
   const createResponse = await request("/beneficiaries", {
     method: "POST",
     headers: authHeaders,
     body: json({
       displayName: "HTTP Family",
-      accountNumber: "987654321012",
+      accountNumber: recipientAccountNumber,
       bankName: "Reference Bank",
     }),
   });
@@ -431,8 +492,8 @@ test("HTTP API supports beneficiary directory CRUD without exposing raw account 
     beneficiary: { id: string; displayName: string; maskedAccountNumber: string };
   };
   assert.equal(created.beneficiary.displayName, "HTTP Family");
-  assert.equal(created.beneficiary.maskedAccountNumber, "•••• 1012");
-  assert.equal(created.beneficiary.maskedAccountNumber.includes("987654"), false);
+  assert.equal(created.beneficiary.maskedAccountNumber, `•••• ${recipientAccountNumber.slice(-4)}`);
+  assert.equal(created.beneficiary.maskedAccountNumber.includes(recipientAccountNumber.slice(0, -4)), false);
 
   const renameResponse = await request(
     `/beneficiaries/${created.beneficiary.id}`,
@@ -483,17 +544,12 @@ test("HTTP auth exposes a device-bound MFA challenge", async (t) => {
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  const registerResponse = await request("/auth/register", {
-    method: "POST",
-    headers: { "X-Device-ID": deviceId },
-    body: json({
-      fullName: "MFA HTTP User",
-      email: "mfa-http@example.com",
-      phoneNumber: "0900000001",
-      password: "Password1",
-    }),
+  await completeRegistration(request, deviceId, {
+    fullName: "MFA HTTP User",
+    email: "mfa-http@example.com",
+    phoneNumber: "0900000001",
+    password: "Password1",
   });
-  assert.equal(registerResponse.status, 201);
 
   const loginResponse = await request("/auth/login", {
     method: "POST",
@@ -543,17 +599,12 @@ test("HTTP auth exposes a server-configured biometric challenge", async (t) => {
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  const registerResponse = await request("/auth/register", {
-    method: "POST",
-    headers: { "X-Device-ID": deviceId },
-    body: json({
-      fullName: "Biometric HTTP User",
-      email: "biometric-http@example.com",
-      phoneNumber: "0900000002",
-      password: "Password1",
-    }),
+  await completeRegistration(request, deviceId, {
+    fullName: "Biometric HTTP User",
+    email: "biometric-http@example.com",
+    phoneNumber: "0900000002",
+    password: "Password1",
   });
-  assert.equal(registerResponse.status, 201);
 
   const loginResponse = await request("/auth/login", {
     method: "POST",

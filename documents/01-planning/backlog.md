@@ -1,5 +1,7 @@
 # Backlog và trạng thái M0–M11
 
+> Cập nhật hiện hành 2026-08-17: branch `codex/mini-core-banking-sandbox` đã triển khai Mini Core Sandbox G0–G9 ở mức reference. M0–M4 và M8 vẫn được giữ trong chương trình; trạng thái và quality gate mới nhất xem tại [`mini-core-sandbox-status.md`](mini-core-sandbox-status.md). Các con số trong phần lịch sử bên dưới thuộc checkpoint trước branch này.
+
 | Mã | Hạng mục | Owner | Trạng thái hiện tại | Việc còn lại / cổng |
 | --- | --- | --- | --- | --- |
 | M0 | Sẵn sàng dự án | Phối hợp | Baseline và checkpoint Git sạch `079e9d2` đã có | Owner review/push, board chính thức và evidence thiết bị thật |

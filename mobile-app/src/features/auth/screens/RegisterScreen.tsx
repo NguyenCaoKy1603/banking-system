@@ -15,7 +15,9 @@ import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import { isAuthChallengeResponse } from "@/features/auth/services/authResponseValidators";
 import type {
+  AuthChallengeResponse,
   RegisterFieldErrors,
   RegisterFormValues,
 } from "@/features/auth/types/auth";
@@ -33,11 +35,14 @@ const initialValues: RegisterFormValues = {
 
 export function RegisterScreen() {
   const router = useRouter();
-  const { register } = useAuth();
+  const { register, verifyRegistrationChallenge } = useAuth();
   const [values, setValues] = useState<RegisterFormValues>(initialValues);
   const [errors, setErrors] = useState<RegisterFieldErrors>({});
   const [serverError, setServerError] = useState<string | undefined>();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [registrationChallenge, setRegistrationChallenge] =
+    useState<AuthChallengeResponse | null>(null);
+  const [registrationOtp, setRegistrationOtp] = useState("");
 
   function updateField(field: keyof RegisterFormValues, value: string) {
     setValues((currentValues) => ({ ...currentValues, [field]: value }));
@@ -46,6 +51,36 @@ export function RegisterScreen() {
   }
 
   async function handleRegister() {
+    if (registrationChallenge) {
+      if (!/^\d{6}$/.test(registrationOtp.trim())) {
+        setServerError("Mã OTP phải gồm 6 chữ số.");
+        return;
+      }
+      setIsSubmitting(true);
+      setServerError(undefined);
+      try {
+        await verifyRegistrationChallenge({
+          challengeId: registrationChallenge.challengeId,
+          method: "OTP",
+          proof: registrationOtp.trim(),
+        });
+        Alert.alert(
+          "Đăng ký thành công",
+          "Tài khoản thanh toán đã được tạo với số dư 0 VND.",
+          [{ text: "Đăng nhập", onPress: () => router.replace("/login") }],
+        );
+      } catch (error: unknown) {
+        setServerError(
+          error instanceof ApiError
+            ? error.message
+            : "Không thể xác minh OTP đăng ký. Vui lòng thử lại.",
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     const result = validateRegisterForm(values);
 
     setValues(result.values);
@@ -59,12 +94,18 @@ export function RegisterScreen() {
     setIsSubmitting(true);
 
     try {
-      await register({
+      const registrationResult = await register({
         fullName: result.values.fullName,
         email: result.values.email,
         phoneNumber: result.values.phoneNumber,
         password: result.values.password,
       });
+
+      if (isAuthChallengeResponse(registrationResult)) {
+        setRegistrationChallenge(registrationResult);
+        setServerError("Mã OTP đã được yêu cầu. Nhập mã để hoàn tất đăng ký.");
+        return;
+      }
 
       Alert.alert(
         "Đăng ký thành công",
@@ -166,14 +207,40 @@ export function RegisterScreen() {
               testID="register-confirm-password"
               value={values.confirmPassword}
             />
-            {serverError ? (
+            {registrationChallenge ? (
+              <TextField
+                accessibilityLabel="Mã OTP đăng ký"
+                autoCapitalize="none"
+                autoComplete="one-time-code"
+                error={serverError}
+                keyboardType="number-pad"
+                label="Mã OTP đăng ký"
+                onChangeText={(value) => {
+                  setRegistrationOtp(value.replace(/\D/g, "").slice(0, 6));
+                  setServerError(undefined);
+                }}
+                placeholder="Nhập mã 6 chữ số"
+                secureTextEntry
+                testID="register-otp"
+                value={registrationOtp}
+              />
+            ) : null}
+            {serverError && !registrationChallenge ? (
               <Text accessibilityLiveRegion="polite" style={styles.serverError}>
                 {serverError}
               </Text>
             ) : null}
             <PrimaryButton
               disabled={isSubmitting}
-              label={isSubmitting ? "Đang đăng ký..." : "Đăng ký"}
+              label={
+                isSubmitting
+                  ? registrationChallenge
+                    ? "Đang xác minh..."
+                    : "Đang đăng ký..."
+                  : registrationChallenge
+                    ? "Xác minh OTP"
+                    : "Đăng ký"
+              }
               onPress={handleRegister}
               testID="register-submit"
             />

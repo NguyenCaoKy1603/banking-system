@@ -1,5 +1,7 @@
 # Device evidence — Android emulator smoke
 
+> Cập nhật 2026-08-17: evidence trong file này thuộc APK/snapshot trước branch Mini Core. Chưa được dùng làm bằng chứng cho clean registration, dynamic OTP hoặc credit activation trên branch mới; cần chạy lại APK hiện tại.
+
 Dùng bản ghi này cho smoke test local ngày 2026-08-16. Không ghi password, OTP, token, PIN, CVV hoặc dữ liệu tài chính nhạy cảm vào ảnh/video.
 
 | Trường | Giá trị |

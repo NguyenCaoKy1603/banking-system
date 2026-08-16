@@ -1,5 +1,7 @@
 # Banking reference backend
 
+> Cập nhật 2026-08-17: branch `codex/mini-core-banking-sandbox` dùng registration hai bước, Sandbox Funding operator, người nhận thật, OTP step-up theo context và Savings/Credit opt-in. User mới chỉ có một payment account 0 VND; không còn beneficiary/card/savings tự sinh. `npm run seed:e2e` đã được cập nhật để tự cấp Funding, tạo recipient thật khi có `E2E_RECIPIENT_PASSWORD`, và đi qua credit application/activation.
+
 Đây là backend reference cho sandbox/local demo của mobile app. Nó dùng in-memory store, PBKDF2 và core-banking adapter giả lập để kiểm chứng contract, state machine, refresh rotation, idempotency, audit/outbox và reconciliation.
 
 Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql). Persistent sandbox chỉ nối vào bảng snapshot reference; các bảng relational production chưa được wire vào domain service.

@@ -98,5 +98,6 @@ export type SubmitSavingsOpeningRequest = {
   stepUp: {
     method: "OTP" | "BIOMETRIC";
     proof: string;
+    challengeId?: string;
   };
 };

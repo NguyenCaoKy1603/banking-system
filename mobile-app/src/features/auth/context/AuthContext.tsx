@@ -16,12 +16,14 @@ import {
   revokeAllSessions,
   revokeSession,
   verifyLoginChallenge as verifyLoginChallengeRequest,
+  verifyRegistrationChallenge as verifyRegistrationChallengeRequest,
 } from "@/features/auth/services/authApi";
 import type {
   AuthChallengeResponse,
   LoginRequest,
   RegisterRequest,
   RegisterResponse,
+  RegisterResult,
   VerifyAuthChallengeRequest,
 } from "@/features/auth/types/auth";
 import { isAuthChallengeResponse } from "@/features/auth/services/authResponseValidators";
@@ -56,8 +58,9 @@ type AuthContextValue = {
   isAuthenticated: boolean;
   refreshAccessToken: RefreshAccessToken;
   login: (request: LoginRequest) => Promise<void>;
-  register: (request: RegisterRequest) => Promise<RegisterResponse>;
+  register: (request: RegisterRequest) => Promise<RegisterResult>;
   verifyLoginChallenge: (request: VerifyAuthChallengeRequest) => Promise<void>;
+  verifyRegistrationChallenge: (request: VerifyAuthChallengeRequest) => Promise<RegisterResponse>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
 };
@@ -232,6 +235,16 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [ensureDeviceId],
   );
 
+  const verifyRegistrationChallenge = useCallback(
+    async (request: VerifyAuthChallengeRequest) => {
+      const currentDeviceId = await ensureDeviceId();
+      return verifyRegistrationChallengeRequest(request, {
+        deviceId: currentDeviceId,
+      });
+    },
+    [ensureDeviceId],
+  );
+
   const logout = useCallback(async () => {
     const pendingRefresh = refreshPromiseRef.current;
 
@@ -303,6 +316,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       login,
       register,
       verifyLoginChallenge,
+      verifyRegistrationChallenge,
       logout,
       logoutAll,
     }),
@@ -317,6 +331,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       session,
       status,
       verifyLoginChallenge,
+      verifyRegistrationChallenge,
     ],
   );
 

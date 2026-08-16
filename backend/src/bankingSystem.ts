@@ -40,6 +40,9 @@ import {
   type CardInstrument,
   type CreditAccount,
   type CreditAccountRecord,
+  type CreditApplication,
+  type CreditApplicationRecord,
+  type CreditApplicationRequest,
   type CreditCard,
   type CreditCardRecord,
   type CreditDebtEffect,
@@ -179,6 +182,18 @@ type CreditPurchaseSeed = {
   userId: string;
   creditAccountId: string;
   transactionId: string;
+};
+
+type CreditApplicationIdempotencyRecord = {
+  userId: string;
+  fingerprint: string;
+  applicationId: string;
+};
+
+type CreditActivationIdempotencyRecord = {
+  userId: string;
+  fingerprint: string;
+  applicationId: string;
 };
 
 export type AuditEvent = {
@@ -445,6 +460,19 @@ function toPublicCreditAccount(account: CreditAccountRecord): CreditAccount {
   return cloneCreditAccount(publicAccount);
 }
 
+function toPublicCreditApplication(
+  application: CreditApplicationRecord,
+): CreditApplication {
+  const { userId: _userId, requestFingerprint: _requestFingerprint, ...publicApplication } = application;
+  return {
+    ...publicApplication,
+    requestedLimit: { ...publicApplication.requestedLimit },
+    approvedLimit: publicApplication.approvedLimit
+      ? { ...publicApplication.approvedLimit }
+      : null,
+  };
+}
+
 function toPublicCreditStatement(statement: CreditStatementRecord): CreditStatement {
   const { userId: _userId, ...publicStatement } = statement;
   return cloneCreditStatement(publicStatement);
@@ -520,6 +548,12 @@ type PreparedRegistration = {
   password: string;
 };
 
+type PendingRegistrationRecord = {
+  prepared: PreparedRegistration;
+  passwordMaterial: { salt: string; digest: string };
+  expiresAt: number;
+};
+
 type LoginContext = {
   normalizedEmail: string;
   normalizedPassword: string;
@@ -528,7 +562,7 @@ type LoginContext = {
   user: UserRecord | undefined;
 };
 
-export const BANKING_SYSTEM_STATE_VERSION = 3;
+export const BANKING_SYSTEM_STATE_VERSION = 4;
 
 export type BankingSystemState = {
   /** Optional for backwards compatibility with M0-M6 snapshots created before M7. */
@@ -537,6 +571,7 @@ export type BankingSystemState = {
   users: Array<[string, UserRecord]>;
   accessSessions: Array<[string, AccessSession]>;
   authChallenges: Array<[string, AuthChallengeRecord]>;
+  pendingRegistrations?: Array<[string, PendingRegistrationRecord]>;
   authAttemptWindows: Array<[string, AttemptWindowState]>;
   registrationAttemptWindows: Array<[string, AttemptWindowState]>;
   transferStepUpAttemptWindows: Array<[string, AttemptWindowState]>;
@@ -563,6 +598,9 @@ export type BankingSystemState = {
   creditPayments?: Array<[string, CreditPaymentRecord]>;
   creditIdempotency?: Array<[string, CreditIdempotencyRecord]>;
   creditSeedPurchases?: Array<[string, CreditPurchaseSeed]>;
+  creditApplications?: Array<[string, CreditApplicationRecord]>;
+  creditApplicationIdempotency?: Array<[string, CreditApplicationIdempotencyRecord]>;
+  creditActivationIdempotency?: Array<[string, CreditActivationIdempotencyRecord]>;
   auditEventStore: AuditEvent[];
   outboxEventStore: OutboxEvent[];
 };
@@ -606,6 +644,7 @@ function migrateBankingSystemState(input: BankingSystemState): BankingSystemStat
     users: candidate.users!,
     accessSessions: candidate.accessSessions!,
     authChallenges: candidate.authChallenges!,
+    pendingRegistrations: candidate.pendingRegistrations ?? [],
     authAttemptWindows: candidate.authAttemptWindows!,
     registrationAttemptWindows: candidate.registrationAttemptWindows!,
     transferStepUpAttemptWindows: candidate.transferStepUpAttemptWindows!,
@@ -632,6 +671,9 @@ function migrateBankingSystemState(input: BankingSystemState): BankingSystemStat
     creditPayments: candidate.creditPayments ?? [],
     creditIdempotency: candidate.creditIdempotency ?? [],
     creditSeedPurchases: candidate.creditSeedPurchases ?? [],
+    creditApplications: candidate.creditApplications ?? [],
+    creditApplicationIdempotency: candidate.creditApplicationIdempotency ?? [],
+    creditActivationIdempotency: candidate.creditActivationIdempotency ?? [],
     auditEventStore: candidate.auditEventStore!,
     outboxEventStore: candidate.outboxEventStore!,
   };
@@ -709,6 +751,7 @@ export class BankingSystem {
   private readonly usersByPhone = new Map<string, string>();
   private readonly accessSessions = new Map<string, AccessSession>();
   private readonly authChallenges = new Map<string, AuthChallengeRecord>();
+  private readonly pendingRegistrations = new Map<string, PendingRegistrationRecord>();
   private readonly sandboxOtpInbox = new Map<string, string>();
   private readonly authAttemptWindows = new Map<
     string,
@@ -748,6 +791,9 @@ export class BankingSystem {
   private readonly creditPayments = new Map<string, CreditPaymentRecord>();
   private readonly creditIdempotency = new Map<string, CreditIdempotencyRecord>();
   private readonly creditSeedPurchases = new Map<string, CreditPurchaseSeed>();
+  private readonly creditApplications = new Map<string, CreditApplicationRecord>();
+  private readonly creditApplicationIdempotency = new Map<string, CreditApplicationIdempotencyRecord>();
+  private readonly creditActivationIdempotency = new Map<string, CreditActivationIdempotencyRecord>();
   private readonly policy: ControlPolicy;
 
   constructor(
@@ -1002,6 +1048,73 @@ export class BankingSystem {
     return this.completeRegistration(prepared, passwordMaterial);
   }
 
+  async beginRegistrationAsync(
+    input: {
+      fullName: string;
+      email: string;
+      phoneNumber: string;
+      password: string;
+    },
+    rateLimitKey?: string,
+    deviceId?: string,
+  ): Promise<AuthChallengeResponse> {
+    const prepared = this.prepareRegistration(input, rateLimitKey);
+    const passwordMaterial = await hashPasswordAsync(prepared.password);
+    const registrationId = createId("registration");
+    this.pendingRegistrations.set(registrationId, {
+      prepared,
+      passwordMaterial,
+      expiresAt: this.clock() + AUTH_CHALLENGE_TTL_MS,
+    });
+    return this.issueOtpChallenge(
+      registrationId,
+      this.normalizeDeviceId(deviceId),
+      "REGISTRATION_VERIFY",
+      registrationId,
+      fingerprint({ email: prepared.email, phoneNumber: prepared.phoneNumber }),
+      ["OTP"],
+      this.sandboxOtp ?? undefined,
+    );
+  }
+
+  verifyRegistrationChallenge(
+    challengeId: string,
+    proof: string,
+    deviceId?: string,
+  ): { user: AuthUser } {
+    this.cleanupExpiredState();
+    const challengeHash = hashOpaqueToken(requireString(challengeId, "challengeId"));
+    const challenge = this.authChallenges.get(challengeHash);
+    if (!challenge || challenge.purpose !== "REGISTRATION_VERIFY") {
+      throw unauthorized("Registration challenge is invalid or expired.");
+    }
+    const registrationId = challenge.resourceId ?? challenge.userId;
+    const pending = this.pendingRegistrations.get(registrationId);
+    if (!pending || pending.expiresAt <= this.clock()) {
+      throw unauthorized("Registration challenge is invalid or expired.");
+    }
+    if (
+      this.usersByEmail.has(pending.prepared.email) ||
+      this.usersByPhone.has(pending.prepared.phoneNumber)
+    ) {
+      throw conflict("Email or phone number already exists.");
+    }
+    this.verifyOtpChallenge(
+      challengeId,
+      challenge.userId,
+      deviceId,
+      "OTP",
+      proof,
+      "REGISTRATION_VERIFY",
+      challenge.resourceId,
+      challenge.requestFingerprint,
+    );
+    this.pendingRegistrations.delete(registrationId);
+    const result = this.completeRegistration(pending.prepared, pending.passwordMaterial);
+    this.recordAudit("REGISTRATION_CHALLENGE_VERIFIED", result.user.id, result.user.id);
+    return result;
+  }
+
   login(email: string, password: string, deviceId?: string): LoginResult {
     const context = this.prepareLogin(email, password, deviceId);
     const valid =
@@ -1090,13 +1203,16 @@ export class BankingSystem {
             : purpose === "CARD_UNLOCK"
               ? this.policy.cardUnlockStepUpMethods
               : ["OTP"] as StepUpMethod[];
+    const effectiveFingerprint =
+      this.resolveOtpRequestFingerprint(purpose, resourceId) ?? requestFingerprint;
     return this.issueOtpChallenge(
       userId,
       this.normalizeDeviceId(deviceId),
       purpose,
       resourceId,
-      requestFingerprint,
+      effectiveFingerprint,
       methods,
+      this.sandboxOtp ?? undefined,
     );
   }
 
@@ -1257,7 +1373,7 @@ export class BankingSystem {
     this.enqueueOutbox("SANDBOX_FUNDING_SUCCEEDED", receipt.fundingId, receipt.createdAt);
     this.notifications.get(target.ownerId)?.unshift({
       id: createId("notification"),
-      type: "TRANSFER",
+      type: "SANDBOX_FUNDING",
       title: "Đã cấp tiền Sandbox",
       body: `Tài khoản đã nhận ${receipt.amount.amountMinor} minor unit VND từ Quỹ Sandbox.`,
       resourceId: receipt.transactionId,
@@ -1266,6 +1382,24 @@ export class BankingSystem {
       createdAt: receipt.createdAt,
     });
     return { ...receipt, amount: { ...receipt.amount } };
+  }
+
+  seedCreditSandbox(operatorKey: string, userId: string): CreditCard[] {
+    if (this.bankingEnvironment === "production" || operatorKey !== this.sandboxOperatorKey) {
+      throw unauthorized("Sandbox operator authorization failed.");
+    }
+    if (!this.users.has(userId)) {
+      throw notFound("Sandbox user not found.");
+    }
+    this.assertCreditVisible(userId);
+    this.createCreditProduct(
+      userId,
+      nowIso(this.clock),
+      BigInt(DEFAULT_POSTED_OUTSTANDING_MINOR),
+      BigInt(DEFAULT_CREDIT_LIMIT_MINOR),
+      "CREDIT_ACCOUNT_SEEDED",
+    );
+    return this.listCards(userId);
   }
 
   getAccountNumber(userId: string, accountId: string): string {
@@ -1319,6 +1453,150 @@ export class BankingSystem {
     return [...this.creditAccounts.values()]
       .filter((account) => account.userId === userId)
       .map(toPublicCreditAccount);
+  }
+
+  listCreditApplications(userId: string): CreditApplication[] {
+    this.assertCreditVisible(userId);
+    return [...this.creditApplications.values()]
+      .filter((application) => application.userId === userId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map(toPublicCreditApplication);
+  }
+
+  getCreditApplication(userId: string, applicationId: string): CreditApplication {
+    this.assertCreditVisible(userId);
+    const application = this.creditApplications.get(requireString(applicationId, "applicationId"));
+    if (!application || application.userId !== userId) {
+      throw notFound("Credit application not found.");
+    }
+    return toPublicCreditApplication(application);
+  }
+
+  submitCreditApplication(
+    userId: string,
+    idempotencyKey: string,
+    input: CreditApplicationRequest,
+    deviceId?: string,
+  ): CreditApplication {
+    this.assertCreditVisible(userId);
+    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
+    const requestedLimitMinor = input.requestedLimit
+      ? parseMoney(input.requestedLimit, "requestedLimit")
+      : BigInt(DEFAULT_CREDIT_LIMIT_MINOR);
+    if (requestedLimitMinor <= 0n || requestedLimitMinor > 100_000_000n) {
+      throw conflict("Requested credit limit is outside the sandbox range.");
+    }
+    const requestFingerprint = fingerprint({ requestedLimitMinor: requestedLimitMinor.toString() });
+    const existingIdempotency = this.creditApplicationIdempotency.get(normalizedKey);
+    if (existingIdempotency) {
+      if (
+        existingIdempotency.userId !== userId ||
+        existingIdempotency.fingerprint !== requestFingerprint
+      ) {
+        throw conflict("Credit application idempotency key was reused with a different request.");
+      }
+      return this.getCreditApplication(userId, existingIdempotency.applicationId);
+    }
+    const current = [...this.creditApplications.values()].find(
+      (application) =>
+        application.userId === userId &&
+        (application.status === "PENDING_ACTIVATION" || application.status === "ACTIVE"),
+    );
+    if (current) {
+      throw conflict("A credit application already exists for this user.");
+    }
+    this.verifyCreditStepUp(
+      userId,
+      input.stepUp,
+      null,
+      this.policy.creditPaymentStepUpMethods,
+      deviceId,
+      "CREDIT_APPLICATION",
+      requestFingerprint,
+    );
+    const now = nowIso(this.clock);
+    const application: CreditApplicationRecord = {
+      applicationId: newCreditId(),
+      requestedLimit: creditMoney(requestedLimitMinor),
+      approvedLimit: creditMoney(requestedLimitMinor),
+      status: "PENDING_ACTIVATION",
+      decisionReason: "SANDBOX_AUTO_APPROVED",
+      creditAccountId: null,
+      createdAt: now,
+      updatedAt: now,
+      userId,
+      requestFingerprint,
+    };
+    this.creditApplications.set(application.applicationId, application);
+    this.creditApplicationIdempotency.set(normalizedKey, {
+      userId,
+      fingerprint: requestFingerprint,
+      applicationId: application.applicationId,
+    });
+    this.recordAudit("CREDIT_APPLICATION_SUBMITTED", userId, application.applicationId);
+    this.enqueueOutbox("CREDIT_APPLICATION_APPROVED", application.applicationId, now);
+    return toPublicCreditApplication(application);
+  }
+
+  activateCreditApplication(
+    userId: string,
+    applicationId: string,
+    idempotencyKey: string,
+    input: { stepUp: { method: StepUpMethod; proof: string; challengeId?: string } },
+    deviceId?: string,
+  ): CreditApplication {
+    this.assertCreditVisible(userId);
+    const application = this.creditApplications.get(requireString(applicationId, "applicationId"));
+    if (!application || application.userId !== userId) {
+      throw notFound("Credit application not found.");
+    }
+    if (application.status === "ACTIVE") {
+      return toPublicCreditApplication(application);
+    }
+    if (application.status !== "PENDING_ACTIVATION") {
+      throw conflict("Credit application cannot be activated.");
+    }
+    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
+    const requestFingerprint = fingerprint({ applicationId });
+    const existingIdempotency = this.creditActivationIdempotency.get(normalizedKey);
+    if (existingIdempotency) {
+      if (
+        existingIdempotency.userId !== userId ||
+        existingIdempotency.fingerprint !== requestFingerprint ||
+        existingIdempotency.applicationId !== applicationId
+      ) {
+        throw conflict("Credit activation idempotency key was reused with a different request.");
+      }
+      return this.getCreditApplication(userId, applicationId);
+    }
+    this.verifyCreditStepUp(
+      userId,
+      input.stepUp,
+      applicationId,
+      this.policy.creditPaymentStepUpMethods,
+      deviceId,
+      "CARD_ACTIVATION",
+      requestFingerprint,
+    );
+    const now = nowIso(this.clock);
+    const creditAccountId = this.createCreditProduct(
+      userId,
+      now,
+      0n,
+      BigInt(application.approvedLimit?.amountMinor ?? application.requestedLimit.amountMinor),
+      "CREDIT_ACCOUNT_ACTIVATED",
+    );
+    application.status = "ACTIVE";
+    application.creditAccountId = creditAccountId;
+    application.updatedAt = now;
+    this.creditActivationIdempotency.set(normalizedKey, {
+      userId,
+      fingerprint: requestFingerprint,
+      applicationId,
+    });
+    this.recordAudit("CREDIT_APPLICATION_ACTIVATED", userId, applicationId);
+    this.enqueueOutbox("CREDIT_APPLICATION_ACTIVATED", applicationId, now);
+    return toPublicCreditApplication(application);
   }
 
   getCard(userId: string, cardId: string): {
@@ -1517,15 +1795,7 @@ export class BankingSystem {
       terms: "Đây là thanh toán tín dụng sandbox; không phải nghĩa vụ tín dụng thật.",
       expiresAt: new Date(this.clock() + CREDIT_QUOTE_TTL_MS).toISOString(),
     };
-    const requestFingerprint = fingerprint({
-      sourceAccountId,
-      creditAccountId,
-      statementId,
-      statementVersion: statement.version,
-      paymentOption,
-      amountMinor: amountMinor.toString(),
-      policyVersion: CREDIT_POLICY_VERSION,
-    });
+    const requestFingerprint = fingerprint({ quoteId: quote.quoteId });
     this.creditQuotes.set(quote.quoteId, {
       ...quote,
       userId,
@@ -1737,15 +2007,7 @@ export class BankingSystem {
     this.savingsQuotes.set(quote.quoteId, {
       ...quote,
       userId,
-      fingerprint: fingerprint({
-        quoteId: quote.quoteId,
-        sourceAccountId: quote.sourceAccountId,
-        productId: quote.productId,
-        termsVersion: quote.termsVersion,
-        principal: quote.principal,
-        termMonths: quote.termMonths,
-        maturityInstruction: quote.maturityInstruction,
-      }),
+      fingerprint: fingerprint({ quoteId: quote.quoteId }),
       consumedOpeningId: null,
     });
     this.recordAudit("SAVINGS_QUOTED", userId, quote.quoteId);
@@ -1766,15 +2028,7 @@ export class BankingSystem {
     if (!quoteRecord || quoteRecord.userId !== userId) {
       throw notFound("Savings quote not found.");
     }
-    const requestFingerprint = fingerprint({
-      quoteId: quoteRecord.quoteId,
-      sourceAccountId: quoteRecord.sourceAccountId,
-      productId: quoteRecord.productId,
-      termsVersion: quoteRecord.termsVersion,
-      principal: quoteRecord.principal,
-      termMonths: quoteRecord.termMonths,
-      maturityInstruction: quoteRecord.maturityInstruction,
-    });
+    const requestFingerprint = fingerprint({ quoteId: quoteRecord.quoteId });
     const idempotencyMapKey = `${userId}:${normalizedKey}`;
     const existing = this.savingsIdempotency.get(idempotencyMapKey);
     if (existing) {
@@ -2224,7 +2478,6 @@ export class BankingSystem {
     const transferContextFingerprint = fingerprint({
       quoteId,
       amountMinor: quoteRecord.quote.amount.amountMinor,
-      destinationAccountId: quoteRecord.destinationAccountId,
     });
     try {
       if (stepUp.challengeId) {
@@ -2661,17 +2914,21 @@ export class BankingSystem {
     );
   }
 
-  private ensureCreditForUser(userId: string, now: string): void {
+  private createCreditProduct(
+    userId: string,
+    now: string,
+    openingOutstandingMinor = BigInt(DEFAULT_POSTED_OUTSTANDING_MINOR),
+    creditLimitMinor = BigInt(DEFAULT_CREDIT_LIMIT_MINOR),
+    auditEvent = "CREDIT_ACCOUNT_ACTIVATED",
+  ): string {
     const existing = [...this.creditAccounts.values()].some((account) => account.userId === userId);
     if (existing) {
-      return;
+      return [...this.creditAccounts.values()].find((account) => account.userId === userId)!.creditAccountId;
     }
     const creditAccountId = newCreditId();
     const cardId = newCreditId();
     const statementId = newCreditId();
     const transactionId = newCreditId();
-    const creditLimitMinor = BigInt(DEFAULT_CREDIT_LIMIT_MINOR);
-    const openingOutstandingMinor = BigInt(DEFAULT_POSTED_OUTSTANDING_MINOR);
     const cycleStartAt = addCreditMonthsClamped(now, -1);
     const dueAt = this.creditOverdueSeed
       ? new Date(this.clock() - 1).toISOString()
@@ -2736,23 +2993,30 @@ export class BankingSystem {
       minimumPaymentDue: creditMoney(calculateMinimumPayment(openingOutstandingMinor)),
       minimumPaymentRemaining: creditMoney(calculateMinimumPayment(openingOutstandingMinor)),
       paidAmount: creditMoney(0n),
-      status: "ISSUED",
+      status: openingOutstandingMinor === 0n ? "PAID" : "ISSUED",
       version: 1,
-      items: [cloneCreditTransaction(transaction)],
+      items: openingOutstandingMinor > 0n ? [cloneCreditTransaction(transaction)] : [],
       payments: [],
       userId,
     };
-    this.core.seedCreditPurchase(creditAccountId, openingOutstandingMinor, now);
+    if (openingOutstandingMinor > 0n) {
+      this.core.seedCreditPurchase(creditAccountId, openingOutstandingMinor, now);
+    }
     this.creditAccounts.set(creditAccountId, account);
     this.creditCards.set(cardId, card);
-    this.creditTransactions.set(transactionId, transaction);
+    if (openingOutstandingMinor > 0n) {
+      this.creditTransactions.set(transactionId, transaction);
+    }
     this.creditStatements.set(statementId, statement);
-    this.creditSeedPurchases.set(creditAccountId, {
-      userId,
-      creditAccountId,
-      transactionId,
-    });
-    this.recordAudit("CREDIT_ACCOUNT_SEEDED", userId, creditAccountId);
+    if (openingOutstandingMinor > 0n) {
+      this.creditSeedPurchases.set(creditAccountId, {
+        userId,
+        creditAccountId,
+        transactionId,
+      });
+    }
+    this.recordAudit(auditEvent, userId, creditAccountId);
+    return creditAccountId;
   }
 
   private refreshCreditStatementStatus(statement: CreditStatementRecord): void {
@@ -3014,7 +3278,7 @@ export class BankingSystem {
   private verifyCreditStepUp(
     userId: string,
     stepUp: { method: StepUpMethod; proof: string; challengeId?: string } | undefined,
-    resourceId: string,
+    resourceId: string | null,
     allowedMethods = this.policy.creditPaymentStepUpMethods,
     deviceId?: string,
     purpose: OtpPurpose = "CREDIT_PAYMENT",
@@ -3116,6 +3380,10 @@ export class BankingSystem {
       users: [...this.users.entries()].map(([userId, user]) => [userId, { ...user }]),
       accessSessions: [...this.accessSessions.entries()].map(([hash, session]) => [hash, { ...session }]),
       authChallenges: [...this.authChallenges.entries()].map(([hash, challenge]) => [hash, { ...challenge, methods: [...challenge.methods] }]),
+      pendingRegistrations: [...this.pendingRegistrations.entries()].map(([registrationId, record]) => [
+        registrationId,
+        { ...record, prepared: { ...record.prepared }, passwordMaterial: { ...record.passwordMaterial } },
+      ]),
       authAttemptWindows: [...this.authAttemptWindows.entries()].map(([key, window]) => [key, { ...window }]),
       registrationAttemptWindows: [...this.registrationAttemptWindows.entries()].map(([key, window]) => [key, { ...window }]),
       transferStepUpAttemptWindows: [...this.transferStepUpAttemptWindows.entries()].map(([key, window]) => [key, { ...window }]),
@@ -3190,6 +3458,16 @@ export class BankingSystem {
       ]),
       creditIdempotency: [...this.creditIdempotency.entries()].map(([key, record]) => [key, { ...record }]),
       creditSeedPurchases: [...this.creditSeedPurchases.entries()].map(([key, record]) => [key, { ...record }]),
+      creditApplications: [...this.creditApplications.entries()].map(([key, record]) => [
+        key,
+        {
+          ...record,
+          requestedLimit: { ...record.requestedLimit },
+          approvedLimit: record.approvedLimit ? { ...record.approvedLimit } : null,
+        },
+      ]),
+      creditApplicationIdempotency: [...this.creditApplicationIdempotency.entries()].map(([key, record]) => [key, { ...record }]),
+      creditActivationIdempotency: [...this.creditActivationIdempotency.entries()].map(([key, record]) => [key, { ...record }]),
       auditEventStore: this.auditEventStore.map((event) => ({ ...event })),
       outboxEventStore: this.outboxEventStore.map((event) => ({ ...event })),
     };
@@ -3229,6 +3507,14 @@ export class BankingSystem {
           (challenge.purpose === "LOGIN" && (this.sandboxMfaOtp ?? this.sandboxOtp)
             ? hashOpaqueToken(this.sandboxMfaOtp ?? this.sandboxOtp!)
             : null),
+      });
+    }
+    this.pendingRegistrations.clear();
+    for (const [registrationId, record] of state.pendingRegistrations ?? []) {
+      this.pendingRegistrations.set(registrationId, {
+        ...record,
+        prepared: { ...record.prepared },
+        passwordMaterial: { ...record.passwordMaterial },
       });
     }
     this.authAttemptWindows.clear();
@@ -3357,6 +3643,22 @@ export class BankingSystem {
     this.creditSeedPurchases.clear();
     for (const [key, record] of state.creditSeedPurchases ?? []) {
       this.creditSeedPurchases.set(key, { ...record });
+    }
+    this.creditApplications.clear();
+    for (const [key, record] of state.creditApplications ?? []) {
+      this.creditApplications.set(key, {
+        ...record,
+        requestedLimit: { ...record.requestedLimit },
+        approvedLimit: record.approvedLimit ? { ...record.approvedLimit } : null,
+      });
+    }
+    this.creditApplicationIdempotency.clear();
+    for (const [key, record] of state.creditApplicationIdempotency ?? []) {
+      this.creditApplicationIdempotency.set(key, { ...record });
+    }
+    this.creditActivationIdempotency.clear();
+    for (const [key, record] of state.creditActivationIdempotency ?? []) {
+      this.creditActivationIdempotency.set(key, { ...record });
     }
     this.auditEventStore.length = 0;
     this.auditEventStore.push(...state.auditEventStore.map((event) => ({ ...event })));
@@ -3491,6 +3793,34 @@ export class BankingSystem {
     );
   }
 
+  private resolveOtpRequestFingerprint(
+    purpose: OtpPurpose,
+    resourceId: string | null,
+  ): string | null {
+    if (!resourceId) {
+      return null;
+    }
+    if (purpose === "TRANSFER") {
+      const quote = this.quotes.get(resourceId);
+      return quote
+        ? fingerprint({
+            quoteId: quote.quote.quoteId,
+            amountMinor: quote.quote.amount.amountMinor,
+          })
+        : null;
+    }
+    if (purpose === "SAVINGS_OPENING") {
+      return this.savingsQuotes.has(resourceId) ? fingerprint({ quoteId: resourceId }) : null;
+    }
+    if (purpose === "CREDIT_PAYMENT") {
+      return this.creditQuotes.has(resourceId) ? fingerprint({ quoteId: resourceId }) : null;
+    }
+    if (purpose === "CARD_ACTIVATION") {
+      return this.creditApplications.has(resourceId) ? fingerprint({ applicationId: resourceId }) : null;
+    }
+    return null;
+  }
+
   private issueOtpChallenge(
     userId: string,
     deviceId: string,
@@ -3594,6 +3924,11 @@ export class BankingSystem {
       if (challenge.expiresAt <= now) {
         this.authChallenges.delete(challengeHash);
         this.sandboxOtpInbox.delete(challengeHash);
+      }
+    }
+    for (const [registrationId, registration] of this.pendingRegistrations) {
+      if (registration.expiresAt <= now) {
+        this.pendingRegistrations.delete(registrationId);
       }
     }
     for (const [lookupHash, lookup] of this.recipientLookups) {

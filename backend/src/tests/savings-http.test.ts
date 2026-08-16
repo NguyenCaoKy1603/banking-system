@@ -5,8 +5,37 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer } from "../http.js";
 
+const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
+
+async function completeRegistration(
+  request: (path: string, init?: RequestInit) => Promise<Response>,
+): Promise<{ user: { id: string } }> {
+  const begin = await request("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({
+      fullName: "Savings HTTP User",
+      email: "savings-http@example.com",
+      phoneNumber: "0900001010",
+      password: "Password1",
+    }),
+  });
+  assert.equal(begin.status, 202);
+  const challenge = (await begin.json()) as { challengeId: string };
+  const otpResponse = await request(`/sandbox/otp/${challenge.challengeId}`, {
+    headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY },
+  });
+  const otp = (await otpResponse.json()) as { otp: string };
+  const verified = await request("/auth/register/verify", {
+    method: "POST",
+    body: JSON.stringify({ challengeId: challenge.challengeId, proof: otp.otp }),
+  });
+  assert.equal(verified.status, 201);
+  return (await verified.json()) as { user: { id: string } };
+}
+
 test("HTTP savings flow exposes quote, MFA/idempotency opening and deposit detail", async (t) => {
-  const server = createBankingServer(new BankingSystem({ sandboxOtp: "123456" }));
+  const system = new BankingSystem({ sandboxOtp: "123456" });
+  const server = createBankingServer(system);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
   const address = server.address() as AddressInfo;
@@ -19,16 +48,7 @@ test("HTTP savings flow exposes quote, MFA/idempotency opening and deposit detai
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  const registerResponse = await request("/auth/register", {
-    method: "POST",
-    body: json({
-      fullName: "Savings HTTP User",
-      email: "savings-http@example.com",
-      phoneNumber: "0900001010",
-      password: "Password1",
-    }),
-  });
-  assert.equal(registerResponse.status, 201);
+  const registered = await completeRegistration(request);
   const loginResponse = await request("/auth/login", {
     method: "POST",
     body: json({ email: "savings-http@example.com", password: "Password1" }),
@@ -40,6 +60,11 @@ test("HTTP savings flow exposes quote, MFA/idempotency opening and deposit detai
   const accounts = (await accountsResponse.json()) as { accounts: Array<{ id: string }> };
   const accountId = accounts.accounts[0]?.id;
   assert.ok(accountId);
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, "savings-http-funding", {
+    recipientAccountNumber: system.getAccountNumber(registered.user.id, accountId),
+    amount: { currency: "VND", amountMinor: "10000000" },
+    reason: "test fixture funding",
+  });
 
   const productsResponse = await request("/savings/products", { headers: authHeaders });
   assert.equal(productsResponse.status, 200);

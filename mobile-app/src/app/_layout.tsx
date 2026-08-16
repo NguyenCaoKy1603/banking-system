@@ -36,6 +36,7 @@ function RootNavigator() {
           <Stack.Screen name="transfer" />
           <Stack.Screen name="beneficiaries" />
           <Stack.Screen name="cards" />
+          <Stack.Screen name="cards/apply" />
           <Stack.Screen name="cards/[cardId]" />
           <Stack.Screen name="transaction/[transactionId]" />
           <Stack.Screen name="notifications" />

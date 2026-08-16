@@ -5,6 +5,7 @@ export type BeneficiaryStatus = "ACTIVE" | "BLOCKED";
 export type Beneficiary = {
   id: string;
   displayName: string;
+  accountHolderName?: string;
   maskedAccountNumber: string;
   bankName: string;
   status: BeneficiaryStatus;
@@ -21,7 +22,7 @@ export type BeneficiariesResponse = {
 export type CreateBeneficiaryRequest = {
   displayName: string;
   accountNumber: string;
-  bankName: string;
+  bankName?: string;
 };
 
 export type RenameBeneficiaryRequest = {
@@ -30,7 +31,8 @@ export type RenameBeneficiaryRequest = {
 
 export type TransferQuoteRequest = {
   sourceAccountId: string;
-  beneficiaryId: string;
+  beneficiaryId?: string;
+  lookupId?: string;
   amount: Money;
 };
 
@@ -51,7 +53,21 @@ export type SubmitTransferRequest = {
   stepUp: {
     method: StepUpMethod;
     proof: string;
+    challengeId?: string;
   };
+};
+
+export type InternalRecipientLookup = {
+  lookupId: string;
+  accountHolderName: string;
+  maskedAccountNumber: string;
+  bankName: string;
+  status: BeneficiaryStatus;
+  expiresAt: string;
+};
+
+export type InternalRecipientLookupResponse = {
+  recipient: InternalRecipientLookup;
 };
 
 export type TransferStatus =

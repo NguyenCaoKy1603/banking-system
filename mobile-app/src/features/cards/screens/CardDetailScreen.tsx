@@ -6,6 +6,7 @@ import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import { createOtpChallenge } from "@/features/auth/services/otpApi";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
 import { getCreditCardStatusLabel, getCreditStatementStatusLabel } from "@/features/credit/presentation/creditPresentation";
 import { getCreditCard, lockCreditCard, unlockCreditCard } from "@/features/credit/services/creditApi";
@@ -34,6 +35,7 @@ export function CardDetailScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [stepUpMethod, setStepUpMethod] = useState<CreditStepUpMethod>("OTP");
   const [stepUpProof, setStepUpProof] = useState("");
+  const [unlockChallengeId, setUnlockChallengeId] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
 
@@ -69,6 +71,15 @@ export function CardDetailScreen() {
         setDetail((current) => current ? { ...current, card: response.card } : current);
         setNotice("Thẻ đã được khóa trong sandbox.");
       } else if (card.status === "LOCKED") {
+        if (!unlockChallengeId) {
+          const challenge = await createOtpChallenge(
+            { purpose: "CARD_UNLOCK", resourceId: card.cardId },
+            auth,
+          );
+          setUnlockChallengeId(challenge.challengeId);
+          setNotice("Đã tạo yêu cầu xác thực. Nhập OTP sandbox rồi bấm Mở khóa thẻ lần nữa.");
+          return;
+        }
         let proof = stepUpProof.trim();
         if (stepUpMethod === "BIOMETRIC") {
           await requestBiometricAuthentication("Xác thực để mở khóa thẻ sandbox");
@@ -78,9 +89,14 @@ export function CardDetailScreen() {
           setError("Cần nhập mã OTP sandbox hoặc xác thực sinh trắc học để mở khóa.");
           return;
         }
-        const response = await unlockCreditCard(card.cardId, { method: stepUpMethod, proof }, auth);
+        const response = await unlockCreditCard(
+          card.cardId,
+          { method: stepUpMethod, proof, challengeId: unlockChallengeId },
+          auth,
+        );
         setDetail((current) => current ? { ...current, card: response.card } : current);
         setStepUpProof("");
+        setUnlockChallengeId(null);
         setNotice("Thẻ đã được mở khóa sau bước xác thực.");
       } else {
         setError("Card status does not allow this lock or unlock action.");
@@ -90,7 +106,7 @@ export function CardDetailScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [auth, detail, isSaving, stepUpMethod, stepUpProof]);
+  }, [auth, detail, isSaving, stepUpMethod, stepUpProof, unlockChallengeId]);
 
   return (
     <Screen>

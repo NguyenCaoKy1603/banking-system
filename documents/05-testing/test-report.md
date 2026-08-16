@@ -1,5 +1,7 @@
 # Test report — Mobile banking reference preview
 
+> Cập nhật hiện hành 2026-08-17: Mobile trên branch `codex/mini-core-banking-sandbox` đạt lint/typecheck, 36 suite/167 test, 9 Maestro flow syntax và web export 33 route. Backend hiện 65 test, 61 đạt/4 skip PostgreSQL. Artifact thiết bị trong báo cáo này thuộc snapshot trước branch và cần chạy lại cho clean registration, full account reveal/copy và credit activation.
+
 Ngày lập: 2026-08-16
 Phạm vi: M0–M4, M6–M8 và Card mock bonus
 Trạng thái: **Local reference pass; Android emulator E2E pass; device/staging gates còn mở**
