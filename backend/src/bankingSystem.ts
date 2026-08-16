@@ -85,6 +85,7 @@ import {
 } from "./savings.js";
 import {
   createId,
+  createSandboxOtp,
   createOpaqueToken,
   fingerprint,
   hashOpaqueToken,
@@ -98,11 +99,14 @@ import type {
   AuthChallengeResponse,
   Beneficiary,
   ControlPolicy,
+  FundingReceipt,
   FraudReportResponse,
+  InternalRecipientLookup,
   LoginResponse,
   LoginResult,
   Money,
   Notification,
+  OtpPurpose,
   PaymentAccount,
   Transaction,
   TransactionDetail,
@@ -135,11 +139,26 @@ type RefreshSession = {
 type QuoteRecord = {
   userId: string;
   quote: TransferQuote;
+  destinationAccountId: string;
+  destinationOwnerId: string;
   consumedTransferId?: string;
 };
 
 type BeneficiaryRecord = Beneficiary & {
   accountNumberFingerprint: string;
+  destinationAccountId: string;
+  destinationOwnerId: string;
+};
+
+type RecipientLookupRecord = InternalRecipientLookup & {
+  userId: string;
+  destinationAccountId: string;
+  destinationOwnerId: string;
+};
+
+type FundingIdempotencyRecord = {
+  fingerprint: string;
+  receipt: FundingReceipt;
 };
 
 type IdempotencyRecord = {
@@ -195,14 +214,21 @@ export type ServiceHealth = {
 
 export type QuoteRequest = {
   sourceAccountId: string;
-  beneficiaryId: string;
+  beneficiaryId?: string;
+  lookupId?: string;
   amount: Money;
 };
 
 export type BeneficiaryInput = {
   displayName: string;
   accountNumber: string;
-  bankName: string;
+  bankName?: string;
+};
+
+export type SandboxFundingRequest = {
+  recipientAccountNumber: string;
+  amount: Money;
+  reason: string;
 };
 
 export type SubmitTransferRequest = {
@@ -210,6 +236,7 @@ export type SubmitTransferRequest = {
   stepUp: {
     method: "OTP" | "BIOMETRIC";
     proof: string;
+    challengeId?: string;
   };
 };
 
@@ -225,6 +252,7 @@ export type SubmitSavingsOpeningRequest = {
   stepUp: {
     method: "OTP" | "BIOMETRIC";
     proof: string;
+    challengeId?: string;
   };
 };
 
@@ -290,11 +318,16 @@ type AuthChallengeRecord = {
   expiresAt: number;
   methods: StepUpMethod[];
   attempts: number;
+  purpose: OtpPurpose;
+  resourceId: string | null;
+  requestFingerprint: string | null;
+  otpHash: string | null;
 };
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const QUOTE_TTL_MS = 5 * 60 * 1000;
+const RECIPIENT_LOOKUP_TTL_MS = 5 * 60 * 1000;
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const AUTH_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const AUTH_RATE_LIMIT_MAX_ATTEMPTS = 5;
@@ -302,6 +335,7 @@ const REGISTRATION_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const TRANSFER_STEP_UP_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const DEFAULT_OUTBOX_PENDING_THRESHOLD = 100;
 const DEFAULT_TRANSFER_LIMIT_MINOR = 5_000_000n;
+const DEFAULT_SANDBOX_FUNDING_LIMIT_MINOR = 100_000_000n;
 const DEFAULT_SANDBOX_DEVICE_ID = "sandbox-device";
 
 function nowIso(clock: Clock): string {
@@ -354,8 +388,12 @@ function normalizeBankName(bankName: string): string {
 }
 
 function toPublicBeneficiary(beneficiary: BeneficiaryRecord): Beneficiary {
-  const { accountNumberFingerprint: _accountNumberFingerprint, ...publicBeneficiary } =
-    beneficiary;
+  const {
+    accountNumberFingerprint: _accountNumberFingerprint,
+    destinationAccountId: _destinationAccountId,
+    destinationOwnerId: _destinationOwnerId,
+    ...publicBeneficiary
+  } = beneficiary;
   return { ...publicBeneficiary };
 }
 
@@ -490,7 +528,7 @@ type LoginContext = {
   user: UserRecord | undefined;
 };
 
-export const BANKING_SYSTEM_STATE_VERSION = 2;
+export const BANKING_SYSTEM_STATE_VERSION = 3;
 
 export type BankingSystemState = {
   /** Optional for backwards compatibility with M0-M6 snapshots created before M7. */
@@ -507,10 +545,12 @@ export type BankingSystemState = {
   refreshSessions: Array<[string, RefreshSession]>;
   refreshFamilies: Array<[string, string[]]>;
   beneficiaries: Array<[string, BeneficiaryRecord[]]>;
+  recipientLookups?: Array<[string, RecipientLookupRecord]>;
   notifications: Array<[string, Notification[]]>;
   quotes: Array<[string, QuoteRecord]>;
   transfers: Array<[string, { userId: string; receipt: TransferReceipt }]>;
   idempotency: Array<[string, IdempotencyRecord]>;
+  fundingIdempotency?: Array<[string, FundingIdempotencyRecord]>;
   savingsQuotes?: Array<[string, SavingsQuoteRecord]>;
   savingsOpenings?: Array<[string, SavingsOpeningRecord]>;
   savingsDeposits?: Array<[string, SavingsDepositRecord]>;
@@ -574,10 +614,12 @@ function migrateBankingSystemState(input: BankingSystemState): BankingSystemStat
     refreshSessions: candidate.refreshSessions!,
     refreshFamilies: candidate.refreshFamilies!,
     beneficiaries: candidate.beneficiaries!,
+    recipientLookups: candidate.recipientLookups ?? [],
     notifications: candidate.notifications!,
     quotes: candidate.quotes!,
     transfers: candidate.transfers!,
     idempotency: candidate.idempotency!,
+    fundingIdempotency: candidate.fundingIdempotency ?? [],
     savingsQuotes: candidate.savingsQuotes ?? [],
     savingsOpenings: candidate.savingsOpenings ?? [],
     savingsDeposits: candidate.savingsDeposits ?? [],
@@ -649,8 +691,10 @@ export class BankingSystem {
   private readonly outboxEventStore: OutboxEvent[] = [];
 
   private readonly clock: Clock;
-  private readonly sandboxOtp: string;
-  private readonly sandboxMfaOtp: string;
+  private readonly bankingEnvironment: string;
+  private readonly sandboxOperatorKey: string;
+  private readonly sandboxOtp: string | undefined;
+  private readonly sandboxMfaOtp: string | undefined;
   private readonly mfaRequired: boolean;
   private readonly authChallengeMethods: StepUpMethod[];
   private readonly allowlistPredicate: (userId: string) => boolean;
@@ -665,6 +709,7 @@ export class BankingSystem {
   private readonly usersByPhone = new Map<string, string>();
   private readonly accessSessions = new Map<string, AccessSession>();
   private readonly authChallenges = new Map<string, AuthChallengeRecord>();
+  private readonly sandboxOtpInbox = new Map<string, string>();
   private readonly authAttemptWindows = new Map<
     string,
     { startedAt: number; attempts: number }
@@ -685,10 +730,12 @@ export class BankingSystem {
   private readonly refreshSessions = new Map<string, RefreshSession>();
   private readonly refreshFamilies = new Map<string, Set<string>>();
   private readonly beneficiaries = new Map<string, BeneficiaryRecord[]>();
+  private readonly recipientLookups = new Map<string, RecipientLookupRecord>();
   private readonly notifications = new Map<string, Notification[]>();
   private readonly quotes = new Map<string, QuoteRecord>();
   private readonly transfers = new Map<string, { userId: string; receipt: TransferReceipt }>();
   private readonly idempotency = new Map<string, IdempotencyRecord>();
+  private readonly fundingIdempotency = new Map<string, FundingIdempotencyRecord>();
   private readonly savingsQuotes = new Map<string, SavingsQuoteRecord>();
   private readonly savingsOpenings = new Map<string, SavingsOpeningRecord>();
   private readonly savingsDeposits = new Map<string, SavingsDepositRecord>();
@@ -707,6 +754,7 @@ export class BankingSystem {
     options: {
       clock?: Clock;
       core?: CoreBankingPort;
+      sandboxOperatorKey?: string;
       sandboxOtp?: string;
       sandboxMfaOtp?: string;
       mfaRequired?: boolean;
@@ -737,10 +785,15 @@ export class BankingSystem {
     } = {},
   ) {
     this.clock = options.clock ?? (() => Date.now());
+    this.bankingEnvironment = process.env.BANKING_ENV ?? "development";
+    this.sandboxOperatorKey =
+      options.sandboxOperatorKey ??
+      process.env.BANKING_SANDBOX_OPERATOR_KEY ??
+      "sandbox-operator-local";
     this.core = options.core ?? new InMemoryCoreBanking();
-    this.sandboxOtp = options.sandboxOtp ?? process.env.BANKING_SANDBOX_OTP ?? "123456";
+    this.sandboxOtp = options.sandboxOtp ?? process.env.BANKING_SANDBOX_OTP;
     this.sandboxMfaOtp =
-      options.sandboxMfaOtp ?? process.env.BANKING_SANDBOX_MFA_OTP ?? "654321";
+      options.sandboxMfaOtp ?? process.env.BANKING_SANDBOX_MFA_OTP;
     this.mfaRequired =
       options.mfaRequired ??
       (process.env.BANKING_MFA_REQUIRED === "1" ||
@@ -874,17 +927,7 @@ export class BankingSystem {
     this.usersByEmail.set(prepared.email, user.id);
     this.usersByPhone.set(prepared.phoneNumber, user.id);
     this.core.createPaymentAccount(user.id, user.createdAt);
-    this.ensureCreditForUser(user.id, user.createdAt);
-    this.beneficiaries.set(user.id, [
-      {
-        id: createId("beneficiary"),
-        displayName: "Người nhận sandbox",
-        maskedAccountNumber: "•••• 9876",
-        bankName: "Ngân hàng reference",
-        status: "ACTIVE",
-        accountNumberFingerprint: fingerprint("sandbox-default-account-9876"),
-      },
-    ]);
+    this.beneficiaries.set(user.id, []);
     this.notifications.set(user.id, []);
     this.recordAudit("USER_REGISTERED", user.id, user.id);
 
@@ -999,32 +1042,75 @@ export class BankingSystem {
     if (!challenge || challenge.expiresAt <= this.clock()) {
       throw unauthorized("Authentication challenge is invalid or expired.");
     }
-
-    if (challenge.deviceId !== this.normalizeDeviceId(deviceId)) {
-      throw unauthorized("Device binding mismatch.");
-    }
-
-    if (!challenge.methods.includes(method) || typeof proof !== "string" || !proof.trim()) {
-      this.recordChallengeFailure(tokenHash, challenge);
-      throw unauthorized("Authentication challenge is invalid.");
-    }
-
-    if (
-      (method === "OTP" && proof !== this.sandboxMfaOtp) ||
-      (method === "BIOMETRIC" && proof !== "sandbox-biometric")
-    ) {
-      this.recordChallengeFailure(tokenHash, challenge);
-      throw unauthorized("Authentication challenge verification failed.");
-    }
-
     const user = this.users.get(challenge.userId);
     if (!user) {
       throw unauthorized("User session is invalid.");
     }
-
-    this.authChallenges.delete(tokenHash);
+    this.verifyOtpChallenge(
+      challengeId,
+      challenge.userId,
+      deviceId,
+      method,
+      proof,
+      "LOGIN",
+      null,
+      null,
+    );
     this.recordAudit("AUTH_CHALLENGE_VERIFIED", user.id, null);
     return this.issueTokenPair(user, createId("refresh-family"), challenge.deviceId);
+  }
+
+  createOtpChallenge(
+    userId: string,
+    deviceId: string | undefined,
+    purpose: OtpPurpose,
+    resourceId: string | null = null,
+    requestFingerprint: string | null = null,
+  ): AuthChallengeResponse {
+    const supportedPurposes: readonly OtpPurpose[] = [
+      "REGISTRATION_VERIFY",
+      "LOGIN",
+      "TRANSFER",
+      "SAVINGS_OPENING",
+      "CREDIT_APPLICATION",
+      "CARD_ACTIVATION",
+      "CREDIT_PAYMENT",
+      "CARD_UNLOCK",
+    ];
+    if (!supportedPurposes.includes(purpose)) {
+      throw invalidRequest("OTP purpose is invalid.");
+    }
+    const methods =
+      purpose === "TRANSFER"
+        ? this.policy.stepUpMethods
+        : purpose === "SAVINGS_OPENING"
+          ? this.policy.savingsStepUpMethods
+          : purpose === "CREDIT_PAYMENT"
+            ? this.policy.creditPaymentStepUpMethods
+            : purpose === "CARD_UNLOCK"
+              ? this.policy.cardUnlockStepUpMethods
+              : ["OTP"] as StepUpMethod[];
+    return this.issueOtpChallenge(
+      userId,
+      this.normalizeDeviceId(deviceId),
+      purpose,
+      resourceId,
+      requestFingerprint,
+      methods,
+    );
+  }
+
+  getSandboxOtp(operatorKey: string, challengeId: string): string {
+    if (this.bankingEnvironment === "production" || operatorKey !== this.sandboxOperatorKey) {
+      throw unauthorized("Sandbox operator authorization failed.");
+    }
+    const challengeHash = hashOpaqueToken(requireString(challengeId, "challengeId"));
+    const challenge = this.authChallenges.get(challengeHash);
+    const otp = this.sandboxOtpInbox.get(challengeHash);
+    if (!challenge || challenge.expiresAt <= this.clock() || !otp) {
+      throw notFound("Sandbox OTP challenge not found or expired.");
+    }
+    return otp;
   }
 
   refresh(refreshToken: string, deviceId?: string): LoginResponse {
@@ -1118,6 +1204,70 @@ export class BankingSystem {
     return this.core.listPaymentAccounts(userId);
   }
 
+  fundSandbox(
+    operatorKey: string,
+    idempotencyKey: string,
+    input: SandboxFundingRequest,
+  ): FundingReceipt {
+    if (this.bankingEnvironment === "production") {
+      throw conflictWithCode(
+        "SANDBOX_DISABLED",
+        "Sandbox Funding bị vô hiệu hóa ngoài môi trường sandbox/development.",
+      );
+    }
+    if (operatorKey !== this.sandboxOperatorKey) {
+      throw unauthorized("Sandbox operator authorization failed.");
+    }
+    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
+    const amountMinor = parseMoney(input.amount, "amount");
+    if (
+      amountMinor <= 0n ||
+      amountMinor > DEFAULT_SANDBOX_FUNDING_LIMIT_MINOR
+    ) {
+      throw conflict("Sandbox funding amount is outside the allowed limit.");
+    }
+    const requestFingerprint = fingerprint({
+      recipientAccountNumber: normalizeAccountNumber(input.recipientAccountNumber),
+      amountMinor: amountMinor.toString(),
+      reason: requireBoundedString(input.reason, "reason", 160),
+    });
+    const existing = this.fundingIdempotency.get(normalizedKey);
+    if (existing) {
+      if (existing.fingerprint !== requestFingerprint) {
+        throw conflict("Funding idempotency key was reused with a different request.");
+      }
+      return { ...existing.receipt, amount: { ...existing.receipt.amount } };
+    }
+    const target = this.core.findPaymentAccountByNumber(
+      normalizeAccountNumber(input.recipientAccountNumber),
+    );
+    const reason = requireBoundedString(input.reason, "reason", 160);
+    const receipt = this.core.fundPaymentAccount(
+      createId("sandbox-funding"),
+      target.accountNumber,
+      amountMinor,
+      reason,
+      nowIso(this.clock),
+    );
+    this.fundingIdempotency.set(normalizedKey, {
+      fingerprint: requestFingerprint,
+      receipt: { ...receipt, amount: { ...receipt.amount } },
+    });
+    this.recordAudit("SANDBOX_FUNDING_SUCCEEDED", null, receipt.fundingId);
+    this.enqueueOutbox("SANDBOX_FUNDING_SUCCEEDED", receipt.fundingId, receipt.createdAt);
+    this.notifications.get(target.ownerId)?.unshift({
+      id: createId("notification"),
+      type: "TRANSFER",
+      title: "Đã cấp tiền Sandbox",
+      body: `Tài khoản đã nhận ${receipt.amount.amountMinor} minor unit VND từ Quỹ Sandbox.`,
+      resourceId: receipt.transactionId,
+      resourceAccountId: target.accountId,
+      read: false,
+      createdAt: receipt.createdAt,
+    });
+    return { ...receipt, amount: { ...receipt.amount } };
+  }
+
   getAccountNumber(userId: string, accountId: string): string {
     const accountNumber = this.core.getPaymentAccountNumber(userId, accountId);
     this.recordAudit("ACCOUNT_NUMBER_REVEALED", userId, accountId);
@@ -1153,7 +1303,6 @@ export class BankingSystem {
 
   listCards(userId: string): CreditCard[] {
     this.assertCreditVisible(userId);
-    this.ensureCreditForUser(userId, nowIso(this.clock));
     this.processCreditStatements(userId);
     return [...this.creditCards.values()]
       .filter((card) => card.userId === userId)
@@ -1166,7 +1315,6 @@ export class BankingSystem {
 
   listCreditAccounts(userId: string): CreditAccount[] {
     this.assertCreditVisible(userId);
-    this.ensureCreditForUser(userId, nowIso(this.clock));
     this.processCreditStatements(userId);
     return [...this.creditAccounts.values()]
       .filter((account) => account.userId === userId)
@@ -1179,7 +1327,6 @@ export class BankingSystem {
     latestStatement: CreditStatement | null;
   } {
     this.assertCreditVisible(userId);
-    this.ensureCreditForUser(userId, nowIso(this.clock));
     this.processCreditStatements(userId);
     const card = this.requireCard(userId, cardId);
     const account = this.requireCreditAccount(userId, card.creditAccountId);
@@ -1193,7 +1340,6 @@ export class BankingSystem {
 
   getCreditAccount(userId: string, creditAccountId: string): CreditAccount {
     this.assertCreditVisible(userId);
-    this.ensureCreditForUser(userId, nowIso(this.clock));
     this.processCreditStatements(userId);
     return toPublicCreditAccount(this.requireCreditAccount(userId, creditAccountId));
   }
@@ -1205,7 +1351,6 @@ export class BankingSystem {
     limit = 20,
   ): CreditTransactionsResult {
     this.assertCreditVisible(userId);
-    this.ensureCreditForUser(userId, nowIso(this.clock));
     this.processCreditStatements(userId);
     this.requireCreditAccount(userId, creditAccountId);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
@@ -1232,7 +1377,6 @@ export class BankingSystem {
     limit = 20,
   ): CreditStatementsResult {
     this.assertCreditVisible(userId);
-    this.ensureCreditForUser(userId, nowIso(this.clock));
     this.processCreditStatements(userId);
     this.requireCreditAccount(userId, creditAccountId);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
@@ -1251,7 +1395,6 @@ export class BankingSystem {
 
   getCreditStatement(userId: string, creditAccountId: string, statementId: string): CreditStatement {
     this.assertCreditVisible(userId);
-    this.ensureCreditForUser(userId, nowIso(this.clock));
     this.processCreditStatements(userId);
     const account = this.requireCreditAccount(userId, creditAccountId);
     const statement = this.creditStatements.get(statementId);
@@ -1277,14 +1420,23 @@ export class BankingSystem {
   unlockCard(
     userId: string,
     cardId: string,
-    stepUp: { method: StepUpMethod; proof: string },
+    stepUp: { method: StepUpMethod; proof: string; challengeId?: string },
+    deviceId?: string,
   ): CreditCard {
     this.assertCardControlsAvailable(userId);
     const card = this.requireCard(userId, cardId);
     if (card.status !== "LOCKED") {
       throw conflictWithCode("CARD_STATE_INVALID", "Chỉ thẻ đang khóa mới có thể mở.");
     }
-    this.verifyCreditStepUp(userId, stepUp, card.cardId, this.policy.cardUnlockStepUpMethods);
+    this.verifyCreditStepUp(
+      userId,
+      stepUp,
+      card.cardId,
+      this.policy.cardUnlockStepUpMethods,
+      deviceId,
+      "CARD_UNLOCK",
+      null,
+    );
     card.status = "ACTIVE";
     card.updatedAt = nowIso(this.clock);
     this.recordAudit("CREDIT_CARD_UNLOCKED", userId, card.cardId);
@@ -1298,7 +1450,6 @@ export class BankingSystem {
   ): CreditPaymentQuote {
     this.cleanupExpiredState();
     this.assertCreditPaymentAvailable(userId);
-    this.ensureCreditForUser(userId, nowIso(this.clock));
     this.processCreditStatements(userId);
     const sourceAccountId = requireString(input.sourceAccountId, "sourceAccountId");
     const creditAccountId = requireString(input.creditAccountId, "creditAccountId");
@@ -1389,6 +1540,7 @@ export class BankingSystem {
     userId: string,
     idempotencyKey: string,
     request: CreditPaymentRequest,
+    deviceId?: string,
   ): CreditPayment {
     this.cleanupExpiredState();
     this.assertCreditPaymentAvailable(userId);
@@ -1419,7 +1571,15 @@ export class BankingSystem {
     if (!statement || statement.version !== quote.statementVersion) {
       throw conflictWithCode("STATEMENT_CHANGED", "Sao kê đã thay đổi; hãy tạo báo giá mới.");
     }
-    this.verifyCreditStepUp(userId, request.stepUp, quote.quoteId);
+    this.verifyCreditStepUp(
+      userId,
+      request.stepUp,
+      quote.quoteId,
+      this.policy.creditPaymentStepUpMethods,
+      deviceId,
+      "CREDIT_PAYMENT",
+      quote.requestFingerprint,
+    );
     const card = [...this.creditCards.values()].find(
       (item) => item.userId === userId && item.creditAccountId === quote.creditAccountId,
     );
@@ -1596,6 +1756,7 @@ export class BankingSystem {
     userId: string,
     idempotencyKey: string,
     request: SubmitSavingsOpeningRequest,
+    deviceId?: string,
   ): SavingsOpening {
     this.cleanupExpiredState();
     this.assertSavingsAvailable(userId);
@@ -1649,13 +1810,30 @@ export class BankingSystem {
     if (!this.policy.savingsStepUpMethods.includes(stepUp.method)) {
       throw conflict("The requested step-up method is not enabled.");
     }
-    if (
-      (stepUp.method === "OTP" && stepUp.proof !== this.sandboxOtp) ||
-      (stepUp.method === "BIOMETRIC" && stepUp.proof !== "sandbox-biometric")
-    ) {
+    try {
+      if (stepUp.challengeId) {
+        this.verifyOtpChallenge(
+          stepUp.challengeId,
+          userId,
+          deviceId,
+          stepUp.method,
+          stepUp.proof,
+          "SAVINGS_OPENING",
+          quoteRecord.quoteId,
+          requestFingerprint,
+        );
+      } else if (
+        !(
+          (stepUp.method === "OTP" && this.sandboxOtp && stepUp.proof === this.sandboxOtp) ||
+          (stepUp.method === "BIOMETRIC" && stepUp.proof === "sandbox-biometric")
+        )
+      ) {
+        throw unauthorized("Step-up verification failed.");
+      }
+    } catch (error) {
       this.recordSavingsStepUpFailure(stepUpRateKey);
       this.recordAudit("STEP_UP_VERIFICATION_FAILED", userId, quoteRecord.quoteId);
-      throw unauthorized("Step-up verification failed.");
+      throw error;
     }
     this.savingsStepUpAttemptWindows.delete(stepUpRateKey);
     this.recordAudit("SAVINGS_STEP_UP_VERIFIED", userId, quoteRecord.quoteId);
@@ -1799,6 +1977,41 @@ export class BankingSystem {
     return toPublicBeneficiary(beneficiary);
   }
 
+  lookupInternalRecipient(
+    userId: string,
+    accountNumber: string,
+  ): InternalRecipientLookup {
+    this.cleanupExpiredState();
+    const target = this.core.findPaymentAccountByNumber(
+      normalizeAccountNumber(accountNumber),
+    );
+    if (target.ownerId === userId) {
+      throw conflict("Không thể chuyển tiền cho chính tài khoản của mình.");
+    }
+    if (target.status !== "ACTIVE") {
+      throw conflict("Tài khoản người nhận không hoạt động.");
+    }
+    const owner = this.users.get(target.ownerId);
+    if (!owner) {
+      throw notFound("Recipient owner not found.");
+    }
+    const lookupId = createOpaqueToken();
+    const lookup: RecipientLookupRecord = {
+      lookupId,
+      userId,
+      destinationOwnerId: target.ownerId,
+      destinationAccountId: target.accountId,
+      accountHolderName: owner.fullName,
+      maskedAccountNumber: target.maskedNumber,
+      bankName: target.bankName,
+      status: target.status,
+      expiresAt: new Date(this.clock() + RECIPIENT_LOOKUP_TTL_MS).toISOString(),
+    };
+    this.recipientLookups.set(hashOpaqueToken(lookupId), lookup);
+    this.recordAudit("INTERNAL_RECIPIENT_LOOKED_UP", userId, target.accountId);
+    return { ...lookup };
+  }
+
   listBeneficiaries(userId: string): Beneficiary[] {
     return (this.beneficiaries.get(userId) ?? []).map(toPublicBeneficiary);
   }
@@ -1806,15 +2019,25 @@ export class BankingSystem {
   createBeneficiary(userId: string, input: BeneficiaryInput): Beneficiary {
     const displayName = requireBoundedString(input.displayName, "displayName", 80);
     const accountNumber = normalizeAccountNumber(input.accountNumber);
-    const bankName = requireBoundedString(input.bankName, "bankName", 120);
+    const target = this.core.findPaymentAccountByNumber(accountNumber);
+    if (target.ownerId === userId) {
+      throw conflict("Không thể lưu chính tài khoản của mình vào danh bạ.");
+    }
+    if (target.status !== "ACTIVE") {
+      throw conflict("Tài khoản người nhận không hoạt động.");
+    }
+    const owner = this.users.get(target.ownerId);
+    if (!owner) {
+      throw notFound("Recipient owner not found.");
+    }
+    const bankName = target.bankName;
     const beneficiaries = this.beneficiaries.get(userId) ?? [];
 
     const accountNumberFingerprint = fingerprint(accountNumber);
     if (
       beneficiaries.some(
         (beneficiary) =>
-          beneficiary.accountNumberFingerprint === accountNumberFingerprint &&
-          normalizeBankName(beneficiary.bankName) === normalizeBankName(bankName),
+          beneficiary.destinationAccountId === target.accountId,
       )
     ) {
       throw conflict("Beneficiary already exists.");
@@ -1823,10 +2046,13 @@ export class BankingSystem {
     const beneficiary: BeneficiaryRecord = {
       id: createId("beneficiary"),
       displayName,
+      accountHolderName: owner.fullName,
       maskedAccountNumber: maskAccountNumber(accountNumber),
       bankName,
       status: "ACTIVE",
       accountNumberFingerprint,
+      destinationAccountId: target.accountId,
+      destinationOwnerId: target.ownerId,
     };
     beneficiaries.push(beneficiary);
     this.beneficiaries.set(userId, beneficiaries);
@@ -1872,14 +2098,53 @@ export class BankingSystem {
     }
 
     const sourceAccountId = requireString(input.sourceAccountId, "sourceAccountId");
-    const beneficiaryId = requireString(input.beneficiaryId, "beneficiaryId");
     const amountMinor = parseMoney(input.amount, "amount");
     if (amountMinor <= 0n || amountMinor > BigInt(this.policy.maxTransferAmountMinor)) {
       throw conflict("Transfer amount is outside the sandbox limit.");
     }
 
     this.core.getPaymentAccount(userId, sourceAccountId);
-    const beneficiary = this.lookupBeneficiary(userId, beneficiaryId);
+    const lookupId = input.lookupId?.trim();
+    const beneficiaryId = input.beneficiaryId?.trim();
+    if ((!lookupId && !beneficiaryId) || (lookupId && beneficiaryId)) {
+      throw invalidRequest("Exactly one recipient reference is required.", {
+        lookupId: "Provide lookupId or beneficiaryId, but not both.",
+      });
+    }
+
+    let beneficiary: Beneficiary;
+    let destinationAccountId: string;
+    let destinationOwnerId: string;
+    if (lookupId) {
+      const lookup = this.recipientLookups.get(hashOpaqueToken(lookupId));
+      if (
+        !lookup ||
+        lookup.userId !== userId ||
+        Date.parse(lookup.expiresAt) <= this.clock()
+      ) {
+        throw conflict("Recipient lookup has expired or is invalid.");
+      }
+      beneficiary = {
+        id: lookup.lookupId,
+        displayName: lookup.accountHolderName,
+        accountHolderName: lookup.accountHolderName,
+        maskedAccountNumber: lookup.maskedAccountNumber,
+        bankName: lookup.bankName,
+        status: lookup.status,
+      };
+      destinationAccountId = lookup.destinationAccountId;
+      destinationOwnerId = lookup.destinationOwnerId;
+    } else {
+      const beneficiaryRecord = this.beneficiaries
+        .get(userId)
+        ?.find((item) => item.id === beneficiaryId);
+      if (!beneficiaryRecord) {
+        throw notFound("Beneficiary not found.");
+      }
+      beneficiary = toPublicBeneficiary(beneficiaryRecord);
+      destinationAccountId = beneficiaryRecord.destinationAccountId;
+      destinationOwnerId = beneficiaryRecord.destinationOwnerId;
+    }
     if (beneficiary.status !== "ACTIVE") {
       throw conflict("Beneficiary is not active.");
     }
@@ -1894,7 +2159,12 @@ export class BankingSystem {
       totalDebit: toMoney(amountMinor + feeMinor),
       expiresAt: new Date(this.clock() + QUOTE_TTL_MS).toISOString(),
     };
-    this.quotes.set(quote.quoteId, { userId, quote: cloneQuote(quote) });
+    this.quotes.set(quote.quoteId, {
+      userId,
+      quote: cloneQuote(quote),
+      destinationAccountId,
+      destinationOwnerId,
+    });
     this.recordAudit("TRANSFER_QUOTED", userId, quote.quoteId);
     return cloneQuote(quote);
   }
@@ -1903,14 +2173,12 @@ export class BankingSystem {
     userId: string,
     idempotencyKey: string,
     request: SubmitTransferRequest,
+    deviceId?: string,
   ): TransferReceipt {
     this.cleanupExpiredState();
     const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
     const quoteId = requireString(request.quoteId, "quoteId");
-    const requestFingerprint = fingerprint({
-      quoteId,
-      stepUpMethod: request.stepUp?.method,
-    });
+    const requestFingerprint = fingerprint({ quoteId });
     const existing = this.idempotency.get(`${userId}:${normalizedKey}`);
     if (existing) {
       if (existing.fingerprint !== requestFingerprint) {
@@ -1953,13 +2221,35 @@ export class BankingSystem {
     if (!this.policy.stepUpMethods.includes(stepUp.method)) {
       throw conflict("The requested step-up method is not enabled.");
     }
-    if (
-      (stepUp.method === "OTP" && stepUp.proof !== this.sandboxOtp) ||
-      (stepUp.method === "BIOMETRIC" && stepUp.proof !== "sandbox-biometric")
-    ) {
+    const transferContextFingerprint = fingerprint({
+      quoteId,
+      amountMinor: quoteRecord.quote.amount.amountMinor,
+      destinationAccountId: quoteRecord.destinationAccountId,
+    });
+    try {
+      if (stepUp.challengeId) {
+        this.verifyOtpChallenge(
+          stepUp.challengeId,
+          userId,
+          deviceId,
+          stepUp.method,
+          stepUp.proof,
+          "TRANSFER",
+          quoteId,
+          transferContextFingerprint,
+        );
+      } else if (
+        !(
+          (stepUp.method === "OTP" && this.sandboxOtp && stepUp.proof === this.sandboxOtp) ||
+          (stepUp.method === "BIOMETRIC" && stepUp.proof === "sandbox-biometric")
+        )
+      ) {
+        throw unauthorized("Step-up verification failed.");
+      }
+    } catch (error) {
       this.recordTransferStepUpFailure(stepUpRateKey);
       this.recordAudit("STEP_UP_VERIFICATION_FAILED", userId, quoteRecord.quote.quoteId);
-      throw unauthorized("Step-up verification failed.");
+      throw error;
     }
 
     this.transferStepUpAttemptWindows.delete(stepUpRateKey);
@@ -1967,6 +2257,8 @@ export class BankingSystem {
 
     const receipt = this.core.postTransfer(userId, {
       accountId: quoteRecord.quote.sourceAccountId,
+      destinationAccountId: quoteRecord.destinationAccountId,
+      destinationOwnerId: quoteRecord.destinationOwnerId,
       amountMinor: BigInt(quoteRecord.quote.amount.amountMinor),
       feeMinor: BigInt(quoteRecord.quote.fee.amountMinor),
       counterpartyName: quoteRecord.quote.beneficiary.displayName,
@@ -1993,6 +2285,7 @@ export class BankingSystem {
       receipt.transferId,
       receipt.updatedAt,
     );
+    const transferParties = this.core.getTransferParties(receipt.transferId);
     this.notifications.get(userId)?.unshift({
       id: createId("notification"),
       type: "TRANSFER",
@@ -2009,6 +2302,18 @@ export class BankingSystem {
       read: false,
       createdAt: receipt.updatedAt,
     });
+    if (receipt.status === "SUCCEEDED" && transferParties.destinationTransactionId) {
+      this.notifications.get(transferParties.destinationOwnerId)?.unshift({
+        id: createId("notification"),
+        type: "TRANSFER",
+        title: "Bạn vừa nhận được tiền",
+        body: `Giao dịch ${receipt.reference} đã được ghi có vào tài khoản.`,
+        resourceId: transferParties.destinationTransactionId,
+        resourceAccountId: transferParties.destinationAccountId,
+        read: false,
+        createdAt: receipt.updatedAt,
+      });
+    }
     return receipt;
   }
 
@@ -2045,9 +2350,6 @@ export class BankingSystem {
     if (transfer.receipt.status === status) {
       return transfer.receipt;
     }
-    if (transfer.receipt.status !== "PENDING") {
-      throw conflict("A terminal transfer cannot change state.");
-    }
 
     const transitioned = this.core.transitionTransfer(
       userId,
@@ -2057,6 +2359,7 @@ export class BankingSystem {
     );
     transfer.receipt = transitioned;
     const transferTarget = this.core.getTransferTarget(userId, transferId);
+    const transferParties = this.core.getTransferParties(transferId);
 
     for (const record of this.idempotency.values()) {
       if (record.userId === userId && record.receipt.transferId === transferId) {
@@ -2084,6 +2387,28 @@ export class BankingSystem {
       read: false,
       createdAt: transitioned.updatedAt,
     });
+
+    if (
+      (status === "SUCCEEDED" || status === "REVERSED") &&
+      transferParties.destinationTransactionId
+    ) {
+      this.notifications.get(transferParties.destinationOwnerId)?.unshift({
+        id: createId("notification"),
+        type: "TRANSFER",
+        title:
+          status === "SUCCEEDED"
+            ? "Bạn vừa nhận được tiền"
+            : "Giao dịch nhận tiền đã hoàn tác",
+        body:
+          status === "SUCCEEDED"
+            ? `Giao dịch ${transitioned.reference} đã được ghi có vào tài khoản.`
+            : `Giao dịch ${transitioned.reference} đã được hoàn tác trong sandbox.`,
+        resourceId: transferParties.destinationTransactionId,
+        resourceAccountId: transferParties.destinationAccountId,
+        read: false,
+        createdAt: transitioned.updatedAt,
+      });
+    }
 
     return transitioned;
   }
@@ -2465,7 +2790,6 @@ export class BankingSystem {
   }
 
   private processCreditStatements(userId: string): void {
-    this.ensureCreditForUser(userId, nowIso(this.clock));
     const now = this.clock();
     for (const account of [...this.creditAccounts.values()].filter((item) => item.userId === userId)) {
       for (let iteration = 0; iteration < 24 && Date.parse(account.nextStatementAt) <= now; iteration += 1) {
@@ -2689,9 +3013,12 @@ export class BankingSystem {
 
   private verifyCreditStepUp(
     userId: string,
-    stepUp: { method: StepUpMethod; proof: string } | undefined,
+    stepUp: { method: StepUpMethod; proof: string; challengeId?: string } | undefined,
     resourceId: string,
     allowedMethods = this.policy.creditPaymentStepUpMethods,
+    deviceId?: string,
+    purpose: OtpPurpose = "CREDIT_PAYMENT",
+    requestFingerprint: string | null = null,
   ): void {
     const key = `credit-step-up:${userId}`;
     const current = this.creditStepUpAttemptWindows.get(key);
@@ -2713,13 +3040,30 @@ export class BankingSystem {
     if (!allowedMethods.includes(stepUp.method)) {
       throw conflictWithCode("STEP_UP_INVALID", "Phương thức xác thực bước hai không được bật.");
     }
-    if (
-      (stepUp.method === "OTP" && stepUp.proof !== this.sandboxOtp) ||
-      (stepUp.method === "BIOMETRIC" && stepUp.proof !== "sandbox-biometric")
-    ) {
+    try {
+      if (stepUp.challengeId) {
+        this.verifyOtpChallenge(
+          stepUp.challengeId,
+          userId,
+          deviceId,
+          stepUp.method,
+          stepUp.proof,
+          purpose,
+          resourceId,
+          requestFingerprint,
+        );
+      } else if (
+        !(
+          (stepUp.method === "OTP" && this.sandboxOtp && stepUp.proof === this.sandboxOtp) ||
+          (stepUp.method === "BIOMETRIC" && stepUp.proof === "sandbox-biometric")
+        )
+      ) {
+        throw unauthorized("Step-up verification failed.");
+      }
+    } catch (error) {
       this.recordCreditStepUpFailure(key);
       this.recordAudit("CREDIT_STEP_UP_VERIFICATION_FAILED", userId, resourceId);
-      throw unauthorized("Step-up verification failed.");
+      throw error;
     }
     this.creditStepUpAttemptWindows.delete(key);
     this.recordAudit("CREDIT_STEP_UP_VERIFIED", userId, resourceId);
@@ -2783,6 +3127,10 @@ export class BankingSystem {
         userId,
         items.map((item) => ({ ...item })),
       ]),
+      recipientLookups: [...this.recipientLookups.entries()].map(([key, item]) => [
+        key,
+        { ...item },
+      ]),
       notifications: [...this.notifications.entries()].map(([userId, items]) => [
         userId,
         items.map((item) => ({ ...item })),
@@ -2798,6 +3146,10 @@ export class BankingSystem {
       idempotency: [...this.idempotency.entries()].map(([key, record]) => [
         key,
         { ...record, receipt: cloneReceipt(record.receipt) },
+      ]),
+      fundingIdempotency: [...this.fundingIdempotency.entries()].map(([key, record]) => [
+        key,
+        { ...record, receipt: { ...record.receipt, amount: { ...record.receipt.amount } } },
       ]),
       savingsQuotes: [...this.savingsQuotes.entries()].map(([quoteId, record]) => [
         quoteId,
@@ -2864,8 +3216,20 @@ export class BankingSystem {
       this.accessSessions.set(hash, { ...session });
     }
     this.authChallenges.clear();
+    this.sandboxOtpInbox.clear();
     for (const [hash, challenge] of state.authChallenges) {
-      this.authChallenges.set(hash, { ...challenge, methods: [...challenge.methods] });
+      this.authChallenges.set(hash, {
+        ...challenge,
+        methods: [...challenge.methods],
+        purpose: challenge.purpose ?? "LOGIN",
+        resourceId: challenge.resourceId ?? null,
+        requestFingerprint: challenge.requestFingerprint ?? null,
+        otpHash:
+          challenge.otpHash ??
+          (challenge.purpose === "LOGIN" && (this.sandboxMfaOtp ?? this.sandboxOtp)
+            ? hashOpaqueToken(this.sandboxMfaOtp ?? this.sandboxOtp!)
+            : null),
+      });
     }
     this.authAttemptWindows.clear();
     for (const [key, window] of state.authAttemptWindows) {
@@ -2897,7 +3261,19 @@ export class BankingSystem {
     }
     this.beneficiaries.clear();
     for (const [userId, items] of state.beneficiaries) {
-      this.beneficiaries.set(userId, items.map((item) => ({ ...item })));
+      this.beneficiaries.set(
+        userId,
+        items.map((item) => ({
+          ...item,
+          accountHolderName: item.accountHolderName ?? item.displayName,
+          destinationAccountId: item.destinationAccountId ?? "",
+          destinationOwnerId: item.destinationOwnerId ?? "",
+        })),
+      );
+    }
+    this.recipientLookups.clear();
+    for (const [key, item] of state.recipientLookups ?? []) {
+      this.recipientLookups.set(key, { ...item });
     }
     this.notifications.clear();
     for (const [userId, items] of state.notifications) {
@@ -2925,6 +3301,13 @@ export class BankingSystem {
       this.idempotency.set(key, {
         ...record,
         receipt: cloneReceipt(record.receipt),
+      });
+    }
+    this.fundingIdempotency.clear();
+    for (const [key, record] of state.fundingIdempotency ?? []) {
+      this.fundingIdempotency.set(key, {
+        ...record,
+        receipt: { ...record.receipt, amount: { ...record.receipt.amount } },
       });
     }
     this.savingsQuotes.clear();
@@ -3097,21 +3480,91 @@ export class BankingSystem {
     userId: string,
     deviceId: string,
   ): AuthChallengeResponse {
+    return this.issueOtpChallenge(
+      userId,
+      deviceId,
+      "LOGIN",
+      null,
+      null,
+      this.authChallengeMethods,
+      this.sandboxMfaOtp ?? this.sandboxOtp,
+    );
+  }
+
+  private issueOtpChallenge(
+    userId: string,
+    deviceId: string,
+    purpose: OtpPurpose,
+    resourceId: string | null,
+    requestFingerprint: string | null,
+    methods: readonly StepUpMethod[],
+    fixedOtp?: string,
+  ): AuthChallengeResponse {
     const challengeId = createOpaqueToken();
     const expiresAt = this.clock() + AUTH_CHALLENGE_TTL_MS;
-    this.authChallenges.set(hashOpaqueToken(challengeId), {
+    const challengeHash = hashOpaqueToken(challengeId);
+    const otp = fixedOtp ?? createSandboxOtp();
+    this.authChallenges.set(challengeHash, {
       userId,
       deviceId,
       expiresAt,
-      methods: [...this.authChallengeMethods],
+      methods: [...methods],
       attempts: 0,
+      purpose,
+      resourceId,
+      requestFingerprint,
+      otpHash: hashOpaqueToken(otp),
     });
-    this.recordAudit("AUTH_CHALLENGE_CREATED", userId, null);
+    this.sandboxOtpInbox.set(challengeHash, otp);
+    this.recordAudit("OTP_CHALLENGE_CREATED", userId, resourceId);
     return {
       challengeId,
       expiresAt: new Date(expiresAt).toISOString(),
-      methods: [...this.authChallengeMethods],
+      methods: [...methods],
+      purpose,
     };
+  }
+
+  private verifyOtpChallenge(
+    challengeId: string,
+    userId: string,
+    deviceId: string | undefined,
+    method: StepUpMethod,
+    proof: string,
+    purpose: OtpPurpose,
+    resourceId: string | null,
+    requestFingerprint: string | null,
+  ): void {
+    const challengeHash = hashOpaqueToken(requireString(challengeId, "challengeId"));
+    const challenge = this.authChallenges.get(challengeHash);
+    if (!challenge || challenge.expiresAt <= this.clock()) {
+      throw unauthorized("OTP challenge is invalid or expired.");
+    }
+    if (challenge.userId !== userId || challenge.deviceId !== this.normalizeDeviceId(deviceId)) {
+      throw unauthorized("Device or user binding mismatch.");
+    }
+    if (
+      challenge.purpose !== purpose ||
+      challenge.resourceId !== resourceId ||
+      challenge.requestFingerprint !== requestFingerprint
+    ) {
+      this.recordChallengeFailure(challengeHash, challenge);
+      throw unauthorized("OTP challenge context mismatch.");
+    }
+    if (!challenge.methods.includes(method) || typeof proof !== "string" || !proof.trim()) {
+      this.recordChallengeFailure(challengeHash, challenge);
+      throw unauthorized("OTP challenge is invalid.");
+    }
+    const valid =
+      method === "OTP"
+        ? challenge.otpHash !== null && hashOpaqueToken(proof) === challenge.otpHash
+        : proof === "sandbox-biometric";
+    if (!valid) {
+      this.recordChallengeFailure(challengeHash, challenge);
+      throw unauthorized("OTP challenge verification failed.");
+    }
+    this.authChallenges.delete(challengeHash);
+    this.sandboxOtpInbox.delete(challengeHash);
   }
 
   private cleanupExpiredState(): void {
@@ -3140,6 +3593,12 @@ export class BankingSystem {
     for (const [challengeHash, challenge] of this.authChallenges) {
       if (challenge.expiresAt <= now) {
         this.authChallenges.delete(challengeHash);
+        this.sandboxOtpInbox.delete(challengeHash);
+      }
+    }
+    for (const [lookupHash, lookup] of this.recipientLookups) {
+      if (Date.parse(lookup.expiresAt) <= now) {
+        this.recipientLookups.delete(lookupHash);
       }
     }
     for (const [key, window] of this.authAttemptWindows) {
@@ -3330,6 +3789,7 @@ export class BankingSystem {
       amount: transaction.amount,
       fee: transaction.fee,
       status: transaction.status,
+      kind: transaction.kind,
       description: transaction.description,
       counterpartyName: transaction.counterpartyName,
       occurredAt: transaction.occurredAt,

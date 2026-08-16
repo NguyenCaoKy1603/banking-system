@@ -189,6 +189,23 @@ function isAuthenticatedRoute(
   if (method === "POST" && segments.length === 1 && segments[0] === "fraud-reports") {
     return true;
   }
+  if (
+    method === "POST" &&
+    segments.length === 2 &&
+    segments[0] === "internal-recipients" &&
+    segments[1] === "lookup"
+  ) {
+    return true;
+  }
+  if (
+    method === "POST" &&
+    segments.length === 3 &&
+    segments[0] === "auth" &&
+    segments[1] === "otp" &&
+    segments[2] === "challenges"
+  ) {
+    return true;
+  }
   if (method === "GET" && segments.length === 1 && segments[0] === "accounts") {
     return true;
   }
@@ -313,7 +330,7 @@ export async function handleRequest(
     response.setHeader("Access-Control-Allow-Origin", origin);
   }
   response.setHeader("Vary", "Origin");
-  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID, X-Sandbox-Operator-Key");
   response.setHeader("Access-Control-Allow-Methods", "DELETE,GET,PATCH,POST,OPTIONS");
 
   if (request.method === "OPTIONS") {
@@ -335,6 +352,41 @@ export async function handleRequest(
     const routePath = requestUrl.pathname.slice(API_PREFIX.length) || "/";
     const segments = pathSegments(routePath);
     const body = await readJson(request);
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "sandbox" &&
+      segments[1] === "fundings"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.fundSandbox(
+          header(request, "x-sandbox-operator-key") ?? "",
+          header(request, "idempotency-key") ?? "",
+          data as never,
+        ),
+      );
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 3 &&
+      segments[0] === "sandbox" &&
+      segments[1] === "otp"
+    ) {
+      writeResponse(
+        response,
+        200,
+        traceId,
+        { otp: system.getSandboxOtp(header(request, "x-sandbox-operator-key") ?? "", segments[2]) },
+      );
+      return;
+    }
 
     if (
       request.method === "POST" &&
@@ -453,6 +505,29 @@ export async function handleRequest(
 
     const userId = requireBearer(request, system);
 
+    if (
+      request.method === "POST" &&
+      segments.length === 3 &&
+      segments[0] === "auth" &&
+      segments[1] === "otp" &&
+      segments[2] === "challenges"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        201,
+        traceId,
+        system.createOtpChallenge(
+          userId,
+          requireDeviceId(request),
+          data.purpose as never,
+          typeof data.resourceId === "string" ? data.resourceId : null,
+          typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
+        ),
+      );
+      return;
+    }
+
     if (request.method === "GET" && segments.length === 1 && segments[0] === "notifications") {
       writeResponse(response, 200, traceId, { items: system.listNotifications(userId) });
       return;
@@ -481,6 +556,19 @@ export async function handleRequest(
           data.reason as string,
         ),
       );
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "internal-recipients" &&
+      segments[1] === "lookup"
+    ) {
+      const data = requireObject(body);
+      writeResponse(response, 200, traceId, {
+        recipient: system.lookupInternalRecipient(userId, data.accountNumber as string),
+      });
       return;
     }
 
@@ -517,7 +605,7 @@ export async function handleRequest(
     ) {
       const data = requireObject(body);
       writeResponse(response, 200, traceId, {
-        card: system.unlockCard(userId, segments[1], data as never),
+        card: system.unlockCard(userId, segments[1], data as never, requireDeviceId(request)),
       });
       return;
     }
@@ -603,6 +691,7 @@ export async function handleRequest(
         userId,
         header(request, "idempotency-key") ?? "",
         data as never,
+        requireDeviceId(request),
       );
       writeResponse(response, payment.status === "PENDING" ? 202 : 200, traceId, payment);
       return;
@@ -692,6 +781,7 @@ export async function handleRequest(
         userId,
         header(request, "idempotency-key") ?? "",
         data as never,
+        requireDeviceId(request),
       );
       writeResponse(response, opening.status === "PENDING" ? 202 : 200, traceId, opening);
       return;
@@ -804,6 +894,7 @@ export async function handleRequest(
         userId,
         header(request, "idempotency-key") ?? "",
         data as never,
+        requireDeviceId(request),
       );
       writeResponse(
         response,

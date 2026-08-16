@@ -145,7 +145,7 @@ export type CreditStatementsResponse = { items: CreditStatement[]; nextCursor: s
 
 export type CreditPaymentRequest = {
   quoteId: string;
-  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string };
+  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string };
 };
 
 export type CreditPaymentQuoteRequest = {

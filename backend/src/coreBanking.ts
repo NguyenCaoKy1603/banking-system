@@ -1,4 +1,4 @@
-import { conflict, notFound } from "./errors.js";
+import { conflict, conflictWithCode, notFound } from "./errors.js";
 import {
   InMemoryLedger,
   type LedgerEntryInput,
@@ -7,6 +7,7 @@ import {
 } from "./ledger.js";
 import { createId } from "./security.js";
 import type {
+  FundingReceipt,
   Money,
   PaymentAccount,
   TransactionDetail,
@@ -23,6 +24,7 @@ type CoreAccount = {
   maskedNumber: string;
   bankName: string;
   openingBalanceMinor: bigint;
+  heldMinor: bigint;
   availableMinor: bigint;
   currentMinor: bigint;
   status: "ACTIVE" | "BLOCKED";
@@ -31,6 +33,8 @@ type CoreAccount = {
 
 export type CoreTransferInput = {
   accountId: string;
+  destinationAccountId: string;
+  destinationOwnerId: string;
   amountMinor: bigint;
   feeMinor: bigint;
   counterpartyName: string;
@@ -44,6 +48,25 @@ export type TerminalTransferStatus = Exclude<TransferStatus, "PENDING">;
 export type CoreTransferTarget = {
   accountId: string;
   transactionId: string;
+};
+
+export type CoreTransferParties = {
+  sourceOwnerId: string;
+  sourceAccountId: string;
+  sourceTransactionId: string;
+  destinationOwnerId: string;
+  destinationAccountId: string;
+  destinationTransactionId: string | null;
+};
+
+export type CoreAccountLookup = {
+  ownerId: string;
+  accountId: string;
+  accountNumber: string;
+  maskedNumber: string;
+  displayName: string;
+  bankName: string;
+  status: "ACTIVE" | "BLOCKED";
 };
 
 export type CoreSavingsOpeningInput = {
@@ -97,21 +120,30 @@ export type ReconciliationRow = {
 
 type SerializedCoreAccount = Omit<
   CoreAccount,
-  "accountNumber" | "openingBalanceMinor" | "availableMinor" | "currentMinor"
+  | "accountNumber"
+  | "openingBalanceMinor"
+  | "heldMinor"
+  | "availableMinor"
+  | "currentMinor"
 > & {
   accountNumber?: string;
   openingBalanceMinor: string;
+  heldMinor?: string;
   availableMinor: string;
   currentMinor: string;
 };
 
 type CoreTransferState = {
   ownerId: string;
+  destinationOwnerId?: string;
   accountId: string;
+  destinationAccountId?: string;
   transactionId: string;
-  ledgerJournalId: string;
+  destinationTransactionId?: string | null;
+  ledgerJournalId?: string | null;
   receipt: TransferReceipt;
   refunded: boolean;
+  heldMinor?: string;
 };
 
 type CoreSavingsOpeningState = {
@@ -165,12 +197,21 @@ export type InMemoryCoreState = {
 
 export interface CoreBankingPort {
   createPaymentAccount(ownerId: string, now: string): PaymentAccount;
+  findPaymentAccountByNumber(accountNumber: string): CoreAccountLookup;
+  fundPaymentAccount(
+    fundingId: string,
+    recipientAccountNumber: string,
+    amountMinor: bigint,
+    reason: string,
+    now: string,
+  ): FundingReceipt;
   listPaymentAccounts(ownerId: string): PaymentAccount[];
   getPaymentAccount(ownerId: string, accountId: string): PaymentAccount;
   getPaymentAccountNumber(ownerId: string, accountId: string): string;
   listTransactions(ownerId: string, accountId: string): TransactionDetail[];
   getTransaction(ownerId: string, accountId: string, transactionId: string): TransactionDetail;
   getTransferTarget(ownerId: string, transferId: string): CoreTransferTarget;
+  getTransferParties(transferId: string): CoreTransferParties;
   postTransfer(ownerId: string, input: CoreTransferInput): TransferReceipt;
   postSavingsOpening(
     ownerId: string,
@@ -223,17 +264,7 @@ export class InMemoryCoreBanking implements CoreBankingPort {
   readonly ledger: LedgerPort;
   private readonly accounts = new Map<string, CoreAccount>();
   private readonly transactions = new Map<string, TransactionDetail[]>();
-  private readonly transfers = new Map<
-    string,
-    {
-      ownerId: string;
-      accountId: string;
-      transactionId: string;
-      ledgerJournalId: string;
-      receipt: TransferReceipt;
-      refunded: boolean;
-    }
-  >();
+  private readonly transfers = new Map<string, CoreTransferState>();
   private readonly savingsOpenings = new Map<string, CoreSavingsOpeningState>();
   private readonly creditPayments = new Map<string, CoreCreditPaymentState>();
 
@@ -242,7 +273,12 @@ export class InMemoryCoreBanking implements CoreBankingPort {
   }
 
   createPaymentAccount(ownerId: string, now: string): PaymentAccount {
-    const accountNumber = `9704${String(this.accounts.size + 1).padStart(8, "0")}`;
+    let sequence = this.accounts.size + 1;
+    let accountNumber = `9704${String(sequence).padStart(8, "0")}`;
+    while ([...this.accounts.values()].some((account) => account.accountNumber === accountNumber)) {
+      sequence += 1;
+      accountNumber = `9704${String(sequence).padStart(8, "0")}`;
+    }
     const account: CoreAccount = {
       id: createId("account"),
       ownerId,
@@ -250,33 +286,102 @@ export class InMemoryCoreBanking implements CoreBankingPort {
       accountNumber,
       maskedNumber: `•••• ${accountNumber.slice(-4)}`,
       bankName: "Ngân hàng reference",
-      openingBalanceMinor: 10_000_000n,
-      availableMinor: 10_000_000n,
-      currentMinor: 10_000_000n,
+      openingBalanceMinor: 0n,
+      heldMinor: 0n,
+      availableMinor: 0n,
+      currentMinor: 0n,
       status: "ACTIVE",
       updatedAt: now,
     };
+    this.accounts.set(account.id, account);
+    this.transactions.set(account.id, []);
+    return this.toPaymentAccount(account);
+  }
+
+  findPaymentAccountByNumber(accountNumber: string): CoreAccountLookup {
+    const normalized = accountNumber.trim().replace(/\s+/g, "");
+    const account = [...this.accounts.values()].find(
+      (candidate) => candidate.accountNumber === normalized,
+    );
+    if (!account) {
+      throw notFound("Account not found.");
+    }
+    return {
+      ownerId: account.ownerId,
+      accountId: account.id,
+      accountNumber: account.accountNumber,
+      maskedNumber: account.maskedNumber,
+      displayName: account.displayName,
+      bankName: account.bankName,
+      status: account.status,
+    };
+  }
+
+  fundPaymentAccount(
+    fundingId: string,
+    recipientAccountNumber: string,
+    amountMinor: bigint,
+    reason: string,
+    now: string,
+  ): FundingReceipt {
+    if (!fundingId.trim() || amountMinor <= 0n || !reason.trim()) {
+      throw conflict("Sandbox funding input is invalid.");
+    }
+    const target = this.findPaymentAccountByNumber(recipientAccountNumber);
+    if (target.status !== "ACTIVE") {
+      throw conflict("The recipient account is not active.");
+    }
+    const account = this.accounts.get(target.accountId);
+    if (!account) {
+      throw notFound("Account not found.");
+    }
+    const reference = `FUND-${fundingId.slice(-12).toUpperCase()}`;
     this.ledger.append({
-      journalId: createId("ledger-journal"),
+      journalId: `ledger-journal:${fundingId}`,
       occurredAt: now,
       entries: [
         {
-          accountId: "opening-funding:VND",
+          accountId: "sandbox-funding:VND",
           side: "DEBIT",
-          amountMinor: account.openingBalanceMinor,
+          amountMinor,
           currency: "VND",
         },
         {
           accountId: account.id,
           side: "CREDIT",
-          amountMinor: account.openingBalanceMinor,
+          amountMinor,
           currency: "VND",
         },
       ],
     });
-    this.accounts.set(account.id, account);
-    this.transactions.set(account.id, []);
-    return this.toPaymentAccount(account);
+    account.currentMinor += amountMinor;
+    account.availableMinor += amountMinor;
+    account.updatedAt = now;
+    const transactionId = createId("transaction");
+    this.transactions.get(account.id)?.push({
+      id: transactionId,
+      accountId: account.id,
+      direction: "CREDIT",
+      amount: toMoney(amountMinor),
+      fee: toMoney(0n),
+      status: "SUCCEEDED",
+      kind: "SANDBOX_FUNDING",
+      description: reason.trim(),
+      counterpartyName: "Quỹ Sandbox",
+      occurredAt: now,
+      reference,
+      createdAt: now,
+      completedAt: now,
+    });
+    return {
+      fundingId,
+      reference,
+      status: "SUCCEEDED",
+      amount: toMoney(amountMinor),
+      transactionId,
+      recipientMaskedAccountNumber: account.maskedNumber,
+      createdAt: now,
+    };
   }
 
   listPaymentAccounts(ownerId: string): PaymentAccount[] {
@@ -328,11 +433,37 @@ export class InMemoryCoreBanking implements CoreBankingPort {
     };
   }
 
+  getTransferParties(transferId: string): CoreTransferParties {
+    const transfer = this.transfers.get(transferId);
+    if (
+      !transfer ||
+      !transfer.destinationOwnerId ||
+      !transfer.destinationAccountId
+    ) {
+      throw notFound("Transfer parties not found.");
+    }
+    return {
+      sourceOwnerId: transfer.ownerId,
+      sourceAccountId: transfer.accountId,
+      sourceTransactionId: transfer.transactionId,
+      destinationOwnerId: transfer.destinationOwnerId,
+      destinationAccountId: transfer.destinationAccountId,
+      destinationTransactionId: transfer.destinationTransactionId ?? null,
+    };
+  }
+
   postTransfer(ownerId: string, input: CoreTransferInput): TransferReceipt {
     const account = this.requireOwnedAccount(ownerId, input.accountId);
+    const destination = this.accounts.get(input.destinationAccountId);
+    if (!destination || destination.ownerId !== input.destinationOwnerId) {
+      throw notFound("Recipient account not found.");
+    }
+    if (destination.id === account.id) {
+      throw conflict("A transfer cannot be sent to the source account.");
+    }
 
-    if (account.status !== "ACTIVE") {
-      throw conflict("The source account is not active.");
+    if (account.status !== "ACTIVE" || destination.status !== "ACTIVE") {
+      throw conflict("Both accounts must be active.");
     }
 
     const totalDebit = input.amountMinor + input.feeMinor;
@@ -345,39 +476,6 @@ export class InMemoryCoreBanking implements CoreBankingPort {
 
     const transferId = createId("transfer");
     const reference = `REF-${transferId.slice(-12).toUpperCase()}`;
-    const ledgerJournalId = createId("ledger-journal");
-    const ledgerEntries: LedgerEntryInput[] = [
-      {
-        accountId: account.id,
-        side: "DEBIT",
-        amountMinor: totalDebit,
-        currency: "VND",
-      },
-      {
-        accountId: "settlement:VND",
-        side: "CREDIT",
-        amountMinor: input.amountMinor,
-        currency: "VND",
-      },
-    ];
-    if (input.feeMinor > 0n) {
-      ledgerEntries.push({
-        accountId: "fee-income:VND",
-        side: "CREDIT",
-        amountMinor: input.feeMinor,
-        currency: "VND",
-      });
-    }
-    this.ledger.append({
-      journalId: ledgerJournalId,
-      occurredAt: input.now,
-      entries: ledgerEntries,
-    });
-
-    account.availableMinor -= totalDebit;
-    account.currentMinor -= totalDebit;
-    account.updatedAt = input.now;
-
     const status = input.settleImmediately === false ? "PENDING" : "SUCCEEDED";
     const transaction: TransactionDetail = {
       id: createId("transaction"),
@@ -386,12 +484,13 @@ export class InMemoryCoreBanking implements CoreBankingPort {
       amount: toMoney(input.amountMinor),
       fee: toMoney(input.feeMinor),
       status,
+      kind: "TRANSFER",
       description: input.description,
       counterpartyName: input.counterpartyName,
       occurredAt: input.now,
       reference,
       createdAt: input.now,
-      completedAt: status === "SUCCEEDED" ? input.now : null,
+      completedAt: null,
     };
     this.transactions.get(account.id)?.push(transaction);
 
@@ -406,13 +505,109 @@ export class InMemoryCoreBanking implements CoreBankingPort {
     };
     this.transfers.set(transferId, {
       ownerId,
+      destinationOwnerId: input.destinationOwnerId,
       accountId: account.id,
+      destinationAccountId: destination.id,
       transactionId: transaction.id,
-      ledgerJournalId,
+      destinationTransactionId: null,
+      ledgerJournalId: null,
       receipt,
       refunded: false,
+      heldMinor: totalDebit.toString(),
     });
+    const transfer = this.transfers.get(transferId)!;
+    if (status === "PENDING") {
+      account.heldMinor += totalDebit;
+      this.refreshAvailability(account);
+      account.updatedAt = input.now;
+    } else {
+      this.postTransferSuccess(transfer, input.now);
+    }
     return receipt;
+  }
+
+  private postTransferSuccess(transfer: CoreTransferState, now: string): void {
+    const destinationAccountId = transfer.destinationAccountId;
+    const destinationOwnerId = transfer.destinationOwnerId;
+    if (!destinationAccountId || !destinationOwnerId) {
+      throw conflict("Legacy transfer is missing its recipient account.");
+    }
+    const source = this.accounts.get(transfer.accountId);
+    const destination = this.accounts.get(destinationAccountId);
+    if (!source || !destination || destination.ownerId !== destinationOwnerId) {
+      throw notFound("Transfer account not found.");
+    }
+    const amountMinor = BigInt(transfer.receipt.amount.amountMinor);
+    const feeMinor = BigInt(transfer.receipt.fee.amountMinor);
+    const totalDebit = amountMinor + feeMinor;
+    if (source.currentMinor < totalDebit) {
+      throw conflict("Insufficient current balance to settle transfer.");
+    }
+
+    const journalId = transfer.ledgerJournalId ?? createId("ledger-journal");
+    const ledgerEntries: LedgerEntryInput[] = [
+      {
+        accountId: source.id,
+        side: "DEBIT",
+        amountMinor: totalDebit,
+        currency: "VND",
+      },
+      {
+        accountId: destination.id,
+        side: "CREDIT",
+        amountMinor,
+        currency: "VND",
+      },
+    ];
+    if (feeMinor > 0n) {
+      ledgerEntries.push({
+        accountId: "fee-income:VND",
+        side: "CREDIT",
+        amountMinor: feeMinor,
+        currency: "VND",
+      });
+    }
+    this.ledger.append({ journalId, occurredAt: now, entries: ledgerEntries });
+
+    const heldMinor = BigInt(transfer.heldMinor ?? "0");
+    source.heldMinor = source.heldMinor >= heldMinor ? source.heldMinor - heldMinor : 0n;
+    source.currentMinor -= totalDebit;
+    destination.currentMinor += amountMinor;
+    this.refreshAvailability(source);
+    this.refreshAvailability(destination);
+    source.updatedAt = now;
+    destination.updatedAt = now;
+
+    const sourceTransaction = this.transactions
+      .get(source.id)
+      ?.find((item) => item.id === transfer.transactionId);
+    if (!sourceTransaction) {
+      throw notFound("Transfer source transaction not found.");
+    }
+    sourceTransaction.status = "SUCCEEDED";
+    sourceTransaction.completedAt = now;
+    if (!transfer.destinationTransactionId) {
+      const destinationTransaction: TransactionDetail = {
+        id: createId("transaction"),
+        accountId: destination.id,
+        direction: "CREDIT",
+        amount: toMoney(amountMinor),
+        fee: toMoney(0n),
+        status: "SUCCEEDED",
+        kind: "TRANSFER",
+        description: `Nhận tiền từ tài khoản nội bộ ${source.maskedNumber}`,
+        counterpartyName: "Khách hàng nội bộ",
+        occurredAt: now,
+        reference: transfer.receipt.reference,
+        createdAt: now,
+        completedAt: now,
+      };
+      this.transactions.get(destination.id)?.push(destinationTransaction);
+      transfer.destinationTransactionId = destinationTransaction.id;
+    }
+    transfer.ledgerJournalId = journalId;
+    transfer.heldMinor = "0";
+    transfer.receipt = { ...transfer.receipt, status: "SUCCEEDED", updatedAt: now };
   }
 
   postSavingsOpening(
@@ -910,66 +1105,107 @@ export class InMemoryCoreBanking implements CoreBankingPort {
     if (transfer.receipt.status === status) {
       return { ...transfer.receipt };
     }
-    if (transfer.receipt.status !== "PENDING") {
-      throw conflict("A terminal transfer cannot change state.");
+    if (transfer.receipt.status === "PENDING" && status === "SUCCEEDED") {
+      this.postTransferSuccess(transfer, now);
+      return { ...transfer.receipt };
     }
-
-    const transaction = this.transactions
-      .get(transfer.accountId)
-      ?.find((item) => item.id === transfer.transactionId);
-    if (!transaction) {
-      throw notFound("Transfer transaction not found.");
-    }
-
-    if ((status === "FAILED" || status === "REVERSED") && !transfer.refunded) {
+    if (transfer.receipt.status === "PENDING" && status === "FAILED") {
       const account = this.accounts.get(transfer.accountId);
-      if (!account) {
-        throw notFound("Transfer account not found.");
+      const transaction = this.transactions
+        .get(transfer.accountId)
+        ?.find((item) => item.id === transfer.transactionId);
+      if (!account || !transaction) {
+        throw notFound("Transfer source state not found.");
       }
-      const totalDebit =
-        BigInt(transfer.receipt.amount.amountMinor) +
-        BigInt(transfer.receipt.fee.amountMinor);
-      const reversalEntries: LedgerEntryInput[] = [
-        {
-          accountId: transfer.accountId,
-          side: "CREDIT",
-          amountMinor: totalDebit,
-          currency: "VND",
-        },
-        {
-          accountId: "settlement:VND",
-          side: "DEBIT",
-          amountMinor: BigInt(transfer.receipt.amount.amountMinor),
-          currency: "VND",
-        },
-      ];
-      if (BigInt(transfer.receipt.fee.amountMinor) > 0n) {
-        reversalEntries.push({
-          accountId: "fee-income:VND",
-          side: "DEBIT",
-          amountMinor: BigInt(transfer.receipt.fee.amountMinor),
-          currency: "VND",
-        });
-      }
-      this.ledger.append({
-        journalId: createId("ledger-journal"),
-        occurredAt: now,
-        entries: reversalEntries,
-      });
-      account.availableMinor += totalDebit;
-      account.currentMinor += totalDebit;
+      const heldMinor = BigInt(transfer.heldMinor ?? "0");
+      account.heldMinor = account.heldMinor >= heldMinor ? account.heldMinor - heldMinor : 0n;
+      this.refreshAvailability(account);
       account.updatedAt = now;
+      transaction.status = "FAILED";
+      transaction.completedAt = now;
       transfer.refunded = true;
+      transfer.heldMinor = "0";
+      transfer.receipt = { ...transfer.receipt, status, updatedAt: now };
+      return { ...transfer.receipt };
     }
+    if (transfer.receipt.status === "SUCCEEDED" && status === "REVERSED") {
+      this.reverseTransferSuccess(transfer, now);
+      return { ...transfer.receipt };
+    }
+    throw conflict("The requested transfer state transition is invalid.");
+  }
 
-    transaction.status = status;
-    transaction.completedAt = now;
-    transfer.receipt = {
-      ...transfer.receipt,
-      status,
-      updatedAt: now,
-    };
-    return { ...transfer.receipt };
+  private reverseTransferSuccess(transfer: CoreTransferState, now: string): void {
+    const destinationAccountId = transfer.destinationAccountId;
+    const destinationOwnerId = transfer.destinationOwnerId;
+    if (!destinationAccountId || !destinationOwnerId) {
+      throw conflict("Legacy transfer is missing its recipient account.");
+    }
+    const source = this.accounts.get(transfer.accountId);
+    const destination = this.accounts.get(destinationAccountId);
+    if (!source || !destination || destination.ownerId !== destinationOwnerId) {
+      throw notFound("Transfer account not found.");
+    }
+    const amountMinor = BigInt(transfer.receipt.amount.amountMinor);
+    const feeMinor = BigInt(transfer.receipt.fee.amountMinor);
+    const totalDebit = amountMinor + feeMinor;
+    if (destination.currentMinor < amountMinor) {
+      throw conflictWithCode(
+        "REVERSAL_REQUIRES_REVIEW",
+        "Không thể hoàn tác tự động vì tài khoản người nhận không còn đủ số dư.",
+      );
+    }
+    const reversalEntries: LedgerEntryInput[] = [
+      {
+        accountId: destination.id,
+        side: "DEBIT",
+        amountMinor,
+        currency: "VND",
+      },
+      {
+        accountId: source.id,
+        side: "CREDIT",
+        amountMinor: totalDebit,
+        currency: "VND",
+      },
+    ];
+    if (feeMinor > 0n) {
+      reversalEntries.splice(1, 0, {
+        accountId: "fee-income:VND",
+        side: "DEBIT",
+        amountMinor: feeMinor,
+        currency: "VND",
+      });
+    }
+    this.ledger.append({
+      journalId: createId("ledger-journal"),
+      occurredAt: now,
+      entries: reversalEntries,
+    });
+    source.currentMinor += totalDebit;
+    destination.currentMinor -= amountMinor;
+    this.refreshAvailability(source);
+    this.refreshAvailability(destination);
+    source.updatedAt = now;
+    destination.updatedAt = now;
+    const sourceTransaction = this.transactions
+      .get(source.id)
+      ?.find((item) => item.id === transfer.transactionId);
+    if (sourceTransaction) {
+      sourceTransaction.status = "REVERSED";
+      sourceTransaction.completedAt = now;
+    }
+    if (transfer.destinationTransactionId) {
+      const destinationTransaction = this.transactions
+        .get(destination.id)
+        ?.find((item) => item.id === transfer.destinationTransactionId);
+      if (destinationTransaction) {
+        destinationTransaction.status = "REVERSED";
+        destinationTransaction.completedAt = now;
+      }
+    }
+    transfer.refunded = true;
+    transfer.receipt = { ...transfer.receipt, status: "REVERSED", updatedAt: now };
   }
 
   reconcile(): ReconciliationRow[] {
@@ -991,13 +1227,14 @@ export class InMemoryCoreBanking implements CoreBankingPort {
         },
         account.openingBalanceMinor,
       );
-      const ledgerComputedAvailableMinor = this.ledger.getNetBalance(account.id);
+      const ledgerComputedCurrentMinor = this.ledger.getNetBalance(account.id);
+      const ledgerComputedAvailableMinor = ledgerComputedCurrentMinor - account.heldMinor;
       return {
         accountId: account.id,
         coreAvailableMinor: account.availableMinor.toString(),
         computedAvailableMinor: ledgerComputedAvailableMinor.toString(),
         transactionComputedAvailableMinor:
-          transactionComputedAvailableMinor.toString(),
+          (transactionComputedAvailableMinor - account.heldMinor).toString(),
         differenceMinor: (
           account.availableMinor - ledgerComputedAvailableMinor
         ).toString(),
@@ -1016,6 +1253,7 @@ export class InMemoryCoreBanking implements CoreBankingPort {
         {
           ...account,
           openingBalanceMinor: account.openingBalanceMinor.toString(),
+          heldMinor: account.heldMinor.toString(),
           availableMinor: account.availableMinor.toString(),
           currentMinor: account.currentMinor.toString(),
         },
@@ -1074,6 +1312,7 @@ export class InMemoryCoreBanking implements CoreBankingPort {
         accountNumber: account.accountNumber ?? `9704${legacyPrefix}${legacyLastFour}`,
         bankName: account.bankName ?? "Ngân hàng reference",
         openingBalanceMinor: BigInt(account.openingBalanceMinor),
+        heldMinor: BigInt(account.heldMinor ?? "0"),
         availableMinor: BigInt(account.availableMinor),
         currentMinor: BigInt(account.currentMinor),
       });
@@ -1130,6 +1369,13 @@ export class InMemoryCoreBanking implements CoreBankingPort {
     return account;
   }
 
+  private refreshAvailability(account: CoreAccount): void {
+    account.availableMinor = account.currentMinor - account.heldMinor;
+    if (account.availableMinor < 0n) {
+      throw conflict("Account available balance cannot be negative.");
+    }
+  }
+
   private toPaymentAccount(account: CoreAccount): PaymentAccount {
     const result: PaymentAccount = {
       id: account.id,
@@ -1137,6 +1383,7 @@ export class InMemoryCoreBanking implements CoreBankingPort {
       maskedNumber: account.maskedNumber,
       bankName: account.bankName,
       currency: "VND",
+      heldAmount: toMoney(account.heldMinor),
       availableBalance: toMoney(account.availableMinor),
       currentBalance: toMoney(account.currentMinor),
       status: account.status,

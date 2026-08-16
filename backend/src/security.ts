@@ -3,6 +3,7 @@ import {
   pbkdf2,
   pbkdf2Sync,
   randomBytes,
+  randomInt,
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
@@ -34,6 +35,10 @@ export function createId(prefix: string): string {
 
 export function createOpaqueToken(): string {
   return randomBytes(32).toString("base64url");
+}
+
+export function createSandboxOtp(): string {
+  return String(randomInt(0, 1_000_000)).padStart(6, "0");
 }
 
 export function hashOpaqueToken(token: string): string {

@@ -13,6 +13,16 @@ export type AuthUser = {
   createdAt: string;
 };
 
+export type OtpPurpose =
+  | "REGISTRATION_VERIFY"
+  | "LOGIN"
+  | "TRANSFER"
+  | "SAVINGS_OPENING"
+  | "CREDIT_APPLICATION"
+  | "CARD_ACTIVATION"
+  | "CREDIT_PAYMENT"
+  | "CARD_UNLOCK";
+
 export type LoginResponse = {
   accessToken: string;
   refreshToken: string;
@@ -24,6 +34,7 @@ export type AuthChallengeResponse = {
   challengeId: string;
   expiresAt: string;
   methods: Array<"OTP" | "BIOMETRIC">;
+  purpose?: OtpPurpose;
 };
 
 export type LoginResult = LoginResponse | AuthChallengeResponse;
@@ -34,11 +45,38 @@ export type PaymentAccount = {
   maskedNumber: string;
   bankName: string;
   currency: Currency;
+  heldAmount: Money;
   availableBalance: Money;
   currentBalance: Money;
   status: "ACTIVE" | "BLOCKED";
   updatedAt: string;
 };
+
+export type FundingReceipt = {
+  fundingId: string;
+  reference: string;
+  status: "SUCCEEDED";
+  amount: Money;
+  transactionId: string;
+  recipientMaskedAccountNumber: string;
+  createdAt: string;
+};
+
+export type InternalRecipientLookup = {
+  lookupId: string;
+  accountHolderName: string;
+  maskedAccountNumber: string;
+  bankName: string;
+  status: "ACTIVE" | "BLOCKED";
+  expiresAt: string;
+};
+
+export type TransactionKind =
+  | "TRANSFER"
+  | "SANDBOX_FUNDING"
+  | "SAVINGS"
+  | "CREDIT_PAYMENT"
+  | "MATURITY";
 
 export type TransferStatus = "PENDING" | "SUCCEEDED" | "FAILED" | "REVERSED";
 
@@ -49,6 +87,7 @@ export type Transaction = {
   amount: Money;
   fee: Money;
   status: TransferStatus;
+  kind?: TransactionKind;
   description: string;
   counterpartyName: string | null;
   occurredAt: string;
@@ -63,6 +102,7 @@ export type TransactionDetail = Transaction & {
 export type Beneficiary = {
   id: string;
   displayName: string;
+  accountHolderName?: string;
   maskedAccountNumber: string;
   bankName: string;
   status: "ACTIVE" | "BLOCKED";
