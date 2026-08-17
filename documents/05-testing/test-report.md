@@ -35,7 +35,7 @@ Backend verification checkpoint hiện hành: code `dd515ad`; documentation/evid
 - Đã có APK release local, package/checksum và log Maestro trên emulator; chưa có video cold start/crash-resume, camera thật hoặc biometric prompt thật.
 - Transfer kill app trước/sau submit và session restore sau force-stop chưa có kết quả native lặp lại; riêng credit pending → restart → resume đã pass bằng flow dedicated.
 - Chưa có staging URL/partner integration đã phê duyệt.
-- Handoff Git: code checkpoint hiện hành `dd515ad`; source/workflow/contract/tài liệu cập nhật đang được chốt trong cùng handoff; clone sạch đã chạy `npm ci` và các gate chính. Chưa push/PR trong phiên này.
+- Handoff Git: code checkpoint hiện hành `cab97e0`; source/workflow/contract/tài liệu cập nhật đang được chốt trong cùng handoff; clone sạch đã chạy `npm ci` và các gate chính. Chưa push/PR trong phiên này.
 - Chưa có kết quả usability/accessibility với người dùng và chưa có approver cho 14 cảnh báo High.
 
 ## Kết luận

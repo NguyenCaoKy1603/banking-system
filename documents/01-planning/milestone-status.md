@@ -23,7 +23,7 @@ Backend evidence checkpoint hiện hành: code checkpoint `dd515ad`; historical 
 
 ## Chưa đủ điều kiện đóng milestone
 
-- M0: baseline tài liệu, evidence rules, device evidence và checkpoint Git sạch `dd515ad` đã có; owner review/push vẫn còn.
+- M0: baseline tài liệu, evidence rules, device evidence và checkpoint Git sạch `cab97e0` đã có; owner review/push vẫn còn.
 - M1–M4 và M8: critical flow đã chạy trên Android emulator cho login/MFA, account detail, hiện/sao chép số tài khoản đầy đủ, eKYC, beneficiary, QR manual fallback, M4 transfer và M8 notification deep link; chưa có full device matrix, thiết bị thật hoặc staging partner.
 - M2: eKYC thật/API KYC và test data staging chưa có; phần hiện tại là mock có chủ đích.
 - M4: transfer, beneficiary CRUD, QR manual fallback và pending/restart/resume đã có bằng chứng Maestro trên emulator; QR camera/permission và lifecycle native trên thiết bị thật vẫn chưa có.
