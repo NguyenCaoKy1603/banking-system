@@ -23,7 +23,7 @@ Backend verification checkpoint hiện hành: code/documentation/evidence `34e58
 | Maestro | 9 flow hợp lệ; M0–M4/M8, M6 savings, credit payment, pending-resume, Credit card lock/restart/unlock và Credit overdue notification chạy thành công trên Android emulator bằng Maestro 2.8.0 |
 | Backend reference | PostgreSQL 16 local: 68/68 test đạt, relational regression 1/1 trên database disposable, critical API 8/8, migration/validator đạt; seed E2E smoke thành công |
 | Expo web export | Đạt, 33 static route; dùng URL HTTPS placeholder cho static export vì `.env` local là HTTP sandbox và bị production guard từ chối |
-| Dependency audit | **Không đạt**: 14 High từ `image-size`, chờ risk acceptance/upstream fix |
+| Dependency audit | **Không đạt**: 14 High theo chuỗi Expo/Metro → `image-size@1.2.1`; npm chỉ đề xuất hạ major Expo/React Native không tương thích. Không force fix; chờ bản vá upstream và risk acceptance |
 
 ## Smoke seed
 
