@@ -17,7 +17,7 @@ npm run db:migrate
 npm start
 ```
 
-`npm test` tự chạy test persistence khi `DATABASE_URL` tồn tại; nếu không có PostgreSQL local thì test này được skip và phải chạy trong workflow có PostgreSQL service. Workflow CI tương ứng nằm tại [`../.github/workflows/backend-quality.yml`](../.github/workflows/backend-quality.yml).
+`npm test` tự chạy đầy đủ test persistence khi có cả `DATABASE_URL` và `RELATIONAL_DATABASE_URL`; nếu không có PostgreSQL local thì các test này được skip và phải chạy trong workflow có PostgreSQL service. Workflow CI tương ứng nằm tại [`../.github/workflows/backend-quality.yml`](../.github/workflows/backend-quality.yml).
 Mẫu cấu hình không chứa credential thật nằm tại [`.env.example`](.env.example).
 
 Kiểm thử riêng repository relational phải dùng một database disposable đã migrate, không dùng database demo đang chạy:
