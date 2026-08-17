@@ -126,6 +126,31 @@ test("persistent HTTP validates the request body before opening the snapshot tra
   assert.equal(payload.code, "VALIDATION_ERROR");
 });
 
+test("persistent HTTP fails closed when PostgreSQL is unavailable", async (t) => {
+  const repository = new PostgresSnapshotRepository({
+    connectionString:
+      "postgresql://banking:banking@127.0.0.1:59999/banking_test?connect_timeout=1",
+    snapshotKey: `unavailable-${randomUUID()}`,
+  });
+  const server = createPersistentBankingServer(
+    repository,
+    new BankingSystem({ sandboxOtp: "123456" }),
+  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    await repository.close();
+  });
+
+  const address = server.address() as AddressInfo;
+  const response = await fetch(`http://127.0.0.1:${address.port}/healthz`);
+  assert.equal(response.status, 503);
+  const payload = (await response.json()) as { code: string };
+  assert.equal(payload.code, "PERSISTENCE_UNAVAILABLE");
+});
+
 test("PostgreSQL snapshot persists users and serializes concurrent transfer submit", {
   skip: !databaseUrl,
 }, async (t) => {

@@ -84,4 +84,4 @@ Savings/Credit tiếp tục là module bonus/reference; Chatbot AI, payment rail
 ## Hardening persistent request boundary — 2026-08-17
 
 - Persistent HTTP server hiện đọc và validate request body trước khi mở transaction/advisory lock PostgreSQL; request JSON lỗi trả `422 VALIDATION_ERROR` mà không giữ lock trong lúc chờ body.
-- Regression test mới nằm trong bộ PostgreSQL persistence test; backend hiện đạt 67/67 test với `DATABASE_URL`.
+- Regression test mới nằm trong bộ PostgreSQL persistence test; backend hiện đạt 68/68 test với `DATABASE_URL`, gồm cả nhánh PostgreSQL unavailable trả `503`.

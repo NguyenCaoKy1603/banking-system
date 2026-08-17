@@ -60,4 +60,4 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 ## Cập nhật hardening request boundary — 2026-08-17
 
 - Persistent server đã tách bước đọc/parse body khỏi transaction snapshot; body không hợp lệ được trả lỗi validation trước khi lấy advisory lock.
-- Regression suite PostgreSQL đạt 67/67; critical API đạt 8/8. Đây là hardening reference sandbox, chưa thay thế rate-limit phân tán hoặc gateway production.
+- Regression suite PostgreSQL đạt 68/68; critical API đạt 8/8. Đây là hardening reference sandbox, chưa thay thế rate-limit phân tán hoặc gateway production.
