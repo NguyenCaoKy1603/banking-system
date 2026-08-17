@@ -5,7 +5,7 @@
 Backend evidence checkpoint hiện hành: code/documentation/evidence `34e5849`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
 
 - Mobile lint, type-check và 37 suite/170 test đạt; coverage gate đã được chạy lại sau khi bổ sung trạng thái offline/timeout.
-- Backend reference type-check, build, 68/68 test và 8 critical HTTP flow đạt; relational regression 1/1 đạt trên database disposable; database boundary validator đạt cấu trúc SQL + live PostgreSQL 28 bảng/invariant.
+- Backend reference type-check, build, 69/69 test và 8 critical HTTP flow đạt; relational regression 1/1 đạt trên database disposable; database boundary validator đạt cấu trúc SQL + live PostgreSQL 28 bảng/invariant.
 
 ## Cập nhật mới nhất — relational reference adapter
 
@@ -51,7 +51,7 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 ## Cập nhật sau khi hoàn tất kế hoạch persistent local — 2026-08-17
 
 - M0–M4 và M8 đã được kiểm tra lại trên APK release mới với Android emulator; artifact mới nhất là `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
-- Backend mặc định chạy PostgreSQL persistent, đã kiểm tra migration từ database local, restart giữ user/account/balance, và 68/68 test backend đạt khi có `DATABASE_URL`.
+- Backend mặc định chạy PostgreSQL persistent, đã kiểm tra migration từ database local, restart giữ user/account/balance, và 69/69 test backend đạt khi có `DATABASE_URL`.
 - Đã xử lý lỗi tương thích notification giữa seed và Mobile bằng migration trạng thái; không để nhãn kỹ thuật funding nội bộ xuất hiện như loại notification người dùng.
 - Phần còn mở của các milestone là relational repository production cho toàn domain, device thật, camera/biometric native, performance/concurrency quy mô lớn, remote CI và các kiểm soát staging/production.
 
@@ -65,4 +65,4 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 ## Cập nhật hardening request boundary — 2026-08-17
 
 - Persistent server đã tách bước đọc/parse body khỏi transaction relational; body không hợp lệ được trả lỗi validation trước khi lấy advisory lock và lỗi 4xx/5xx không commit state dở dang.
-- Regression suite PostgreSQL đạt 68/68; critical API đạt 8/8. Đây là hardening reference sandbox, chưa thay thế rate-limit phân tán hoặc gateway production.
+- Regression suite PostgreSQL đạt 69/69; critical API đạt 8/8. Đây là hardening reference sandbox, chưa thay thế rate-limit phân tán hoặc gateway production.

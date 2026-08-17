@@ -9,7 +9,7 @@
     "storage": "postgres",
     "database": "PostgreSQL 16 disposable/local sandbox",
     "databaseTablesValidated": 28,
-    "testPass": "68/68",
+    "testPass": "69/69",
     "criticalApiPass": "8/8",
     "relationalRegressionPass": "1/1",
     "openApiPathsValidated": 44,
