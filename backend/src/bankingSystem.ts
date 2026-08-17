@@ -562,7 +562,7 @@ type LoginContext = {
   user: UserRecord | undefined;
 };
 
-export const BANKING_SYSTEM_STATE_VERSION = 4;
+export const BANKING_SYSTEM_STATE_VERSION = 5;
 
 export type BankingSystemState = {
   /** Optional for backwards compatibility with M0-M6 snapshots created before M7. */
@@ -638,6 +638,20 @@ function migrateBankingSystemState(input: BankingSystemState): BankingSystemStat
     throw new Error("Banking snapshot state is missing required fields.");
   }
 
+  const notifications = candidate.notifications!.map(([userId, items]) => [
+    userId,
+    items.map((notification) =>
+      notification.type === "SANDBOX_FUNDING"
+        ? {
+            ...notification,
+            type: "SECURITY" as const,
+            title: "Tài khoản đã được nạp tiền",
+            body: "Một khoản ghi có đã được cập nhật vào tài khoản.",
+          }
+        : { ...notification },
+    ),
+  ] as [string, Notification[]]);
+
   return {
     stateVersion: BANKING_SYSTEM_STATE_VERSION,
     core: candidate.core,
@@ -654,7 +668,7 @@ function migrateBankingSystemState(input: BankingSystemState): BankingSystemStat
     refreshFamilies: candidate.refreshFamilies!,
     beneficiaries: candidate.beneficiaries!,
     recipientLookups: candidate.recipientLookups ?? [],
-    notifications: candidate.notifications!,
+    notifications,
     quotes: candidate.quotes!,
     transfers: candidate.transfers!,
     idempotency: candidate.idempotency!,
@@ -1373,9 +1387,9 @@ export class BankingSystem {
     this.enqueueOutbox("SANDBOX_FUNDING_SUCCEEDED", receipt.fundingId, receipt.createdAt);
     this.notifications.get(target.ownerId)?.unshift({
       id: createId("notification"),
-      type: "SANDBOX_FUNDING",
-      title: "Đã cấp tiền Sandbox",
-      body: `Tài khoản đã nhận ${receipt.amount.amountMinor} minor unit VND từ Quỹ Sandbox.`,
+      type: "SECURITY",
+      title: "Tài khoản đã được nạp tiền",
+      body: "Một khoản ghi có đã được cập nhật vào tài khoản.",
       resourceId: receipt.transactionId,
       resourceAccountId: target.accountId,
       read: false,

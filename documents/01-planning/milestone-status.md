@@ -42,3 +42,10 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 - M6/M7 local gate hien tai: Backend 58 test definition (54 pass, 4 PostgreSQL skip; PostgreSQL 16 tam 58/58), Mobile 36 suite/167 test, OpenAPI 36 path, Maestro syntax 9 flow; M6 savings va M7 credit native flow da co artifact emulator.
 - Home/account detail da cho phep hien va sao chep day du so tai khoan qua API rieng; mat tren Home van chi hien/che so du.
 - Chua dong milestone: relational repository production, transfer lifecycle native day du, physical device, staging/partner integration va production controls. PostgreSQL live, concurrency/restart sandbox va Maestro M7 emulator da co evidence.
+
+## Cập nhật sau khi hoàn tất kế hoạch persistent local — 2026-08-17
+
+- M0–M4 và M8 đã được kiểm tra lại trên APK release mới với Android emulator; artifact mới nhất là `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
+- Backend mặc định chạy PostgreSQL persistent, đã kiểm tra migration từ database local, restart giữ user/account/balance, và 66/66 test backend đạt khi có `DATABASE_URL`.
+- Đã xử lý lỗi tương thích notification giữa seed và Mobile bằng migration trạng thái; không để nhãn kỹ thuật funding nội bộ xuất hiện như loại notification người dùng.
+- Phần còn mở của các milestone là relational repository canonical thay cho snapshot JSON reference, device thật, camera/biometric native, pending transfer E2E trên thiết bị, performance/concurrency quy mô lớn, remote CI và các kiểm soát staging/production.

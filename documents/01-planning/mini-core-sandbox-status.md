@@ -53,3 +53,12 @@ PostgreSQL thật, tải/concurrency quy mô lớn, thiết bị vật lý, came
 ## Cách kiểm tra số tài khoản đầy đủ
 
 Sau khi sửa code, khởi động lại backend và reload/rebuild Mobile. Đăng nhập lại, vào Home hoặc Chi tiết tài khoản rồi bấm `Hiện đầy đủ` hoặc `Sao chép`. Backend phải trả `GET /accounts/{accountId}/number` với chuỗi số đầy đủ; UI không được dùng `maskedNumber` cho hai thao tác này. Không hiển thị UUID, token, device ID, PIN, OTP, password hoặc ledger journal ID.
+
+## Xác nhận triển khai tiếp theo — 2026-08-17
+
+- Runtime local mặc định đã chuyển sang PostgreSQL persistent; `npm start` đọc `.env`, yêu cầu schema đã migrate và chỉ dùng `BANKING_STORAGE=in-memory` cho unit/reference test nhanh.
+- PostgreSQL 16 local đã chạy đủ migration, database validator xác nhận 27 bảng và constraint chính; health trả reconciliation/outbox `ok`.
+- Backend đạt 66/66 test khi chạy cùng PostgreSQL, typecheck, build, critical API, OpenAPI và dependency audit đều đạt. Dữ liệu user/account/balance đã được kiểm tra còn nguyên sau khi restart backend.
+- Lần chạy Maestro đầu tiên phát hiện lỗi contract notification: dữ liệu funding cũ có loại nội bộ `SANDBOX_FUNDING`, khiến Mobile từ chối cả danh sách. Đã sửa generator và thêm state migration sang notification `SECURITY`, đồng thời thêm regression test.
+- Luồng M0–M4/M8 đã pass trên Android emulator sau sửa: login + MFA, Home, hiện/sao chép số tài khoản đầy đủ ở Home và Account Detail, KYC mô phỏng, beneficiary, QR manual fallback và notification deep-link. Artifact: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
+- Phạm vi vẫn là ngân hàng mô phỏng bằng tiền ảo; chưa kết nối core banking, payment rail, PostgreSQL relational canonical, thiết bị vật lý, camera/biometric native, tải lớn, staging hoặc compliance production.

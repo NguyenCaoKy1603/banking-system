@@ -2,7 +2,7 @@
 
 > Cập nhật 2026-08-17: branch `codex/mini-core-banking-sandbox` dùng registration hai bước, Sandbox Funding operator, người nhận thật, OTP step-up theo context và Savings/Credit opt-in. User mới chỉ có một payment account 0 VND; không còn beneficiary/card/savings tự sinh. `npm run seed:e2e` đã được cập nhật để tự cấp Funding, tạo recipient thật khi có `E2E_RECIPIENT_PASSWORD`, và đi qua credit application/activation.
 
-Đây là backend reference cho sandbox/local demo của mobile app. Nó dùng in-memory store, PBKDF2 và core-banking adapter giả lập để kiểm chứng contract, state machine, refresh rotation, idempotency, audit/outbox và reconciliation.
+Đây là backend reference cho môi trường local của mobile app. Runtime mặc định dùng PostgreSQL persistent snapshot; in-memory chỉ dành cho unit/reference test nhanh. PBKDF2 và core-banking adapter giả lập được dùng để kiểm chứng contract, state machine, refresh rotation, idempotency, audit/outbox và reconciliation.
 
 Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql). Persistent sandbox chỉ nối vào bảng snapshot reference; các bảng relational production chưa được wire vào domain service.
 
@@ -43,6 +43,13 @@ Server mặc định lắng nghe `http://localhost:5000/api/v1`; health/readines
 Để kiểm thử crash/restart với transfer `PENDING`, chạy server với `BANKING_SETTLE_IMMEDIATELY=0`; worker/core-banking adapter thật phải chịu trách nhiệm settle/reconcile ở môi trường production.
 
 Local server mặc định cho phép CORS `*`; production phải cấu hình `BANKING_ALLOWED_ORIGINS` bằng allowlist origin đã phê duyệt. Có thể giới hạn pilot bằng `BANKING_ALLOWLIST_ENABLED=1` và `BANKING_MAX_TRANSFER_AMOUNT_MINOR` (đơn vị minor-unit VND); các giới hạn này được áp ở server.
+
+## Cấu hình chạy hiện tại — 2026-08-17
+
+- `npm start` mặc định dùng `BANKING_STORAGE=postgres` và tự đọc `.env` nếu file tồn tại. Database phải được migrate trước; lệnh chuẩn là `npm run start:persistent`.
+- `BANKING_STORAGE=in-memory` chỉ dành cho unit/reference test nhanh, không còn là chế độ runtime mặc định.
+- PostgreSQL persistent hiện là adapter snapshot JSON có transaction lock để chứng minh restart/concurrency; schema relational đã được validate nhưng chưa phải repository relational canonical.
+- Chương trình mô phỏng nghiệp vụ ngân hàng bằng tiền ảo. Không có kết nối core banking, payment rail, tài khoản thật, KYC/AML thật hoặc xử lý tiền thật.
 
 ## Invariant được kiểm chứng
 

@@ -4,17 +4,18 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "start": "tsx src/server.ts",
+    "dev": "node --env-file-if-exists=.env --import=tsx --watch src/server.ts",
+    "start": "node --env-file-if-exists=.env --import=tsx src/server.ts",
+    "start:persistent": "npm run db:migrate && npm start",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
-    "validate:database": "node scripts/validate-database-schema.cjs",
+    "validate:database": "node --env-file-if-exists=.env scripts/validate-database-schema.cjs",
     "validate:openapi": "node scripts/validate-openapi.cjs",
-    "db:migrate": "tsx scripts/apply-migration.ts",
-    "sandbox:fund": "tsx scripts/sandbox-fund.ts",
+    "db:migrate": "node --env-file-if-exists=.env --import=tsx scripts/apply-migration.ts",
+    "sandbox:fund": "node --env-file-if-exists=.env --import=tsx scripts/sandbox-fund.ts",
     "test": "tsx --test src/tests/*.test.ts",
     "test:critical": "tsx --test src/tests/http.test.ts",
-    "seed:e2e": "tsx scripts/seed-e2e.ts"
+    "seed:e2e": "node --env-file-if-exists=.env --import=tsx scripts/seed-e2e.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

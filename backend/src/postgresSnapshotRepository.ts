@@ -11,15 +11,6 @@ export type PostgresSnapshotRepositoryOptions = {
   maxConnections?: number;
 };
 
-const SNAPSHOT_TABLE_DDL = `
-  CREATE TABLE IF NOT EXISTS reference_state_snapshots (
-    snapshot_key text PRIMARY KEY,
-    state jsonb NOT NULL,
-    version bigint NOT NULL DEFAULT 0 CHECK (version >= 0),
-    updated_at timestamptz NOT NULL
-  )
-`;
-
 export class PostgresSnapshotRepository {
   private readonly pool: Pool;
   private readonly snapshotKey: string;
@@ -27,7 +18,7 @@ export class PostgresSnapshotRepository {
   constructor(options: PostgresSnapshotRepositoryOptions = {}) {
     const connectionString = options.connectionString ?? process.env.DATABASE_URL;
     if (!connectionString?.trim()) {
-      throw new Error("DATABASE_URL is required for the PostgreSQL sandbox adapter.");
+      throw new Error("DATABASE_URL is required for the PostgreSQL persistent adapter.");
     }
 
     this.snapshotKey = options.snapshotKey ?? process.env.BANKING_SNAPSHOT_KEY ?? "banking-reference-sandbox";
@@ -38,7 +29,14 @@ export class PostgresSnapshotRepository {
   }
 
   async initialize(): Promise<void> {
-    await this.pool.query(SNAPSHOT_TABLE_DDL);
+    const result = await this.pool.query<{ table_name: string | null }>(
+      "SELECT to_regclass('public.reference_state_snapshots') AS table_name",
+    );
+    if (!result.rows[0]?.table_name) {
+      throw new Error(
+        "PostgreSQL schema is not initialized. Run `npm run db:migrate` before starting the persistent backend.",
+      );
+    }
   }
 
   async withState<T>(initialState: unknown, operation: SnapshotOperation<T>): Promise<T> {
@@ -61,6 +59,10 @@ export class PostgresSnapshotRepository {
 
   async close(): Promise<void> {
     await this.pool.end();
+  }
+
+  async healthCheck(): Promise<void> {
+    await this.pool.query("SELECT 1");
   }
 
   async deleteSnapshot(): Promise<void> {
