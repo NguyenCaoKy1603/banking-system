@@ -5,7 +5,7 @@
 Ngày kiểm tra: 2026-08-17
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
 Trạng thái: **In-memory và PostgreSQL persistent reference relational pass; production adapter toàn domain vẫn là DRAFT**
-Commit backend gần nhất: `cd3e76e` (`Add relational backup restore rehearsal`)
+Commit backend gần nhất: `dd515ad` (`Make sandbox handoff reproducible`)
 
 ## Đã kiểm chứng local
 
@@ -53,7 +53,7 @@ Persistent mode dùng `PostgresRelationalRepository` với advisory transaction 
 
 - Clone sạch đã chạy `npm ci`; backend typecheck/build/OpenAPI đạt, migration từ database PostgreSQL rỗng đạt và test backend 70/70 đạt khi khai báo cả hai biến database.
 - Persistent HTTP đọc/validate request body trước advisory lock và trả `503 PERSISTENCE_UNAVAILABLE` khi PostgreSQL không truy cập được.
-- Backend source checkpoint: `cd3e76e`; health fail-closed và request transaction boundary nằm trong lịch sử trước đó.
+- Backend source checkpoint: `dd515ad`; health fail-closed và request transaction boundary nằm trong lịch sử trước đó.
 - Runtime mặc định hiện dùng `PostgresRelationalRepository`: core M0–M4/M8 được lưu trong bảng relational; auth runtime và M6/M7 bonus dùng `reference_runtime_records` theo từng record. Snapshot JSON chỉ còn đường nâng dữ liệu cũ một lần, không phải nguồn ghi mới.
 - `npm run seed:e2e` đã chạy lại trên adapter relational sau restart backend: registration/MFA → Sandbox Funding → transfer `SUCCEEDED` → savings `SUCCEEDED` → credit application/activation; stdout không chứa password/OTP.
 - Health JSON an toàn (không chứa credential/token/OTP) được lưu tại [`health-sandbox-2026-08-17.json`](health-sandbox-2026-08-17.json).

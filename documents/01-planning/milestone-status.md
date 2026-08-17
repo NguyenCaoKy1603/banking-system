@@ -2,7 +2,7 @@
 
 ## Đã kiểm chứng local
 
-Backend evidence checkpoint hiện hành: code checkpoint `cd3e76e`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
+Backend evidence checkpoint hiện hành: code checkpoint `dd515ad`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
 
 - Mobile lint, type-check và 37 suite/170 test đạt; coverage gate đã được chạy lại sau khi bổ sung trạng thái offline/timeout.
 - Backend reference type-check, build, 70/70 test và 8 critical HTTP flow đạt; relational regression 1/1 đạt trên database disposable; database boundary validator đạt cấu trúc SQL + live PostgreSQL 28 bảng/invariant.
@@ -23,7 +23,7 @@ Backend evidence checkpoint hiện hành: code checkpoint `cd3e76e`; historical 
 
 ## Chưa đủ điều kiện đóng milestone
 
-- M0: baseline tài liệu, evidence rules, device evidence và checkpoint Git sạch `cd3e76e` đã có; owner review/push vẫn còn.
+- M0: baseline tài liệu, evidence rules, device evidence và checkpoint Git sạch `dd515ad` đã có; owner review/push vẫn còn.
 - M1–M4 và M8: critical flow đã chạy trên Android emulator cho login/MFA, account detail, hiện/sao chép số tài khoản đầy đủ, eKYC, beneficiary, QR manual fallback, M4 transfer và M8 notification deep link; chưa có full device matrix, thiết bị thật hoặc staging partner.
 - M2: eKYC thật/API KYC và test data staging chưa có; phần hiện tại là mock có chủ đích.
 - M4: transfer, beneficiary CRUD, QR manual fallback và pending/restart/resume đã có bằng chứng Maestro trên emulator; QR camera/permission và lifecycle native trên thiết bị thật vẫn chưa có.

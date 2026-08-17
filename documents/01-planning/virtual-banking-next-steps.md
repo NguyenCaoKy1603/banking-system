@@ -43,6 +43,7 @@ Mục tiêu: người khác có thể dựng chương trình từ clone sạch.
 - Chạy quality gate Backend và Mobile từ `npm ci`, không dùng thư mục dependency có sẵn.
 - Giữ `.env`, secret, `node_modules`, `dist`, APK và log có dữ liệu nhạy cảm ngoài Git.
 - Chốt một commit SHA và một runbook duy nhất cho demo.
+- Có `npm run reset:sandbox` với xác nhận bắt buộc để làm sạch PostgreSQL local trước `npm run seed:e2e`; lệnh từ chối production và database remote.
 
 Điều kiện đóng: clone sạch chạy được typecheck/build/validator; migration thành công; không có secret hoặc artifact runtime bị theo dõi.
 
@@ -95,6 +96,7 @@ Mục tiêu: giao diện giống một ứng dụng ngân hàng thật nhưng kh
 - Không hiển thị UUID, token, device ID, PIN, OTP, password, journal ID hoặc chi tiết backend.
 - Giữ loading, empty, lỗi kết nối, timeout, offline, unauthorized và retry.
 - “Tiền gửi” chỉ hiển thị “Sắp ra mắt” cho đến khi module được bật; Credit phải gắn nhãn sandbox/reference.
+- M6 Savings hiện đã được bật ở mức reference sandbox có chủ đích; vì vậy Home mở được module và vẫn gắn nhãn dữ liệu sandbox.
 - Không thêm banner, quảng cáo, ưu đãi hoặc dịch vụ ngoài phạm vi.
 
 Điều kiện đóng: dữ liệu tài khoản lấy từ API; bấm hiện và sao chép dùng cùng số đầy đủ từ endpoint bảo vệ; mọi trạng thái lỗi có cách khôi phục rõ ràng.
