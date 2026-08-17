@@ -40,6 +40,13 @@ Không phát hành nếu còn lỗi High/Critical, nếu API URL production chư
 - Artifact Maestro: `C:\Users\admin\.maestro\tests\2026-08-17_121849`. Không lưu password, OTP, token hoặc số tài khoản đầy đủ vào artifact báo cáo.
 - Trước khi test sau mỗi lần đổi code: restart backend, rebuild/reload Mobile nếu có thay đổi Mobile, rồi chạy lại flow. Tiền trong toàn bộ luồng là tiền ảo phục vụ mô phỏng; không dùng cho giao dịch thật.
 
+## Xác nhận pending-resume mới nhất — 2026-08-17
+
+- Flow `critical-transfer-retry.yaml` đã pass trên Android emulator với PostgreSQL persistent: tạo quote/step-up/transfer pending, stop app, launch app và refresh trạng thái.
+- Artifact Maestro: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
+- Backend critical API test vẫn là nơi xác nhận idempotency khi submit lặp; flow thiết bị xác nhận lifecycle và khả năng đọc lại trạng thái sau restart.
+- Khi demo thủ công, chỉ dùng dữ liệu giả lập; không đưa password, OTP, access token, refresh token hoặc số tài khoản đầy đủ vào video/ảnh/báo cáo.
+
 Hiện `uuid` đã được pin ở `11.1.1` cho nhánh transitive qua xcode. `npm audit --omit=dev` vẫn còn 14 cảnh báo High từ `image-size` nằm dưới Metro của Expo 57. Override `image-size` lên 2.x đã được thử nhưng làm web export của Expo/Metro lỗi nên không giữ; `npm audit fix --force` đề xuất đổi React Native/Expo theo breaking change. Không phát hành pilot khi cảnh báo High/Critical này chưa có upstream patch hoặc phương án nâng cấp được kiểm thử và phê duyệt.
 
 CI có release gate `npm audit --omit=dev --audit-level=high`; vì vậy pipeline mobile hiện phải fail ở gate bảo mật cho tới khi finding này được xử lý hợp lệ.

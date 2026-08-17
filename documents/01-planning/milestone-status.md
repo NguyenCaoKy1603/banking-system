@@ -49,3 +49,10 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 - Backend mặc định chạy PostgreSQL persistent, đã kiểm tra migration từ database local, restart giữ user/account/balance, và 66/66 test backend đạt khi có `DATABASE_URL`.
 - Đã xử lý lỗi tương thích notification giữa seed và Mobile bằng migration trạng thái; không để nhãn kỹ thuật funding nội bộ xuất hiện như loại notification người dùng.
 - Phần còn mở của các milestone là relational repository canonical thay cho snapshot JSON reference, device thật, camera/biometric native, pending transfer E2E trên thiết bị, performance/concurrency quy mô lớn, remote CI và các kiểm soát staging/production.
+
+## Cập nhật bằng chứng transfer pending — 2026-08-17
+
+- Transfer `PENDING` đã được kiểm tra trên Android emulator sau khi dừng ứng dụng và mở lại; trạng thái vẫn được đọc từ backend PostgreSQL persistent.
+- Artifact: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
+- M4 hiện có bằng chứng emulator cho quote/review/step-up/submit và pending-resume. Gate còn lại là thiết bị thật, camera QR/permission native, concurrency quy mô lớn và staging.
+- Các bước tiếp theo theo phạm vi: reproducible CI → hardening lỗi mạng/concurrency → repository relational canonical (nếu bàn giao persistent dài hạn) → Android thật → bộ bằng chứng và runbook.

@@ -32,3 +32,10 @@ Evidence checkpoint: `079e9d2` (`Verify M6 M7 native flows and account reveal`);
 - `npm audit --omit=dev --audit-level=high` vẫn fail với 14 High trong dependency Metro/`image-size`; không chạy `npm audit fix --force` vì có thể gây breaking change Expo/React Native.
 - Chưa có staging core/partner, signing/APK release candidate, device matrix evidence hoặc legal/compliance sign-off.
 - `mobile-app/app.json` và `eas.json` đã có package/profile preview APK. APK release local `1.0.0` đã build thành công; checksum và checklist chi tiết nằm tại [`documents/05-testing/device-evidence.md`](../05-testing/device-evidence.md). Chưa có signing/phê duyệt release candidate hoặc cài đặt trên thiết bị thật.
+
+## Bổ sung kiểm thử transfer pending trên emulator — 2026-08-17
+
+- Với backend PostgreSQL persistent và settle immediate tắt cho snapshot E2E, flow đã tạo transfer `PENDING`, force-stop ứng dụng, mở lại và cập nhật trạng thái thành công.
+- Artifact: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
+- Flow được thực thi bằng Maestro 2.8.0 trên `emulator-5554`; biến môi trường được truyền qua tham số Maestro, không ghi credential vào file flow.
+- Đây là bằng chứng bổ sung cho M4 lifecycle; chưa phải bằng chứng thiết bị vật lý hoặc tích hợp core/payment thật.
