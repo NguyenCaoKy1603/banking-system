@@ -29,7 +29,7 @@ Phạm vi: reference sandbox cho đồ án; không phải hệ thống xử lý 
 | Database boundary validator | Đạt live PostgreSQL: 28 bảng, cột và constraint chính |
 | Backend OpenAPI validator | 44 path bắt buộc, 49 exact route guards |
 | Mobile lint/typecheck | Đạt |
-| Mobile unit test | 36 suite, 167 test đạt |
+| Mobile unit test | 37 suite, 170 test đạt |
 | Mobile OpenAPI/Maestro syntax | 36 path Mobile; 9 flow hợp lệ |
 | Web export | Đạt 33 static route khi dùng URL HTTPS preview cho bước export |
 | E2E seed tích hợp | Đạt trên PostgreSQL persistent local: clean registration → Funding → transfer → savings → credit activation |

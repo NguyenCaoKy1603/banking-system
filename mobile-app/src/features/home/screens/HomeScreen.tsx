@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
 import { getAccountNumber, listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
@@ -30,7 +31,7 @@ export function HomeScreen() {
   );
   const [account, setAccount] = useState<PaymentAccount | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | undefined>();
+  const [error, setError] = useState<unknown>();
   const [isSessionExpired, setIsSessionExpired] = useState(false);
   const [isBalanceVisible, setIsBalanceVisible] = useState(false);
   const [isAccountNumberVisible, setIsAccountNumberVisible] = useState(false);
@@ -158,13 +159,12 @@ export function HomeScreen() {
               />
             </View>
           ) : error ? (
-            <View style={styles.stateCard} testID="home-account-error">
-              <Text style={styles.stateTitle}>Không thể kết nối</Text>
-              <Text accessibilityLiveRegion="polite" style={styles.errorText}>
-                {error}
-              </Text>
-              <PrimaryButton label="Thử lại" onPress={loadAccounts} testID="home-account-retry" />
-            </View>
+            <RequestErrorNotice
+              error={error}
+              fallbackMessage="Không thể tải dữ liệu tài khoản. Vui lòng thử lại."
+              onRetry={loadAccounts}
+              testID="home-account-error"
+            />
           ) : account ? (
             <BalanceCard
               account={account}
@@ -276,11 +276,6 @@ const styles = StyleSheet.create({
   },
   stateText: {
     color: colors.muted,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  errorText: {
-    color: colors.danger,
     fontSize: 14,
     lineHeight: 20,
   },

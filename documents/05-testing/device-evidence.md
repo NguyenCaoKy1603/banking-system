@@ -45,6 +45,7 @@ Evidence: Maestro run thành công tương ứng nằm tại `C:\Users\admin\.ma
 - APK release hiện tại đã chạy lại M0–M4/M8 trên Android emulator; artifact: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
 - Transfer pending-resume đã pass với PostgreSQL persistent: tạo transfer `PENDING`, force-stop, mở lại và cập nhật trạng thái; artifact: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
 - Không ghi password, OTP, token hoặc số tài khoản đầy đủ vào artifact/report. Thiết bị Android thật, QR camera native, biometric native và staging vẫn là gate mở.
+- Mobile đã có trạng thái hiển thị riêng cho mất kết nối, timeout và yêu cầu bị hủy, kèm nút thử lại; unit test đã kiểm tra mapping này. Kiểm thử các trạng thái đó khi tắt mạng trên thiết bị thật vẫn chưa chạy.
 
 ## Preflight trước mỗi lần chạy thiết bị
 

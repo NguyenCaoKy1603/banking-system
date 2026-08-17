@@ -4,7 +4,7 @@
 
 Backend evidence checkpoint: code/evidence checkpoint `079e9d2`; implementation hardening commit `0f06b77`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
 
-- Mobile lint, type-check và 36 suite/167 test đạt; các coverage gate trước đó vẫn đạt trên nhóm domain/validation/presentation/storage/navigation; coverage không được chạy lại trong lượt cuối.
+- Mobile lint, type-check và 37 suite/170 test đạt; coverage gate đã được chạy lại sau khi bổ sung trạng thái offline/timeout.
 - Backend reference type-check, build, 68/68 test và 8 critical HTTP flow đạt; relational regression 1/1 đạt trên database disposable; database boundary validator đạt cấu trúc SQL + live PostgreSQL 28 bảng/invariant.
 
 ## Cập nhật mới nhất — relational reference adapter
@@ -44,7 +44,7 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 ## Cap nhat chinh xac sau M7 local verification - 2026-08-15
 
 - M6 Savings va M7 Credit da co reference sandbox implementation; cac dong mo ta cu "chua trien khai" chi la snapshot truoc khi thuc hien.
-- M6/M7 local gate hien tai: Backend 58 test definition (54 pass, 4 PostgreSQL skip; PostgreSQL 16 tam 58/58), Mobile 36 suite/167 test, OpenAPI 36 path, Maestro syntax 9 flow; M6 savings va M7 credit native flow da co artifact emulator.
+- M6/M7 local gate hiện tại: Mobile 37 suite/170 test, OpenAPI 36 path, Maestro syntax 9 flow; M6 savings và M7 credit native flow đã có artifact emulator.
 - Home/account detail da cho phep hien va sao chep day du so tai khoan qua API rieng; mat tren Home van chi hien/che so du.
 - Chua dong milestone: relational repository production, transfer lifecycle native day du, physical device, staging/partner integration va production controls. PostgreSQL live, concurrency/restart sandbox va Maestro M7 emulator da co evidence.
 

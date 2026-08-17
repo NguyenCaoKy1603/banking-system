@@ -1,6 +1,6 @@
 # Test report — Mobile banking reference preview
 
-> Cập nhật hiện hành 2026-08-17: Mobile trên branch `codex/mini-core-banking-sandbox` đạt lint/typecheck, 36 suite/167 test, coverage gate, 9 Maestro flow syntax và web export 33 route. Backend đạt 68/68 test với PostgreSQL, relational regression 1/1 trên database disposable và critical API 8/8. Bằng chứng emulator mới cho M0–M4/M8 và transfer pending-resume đã được bổ sung bên dưới.
+> Cập nhật hiện hành 2026-08-17: Mobile trên branch `codex/mini-core-banking-sandbox` đạt lint/typecheck, 37 suite/170 test, coverage gate, 9 Maestro flow syntax và web export 33 route. Backend đạt 68/68 test với PostgreSQL, relational regression 1/1 trên database disposable và critical API 8/8. Bằng chứng emulator mới cho M0–M4/M8 và transfer pending-resume đã được bổ sung bên dưới.
 
 > Handoff manifest không chứa credential/token/OTP: [`handoff-manifest-2026-08-17.json`](handoff-manifest-2026-08-17.json).
 
@@ -15,8 +15,9 @@ Backend verification checkpoint: code/evidence checkpoint `079e9d2`; implementat
 | --- | --- |
 | Mobile lint | Đạt sau khi hoàn tất thay đổi hiện tại |
 | Mobile typecheck | Đạt |
-| Mobile unit tests | 36 suite, 167 test đạt |
-| Mobile coverage | 95.58% statements, 93.11% branches, 97.95% functions, 95.58% lines |
+| Mobile unit tests | 37 suite, 170 test đạt |
+| Mobile coverage | 84.09% statements, 85.52% branches, 91.95% functions, 85.04% lines |
+| Offline/timeout presentation | Đạt mapping và retry unit test cho `NETWORK_ERROR`, `TIMEOUT`, `REQUEST_ABORTED`; native device evidence còn mở |
 | OpenAPI required paths | Đạt, 36 path bắt buộc |
 | Native E2E | Android emulator `Pixel_7_API_35`: M0–M4, M6, M8 và Credit sandbox flow đạt; gồm hiện/sao chép đầy đủ số tài khoản, eKYC mô phỏng, beneficiary, QR manual fallback, savings quote/review/OTP và notification deep link |
 | Maestro | 9 flow hợp lệ; M0–M4/M8, M6 savings, credit payment, pending-resume, Credit card lock/restart/unlock và Credit overdue notification chạy thành công trên Android emulator bằng Maestro 2.8.0 |
@@ -51,7 +52,7 @@ Các kiểm tra local cùng E2E emulator chứng minh reference implementation c
 ## Cap nhat xac nhan cuoi M6/M7 va account reveal - 2026-08-15
 
 - Backend: local khong co `DATABASE_URL` co 58 test, 54 pass va 4 skip; voi PostgreSQL 16 tam thoi co 58/58 pass, migration 001–004, live schema validator va critical HTTP 8/8.
-- Mobile: 36 suite/167 test pass; lint, typecheck, OpenAPI 36 path, 9 flow Maestro syntax, web export 32 route va release config deu dat.
+- Mobile: 37 suite/170 test pass; lint, typecheck, OpenAPI 36 path, 9 flow Maestro syntax, web export 33 route và release config đều đạt.
 - Credit sandbox da co seed card, sao ke, quote, MFA, idempotency, PENDING resume, ledger/reconciliation va lock/unlock step-up.
 - `seed:e2e` da chay thanh cong tren server sandbox tam: transfer va savings `SUCCEEDED`, Credit card/statement duoc tao; stdout khong chua password/OTP.
 - Account number: list API chi tra masked; `GET /accounts/{accountId}/number` tra full number; Home va Account Detail co nut Hien day du va Sao chep, clipboard nhan dung toan bo chuoi so.

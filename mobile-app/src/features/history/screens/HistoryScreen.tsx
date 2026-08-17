@@ -10,6 +10,7 @@ import {
 } from "react-native";
 
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import {
@@ -73,7 +74,7 @@ export function HistoryScreen() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [error, setError] = useState<string | undefined>();
+  const [error, setError] = useState<unknown>();
   const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>("ALL");
   const [directionFilter, setDirectionFilter] = useState<HistoryDirectionFilter>("ALL");
 
@@ -209,10 +210,12 @@ export function HistoryScreen() {
             <ActivityIndicator color={colors.primary} size="large" />
           </View>
         ) : error ? (
-          <View style={styles.stateCard}>
-            <Text style={styles.errorText}>{error}</Text>
-            <PrimaryButton label="Thử lại" onPress={loadInitial} />
-          </View>
+          <RequestErrorNotice
+            error={error}
+            fallbackMessage="Không thể tải lịch sử giao dịch. Vui lòng thử lại."
+            onRetry={loadInitial}
+            testID="history-error"
+          />
         ) : !selectedAccountId ? (
           <View style={styles.stateCard}>
             <Text style={styles.emptyState}>Chưa có tài khoản để hiển thị.</Text>
@@ -378,11 +381,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: spacing.md,
     backgroundColor: colors.surface,
-  },
-  errorText: {
-    color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
   },
   emptyState: {
     color: colors.text,

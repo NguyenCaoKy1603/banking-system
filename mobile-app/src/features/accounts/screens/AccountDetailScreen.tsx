@@ -12,6 +12,7 @@ import {
 } from "react-native";
 
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { getAccountNumber, listAccounts } from "@/features/accounts/services/accountsApi";
@@ -42,7 +43,7 @@ export function AccountDetailScreen() {
   );
   const [account, setAccount] = useState<PaymentAccount | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | undefined>();
+  const [error, setError] = useState<unknown>();
   const [isNumberVisible, setIsNumberVisible] = useState(false);
   const [revealedAccountNumber, setRevealedAccountNumber] = useState<string | null>(null);
   const [isRevealingNumber, setIsRevealingNumber] = useState(false);
@@ -163,10 +164,12 @@ export function AccountDetailScreen() {
             <ActivityIndicator color={colors.primary} size="large" />
           </View>
         ) : error ? (
-          <View style={styles.card}>
-            <Text style={styles.errorText}>{error}</Text>
-            <PrimaryButton label="Thử lại" onPress={loadAccount} testID="account-detail-retry" />
-          </View>
+          <RequestErrorNotice
+            error={error}
+            fallbackMessage="Không thể tải chi tiết tài khoản. Vui lòng thử lại."
+            onRetry={loadAccount}
+            testID="account-detail-error"
+          />
         ) : !account ? (
           <View style={styles.card}>
             <Text style={styles.emptyText}>Không tìm thấy tài khoản trong phạm vi phiên hiện tại.</Text>
@@ -411,11 +414,6 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 12,
     lineHeight: 18,
-  },
-  errorText: {
-    color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
   },
   emptyText: {
     color: colors.text,
