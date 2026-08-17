@@ -1,10 +1,10 @@
 # Working-tree checkpoint report
 
-> Cập nhật hiện hành 2026-08-17: branch thực tế là `codex/mini-core-banking-sandbox`; code checkpoint hiện hành `46ddd6d`. Backend đạt 70/70 test với PostgreSQL, relational regression 1/1, Mobile 37 suite/170 test, coverage đạt, web export 33 route; M0–M4/M8, transfer pending-resume và offline login retry đã có evidence emulator. Manifest bàn giao nằm tại [`handoff-manifest-2026-08-17.json`](../05-testing/handoff-manifest-2026-08-17.json).
+> Cập nhật hiện hành 2026-08-17: branch thực tế là `codex/mini-core-banking-sandbox`; code checkpoint hiện hành `cd3e76e`. Backend đạt 70/70 test với PostgreSQL, relational regression 1/1, Mobile 37 suite/170 test, coverage đạt, web export 33 route; M0–M4/M8, transfer pending-resume và offline login retry đã có evidence emulator. Manifest bàn giao nằm tại [`handoff-manifest-2026-08-17.json`](../05-testing/handoff-manifest-2026-08-17.json).
 
 Ngày ghi nhận: 2026-08-17
 Nhánh: `codex/mini-core-banking-sandbox`
-Implementation checkpoint hiện hành: `46ddd6d`; evidence APK/preflight cũ vẫn được giữ để truy vết lịch sử. Các hash cũ bên dưới chỉ giữ để truy vết lịch sử.
+Implementation checkpoint hiện hành: `cd3e76e`; evidence APK/preflight cũ vẫn được giữ để truy vết lịch sử. Các hash cũ bên dưới chỉ giữ để truy vết lịch sử.
 
 ## Trạng thái
 

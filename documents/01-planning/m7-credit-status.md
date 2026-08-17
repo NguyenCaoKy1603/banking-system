@@ -20,7 +20,7 @@ Không có phê duyệt tín dụng thật, CIC, scoring, processor/acquirer, PA
 - [x] Kiểm thử restart/concurrency payment; chứng minh không debit hai lần và reconciliation difference bằng 0.
 - [x] Chạy `seed:e2e`, lưu output không chứa secret; transfer và savings đều `SUCCEEDED`, Credit seed có card/statement; seed mode overdue đã tạo notification CREDIT trỏ đúng `cardId`.
 - [x] Chạy Maestro overview/payment/pending-resume, card lock → stop/launch → OTP unlock và overdue notification → card detail trên Android emulator `Pixel_7_API_35`; artifact overview M0–M4/M8 (gồm hiện/sao chép đủ số tài khoản) là `C:\Users\admin\.maestro\tests\2026-08-16_014619`, card là `C:\Users\admin\.maestro\tests\2026-08-16_003018`, overdue là `C:\Users\admin\.maestro\tests\2026-08-16_004626`; thiết bị thật vẫn là gate mở.
-- [x] Rerun regression M0–M4/M8 và cập nhật test report, device evidence và runbook theo bằng chứng local; checkpoint code hiện hành là `46ddd6d`.
+- [x] Rerun regression M0–M4/M8 và cập nhật test report, device evidence và runbook theo bằng chứng local; checkpoint code hiện hành là `cd3e76e`.
 - [ ] Không đánh dấu production/pilot readiness khi chưa có staging, signing, monitoring, legal/compliance và partner approval.
 
 ## Cập nhật xác nhận cuối - 2026-08-16
