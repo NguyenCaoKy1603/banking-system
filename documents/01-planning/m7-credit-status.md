@@ -25,7 +25,7 @@ Không có phê duyệt tín dụng thật, CIC, scoring, processor/acquirer, PA
 
 ## Cập nhật xác nhận cuối - 2026-08-16
 
-- Backend PostgreSQL 16 local: 69/69 test, migration 001–005 và live schema validator đạt, critical HTTP 8/8.
+- Backend PostgreSQL 16 local: 70/70 test, migration 001–005 và live schema validator đạt, critical HTTP 8/8.
 - Mobile: typecheck, lint, 37 suite/170 test, OpenAPI 36 path, Maestro syntax 10 flow, web export 33 route và release config đều đạt.
 - So tai khoan: danh sach chi tra so che; Home va Account Detail goi `GET /accounts/{accountId}/number` khi bam `Hien day du` hoac `Sao chep`, sau do hien/clipboard dung toan bo chuoi so.
 - Maestro 2.8.0 va ADB da duoc dung tren `Pixel_7_API_35`: flow M0–M4/M8 tren APK hien tai, M6 savings, credit payment, credit pending → stop/launch → resume, Credit card lock → stop/launch → OTP unlock va Credit overdue notification → card detail deu pass. Thiet bi that, camera/biometric native va staging van mo.

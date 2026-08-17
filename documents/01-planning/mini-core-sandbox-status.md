@@ -23,7 +23,7 @@ Phạm vi: reference sandbox cho đồ án; không phải hệ thống xử lý 
 | Hạng mục | Kết quả |
 | --- | --- |
 | Backend typecheck/build | Đạt |
-| Backend unit + HTTP | 69/69 đạt với PostgreSQL persistent local; không có `DATABASE_URL` thì 5 test persistence được skip có chủ ý |
+| Backend unit + HTTP | 70/70 đạt với PostgreSQL persistent local khi cấu hình cả `DATABASE_URL` và `RELATIONAL_DATABASE_URL`; không có database thì 6 test persistence được skip có chủ ý |
 | Relational persistence regression | 1/1 đạt trên PostgreSQL disposable: restart, pending settlement, reconciliation và concurrent quote submit |
 | Mini Core regression | 7/7 đạt |
 | Database boundary validator | Đạt live PostgreSQL: 28 bảng, cột và constraint chính |
@@ -62,7 +62,7 @@ Sau khi sửa code, khởi động lại backend và reload/rebuild Mobile. Đă
 
 - Runtime local mặc định đã chuyển sang PostgreSQL persistent; `npm start` đọc `.env`, yêu cầu schema đã migrate và chỉ dùng `BANKING_STORAGE=in-memory` cho unit/reference test nhanh.
 - PostgreSQL 16 local đã chạy đủ migration, database validator xác nhận 28 bảng và constraint chính; health trả reconciliation/outbox `ok`.
-- Backend đạt 69/69 test khi chạy cùng PostgreSQL, typecheck, build, critical API, OpenAPI và dependency audit đều đạt. Dữ liệu user/account/balance đã được kiểm tra còn nguyên sau khi restart backend.
+- Backend đạt 70/70 test khi chạy cùng PostgreSQL, typecheck, build, critical API, OpenAPI và dependency audit đều đạt. Dữ liệu user/account/balance đã được kiểm tra còn nguyên sau khi restart backend.
 - Lần chạy Maestro đầu tiên phát hiện lỗi contract notification: dữ liệu funding cũ có loại nội bộ `SANDBOX_FUNDING`, khiến Mobile từ chối cả danh sách. Đã sửa generator và thêm state migration sang notification `SECURITY`, đồng thời thêm regression test.
 - Luồng M0–M4/M8 đã pass trên Android emulator sau sửa: login + MFA, Home, hiện/sao chép số tài khoản đầy đủ ở Home và Account Detail, KYC mô phỏng, beneficiary, QR manual fallback và notification deep-link. Artifact: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
 - Phạm vi vẫn là ngân hàng mô phỏng bằng tiền ảo; chưa kết nối core banking, payment rail, repository relational production cho toàn bộ M6/M7/auth runtime, thiết bị vật lý, camera/biometric native, tải lớn, staging hoặc compliance production.
@@ -88,4 +88,4 @@ Savings/Credit tiếp tục là module bonus/reference; Chatbot AI, payment rail
 ## Hardening persistent request boundary — 2026-08-17
 
 - Persistent HTTP server hiện đọc và validate request body trước khi mở transaction/advisory lock PostgreSQL; request JSON lỗi trả `422 VALIDATION_ERROR` mà không giữ lock trong lúc chờ body.
-- Regression test mới nằm trong bộ PostgreSQL persistence test; backend hiện đạt 69/69 test với `DATABASE_URL`, gồm cả nhánh PostgreSQL unavailable trả `503`.
+- Regression test cleanup quote/outbox nằm trong bộ backend test; backend hiện đạt 70/70 test với cả hai biến database, gồm cả nhánh PostgreSQL unavailable trả `503`.

@@ -344,6 +344,7 @@ const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const QUOTE_TTL_MS = 5 * 60 * 1000;
 const RECIPIENT_LOOKUP_TTL_MS = 5 * 60 * 1000;
 const AUTH_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+export const OUTBOX_EVENT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const AUTH_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const AUTH_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const REGISTRATION_RATE_LIMIT_MAX_ATTEMPTS = 5;
@@ -1826,10 +1827,10 @@ export class BankingSystem {
     request: CreditPaymentRequest,
     deviceId?: string,
   ): CreditPayment {
-    this.cleanupExpiredState();
+    const quoteId = requireString(request.quoteId, "quoteId");
+    this.cleanupExpiredState(new Set([quoteId]));
     this.assertCreditPaymentAvailable(userId);
     const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
-    const quoteId = requireString(request.quoteId, "quoteId");
     const quote = this.creditQuotes.get(quoteId);
     if (!quote || quote.userId !== userId) {
       throw notFound("Credit payment quote not found.");
@@ -2034,10 +2035,10 @@ export class BankingSystem {
     request: SubmitSavingsOpeningRequest,
     deviceId?: string,
   ): SavingsOpening {
-    this.cleanupExpiredState();
+    const quoteId = requireString(request.quoteId, "quoteId");
+    this.cleanupExpiredState(new Set([quoteId]));
     this.assertSavingsAvailable(userId);
     const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
-    const quoteId = requireString(request.quoteId, "quoteId");
     const quoteRecord = this.savingsQuotes.get(quoteId);
     if (!quoteRecord || quoteRecord.userId !== userId) {
       throw notFound("Savings quote not found.");
@@ -2443,9 +2444,9 @@ export class BankingSystem {
     request: SubmitTransferRequest,
     deviceId?: string,
   ): TransferReceipt {
-    this.cleanupExpiredState();
-    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
     const quoteId = requireString(request.quoteId, "quoteId");
+    this.cleanupExpiredState(new Set([quoteId]));
+    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
     const requestFingerprint = fingerprint({ quoteId });
     const existing = this.idempotency.get(`${userId}:${normalizedKey}`);
     if (existing) {
@@ -3911,8 +3912,12 @@ export class BankingSystem {
     this.sandboxOtpInbox.delete(challengeHash);
   }
 
-  private cleanupExpiredState(): void {
+  private cleanupExpiredState(preservedQuoteIds: ReadonlySet<string> = new Set()): void {
     const now = this.clock();
+    const isExpired = (value: string | number): boolean => {
+      const timestamp = typeof value === "number" ? value : Date.parse(value);
+      return Number.isFinite(timestamp) && timestamp <= now;
+    };
 
     for (const [tokenHash, session] of this.accessSessions) {
       if (session.expiresAt <= now) {
@@ -3946,8 +3951,35 @@ export class BankingSystem {
       }
     }
     for (const [lookupHash, lookup] of this.recipientLookups) {
-      if (Date.parse(lookup.expiresAt) <= now) {
+      if (isExpired(lookup.expiresAt)) {
         this.recipientLookups.delete(lookupHash);
+      }
+    }
+    for (const [quoteId, record] of this.quotes) {
+      if (
+        record.consumedTransferId === undefined &&
+        !preservedQuoteIds.has(quoteId) &&
+        isExpired(record.quote.expiresAt)
+      ) {
+        this.quotes.delete(quoteId);
+      }
+    }
+    for (const [quoteId, record] of this.savingsQuotes) {
+      if (
+        record.consumedOpeningId === null &&
+        !preservedQuoteIds.has(quoteId) &&
+        isExpired(record.expiresAt)
+      ) {
+        this.savingsQuotes.delete(quoteId);
+      }
+    }
+    for (const [quoteId, record] of this.creditQuotes) {
+      if (
+        record.consumedPaymentId === null &&
+        !preservedQuoteIds.has(quoteId) &&
+        isExpired(record.expiresAt)
+      ) {
+        this.creditQuotes.delete(quoteId);
       }
     }
     for (const [key, window] of this.authAttemptWindows) {
@@ -3968,6 +4000,24 @@ export class BankingSystem {
     for (const [key, window] of this.savingsStepUpAttemptWindows) {
       if (now - window.startedAt >= AUTH_RATE_LIMIT_WINDOW_MS) {
         this.savingsStepUpAttemptWindows.delete(key);
+      }
+    }
+    for (const [key, window] of this.creditStepUpAttemptWindows) {
+      if (now - window.startedAt >= AUTH_RATE_LIMIT_WINDOW_MS) {
+        this.creditStepUpAttemptWindows.delete(key);
+      }
+    }
+
+    const outboxRetentionCutoff = now - OUTBOX_EVENT_RETENTION_MS;
+    for (let index = this.outboxEventStore.length - 1; index >= 0; index -= 1) {
+      const event = this.outboxEventStore[index];
+      const occurredAt = event ? Date.parse(event.occurredAt) : Number.NaN;
+      if (
+        event?.published &&
+        Number.isFinite(occurredAt) &&
+        occurredAt <= outboxRetentionCutoff
+      ) {
+        this.outboxEventStore.splice(index, 1);
       }
     }
   }

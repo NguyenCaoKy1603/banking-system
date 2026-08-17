@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { BankingSystem } from "../bankingSystem.js";
+import { BankingSystem, OUTBOX_EVENT_RETENTION_MS } from "../bankingSystem.js";
 import { InMemoryCoreBanking } from "../coreBanking.js";
 import type { LoginResponse, LoginResult } from "../types.js";
 
@@ -382,7 +382,7 @@ test("logout all devices revokes every access session and refresh family", () =>
 });
 
 test("transfer quote and submit are server-authoritative and idempotent", () => {
-  const { system } = createSystem();
+  const { system, advance } = createSystem();
   const registered = system.register({
     fullName: "Test User",
     email: "tester@example.com",
@@ -410,8 +410,15 @@ test("transfer quote and submit are server-authoritative and idempotent", () => 
     "transfer-intent-1",
     { ...request, stepUp: { method: "OTP", proof: "654321" } },
   );
+  advance(OUTBOX_EVENT_RETENTION_MS + 1);
+  const lateRetryReceipt = system.submitTransfer(
+    registered.user.id,
+    "transfer-intent-1",
+    request,
+  );
 
   assert.deepEqual(retryReceipt, firstReceipt);
+  assert.deepEqual(lateRetryReceipt, firstReceipt);
   assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 2);
   assert.equal(system.listAccounts(registered.user.id)[0]?.availableBalance.amountMinor, "9899000");
   assert.equal(system.reconcile()[0]?.differenceMinor, "0");
@@ -766,6 +773,54 @@ test("expired quote cannot be submitted", () => {
         stepUp: { method: "OTP", proof: "123456" },
       }),
     /expired/,
+  );
+});
+
+test("cleanup removes expired quotes and retained published outbox events", () => {
+  const { system, advance } = createSystem();
+  const registered = system.register({
+    fullName: "Cleanup User",
+    email: "cleanup@example.com",
+    phoneNumber: "0912345699",
+    password: "Password1",
+  });
+  const { account, beneficiary } = prepareTransferFixture(system, registered.user.id);
+  const publishedFunding = system.outboxEvents[0];
+  assert.ok(publishedFunding);
+  system.markOutboxPublished(publishedFunding.id);
+
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, "cleanup-pending-funding", {
+    recipientAccountNumber: getAccountNumber(system, registered.user.id),
+    amount: { currency: "VND", amountMinor: "100000" },
+    reason: "cleanup pending outbox fixture",
+  });
+  const pendingFunding = system.outboxEvents.find(
+    (event) => event.id !== publishedFunding.id,
+  );
+  assert.ok(pendingFunding);
+
+  const expiredQuote = system.createQuote(registered.user.id, {
+    sourceAccountId: account.id,
+    beneficiaryId: beneficiary.id,
+    amount: { currency: "VND", amountMinor: "100000" },
+  });
+  advance(OUTBOX_EVENT_RETENTION_MS + 1);
+  const freshQuote = system.createQuote(registered.user.id, {
+    sourceAccountId: account.id,
+    beneficiaryId: beneficiary.id,
+    amount: { currency: "VND", amountMinor: "200000" },
+  });
+
+  const state = system.exportState();
+  assert.equal(state.quotes.some(([quoteId]) => quoteId === expiredQuote.quoteId), false);
+  assert.equal(state.quotes.some(([quoteId]) => quoteId === freshQuote.quoteId), true);
+  assert.equal(
+    state.outboxEventStore.some((event) => event.id === publishedFunding.id),
+    false,
+  );
+  assert.equal(
+    state.outboxEventStore.some((event) => event.id === pendingFunding.id),
+    true,
   );
 });
 

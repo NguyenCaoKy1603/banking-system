@@ -59,6 +59,14 @@ Mục tiêu: hành vi chuyển tiền phải an toàn ngay cả khi người dù
 
 Điều kiện đóng: không double-debit; không mất hoặc tạo thêm tiền ảo sau retry; health và lỗi HTTP phản ánh đúng nguyên nhân.
 
+### Kết quả S2 đã thực hiện trong checkpoint hiện tại
+
+- Cleanup quote transfer/Savings/Credit chưa dùng sau khi hết hạn.
+- Cleanup cửa sổ step-up Credit và outbox đã publish quá 24 giờ; outbox pending không bị xóa.
+- Quote đang được submit được giữ lại trong request đó để vẫn trả lỗi hết hạn rõ ràng thay vì biến thành 404.
+- Quote đã dùng được giữ để retry cùng idempotency key trả lại kết quả cũ.
+- Regression đã kiểm tra quote expired, cleanup outbox, pending outbox và late idempotent retry; full PostgreSQL suite đạt 70/70.
+
 ### S3 — Hoàn thiện persistence reference theo quyết định bàn giao
 
 Mục tiêu: xác định rõ mức persistent cần cho đồ án và không gọi nhầm record-level reference là production repository.
