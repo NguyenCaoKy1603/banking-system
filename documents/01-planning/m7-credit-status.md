@@ -20,13 +20,13 @@ Không có phê duyệt tín dụng thật, CIC, scoring, processor/acquirer, PA
 - [x] Kiểm thử restart/concurrency payment; chứng minh không debit hai lần và reconciliation difference bằng 0.
 - [x] Chạy `seed:e2e`, lưu output không chứa secret; transfer và savings đều `SUCCEEDED`, Credit seed có card/statement; seed mode overdue đã tạo notification CREDIT trỏ đúng `cardId`.
 - [x] Chạy Maestro overview/payment/pending-resume, card lock → stop/launch → OTP unlock và overdue notification → card detail trên Android emulator `Pixel_7_API_35`; artifact overview M0–M4/M8 (gồm hiện/sao chép đủ số tài khoản) là `C:\Users\admin\.maestro\tests\2026-08-16_014619`, card là `C:\Users\admin\.maestro\tests\2026-08-16_003018`, overdue là `C:\Users\admin\.maestro\tests\2026-08-16_004626`; thiết bị thật vẫn là gate mở.
-- [x] Rerun regression M0–M4/M8 và cập nhật test report, device evidence và runbook theo bằng chứng local; checkpoint hiện hành là `34e5849`.
+- [x] Rerun regression M0–M4/M8 và cập nhật test report, device evidence và runbook theo bằng chứng local; checkpoint code hiện hành là `fc8380c`.
 - [ ] Không đánh dấu production/pilot readiness khi chưa có staging, signing, monitoring, legal/compliance và partner approval.
 
 ## Cập nhật xác nhận cuối - 2026-08-16
 
 - Backend PostgreSQL 16 local: 69/69 test, migration 001–005 và live schema validator đạt, critical HTTP 8/8.
-- Mobile: typecheck, lint, 37 suite/170 test, OpenAPI 36 path, Maestro syntax 9 flow, web export 33 route và release config đều đạt.
+- Mobile: typecheck, lint, 37 suite/170 test, OpenAPI 36 path, Maestro syntax 10 flow, web export 33 route và release config đều đạt.
 - So tai khoan: danh sach chi tra so che; Home va Account Detail goi `GET /accounts/{accountId}/number` khi bam `Hien day du` hoac `Sao chep`, sau do hien/clipboard dung toan bo chuoi so.
 - Maestro 2.8.0 va ADB da duoc dung tren `Pixel_7_API_35`: flow M0–M4/M8 tren APK hien tai, M6 savings, credit payment, credit pending → stop/launch → resume, Credit card lock → stop/launch → OTP unlock va Credit overdue notification → card detail deu pass. Thiet bi that, camera/biometric native va staging van mo.
 - Backend dependency audit: 0 vulnerability. Mobile con 14 High transitive tu `image-size` trong Expo/Metro; khong ap dung `npm audit fix --force` vi no de xuat breaking downgrade Expo.

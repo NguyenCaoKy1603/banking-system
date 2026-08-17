@@ -1,8 +1,8 @@
 {
   "date": "2026-08-17",
-  "generatedAt": "2026-08-17T07:50:53.420Z",
+  "generatedAt": "2026-08-17T08:28:54.381Z",
   "packageName": "com.example.digitalbanking.mobile",
-  "apkSha256": "7AE55E9E388A64AFA01B0058AE7ADC4D31FADCBA84F93ADB296CAC3EA078738D",
+  "apkSha256": "8ADAEEDD4A21D310A1CDA0A79B75515785A6683792CD5FF26583F2B65D808F7A",
   "adbPath": "C:\\Users\\admin\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
   "health": {
     "url": "http://127.0.0.1:5000/healthz",
@@ -38,5 +38,5 @@
     "appProcessPresent": true,
     "crashSignatures": 0
   },
-  "note": "Local preflight evidence only; physical Android device, native camera/biometric and current flow execution remain open gates."
+  "note": "Local preflight evidence only; offline login retry was executed separately on the emulator. Physical Android device and native camera/biometric remain open gates."
 }

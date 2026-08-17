@@ -3,7 +3,7 @@
 > Cập nhật hiện hành 2026-08-17: phần bằng chứng M0–M4/M8 đã được chạy lại trên APK release hiện tại; transfer pending-resume có artifact riêng. Các checkpoint cũ bên dưới được giữ để truy vết. Bảng trạng thái canonical nằm tại [`mini-core-sandbox-status.md`](mini-core-sandbox-status.md).
 
 Ngày kiểm tra: 2026-08-17
-Evidence checkpoint hiện hành: `34e5849`; các checkpoint cũ chỉ giữ để truy vết.
+Evidence checkpoint hiện hành: `fc8380c`; các checkpoint cũ chỉ giữ để truy vết.
 
 ## Phạm vi đã đối chiếu
 
@@ -18,7 +18,7 @@ Evidence checkpoint hiện hành: `34e5849`; các checkpoint cũ chỉ giữ đ�
 
 ## Bằng chứng local
 
-- Mobile: lint, typecheck, 37 test suites/170 tests, OpenAPI 36 required paths, Maestro syntax 9 flows và web export 33 routes đều đạt.
+- Mobile: lint, typecheck, 37 test suites/170 tests, OpenAPI 36 required paths, Maestro syntax 10 flows và web export 33 routes đều đạt.
 - Backend reference: typecheck, build, database boundary validation source + live PostgreSQL, 69/69 test với PostgreSQL và 8 critical HTTP tests; correctness P1/P2, beneficiary fingerprint, quote one-time, reconciliation drift, exact route, async HTTP auth, persistent body validation và outbox retry đều có regression test.
 - Full critical flow đã chạy lại trên Android emulator `Pixel_7_API_35` (Android 15/API 35) bằng Maestro 2.8.0: cold launch, login + server-driven MFA, dashboard, hiện/che số dư, account detail với hiện và sao chép số tài khoản đầy đủ, M2 eKYC, M4 beneficiary và QR manual fallback, M8 notification detail → transaction/profile deep link. Bằng chứng bản APK hiện tại: `C:\Users\admin\.maestro\tests\2026-08-16_014619`.
 - Credit pending → stop/launch → resume, Credit card lock → stop/launch → OTP unlock và Credit overdue notification → card detail đã có bằng chứng native trên emulator; chưa có bằng chứng lặp lại cho transfer kill app trước/sau submit, session restore sau force-stop, QR camera permission/biometric thật, thiết bị thật hoặc staging partner. Đây vẫn là gate bắt buộc trước preview/pilot.

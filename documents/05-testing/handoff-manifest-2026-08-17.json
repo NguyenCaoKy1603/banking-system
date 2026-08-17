@@ -1,9 +1,9 @@
 {
   "date": "2026-08-17",
   "branch": "codex/mini-core-banking-sandbox",
-  "codeCommit": "34e5849",
-  "documentationCommit": "34e5849",
-  "evidenceCommit": "34e5849",
+  "codeCommit": "fc8380c",
+  "documentationCommit": "fc8380c",
+  "evidenceCommit": "fc8380c",
   "scope": "simulated banking with virtual money only",
   "backend": {
     "storage": "postgres",
@@ -19,10 +19,10 @@
     "package": "com.example.digitalbanking.mobile",
     "testSuites": "37",
     "tests": "170/170",
-    "maestroFlowSyntax": "9 flows",
+    "maestroFlowSyntax": "10 flows",
     "webExportStaticRoutes": 33,
     "apk": "mobile-app/android/app/build/outputs/apk/release/app-release.apk",
-    "apkSha256": "7AE55E9E388A64AFA01B0058AE7ADC4D31FADCBA84F93ADB296CAC3EA078738D"
+    "apkSha256": "8ADAEEDD4A21D310A1CDA0A79B75515785A6683792CD5FF26583F2B65D808F7A"
   },
   "runtimeEvidence": {
     "health": "documents/05-testing/health-sandbox-2026-08-17.json",
@@ -38,7 +38,7 @@
     "Run backend npm run db:migrate, then npm start.",
     "Run backend npm run seed:e2e with caller-provided test credentials.",
     "Install the APK, configure the emulator API URL, and use the sandbox OTP values from the caller environment.",
-    "Verify health, account detail reveal/copy, transfer, pending-resume and notification deep link."
+    "Verify health, account detail reveal/copy, transfer, pending-resume, notification deep link and offline login retry."
   ],
   "openRisks": [
     "Physical Android device, native QR camera permission and native biometric prompt are not evidenced.",

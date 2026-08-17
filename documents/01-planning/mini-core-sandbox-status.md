@@ -30,7 +30,7 @@ Phạm vi: reference sandbox cho đồ án; không phải hệ thống xử lý 
 | Backend OpenAPI validator | 44 path bắt buộc, 49 exact route guards |
 | Mobile lint/typecheck | Đạt |
 | Mobile unit test | 37 suite, 170 test đạt |
-| Mobile OpenAPI/Maestro syntax | 36 path Mobile; 9 flow hợp lệ |
+| Mobile OpenAPI/Maestro syntax | 36 path Mobile; 10 flow hợp lệ |
 | Web export | Đạt 33 static route khi dùng URL HTTPS preview cho bước export |
 | E2E seed tích hợp | Đạt trên PostgreSQL persistent local: clean registration → Funding → transfer → savings → credit activation |
 
@@ -50,7 +50,7 @@ PostgreSQL thật, tải/concurrency quy mô lớn, thiết bị vật lý, came
 ## APK build mới
 
 - `assembleRelease`: thành công ngày 2026-08-17; APK nằm tại `mobile-app/android/app/build/outputs/apk/release/app-release.apk`.
-- SHA-256 bản sandbox emulator hiện hành: `7AE55E9E388A64AFA01B0058AE7ADC4D31FADCBA84F93ADB296CAC3EA078738D`.
+- SHA-256 bản sandbox emulator hiện hành: `8ADAEEDD4A21D310A1CDA0A79B75515785A6683792CD5FF26583F2B65D808F7A`.
 - Bản này dùng `EXPO_PUBLIC_SANDBOX_HTTP=1` và URL HTTP nội bộ `127.0.0.1:5000` qua `adb reverse`; chỉ dùng cho emulator/local sandbox, không dùng production.
 - Đây là artifact để cài kiểm tra thủ công; cần chạy lại Maestro/E2E đầy đủ trước khi coi là bằng chứng hoàn tất.
 

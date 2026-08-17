@@ -2,7 +2,7 @@
 
 ## Đã kiểm chứng local
 
-Backend evidence checkpoint hiện hành: code/documentation/evidence `34e5849`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
+Backend evidence checkpoint hiện hành: code checkpoint `fc8380c`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
 
 - Mobile lint, type-check và 37 suite/170 test đạt; coverage gate đã được chạy lại sau khi bổ sung trạng thái offline/timeout.
 - Backend reference type-check, build, 69/69 test và 8 critical HTTP flow đạt; relational regression 1/1 đạt trên database disposable; database boundary validator đạt cấu trúc SQL + live PostgreSQL 28 bảng/invariant.
@@ -13,7 +13,7 @@ Backend evidence checkpoint hiện hành: code/documentation/evidence `34e5849`;
 - Gate mới `npm run test:relational` đạt 1/1 trên database disposable, gồm restart, pending settlement, reconciliation và concurrent quote submit. Auth runtime và M6/M7 bonus vẫn là record-level reference; chưa tuyên bố production readiness.
 - Backend correctness đã có quote snapshot/one-time, beneficiary fingerprint, UUID-compatible IDs, exact route, registration/step-up rate limit, reconciliation formula và outbox retry threshold.
 - Persistent PostgreSQL relational reference adapter, migration runner và CI service đã được thêm; integration test core chạy khi có `DATABASE_URL`, còn relational regression dùng `RELATIONAL_DATABASE_URL` disposable.
-- OpenAPI validation, Maestro syntax validation, Expo native config và web export đều đã chạy lại sau các route hiện tại; hiện có 36 path OpenAPI, 9 flow Maestro hợp lệ và 33 static route. Critical flow M0–M4/M8, M6 savings, credit payment, credit pending-resume, Credit card lock/restart/unlock và Credit overdue notification đã chạy thành công trên Android emulator.
+- OpenAPI validation, Maestro syntax validation, Expo native config và web export đều đã chạy lại sau các route hiện tại; hiện có 36 path OpenAPI, 10 flow Maestro hợp lệ và 33 static route. Critical flow M0–M4/M8, M6 savings, credit payment, credit pending-resume, Credit card lock/restart/unlock, Credit overdue notification và offline login retry đã chạy thành công trên Android emulator.
 - Auth/session/device binding/MFA, accounts/history/detail/filter, transfer quote/step-up/idempotency/pending recovery, notifications và fraud report có reference flow.
 - M2 có eKYC mô phỏng với form, ảnh mẫu và vòng đời DRAFT/PENDING/APPROVED/REJECTED.
 - M4 có transfer flow, danh bạ người nhận CRUD, QR payload validation, camera scanner và manual input fallback.
@@ -23,7 +23,7 @@ Backend evidence checkpoint hiện hành: code/documentation/evidence `34e5849`;
 
 ## Chưa đủ điều kiện đóng milestone
 
-- M0: baseline tài liệu, evidence rules, device evidence và checkpoint Git sạch `34e5849` đã có; owner review/push vẫn còn.
+- M0: baseline tài liệu, evidence rules, device evidence và checkpoint Git sạch `fc8380c` đã có; owner review/push vẫn còn.
 - M1–M4 và M8: critical flow đã chạy trên Android emulator cho login/MFA, account detail, hiện/sao chép số tài khoản đầy đủ, eKYC, beneficiary, QR manual fallback, M4 transfer và M8 notification deep link; chưa có full device matrix, thiết bị thật hoặc staging partner.
 - M2: eKYC thật/API KYC và test data staging chưa có; phần hiện tại là mock có chủ đích.
 - M4: transfer, beneficiary CRUD, QR manual fallback và pending/restart/resume đã có bằng chứng Maestro trên emulator; QR camera/permission và lifecycle native trên thiết bị thật vẫn chưa có.
@@ -44,7 +44,7 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 ## Cap nhat chinh xac sau M7 local verification - 2026-08-15
 
 - M6 Savings va M7 Credit da co reference sandbox implementation; cac dong mo ta cu "chua trien khai" chi la snapshot truoc khi thuc hien.
-- M6/M7 local gate hiện tại: Mobile 37 suite/170 test, OpenAPI 36 path, Maestro syntax 9 flow; M6 savings và M7 credit native flow đã có artifact emulator.
+- M6/M7 local gate hiện tại: Mobile 37 suite/170 test, OpenAPI 36 path, Maestro syntax 10 flow; M6 savings, M7 credit và offline retry đã có bằng chứng emulator.
 - Home/account detail da cho phep hien va sao chep day du so tai khoan qua API rieng; mat tren Home van chi hien/che so du.
 - Chua dong milestone: relational repository production, transfer lifecycle native day du, physical device, staging/partner integration va production controls. PostgreSQL live, concurrency/restart sandbox va Maestro M7 emulator da co evidence.
 

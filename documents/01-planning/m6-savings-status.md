@@ -11,7 +11,7 @@ Ngày kiểm tra: 2026-08-17
 - Có migration draft `002_savings_sandbox.sql`, migration runner chạy tuần tự 001 rồi 002 và validator kiểm tra schema/constraint.
 - Mobile có Home → Tiền gửi → danh sách → mở khoản → quote/review → MFA → kết quả → chi tiết; intent lưu quote và idempotency key, không lưu OTP.
 - Notification type SAVINGS deep-link tới chi tiết khoản gửi; ô Tiền gửi trên Home đã hoạt động và có nhãn sandbox.
-- OpenAPI DRAFT hiện có 36 path; Maestro có 9 flow syntax-valid gồm flow M6 và M7.
+- OpenAPI DRAFT hiện có 36 path; Maestro có 10 flow syntax-valid gồm flow M6, M7 và offline retry.
 
 ## Đã kiểm tra local
 
