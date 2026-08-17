@@ -14,7 +14,7 @@ Commit backend gần nhất: `46ddd6d` (`Harden quote and outbox cleanup`)
 | Typecheck/build | Đạt |
 | Database boundary validator | Đạt, kiểm tra cấu trúc SQL và live PostgreSQL: 28 bảng, cột UUID/transfer/notification/runtime và constraint chính |
 | Unit + HTTP tests | 70 test definition; PostgreSQL 16 local: 70/70 đạt, gồm body validation trước transaction và fail-closed khi DB unavailable |
-| Relational persistence | `npm run test:relational`: 1/1 đạt trên database disposable, gồm restart, pending settlement, reconciliation và concurrent quote submit |
+| Relational persistence | `npm run test:relational`: 1/1 đạt trên database disposable, gồm restart, pending settlement, reconciliation, concurrent quote submit và logical backup/restore rehearsal |
 | Critical HTTP tests | 8 đạt |
 | Backend dependency audit | 0 vulnerability |
 | Quote correctness | Snapshot beneficiary, one-time quote, idempotent retry |

@@ -79,6 +79,13 @@ Mục tiêu: xác định rõ mức persistent cần cho đồ án và không g�
 
 Điều kiện đóng: dữ liệu của module được tuyên bố persistent có thể khôi phục từ database; migration chạy lặp lại an toàn; test chứng minh transaction boundary.
 
+### Kết quả S3 ở mức reference sandbox
+
+- Core M0–M4/M8 tiếp tục dùng bảng relational canonical; auth runtime và M6/M7 dùng record-level JSONB có khóa collection/record.
+- Relational regression đã có restart, concurrent quote submit, pending settlement, reconciliation và logical backup → clear → restore → restart verification.
+- `RELATIONAL_DATABASE_URL` đã được thêm vào mẫu cấu hình để chạy gate trên database disposable riêng.
+- Không mở dedicated production repository, RLS hay backup vận hành vì các phần đó cần owner, staging, security review và không thuộc phạm vi tiền ảo của đồ án.
+
 ### S4 — Hoàn thiện trải nghiệm Mobile
 
 Mục tiêu: giao diện giống một ứng dụng ngân hàng thật nhưng không làm người dùng hiểu nhầm dữ liệu mô phỏng là nghiệp vụ thật.

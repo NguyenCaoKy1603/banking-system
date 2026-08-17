@@ -18,7 +18,7 @@ function accountNumber(system: BankingSystem, userId: string): string {
   return system.getAccountNumber(userId, account.id);
 }
 
-test("relational adapter persists restart state and serializes one quote submission", {
+test("relational adapter persists restart state, serializes one quote submission and rehearses logical restore", {
   skip: !databaseUrl,
 }, async (t) => {
   const repository = new PostgresRelationalRepository({
@@ -156,4 +156,44 @@ test("relational adapter persists restart state and serializes one quote submiss
   assert.equal(final.available, "9899000");
   assert.equal(final.held, "0");
   assert.equal(final.reconciliation, "0");
+
+  const backupState = finalSystem.exportState();
+  await repository.clear();
+  const restoreSystem = new BankingSystem({ sandboxOtp: "123456" });
+  const restoredFromBackup = await repository.withState(
+    restoreSystem.exportState(),
+    async () => {
+      restoreSystem.importState(backupState);
+      const account = restoreSystem.listAccounts(fixture.senderId)[0];
+      assert.ok(account);
+      return {
+        result: {
+          available: account.availableBalance.amountMinor,
+          held: account.heldAmount.amountMinor,
+          reconciliation: restoreSystem.reconcile()[0]?.differenceMinor,
+        },
+        nextState: restoreSystem.exportState(),
+      };
+    },
+  );
+  assert.deepEqual(restoredFromBackup, final);
+
+  const afterRestoreSystem = new BankingSystem({ sandboxOtp: "123456" });
+  const afterRestore = await repository.withState(
+    afterRestoreSystem.exportState(),
+    async (state) => {
+      afterRestoreSystem.importState(state as BankingSystemState);
+      const account = afterRestoreSystem.listAccounts(fixture.senderId)[0];
+      assert.ok(account);
+      return {
+        result: {
+          available: account.availableBalance.amountMinor,
+          held: account.heldAmount.amountMinor,
+          reconciliation: afterRestoreSystem.reconcile()[0]?.differenceMinor,
+        },
+        nextState: state,
+      };
+    },
+  );
+  assert.deepEqual(afterRestore, final);
 });
