@@ -9,10 +9,10 @@ appId: ${APP_ID}
     timeout: 30000
 - tapOn:
     id: login-email
-- inputText: offline-check@example.invalid
+- inputText: ${OFFLINE_TEST_EMAIL}
 - tapOn:
     id: login-password
-- inputText: OfflineCheckPassword123!
+- inputText: ${OFFLINE_TEST_PASSWORD}
 - pressKey: BACK
 - tapOn:
     id: login-submit
