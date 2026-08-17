@@ -3,7 +3,7 @@
   "branch": "codex/mini-core-banking-sandbox",
   "codeCommit": "cd3e76e",
   "documentationCommit": "cd3e76e",
-  "evidenceCommit": "a0b446d",
+  "evidenceCommit": "1bc081d",
   "scope": "simulated banking with virtual money only",
   "backend": {
     "storage": "postgres",
