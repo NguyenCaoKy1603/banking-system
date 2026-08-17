@@ -9,6 +9,7 @@ const email = process.env.E2E_EMAIL ?? "tester@example.com";
 const password = process.env.E2E_PASSWORD?.trim();
 const deviceId = process.env.E2E_DEVICE_ID ?? "e2e-device-android";
 const operatorKey = process.env.E2E_SANDBOX_OPERATOR_KEY ?? process.env.BANKING_SANDBOX_OPERATOR_KEY ?? "sandbox-operator-local";
+const registrationOtp = process.env.E2E_MFA_OTP?.trim() ?? process.env.BANKING_SANDBOX_MFA_OTP?.trim();
 const mfaOtp = process.env.E2E_MFA_OTP?.trim() ?? process.env.BANKING_SANDBOX_MFA_OTP?.trim();
 const transferOtp = process.env.E2E_TRANSFER_OTP?.trim() ?? process.env.BANKING_SANDBOX_OTP?.trim();
 
@@ -85,7 +86,7 @@ async function registerIfNeeded(
   });
   if (register.status === 202) {
     const challenge = requireBody<{ challengeId: string }>(register, "registration");
-    const proof = transferOtp ?? await getSandboxOtp(challenge.challengeId);
+    const proof = registrationOtp ?? await getSandboxOtp(challenge.challengeId);
     requireBody(
       await request("/auth/register/verify", {
         method: "POST",

@@ -36,6 +36,17 @@ maestro test `
 
 `APP_ID` và dữ liệu test phải do môi trường preview cấp; không ghi credential thật vào flow hoặc repository. Flow cố ý dùng các `testID` ổn định trong app để tránh phụ thuộc vào text hiển thị. Có thể dùng `npm run e2e:maestro -- test ...` thay cho gọi Maestro trực tiếp; wrapper tự chuẩn hóa `JAVA_HOME` nếu biến môi trường đang trỏ nhầm vào thư mục `bin`.
 
+Để tự chuẩn bị một user/recipient E2E mới mà không nhập credential thủ công, khởi động backend đã migrate rồi chạy:
+
+```powershell
+cd mobile-app
+$env:E2E_MFA_OTP = $env:BANKING_SANDBOX_MFA_OTP
+$env:E2E_TRANSFER_OTP = $env:BANKING_SANDBOX_OTP
+npm run e2e:sandbox
+```
+
+Lệnh dùng credential ngẫu nhiên trong bộ nhớ, gọi `backend` seed, lấy số tài khoản đầy đủ qua API bảo vệ, chạy flow mặc định M0–M4/M8 và xóa artifact Maestro tạm sau khi chạy. Dữ liệu nghiệp vụ được tạo trong database sandbox hiện tại; nếu cần làm sạch, dùng `backend/npm run reset:sandbox` với xác nhận theo [`e2e-sandbox-seed.md`](../../../documents/05-testing/e2e-sandbox-seed.md).
+
 ## Coverage
 
 - `critical-auth-and-logout.yaml`: login MFA, session entry và logout tất cả thiết bị.
