@@ -1,6 +1,6 @@
 # Working-tree checkpoint report
 
-> Cập nhật hiện hành 2026-08-17: branch thực tế là `codex/mini-core-banking-sandbox`; các checkpoint lịch sử bên dưới được giữ để truy vết. Backend hiện đạt 68/68 test với PostgreSQL, Mobile 36 suite/167 test, coverage đạt, web export 33 route; M0–M4/M8 và transfer pending-resume đã có evidence emulator.
+> Cập nhật hiện hành 2026-08-17: branch thực tế là `codex/mini-core-banking-sandbox`; code commit `08e8d33`, documentation/evidence commit `d5fe672`. Backend đạt 68/68 test với PostgreSQL, relational regression 1/1, Mobile 36 suite/167 test, coverage đạt, web export 33 route; M0–M4/M8 và transfer pending-resume đã có evidence emulator. Manifest bàn giao nằm tại [`handoff-manifest-2026-08-17.json`](../05-testing/handoff-manifest-2026-08-17.json).
 
 Ngày ghi nhận: 2026-08-16
 Nhánh: `feature/mobile-authentication`
@@ -8,9 +8,9 @@ Implementation/evidence checkpoint: `079e9d2` (`Verify M6 M7 native flows and ac
 
 ## Trạng thái
 
-**ĐÃ TẠO checkpoint Git sạch.** Backend, workflow, contract, lockfile, Mobile, Maestro flow và tài liệu triển khai đã được commit. `artifacts/`, native generated folder và `.env` local bị loại khỏi commit.
+**ĐÃ TẠO checkpoint Git sạch.** Backend, workflow, contract, lockfile, Mobile, Maestro flow và tài liệu triển khai đã được commit. `artifacts/`, native generated folder và `.env` local bị loại khỏi commit. Core M0–M4/M8 persistence dùng relational reference adapter; auth runtime/M6/M7 vẫn được ghi nhận là reference-level.
 
-Quality gate hiện tại: backend 58/58 test với PostgreSQL 16 tạm, critical HTTP 8/8, database/OpenAPI validator đạt; Mobile lint/typecheck, 36 suite/167 test, OpenAPI 36 path, 9 Maestro flow syntax và web export 32 route đạt. APK release local và Maestro emulator evidence gồm M0–M4/M8, M6 Savings, Credit payment/resume, card lock/unlock và overdue notification. Đây vẫn là reference sandbox, chưa phải release production.
+Quality gate hiện tại: backend 68/68 test với PostgreSQL 16, relational regression 1/1, critical HTTP 8/8, database/OpenAPI validator đạt; Mobile lint/typecheck, 36 suite/167 test, OpenAPI 36 path, 9 Maestro flow syntax và web export 33 route đạt. APK release local SHA-256 đã được ghi trong manifest; Maestro emulator evidence gồm M0–M4/M8, M6 Savings, Credit payment/resume, card lock/unlock và overdue notification. Đây vẫn là reference sandbox, chưa phải release production.
 
 ## Việc cần làm sau checkpoint
 

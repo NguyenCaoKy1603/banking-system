@@ -1,0 +1,47 @@
+{
+  "date": "2026-08-17",
+  "branch": "codex/mini-core-banking-sandbox",
+  "codeCommit": "08e8d33",
+  "documentationCommit": "d5fe672",
+  "scope": "simulated banking with virtual money only",
+  "backend": {
+    "storage": "postgres",
+    "database": "PostgreSQL 16 disposable/local sandbox",
+    "databaseTablesValidated": 28,
+    "testPass": "68/68",
+    "criticalApiPass": "8/8",
+    "relationalRegressionPass": "1/1",
+    "openApiPathsValidated": 44,
+    "dependencyAudit": "0 vulnerabilities"
+  },
+  "mobile": {
+    "package": "com.example.digitalbanking.mobile",
+    "testSuites": "36",
+    "tests": "167/167",
+    "maestroFlowSyntax": "9 flows",
+    "webExportStaticRoutes": 33,
+    "apk": "mobile-app/android/app/build/outputs/apk/release/app-release.apk",
+    "apkSha256": "468238E016D5C2B302A2C0FEB9B7067D071A425023CA1A68F87DC55F69B61CAE"
+  },
+  "runtimeEvidence": {
+    "health": "documents/05-testing/health-sandbox-2026-08-17.json",
+    "status": "ok",
+    "reconciliation": "ok",
+    "outbox": "ok",
+    "device": "Android emulator emulator-5554",
+    "physicalDevice": false
+  },
+  "manualReproduction": [
+    "Run backend npm run db:migrate, then npm start.",
+    "Run backend npm run seed:e2e with caller-provided test credentials.",
+    "Install the APK, configure the emulator API URL, and use the sandbox OTP values from the caller environment.",
+    "Verify health, account detail reveal/copy, transfer, pending-resume and notification deep link."
+  ],
+  "openRisks": [
+    "Physical Android device, native QR camera permission and native biometric prompt are not evidenced.",
+    "Mobile audit still reports 14 High transitive Metro/Expo findings; no breaking force-fix was applied.",
+    "Auth runtime and M6/M7 remain record-level reference persistence, not a production repository.",
+    "No staging, signing, partner core integration or real-money/payment rail is in scope."
+  ],
+  "note": "Reference sandbox evidence only; not production readiness or certification evidence."
+}

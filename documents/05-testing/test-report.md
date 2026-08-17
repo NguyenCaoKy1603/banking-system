@@ -2,6 +2,8 @@
 
 > Cập nhật hiện hành 2026-08-17: Mobile trên branch `codex/mini-core-banking-sandbox` đạt lint/typecheck, 36 suite/167 test, coverage gate, 9 Maestro flow syntax và web export 33 route. Backend đạt 68/68 test với PostgreSQL, relational regression 1/1 trên database disposable và critical API 8/8. Bằng chứng emulator mới cho M0–M4/M8 và transfer pending-resume đã được bổ sung bên dưới.
 
+> Handoff manifest không chứa credential/token/OTP: [`handoff-manifest-2026-08-17.json`](handoff-manifest-2026-08-17.json).
+
 Ngày lập: 2026-08-16
 Phạm vi: M0–M4, M6–M8 và Card mock bonus
 Trạng thái: **Local reference pass; Android emulator E2E pass; device/staging gates còn mở**
