@@ -25,11 +25,13 @@
   },
   "runtimeEvidence": {
     "health": "documents/05-testing/health-sandbox-2026-08-17.json",
+    "devicePreflight": "documents/05-testing/device-preflight-2026-08-17.json",
     "status": "ok",
     "reconciliation": "ok",
     "outbox": "ok",
     "device": "Android emulator emulator-5554",
-    "physicalDevice": false
+    "physicalDevice": false,
+    "maestroAvailableInCurrentShell": false
   },
   "manualReproduction": [
     "Run backend npm run db:migrate, then npm start.",

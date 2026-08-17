@@ -7,7 +7,7 @@ Dùng bản ghi này cho smoke test local ngày 2026-08-16. Không ghi password,
 | Trường | Giá trị |
 | --- | --- |
 | Build version/package | `1.0.0` / `com.example.digitalbanking.mobile` (debug dev-client dùng cho E2E; release cũng đã build) |
-| APK SHA-256 | Debug `9D61EE86309FB00713DE001992D3FDD076CD087C51C9624B448247118BC3E74A`; release `DAFC8332B08B1A4426585A504BD3DF771315CB9BB36289D9ABB6899C45B0EF48` (built after the savings keyboard-submit fix) |
+| APK SHA-256 | Release `468238E016D5C2B302A2C0FEB9B7067D071A425023CA1A68F87DC55F69B61CAE` (bản đang có trong `mobile-app/android/app/build/outputs/apk/release/app-release.apk`) |
 | Device/emulator model | `Pixel_7_API_35` / `sdk_gphone64_x86_64` / `emulator-5554` |
 | OS version | Android 15, API 35 |
 | Build/install time | 2026-08-16 01:21 local time; release APK build/install completed successfully |
@@ -45,3 +45,12 @@ Evidence: Maestro run thành công tương ứng nằm tại `C:\Users\admin\.ma
 - APK release hiện tại đã chạy lại M0–M4/M8 trên Android emulator; artifact: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
 - Transfer pending-resume đã pass với PostgreSQL persistent: tạo transfer `PENDING`, force-stop, mở lại và cập nhật trạng thái; artifact: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
 - Không ghi password, OTP, token hoặc số tài khoản đầy đủ vào artifact/report. Thiết bị Android thật, QR camera native, biometric native và staging vẫn là gate mở.
+
+## Preflight trước mỗi lần chạy thiết bị
+
+Từ thư mục `mobile-app`, chạy `npm run device:preflight`. Lệnh này kiểm tra ADB, thiết bị đang ở trạng thái `device`, package app, backend `/healthz` và khả năng phát hiện Maestro. Kết quả chỉ gồm thông tin chẩn đoán không nhạy cảm; không in password, OTP, token, PIN hoặc số tài khoản.
+
+- Chạy local với emulator hoặc thiết bị Android đã kết nối: `npm run device:preflight`.
+- Đóng gate thiết bị thật: `npm run device:preflight -- --require-physical`.
+- Nếu chỉ có emulator, kết quả local có thể đạt nhưng lệnh `--require-physical` cố ý trả lỗi để không nhầm bằng chứng emulator với thiết bị thật.
+- Kết quả preflight đã lưu tại [`device-preflight-2026-08-17.json`](device-preflight-2026-08-17.json).

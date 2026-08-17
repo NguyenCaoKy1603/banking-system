@@ -1,0 +1,33 @@
+{
+  "date": "2026-08-17",
+  "packageName": "com.example.digitalbanking.mobile",
+  "adbPath": "C:\\Users\\admin\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
+  "health": {
+    "url": "http://127.0.0.1:5000/healthz",
+    "reachable": true,
+    "status": 200,
+    "applicationStatus": "ok",
+    "reconciliation": "ok",
+    "outbox": "ok"
+  },
+  "maestroInstalled": false,
+  "devices": [
+    {
+      "serial": "emulator-5554",
+      "state": "device",
+      "kind": "emulator",
+      "model": "sdk_gphone64_x86_64",
+      "apiLevel": "35",
+      "packageInstalled": true
+    }
+  ],
+  "checks": {
+    "adb": true,
+    "deviceConnected": true,
+    "appInstalled": true,
+    "backendHealth": true,
+    "physicalDevice": false,
+    "maestro": false
+  },
+  "note": "Local preflight evidence only; physical Android device and Maestro CLI remain open gates."
+}

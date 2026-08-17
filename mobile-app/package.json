@@ -54,6 +54,7 @@
     "validate:openapi": "node scripts/validate-openapi.cjs",
     "validate:e2e": "node scripts/validate-maestro.cjs",
     "validate:release": "node scripts/validate-release.cjs",
+    "device:preflight": "node scripts/device-preflight.cjs",
     "release:checksum": "node scripts/create-release-checksum.cjs",
     "typecheck": "npm run generate:routes && tsc --noEmit",
     "test": "jest",
