@@ -55,6 +55,7 @@
     "validate:e2e": "node scripts/validate-maestro.cjs",
     "validate:release": "node scripts/validate-release.cjs",
     "device:preflight": "node scripts/device-preflight.cjs",
+    "e2e:maestro": "node scripts/run-maestro.cjs",
     "release:checksum": "node scripts/create-release-checksum.cjs",
     "typecheck": "npm run generate:routes && tsc --noEmit",
     "test": "jest",

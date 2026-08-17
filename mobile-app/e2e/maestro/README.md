@@ -34,7 +34,7 @@ maestro test `
   e2e/maestro
 ```
 
-`APP_ID` và dữ liệu test phải do môi trường preview cấp; không ghi credential thật vào flow hoặc repository. Flow cố ý dùng các `testID` ổn định trong app để tránh phụ thuộc vào text hiển thị.
+`APP_ID` và dữ liệu test phải do môi trường preview cấp; không ghi credential thật vào flow hoặc repository. Flow cố ý dùng các `testID` ổn định trong app để tránh phụ thuộc vào text hiển thị. Có thể dùng `npm run e2e:maestro -- test ...` thay cho gọi Maestro trực tiếp; wrapper tự chuẩn hóa `JAVA_HOME` nếu biến môi trường đang trỏ nhầm vào thư mục `bin`.
 
 ## Coverage
 
