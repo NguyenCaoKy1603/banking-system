@@ -52,3 +52,4 @@ Persistent mode dùng `reference_state_snapshots` JSON checkpoint với advisory
 - Persistent HTTP đọc/validate request body trước advisory lock và trả `503 PERSISTENCE_UNAVAILABLE` khi PostgreSQL không truy cập được.
 - Commit hiện hành: `cbe1e71` (health fail-closed), trước đó `c6fcd2a` (request transaction boundary).
 - Snapshot JSON vẫn là persistence reference; repository relational canonical là bước nâng cấp còn mở, không được tuyên bố là đã hoàn thành.
+- Health JSON an toàn (không chứa credential/token/OTP) được lưu tại [`health-sandbox-2026-08-17.json`](health-sandbox-2026-08-17.json).
