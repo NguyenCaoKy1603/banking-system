@@ -1,15 +1,15 @@
 {
   "date": "2026-08-17",
   "branch": "codex/mini-core-banking-sandbox",
-  "codeCommit": "fc8380c",
-  "documentationCommit": "4ef7417",
+  "codeCommit": "46ddd6d",
+  "documentationCommit": "46ddd6d",
   "evidenceCommit": "a0b446d",
   "scope": "simulated banking with virtual money only",
   "backend": {
     "storage": "postgres",
     "database": "PostgreSQL 16 disposable/local sandbox",
     "databaseTablesValidated": 28,
-    "testPass": "69/69",
+    "testPass": "70/70",
     "criticalApiPass": "8/8",
     "relationalRegressionPass": "1/1",
     "openApiPathsValidated": 44,

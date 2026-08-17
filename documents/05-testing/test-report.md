@@ -7,7 +7,7 @@
 Ngày lập: 2026-08-16
 Phạm vi: M0–M4, M6–M8 và Card mock bonus
 Trạng thái: **Local reference pass; Android emulator E2E pass; device/staging gates còn mở**
-Backend verification checkpoint hiện hành: code/documentation/evidence `fc8380c`; historical backend gate `595afc3` remains referenced in the audit trail. The checkpoint includes the current M6/M7, account-reveal and offline-retry evidence.
+Backend verification checkpoint hiện hành: code `46ddd6d`; documentation/evidence emulator giữ theo các artifact đã ghi trong manifest; historical backend gate `595afc3` remains referenced in the audit trail. The checkpoint includes the current M6/M7, account-reveal and offline-retry evidence.
 
 ## Kết quả đã chạy
 
@@ -35,7 +35,7 @@ Backend verification checkpoint hiện hành: code/documentation/evidence `fc838
 - Đã có APK release local, package/checksum và log Maestro trên emulator; chưa có video cold start/crash-resume, camera thật hoặc biometric prompt thật.
 - Transfer kill app trước/sau submit và session restore sau force-stop chưa có kết quả native lặp lại; riêng credit pending → restart → resume đã pass bằng flow dedicated.
 - Chưa có staging URL/partner integration đã phê duyệt.
-- Handoff Git: code checkpoint hiện hành `fc8380c`; source/workflow/contract/tài liệu cập nhật đang được chốt trong cùng handoff; clone sạch đã chạy `npm ci` và các gate chính. Chưa push/PR trong phiên này.
+- Handoff Git: code checkpoint hiện hành `46ddd6d`; source/workflow/contract/tài liệu cập nhật đang được chốt trong cùng handoff; clone sạch đã chạy `npm ci` và các gate chính. Chưa push/PR trong phiên này.
 - Chưa có kết quả usability/accessibility với người dùng và chưa có approver cho 14 cảnh báo High.
 
 ## Kết luận
