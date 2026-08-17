@@ -15,6 +15,7 @@
     "sandbox:fund": "node --env-file-if-exists=.env --import=tsx scripts/sandbox-fund.ts",
     "test": "tsx --test src/tests/*.test.ts",
     "test:critical": "tsx --test src/tests/http.test.ts",
+    "test:relational": "tsx --test src/tests/relationalPersistence.test.ts",
     "seed:e2e": "node --env-file-if-exists=.env --import=tsx scripts/seed-e2e.ts"
   },
   "devDependencies": {

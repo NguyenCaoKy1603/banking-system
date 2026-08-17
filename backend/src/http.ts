@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 
 import { BankingSystem } from "./bankingSystem.js";
 import { DomainError, invalidRequest, notFound, unauthorized } from "./errors.js";
-import { PostgresSnapshotRepository } from "./postgresSnapshotRepository.js";
+import type { RelationalStateOperation } from "./postgresRelationalRepository.js";
 
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 1_000_000;
@@ -1026,7 +1026,9 @@ export function createBankingServer(
 }
 
 export function createPersistentBankingServer(
-  repository: PostgresSnapshotRepository,
+  repository: {
+    withState<T>(initialState: unknown, operation: RelationalStateOperation<T>): Promise<T>;
+  },
   system = new BankingSystem(),
   options: HttpOptions = {},
 ): Server {
@@ -1045,7 +1047,13 @@ export function createPersistentBankingServer(
             parsedBody,
             true,
           );
-          return { result: undefined, nextState: system.exportState() };
+          // handleRequest writes DomainError/500 responses instead of throwing.
+          // Preserve the imported state for every 4xx/5xx response so a
+          // partially-mutated in-memory core can never be committed.
+          return {
+            result: undefined,
+            nextState: bufferedResponse.statusCode >= 400 ? state : system.exportState(),
+          };
         }),
       )
       .then(() => bufferedResponse.flush())

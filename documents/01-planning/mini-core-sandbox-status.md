@@ -6,6 +6,9 @@ Phạm vi: reference sandbox cho đồ án; không phải hệ thống xử lý 
 
 ## Kết quả chính
 
+- PostgreSQL runtime mặc định đã dùng `PostgresRelationalRepository`: customer/account/beneficiary/quote/transfer/transaction/ledger/notification/audit/outbox được chiếu vào bảng relational. Snapshot cũ chỉ được đọc một lần để nâng dữ liệu; state auth tạm thời và M6/M7 bonus nằm theo từng record trong `reference_runtime_records`.
+- `npm run seed:e2e` đã chạy lại trên adapter mới sau restart backend: registration/MFA, Funding, transfer `SUCCEEDED`, savings `SUCCEEDED` và credit activation đều đạt; không in secret.
+
 - M0–M4 và M8 vẫn có trong chương trình: nền tảng, auth/eKYC mô phỏng, account/history, transfer/beneficiary/QR và notification/deep-link.
 - Đăng ký mới hoàn tất qua hai bước OTP; trước khi xác minh chưa tạo user/account. Sau xác minh chỉ có một payment account, số dư 0 VND, không tự tạo beneficiary, savings hoặc credit.
 - Sandbox Funding là thao tác operator riêng, có idempotency và không có customer route. Funding tạo journal cân bằng, transaction và notification.
@@ -21,8 +24,9 @@ Phạm vi: reference sandbox cho đồ án; không phải hệ thống xử lý 
 | --- | --- |
 | Backend typecheck/build | Đạt |
 | Backend unit + HTTP | 68/68 đạt với PostgreSQL persistent local; không có `DATABASE_URL` thì 4 test persistence được skip có chủ ý |
+| Relational persistence regression | 1/1 đạt trên PostgreSQL disposable: restart, pending settlement, reconciliation và concurrent quote submit |
 | Mini Core regression | 7/7 đạt |
-| Database boundary validator | Đạt live PostgreSQL: 27 bảng, cột và constraint chính |
+| Database boundary validator | Đạt live PostgreSQL: 28 bảng, cột và constraint chính |
 | Backend OpenAPI validator | 44 path bắt buộc, 49 exact route guards |
 | Mobile lint/typecheck | Đạt |
 | Mobile unit test | 36 suite, 167 test đạt |
@@ -57,11 +61,11 @@ Sau khi sửa code, khởi động lại backend và reload/rebuild Mobile. Đă
 ## Xác nhận triển khai tiếp theo — 2026-08-17
 
 - Runtime local mặc định đã chuyển sang PostgreSQL persistent; `npm start` đọc `.env`, yêu cầu schema đã migrate và chỉ dùng `BANKING_STORAGE=in-memory` cho unit/reference test nhanh.
-- PostgreSQL 16 local đã chạy đủ migration, database validator xác nhận 27 bảng và constraint chính; health trả reconciliation/outbox `ok`.
+- PostgreSQL 16 local đã chạy đủ migration, database validator xác nhận 28 bảng và constraint chính; health trả reconciliation/outbox `ok`.
 - Backend đạt 66/66 test khi chạy cùng PostgreSQL, typecheck, build, critical API, OpenAPI và dependency audit đều đạt. Dữ liệu user/account/balance đã được kiểm tra còn nguyên sau khi restart backend.
 - Lần chạy Maestro đầu tiên phát hiện lỗi contract notification: dữ liệu funding cũ có loại nội bộ `SANDBOX_FUNDING`, khiến Mobile từ chối cả danh sách. Đã sửa generator và thêm state migration sang notification `SECURITY`, đồng thời thêm regression test.
 - Luồng M0–M4/M8 đã pass trên Android emulator sau sửa: login + MFA, Home, hiện/sao chép số tài khoản đầy đủ ở Home và Account Detail, KYC mô phỏng, beneficiary, QR manual fallback và notification deep-link. Artifact: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
-- Phạm vi vẫn là ngân hàng mô phỏng bằng tiền ảo; chưa kết nối core banking, payment rail, PostgreSQL relational canonical, thiết bị vật lý, camera/biometric native, tải lớn, staging hoặc compliance production.
+- Phạm vi vẫn là ngân hàng mô phỏng bằng tiền ảo; chưa kết nối core banking, payment rail, repository relational production cho toàn bộ M6/M7/auth runtime, thiết bị vật lý, camera/biometric native, tải lớn, staging hoặc compliance production.
 
 ## Xác nhận transfer pending sau restart — 2026-08-17
 
@@ -75,7 +79,7 @@ Sau khi sửa code, khởi động lại backend và reload/rebuild Mobile. Đă
 
 1. Đóng gói reproducible: chạy lại quality gate từ clone sạch, xác nhận CI dùng PostgreSQL service và giữ `.env`, secret, `node_modules`, `dist` ngoài Git.
 2. Hardening transfer: thêm/duy trì test concurrency, retry, timeout/offline, hết hạn quote/OTP, cleanup dữ liệu hết hạn và health fail khi DB/outbox lỗi.
-3. Nâng persistence nếu cần bàn giao dài hạn: thay snapshot JSON bằng repository relational canonical, migration từ database rỗng và kiểm thử transaction quote → transfer → ledger → outbox.
+3. Hoàn thiện persistence dài hạn nếu cần bàn giao ngoài reference: mở rộng repository relational cho toàn bộ M6/M7 và auth runtime, migration từ database rỗng, backup/restore rehearsal và kiểm thử transaction quote → transfer → ledger → outbox.
 4. Mở rộng bằng chứng thiết bị: Android thật cho camera QR, background/resume và permission; iOS chỉ khi được đưa vào scope; không coi emulator là thiết bị thật.
 5. Hồ sơ bàn giao: chốt commit SHA, test report, health JSON, checksum APK, runbook giả lập và video/ảnh không chứa OTP, token hoặc số tài khoản đầy đủ.
 

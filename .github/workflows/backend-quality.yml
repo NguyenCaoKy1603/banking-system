@@ -78,3 +78,8 @@ jobs:
 
       - name: Critical API tests
         run: npm run test:critical
+
+      - name: Relational persistence regression
+        env:
+          RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
+        run: npm run test:relational

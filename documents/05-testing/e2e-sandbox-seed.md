@@ -6,7 +6,7 @@
 
 ## Chạy lại từ trạng thái sạch
 
-Reference backend mặc định dùng in-memory store. Dừng và khởi động lại server để reset dữ liệu. Persistent PostgreSQL sandbox không dùng reset này; hãy dùng snapshot key/database disposable riêng cho test.
+Reference backend mặc định dùng PostgreSQL relational store. Dừng và khởi động lại server không reset dữ liệu; muốn làm sạch hãy dùng database disposable riêng hoặc chạy seed với user/test data mới. Chế độ `BANKING_STORAGE=in-memory` chỉ dành cho test nhanh.
 
 ```powershell
 cd backend
@@ -72,7 +72,7 @@ Khởi động server với `$env:BANKING_SETTLE_IMMEDIATELY = "0"` trước khi
 
 - `E2E_PASSWORD` chỉ tồn tại trong shell/secret của môi trường test, không commit vào repository.
 - Seed output chỉ dùng cho local/preview sandbox; không dùng OTP sandbox hoặc account ID này cho staging/production.
-- Chạy lại từ trạng thái sạch bằng cách restart in-memory backend; không coi đây là persistence test.
+- Với PostgreSQL relational, không reset bằng restart; dùng database disposable riêng hoặc user seed mới. Restart chỉ kiểm tra dữ liệu có còn sau khi backend khởi động lại.
 
 ## M7 credit
 

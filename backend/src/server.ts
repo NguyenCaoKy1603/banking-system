@@ -1,6 +1,6 @@
 import { createBankingServer, createPersistentBankingServer } from "./http.js";
 import { BankingSystem } from "./bankingSystem.js";
-import { PostgresSnapshotRepository } from "./postgresSnapshotRepository.js";
+import { PostgresRelationalRepository } from "./postgresRelationalRepository.js";
 
 type StepUpMethod = "OTP" | "BIOMETRIC";
 
@@ -47,11 +47,11 @@ async function start(): Promise<void> {
     authChallengeMethods: readConfiguredMethods(),
   });
   const httpOptions = allowedOrigins.length > 0 ? { allowedOrigins } : undefined;
-  let repository: PostgresSnapshotRepository | undefined;
+  let repository: PostgresRelationalRepository | undefined;
   let server;
 
   if (storage === "postgres") {
-    repository = new PostgresSnapshotRepository();
+    repository = new PostgresRelationalRepository();
     await repository.initialize();
     server = createPersistentBankingServer(repository, system, httpOptions);
   } else if (storage === "in-memory") {

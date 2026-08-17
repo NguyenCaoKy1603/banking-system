@@ -48,6 +48,9 @@ const requiredTablesByMigration: Record<string, string[]> = {
     "credit_payment_quotes",
     "credit_payments",
   ],
+  "005_relational_reference_runtime": [
+    "reference_runtime_records",
+  ],
 };
 
 const pool = new Pool({ connectionString: databaseUrl });

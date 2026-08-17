@@ -1,10 +1,10 @@
 # Backend hardening test report
 
-> Cập nhật hiện hành 2026-08-17: trên branch `codex/mini-core-banking-sandbox`, suite hiện có 68/68 test đạt khi có `DATABASE_URL`; critical API 8/8, migration từ PostgreSQL rỗng và live validator 27 bảng đều đạt. Không có `DATABASE_URL` thì 4 test persistence được skip; đó là hành vi có chủ ý của test local.
+> Cập nhật hiện hành 2026-08-17: trên branch `codex/mini-core-banking-sandbox`, suite hiện có 68/68 test đạt khi có `DATABASE_URL`; relational regression 1/1 đạt trên database disposable; critical API 8/8, migration từ PostgreSQL rỗng và live validator 28 bảng đều đạt. Không có `DATABASE_URL` thì 4 test snapshot persistence và relational regression không có `RELATIONAL_DATABASE_URL` sẽ được skip; đó là hành vi có chủ ý của test local.
 
 Ngày kiểm tra: 2026-08-17
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
-Trạng thái: **In-memory và PostgreSQL persistent sandbox pass; relational production adapter vẫn là DRAFT**
+Trạng thái: **In-memory và PostgreSQL persistent reference relational pass; production adapter toàn domain vẫn là DRAFT**
 Commit kiểm thử: `0f06b77` (`Harden M7 state migration and credit payment flow`)
 
 ## Đã kiểm chứng local
@@ -12,8 +12,9 @@ Commit kiểm thử: `0f06b77` (`Harden M7 state migration and credit payment fl
 | Gate | Kết quả |
 | --- | --- |
 | Typecheck/build | Đạt |
-| Database boundary validator | Đạt, kiểm tra cấu trúc SQL và live PostgreSQL: 27 bảng, cột UUID/transfer/notification/savings/credit và constraint chính |
+| Database boundary validator | Đạt, kiểm tra cấu trúc SQL và live PostgreSQL: 28 bảng, cột UUID/transfer/notification/runtime và constraint chính |
 | Unit + HTTP tests | 68 test definition; PostgreSQL 16 local: 68/68 đạt, gồm body validation trước transaction và fail-closed khi DB unavailable |
+| Relational persistence | `npm run test:relational`: 1/1 đạt trên database disposable, gồm restart, pending settlement, reconciliation và concurrent quote submit |
 | Critical HTTP tests | 8 đạt |
 | Backend dependency audit | 0 vulnerability |
 | Quote correctness | Snapshot beneficiary, one-time quote, idempotent retry |
@@ -29,7 +30,9 @@ Commit kiểm thử: `0f06b77` (`Harden M7 state migration and credit payment fl
 
 Test `persistence.test.ts` dùng `DATABASE_URL`, chạy migration từ database rỗng, kiểm tra restart state, HTTP restart và concurrent submit bằng hai idempotency key khác nhau. Gate local đã chạy với PostgreSQL 16 trong Docker: migration từ database rỗng đạt, chạy lại migration không lỗi, live schema validation đạt, cả 68/68 test đạt và chỉ một request concurrent được debit. Workflow [`backend-quality.yml`](../../.github/workflows/backend-quality.yml) tái hiện cùng gate trên CI service.
 
-Persistent mode dùng `reference_state_snapshots` JSON checkpoint với advisory transaction lock. Đây là bước trung gian cho sandbox; chưa phải repository relational production.
+`relationalPersistence.test.ts` chạy bằng `RELATIONAL_DATABASE_URL` trên database disposable riêng, kiểm tra cùng một quote khi hai request đến đồng thời, pending hold → settle, restart và reconciliation sau khi ghi vào bảng relational.
+
+Persistent mode dùng `PostgresRelationalRepository` với advisory transaction lock. Core M0–M4/M8 ghi vào bảng relational; auth runtime và M6/M7 bonus dùng record-level JSONB. `reference_state_snapshots` chỉ là đường nâng dữ liệu cũ một lần; đây vẫn là sandbox-only.
 
 ## Còn thiếu
 
@@ -42,14 +45,15 @@ Persistent mode dùng `reference_state_snapshots` JSON checkpoint với advisory
 - Credit test bao phu seed balance/minimum, quote one-time, payment ledger/reconciliation, pending resume, lock/unlock va HTTP idempotency flow.
 - `npm test`: local khong co `DATABASE_URL` 58 test, 54 pass, 4 skip; voi PostgreSQL 16 tam thoi 58/58 pass, bao gom restart/concurrency Credit va overdue notification idempotency.
 - `npm run test:critical` 8/8; typecheck, build, OpenAPI validator va Backend dependency audit (0 vulnerability) dat.
-- `003_credit_sandbox.sql` da migrate tu database rong; live validator kiem tra 27 table definitions va constraints chinh.
+- `003_credit_sandbox.sql` và `005_relational_reference_runtime.sql` đã migrate từ database rỗng; live validator kiểm tra 28 table definitions và constraints chính.
 - `seed:e2e` da chay thanh cong voi MFA sandbox: transfer va savings `SUCCEEDED`, Credit card/statement seed thanh cong; khong in password/OTP.
-- Persistent mode van la snapshot adapter cho sandbox, chua phai repository relational production.
+- Persistent mode đã chuyển sang relational reference adapter cho core; repository production toàn domain và backup/restore rehearsal vẫn mở.
 
 ## Xác nhận hiện hành — 2026-08-17
 
 - Clone sạch đã chạy `npm ci`; backend typecheck/build/OpenAPI đạt, migration từ database PostgreSQL rỗng đạt và test backend 68/68 đạt.
 - Persistent HTTP đọc/validate request body trước advisory lock và trả `503 PERSISTENCE_UNAVAILABLE` khi PostgreSQL không truy cập được.
 - Commit hiện hành: `cbe1e71` (health fail-closed), trước đó `c6fcd2a` (request transaction boundary).
-- Snapshot JSON vẫn là persistence reference; repository relational canonical là bước nâng cấp còn mở, không được tuyên bố là đã hoàn thành.
+- Runtime mặc định hiện dùng `PostgresRelationalRepository`: core M0–M4/M8 được lưu trong bảng relational; auth runtime và M6/M7 bonus dùng `reference_runtime_records` theo từng record. Snapshot JSON chỉ còn đường nâng dữ liệu cũ một lần, không phải nguồn ghi mới.
+- `npm run seed:e2e` đã chạy lại trên adapter relational sau restart backend: registration/MFA → Sandbox Funding → transfer `SUCCEEDED` → savings `SUCCEEDED` → credit application/activation; stdout không chứa password/OTP.
 - Health JSON an toàn (không chứa credential/token/OTP) được lưu tại [`health-sandbox-2026-08-17.json`](health-sandbox-2026-08-17.json).

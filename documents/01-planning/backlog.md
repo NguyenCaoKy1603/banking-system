@@ -36,7 +36,7 @@ Auth/session, Account/History, Transfer/idempotency/pending, error handling, tes
 | --- | --- | --- |
 | S1 — Reproducible handoff | Clone sạch, migration, CI PostgreSQL, lockfile và tài liệu chạy | `npm ci` + migration + quality gate chạy lại được; không có secret/artifact thừa trong Git |
 | S2 — Transfer hardening | Concurrency, retry/timeout/offline, quote/OTP expiry, outbox và health | Không double-debit; lỗi mạng có retry/resume; health báo lỗi đúng khi DB/outbox hỏng |
-| S3 — Persistent dài hạn | Repository relational canonical thay snapshot JSON | Database rỗng chạy migration; restart còn dữ liệu; transaction quote → transfer → ledger → outbox có rollback/commit rõ |
+| S3 — Persistent reference relational | Core M0–M4/M8 đã chiếu vào bảng relational; runtime/auth và M6/M7 vẫn record-level reference | Database rỗng chạy migration; restart còn dữ liệu; transaction quote → transfer → ledger → outbox có rollback/commit rõ; mở rộng toàn bộ domain vẫn là việc dài hạn |
 | S4 — Device evidence | Android thật cho camera QR, permission, background/resume; iOS nếu được duyệt | Có report/video/ảnh không chứa secret; emulator và thiết bị thật phân biệt rõ |
 | S5 — Bàn giao đồ án | Commit SHA, test report, health JSON, APK checksum, runbook demo | Người khác tái hiện được bằng dữ liệu giả lập và biết rõ giới hạn reference |
 
