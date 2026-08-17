@@ -15,6 +15,7 @@ npm run seed:e2e
 Lệnh reset chỉ chạy khi `BANKING_ENV` không phải `production`, database là PostgreSQL local
 (`localhost`, `127.0.0.1` hoặc `::1`) và tên database kết thúc bằng `test`, `sandbox` hoặc `e2e`.
 Lệnh không xóa migration schema; nó chỉ xóa dữ liệu reference sandbox để tạo lại bộ dữ liệu E2E.
+Đã diễn tập trên một PostgreSQL database tạm: migration thành công, bản ghi giả được xóa về 0 và database tạm được dọn sau kiểm tra.
 
 ## Chạy lại từ trạng thái sạch
 

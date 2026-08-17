@@ -52,6 +52,7 @@ Persistent mode dùng `PostgresRelationalRepository` với advisory transaction 
 ## Xác nhận hiện hành — 2026-08-17
 
 - Clone sạch đã chạy `npm ci`; backend typecheck/build/OpenAPI đạt, migration từ database PostgreSQL rỗng đạt và test backend 70/70 đạt khi khai báo cả hai biến database.
+- `reset:sandbox` đã được diễn tập trên database PostgreSQL tạm: guard từ chối target không đúng quy ước, target local hợp lệ được reset và bản ghi kiểm tra về 0; database tạm được xóa sau rehearsal.
 - Persistent HTTP đọc/validate request body trước advisory lock và trả `503 PERSISTENCE_UNAVAILABLE` khi PostgreSQL không truy cập được.
 - Backend source checkpoint: `dd515ad`; health fail-closed và request transaction boundary nằm trong lịch sử trước đó.
 - Runtime mặc định hiện dùng `PostgresRelationalRepository`: core M0–M4/M8 được lưu trong bảng relational; auth runtime và M6/M7 bonus dùng `reference_runtime_records` theo từng record. Snapshot JSON chỉ còn đường nâng dữ liệu cũ một lần, không phải nguồn ghi mới.
