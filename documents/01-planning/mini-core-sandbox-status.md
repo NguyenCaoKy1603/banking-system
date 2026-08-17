@@ -50,8 +50,8 @@ PostgreSQL thật, tải/concurrency quy mô lớn, thiết bị vật lý, came
 ## APK build mới
 
 - `assembleRelease`: thành công ngày 2026-08-17; APK nằm tại `mobile-app/android/app/build/outputs/apk/release/app-release.apk`.
-- SHA-256 bản sandbox emulator: `468238E016D5C2B302A2C0FEB9B7067D071A425023CA1A68F87DC55F69B61CAE`.
-- Bản này dùng `EXPO_PUBLIC_SANDBOX_HTTP=1` và URL HTTP nội bộ `10.0.2.2`; chỉ dùng cho emulator/local sandbox, không dùng production.
+- SHA-256 bản sandbox emulator hiện hành: `CE23E7CC31C065217C885404FCFF2F23A788DB1D8727EE7681EA1C067A2DC661`.
+- Bản này dùng `EXPO_PUBLIC_SANDBOX_HTTP=1` và URL HTTP nội bộ `127.0.0.1:5000` qua `adb reverse`; chỉ dùng cho emulator/local sandbox, không dùng production.
 - Đây là artifact để cài kiểm tra thủ công; cần chạy lại Maestro/E2E đầy đủ trước khi coi là bằng chứng hoàn tất.
 
 ## Cách kiểm tra số tài khoản đầy đủ

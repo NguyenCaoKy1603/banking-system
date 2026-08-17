@@ -1,6 +1,7 @@
 {
   "date": "2026-08-17",
   "packageName": "com.example.digitalbanking.mobile",
+  "apkSha256": "CE23E7CC31C065217C885404FCFF2F23A788DB1D8727EE7681EA1C067A2DC661",
   "adbPath": "C:\\Users\\admin\\AppData\\Local\\Android\\Sdk\\platform-tools\\adb.exe",
   "health": {
     "url": "http://127.0.0.1:5000/healthz",

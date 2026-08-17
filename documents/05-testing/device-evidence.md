@@ -7,10 +7,10 @@ Dùng bản ghi này cho smoke test local ngày 2026-08-16. Không ghi password,
 | Trường | Giá trị |
 | --- | --- |
 | Build version/package | `1.0.0` / `com.example.digitalbanking.mobile` (debug dev-client dùng cho E2E; release cũng đã build) |
-| APK SHA-256 | Release `468238E016D5C2B302A2C0FEB9B7067D071A425023CA1A68F87DC55F69B61CAE` (bản đang có trong `mobile-app/android/app/build/outputs/apk/release/app-release.apk`) |
+| APK SHA-256 | Release `CE23E7CC31C065217C885404FCFF2F23A788DB1D8727EE7681EA1C067A2DC661` (bản vừa build/cài trên emulator) |
 | Device/emulator model | `Pixel_7_API_35` / `sdk_gphone64_x86_64` / `emulator-5554` |
 | OS version | Android 15, API 35 |
-| Build/install time | 2026-08-16 01:21 local time; release APK build/install completed successfully |
+| Build/install time | 2026-08-17 local time; release APK force-rebuild/install/launch completed successfully |
 | API environment | Reference backend local; emulator release build dùng `EXPO_PUBLIC_SANDBOX_HTTP=1`, `EXPO_PUBLIC_API_URL=http://127.0.0.1:5000/api/v1` và `adb reverse tcp:5000 tcp:5000`; production vẫn bắt buộc HTTPS |
 | Maestro version | 2.8.0; 9 flow files passed syntax validation; critical M0–M4/M8, M6 savings, credit payment, credit pending-resume, Credit card lock/restart/unlock và Credit overdue notification flow đã pass |
 | Tester/reviewer | Codex local verification; human device reviewer pending |
@@ -46,6 +46,7 @@ Evidence: Maestro run thành công tương ứng nằm tại `C:\Users\admin\.ma
 - Transfer pending-resume đã pass với PostgreSQL persistent: tạo transfer `PENDING`, force-stop, mở lại và cập nhật trạng thái; artifact: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
 - Không ghi password, OTP, token hoặc số tài khoản đầy đủ vào artifact/report. Thiết bị Android thật, QR camera native, biometric native và staging vẫn là gate mở.
 - Mobile đã có trạng thái hiển thị riêng cho mất kết nối, timeout và yêu cầu bị hủy, kèm nút thử lại; unit test đã kiểm tra mapping này. Kiểm thử các trạng thái đó khi tắt mạng trên thiết bị thật vẫn chưa chạy.
+- APK release sau thay đổi UI đã được force-rebuild với cấu hình sandbox HTTP, cài lại và mở thành công trên emulator; tiến trình app còn sống và logcat không có chữ ký crash.
 
 ## Preflight trước mỗi lần chạy thiết bị
 
