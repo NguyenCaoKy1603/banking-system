@@ -1,8 +1,8 @@
 {
   "date": "2026-08-17",
   "branch": "codex/mini-core-banking-sandbox",
-  "codeCommit": "cab97e0",
-  "documentationCommit": "27d0c6d",
+  "codeCommit": "4ec5225",
+  "documentationCommit": "4ec5225",
   "evidenceCommit": "dd515ad",
   "scope": "simulated banking with virtual money only",
   "backend": {
