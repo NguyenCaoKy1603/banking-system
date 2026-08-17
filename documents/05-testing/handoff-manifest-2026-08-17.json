@@ -2,8 +2,8 @@
   "date": "2026-08-17",
   "branch": "codex/mini-core-banking-sandbox",
   "codeCommit": "fc8380c",
-  "documentationCommit": "fc8380c",
-  "evidenceCommit": "fc8380c",
+  "documentationCommit": "4ef7417",
+  "evidenceCommit": "4ef7417",
   "scope": "simulated banking with virtual money only",
   "backend": {
     "storage": "postgres",
