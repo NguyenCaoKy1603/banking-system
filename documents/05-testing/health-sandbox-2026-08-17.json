@@ -1,7 +1,7 @@
 {
   "checkedAt": "2026-08-17T06:51:47.554Z",
   "branch": "codex/mini-core-banking-sandbox",
-  "codeCommit": "8f4dce5",
+  "codeCommit": "34e5849",
   "storage": "postgres",
   "scope": "simulated banking with virtual money only",
   "status": "ok",

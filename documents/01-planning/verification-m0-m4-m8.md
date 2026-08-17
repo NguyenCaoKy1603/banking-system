@@ -3,7 +3,7 @@
 > Cập nhật hiện hành 2026-08-17: phần bằng chứng M0–M4/M8 đã được chạy lại trên APK release hiện tại; transfer pending-resume có artifact riêng. Các checkpoint cũ bên dưới được giữ để truy vết. Bảng trạng thái canonical nằm tại [`mini-core-sandbox-status.md`](mini-core-sandbox-status.md).
 
 Ngày kiểm tra: 2026-08-17
-Evidence checkpoint hiện hành: `8c49c67`; code hardening `8f4dce5`; các checkpoint cũ chỉ giữ để truy vết.
+Evidence checkpoint hiện hành: `34e5849`; các checkpoint cũ chỉ giữ để truy vết.
 
 ## Phạm vi đã đối chiếu
 
