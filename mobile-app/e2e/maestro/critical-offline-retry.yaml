@@ -1,0 +1,30 @@
+appId: ${APP_ID}
+
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible:
+      id: login-email
+    timeout: 30000
+- tapOn:
+    id: login-email
+- inputText: offline-check@example.invalid
+- tapOn:
+    id: login-password
+- inputText: OfflineCheckPassword123!
+- pressKey: BACK
+- tapOn:
+    id: login-submit
+- extendedWaitUntil:
+    visible:
+      id: login-request-error
+    timeout: 15000
+- assertVisible: Đang ngoại tuyến
+- tapOn:
+    id: login-request-error-retry
+- extendedWaitUntil:
+    visible:
+      id: login-request-error
+    timeout: 30000
+- assertVisible: Đang ngoại tuyến

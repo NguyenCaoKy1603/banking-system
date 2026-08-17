@@ -11,6 +11,7 @@ import {
 } from "react-native";
 
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
@@ -28,11 +29,19 @@ const initialValues: LoginFormValues = {
   password: "",
 };
 
+function isRetryableRequestError(error: unknown): boolean {
+  return (
+    error instanceof ApiError &&
+    ["NETWORK_ERROR", "TIMEOUT", "REQUEST_ABORTED"].includes(error.code)
+  );
+}
+
 export function LoginScreen() {
   const { login, pendingLoginChallenge, verifyLoginChallenge } = useAuth();
   const [values, setValues] = useState<LoginFormValues>(initialValues);
   const [errors, setErrors] = useState<LoginFieldErrors>({});
   const [serverError, setServerError] = useState<string | undefined>();
+  const [requestError, setRequestError] = useState<unknown>();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [challengeProof, setChallengeProof] = useState("");
   const [isVerifyingChallenge, setIsVerifyingChallenge] = useState(false);
@@ -41,6 +50,7 @@ export function LoginScreen() {
     setValues((currentValues) => ({ ...currentValues, [field]: value }));
     setErrors((currentErrors) => ({ ...currentErrors, [field]: undefined }));
     setServerError(undefined);
+    setRequestError(undefined);
   }
 
   async function handleLogin() {
@@ -51,6 +61,7 @@ export function LoginScreen() {
     setServerError(undefined);
 
     if (!result.isValid) {
+      setRequestError(undefined);
       return;
     }
 
@@ -59,6 +70,12 @@ export function LoginScreen() {
     try {
       await login(result.values);
     } catch (error: unknown) {
+      if (isRetryableRequestError(error)) {
+        setRequestError(error);
+        return;
+      }
+
+      setRequestError(undefined);
       if (error instanceof ApiError) {
         setErrors({
           email: error.fieldErrors?.email,
@@ -93,6 +110,12 @@ export function LoginScreen() {
         proof: challengeProof,
       });
     } catch (error: unknown) {
+      if (isRetryableRequestError(error)) {
+        setRequestError(error);
+        return;
+      }
+
+      setRequestError(undefined);
       setServerError(
         error instanceof ApiError
           ? error.message
@@ -182,6 +205,15 @@ export function LoginScreen() {
                   {serverError}
                 </Text>
               ) : null}
+              {requestError ? (
+                <RequestErrorNotice
+                  error={requestError}
+                  fallbackMessage="Không thể hoàn tất đăng nhập. Vui lòng thử lại."
+                  isRetrying={isVerifyingChallenge}
+                  onRetry={() => void handleVerifyChallenge()}
+                  testID="login-request-error"
+                />
+              ) : null}
               {pendingLoginChallenge.methods.includes("OTP") ? (
                 <PrimaryButton
                   disabled={isVerifyingChallenge}
@@ -229,6 +261,15 @@ export function LoginScreen() {
                 <Text accessibilityLiveRegion="polite" style={styles.serverError}>
                   {serverError}
                 </Text>
+              ) : null}
+              {requestError ? (
+                <RequestErrorNotice
+                  error={requestError}
+                  fallbackMessage="Không thể kết nối để đăng nhập. Vui lòng thử lại."
+                  isRetrying={isSubmitting}
+                  onRetry={() => void handleLogin()}
+                  testID="login-request-error"
+                />
               ) : null}
               <PrimaryButton
                 disabled={isSubmitting}

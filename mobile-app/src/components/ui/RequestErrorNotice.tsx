@@ -12,6 +12,7 @@ type RequestErrorNoticeProps = {
   fallbackMessage: string;
   onRetry: () => void;
   retryLabel?: string;
+  isRetrying?: boolean;
   testID?: string;
 };
 
@@ -20,6 +21,7 @@ export function RequestErrorNotice({
   fallbackMessage,
   onRetry,
   retryLabel = "Thử lại",
+  isRetrying = false,
   testID = "request-error-notice",
 }: RequestErrorNoticeProps) {
   const presentation = getRequestErrorPresentation(error, fallbackMessage);
@@ -34,7 +36,12 @@ export function RequestErrorNotice({
       <Text accessibilityLiveRegion="polite" style={styles.message}>
         {presentation.message}
       </Text>
-      <PrimaryButton label={retryLabel} onPress={onRetry} testID={`${testID}-retry`} />
+      <PrimaryButton
+        disabled={isRetrying}
+        label={isRetrying ? "Đang thử lại..." : retryLabel}
+        onPress={onRetry}
+        testID={`${testID}-retry`}
+      />
     </View>
   );
 }
