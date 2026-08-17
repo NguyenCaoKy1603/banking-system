@@ -51,7 +51,7 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 ## Cập nhật sau khi hoàn tất kế hoạch persistent local — 2026-08-17
 
 - M0–M4 và M8 đã được kiểm tra lại trên APK release mới với Android emulator; artifact mới nhất là `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
-- Backend mặc định chạy PostgreSQL persistent, đã kiểm tra migration từ database local, restart giữ user/account/balance, và 66/66 test backend đạt khi có `DATABASE_URL`.
+- Backend mặc định chạy PostgreSQL persistent, đã kiểm tra migration từ database local, restart giữ user/account/balance, và 68/68 test backend đạt khi có `DATABASE_URL`.
 - Đã xử lý lỗi tương thích notification giữa seed và Mobile bằng migration trạng thái; không để nhãn kỹ thuật funding nội bộ xuất hiện như loại notification người dùng.
 - Phần còn mở của các milestone là relational repository production cho toàn domain, device thật, camera/biometric native, performance/concurrency quy mô lớn, remote CI và các kiểm soát staging/production.
 

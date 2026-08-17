@@ -38,7 +38,7 @@ Persistent mode dùng `PostgresRelationalRepository` với advisory transaction 
 
 - Chưa có log của một CI run remote; local PostgreSQL integration đã đạt với Docker PostgreSQL 16.
 - Chưa có migration rollback/backup-restore rehearsal.
-- Chưa wire từng nghiệp vụ vào `customers`, `transfers`, `ledger_entries`, `outbox_events` production tables.
+- Core M0–M4/M8 đã wire vào các bảng relational reference tương ứng; auth runtime và M6/M7 vẫn lưu record-level JSONB, chưa phải repository production toàn domain.
 
 ## Cap nhat xac nhan cuoi M7 - 2026-08-15
 

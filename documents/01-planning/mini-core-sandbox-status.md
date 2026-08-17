@@ -34,16 +34,16 @@ Phạm vi: reference sandbox cho đồ án; không phải hệ thống xử lý 
 | Web export | Đạt 33 static route khi dùng URL HTTPS preview cho bước export |
 | E2E seed tích hợp | Đạt trên PostgreSQL persistent local: clean registration → Funding → transfer → savings → credit activation |
 
-## Bằng chứng cần chạy lại
+## Bằng chứng hiện hành và phần cần bổ sung
 
-Các artifact Maestro/APK ngày 2026-08-16 được tạo trước branch này, nên không dùng chúng để khẳng định các flow clean-registration/credit-activation mới. Cần chạy lại trên APK hiện tại:
+Các artifact ngày 2026-08-16 chỉ giữ vai trò truy vết lịch sử, không dùng để khẳng định các flow clean-registration/credit-activation mới. Bằng chứng hiện hành trên APK release ngày 2026-08-17 đã xác nhận M0–M4/M8 và transfer pending-resume trên emulator; các gate còn phải bổ sung là thiết bị thật, native camera/biometric và staging:
 
-1. M0–M4/M8: đăng ký OTP → login → Home → Hiện đầy đủ/Sao chép số tài khoản → transfer người nhận thật → notification/deep-link.
-2. Savings: chọn ô Tiền gửi → quote → OTP động → mở khoản.
-3. Credit: đăng ký hồ sơ → OTP → kích hoạt → thẻ xuất hiện với dư nợ 0.
-4. Card unlock/transfer/pending-resume sau restart.
+1. M0–M4/M8 trên thiết bị Android thật: đăng ký OTP → login → Home → Hiện đầy đủ/Sao chép số tài khoản → transfer người nhận thật → notification/deep-link.
+2. Savings trên APK hiện tại: chọn ô Tiền gửi → quote → OTP động → mở khoản.
+3. Credit trên APK hiện tại: đăng ký hồ sơ → OTP → kích hoạt → thẻ xuất hiện với dư nợ 0.
+4. Card unlock/transfer/pending-resume sau restart trên lifecycle native và thiết bị thật.
 
-Kiểm tra nhanh trên Android emulator `emulator-5554` ngày 2026-08-17 đã hoàn tất cho phạm vi số tài khoản: cài APK sandbox, đăng nhập dữ liệu giả lập, Home và Account Detail đều hiện số dạng 12 chữ số khi bấm `Hiện`; hai nút `Sao chép` đều hiển thị thông báo thành công. Không lưu số đầy đủ, mật khẩu hoặc OTP vào bằng chứng. Đây chưa phải là lần chạy lại toàn bộ Maestro/E2E.
+Kiểm tra trên Android emulator `emulator-5554` ngày 2026-08-17 đã hoàn tất cho M0–M4/M8 và phạm vi số tài khoản: cài APK sandbox, đăng nhập dữ liệu giả lập, Home và Account Detail đều hiện số dạng 12 chữ số khi bấm `Hiện`; hai nút `Sao chép` đều hiển thị thông báo thành công. Không lưu số đầy đủ, mật khẩu hoặc OTP vào bằng chứng. Đây vẫn chưa phải bằng chứng thiết bị Android thật hoặc staging.
 
 PostgreSQL thật, tải/concurrency quy mô lớn, thiết bị vật lý, camera/biometric native, staging/partner integration, signing và compliance vẫn là phần còn thiếu.
 
@@ -62,7 +62,7 @@ Sau khi sửa code, khởi động lại backend và reload/rebuild Mobile. Đă
 
 - Runtime local mặc định đã chuyển sang PostgreSQL persistent; `npm start` đọc `.env`, yêu cầu schema đã migrate và chỉ dùng `BANKING_STORAGE=in-memory` cho unit/reference test nhanh.
 - PostgreSQL 16 local đã chạy đủ migration, database validator xác nhận 28 bảng và constraint chính; health trả reconciliation/outbox `ok`.
-- Backend đạt 66/66 test khi chạy cùng PostgreSQL, typecheck, build, critical API, OpenAPI và dependency audit đều đạt. Dữ liệu user/account/balance đã được kiểm tra còn nguyên sau khi restart backend.
+- Backend đạt 68/68 test khi chạy cùng PostgreSQL, typecheck, build, critical API, OpenAPI và dependency audit đều đạt. Dữ liệu user/account/balance đã được kiểm tra còn nguyên sau khi restart backend.
 - Lần chạy Maestro đầu tiên phát hiện lỗi contract notification: dữ liệu funding cũ có loại nội bộ `SANDBOX_FUNDING`, khiến Mobile từ chối cả danh sách. Đã sửa generator và thêm state migration sang notification `SECURITY`, đồng thời thêm regression test.
 - Luồng M0–M4/M8 đã pass trên Android emulator sau sửa: login + MFA, Home, hiện/sao chép số tài khoản đầy đủ ở Home và Account Detail, KYC mô phỏng, beneficiary, QR manual fallback và notification deep-link. Artifact: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
 - Phạm vi vẫn là ngân hàng mô phỏng bằng tiền ảo; chưa kết nối core banking, payment rail, repository relational production cho toàn bộ M6/M7/auth runtime, thiết bị vật lý, camera/biometric native, tải lớn, staging hoặc compliance production.
