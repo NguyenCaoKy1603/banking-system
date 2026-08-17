@@ -20,14 +20,7 @@ import {
 import type { Transaction } from "@/features/accounts/types/account";
 import { filterTransactions, type HistoryDirectionFilter, type HistoryStatusFilter } from "@/features/history/presentation/historyFilters";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
-import { ApiError } from "@/services/api/ApiError";
 import { colors, spacing } from "@/theme";
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof ApiError
-    ? error.message
-    : "Không thể tải lịch sử giao dịch. Vui lòng thử lại.";
-}
 
 function getTransactionAmount(transaction: Transaction): string {
   const prefix = transaction.direction === "CREDIT" ? "+" : "-";
@@ -106,7 +99,7 @@ export function HistoryScreen() {
       setTransactions(page.items);
       setNextCursor(page.nextCursor);
     } catch (requestError: unknown) {
-      setError(getErrorMessage(requestError));
+      setError(requestError);
     } finally {
       setIsLoading(false);
     }
@@ -137,7 +130,7 @@ export function HistoryScreen() {
       ]);
       setNextCursor(page.nextCursor);
     } catch (requestError: unknown) {
-      setError(getErrorMessage(requestError));
+      setError(requestError);
     } finally {
       setIsLoadingMore(false);
     }

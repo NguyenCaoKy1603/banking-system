@@ -22,7 +22,7 @@
     "maestroFlowSyntax": "9 flows",
     "webExportStaticRoutes": 33,
     "apk": "mobile-app/android/app/build/outputs/apk/release/app-release.apk",
-    "apkSha256": "CE23E7CC31C065217C885404FCFF2F23A788DB1D8727EE7681EA1C067A2DC661"
+    "apkSha256": "7AE55E9E388A64AFA01B0058AE7ADC4D31FADCBA84F93ADB296CAC3EA078738D"
   },
   "runtimeEvidence": {
     "health": "documents/05-testing/health-sandbox-2026-08-17.json",

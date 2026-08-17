@@ -7,7 +7,7 @@
 Ngày lập: 2026-08-16
 Phạm vi: M0–M4, M6–M8 và Card mock bonus
 Trạng thái: **Local reference pass; Android emulator E2E pass; device/staging gates còn mở**
-Backend verification checkpoint: code/evidence checkpoint `079e9d2`; implementation hardening `0f06b77`; historical backend gate `595afc3` remains referenced in the audit trail. The checkpoint includes the current M6/M7 and account-reveal evidence.
+Backend verification checkpoint hiện hành: code `8f4dce5`, documentation/evidence `8c49c67`; historical backend gate `595afc3` remains referenced in the audit trail. The checkpoint includes the current M6/M7 and account-reveal evidence.
 
 ## Kết quả đã chạy
 
@@ -17,7 +17,7 @@ Backend verification checkpoint: code/evidence checkpoint `079e9d2`; implementat
 | Mobile typecheck | Đạt |
 | Mobile unit tests | 37 suite, 170 test đạt |
 | Mobile coverage | 84.09% statements, 85.52% branches, 91.95% functions, 85.04% lines |
-| Offline/timeout presentation | Đạt mapping và retry unit test cho `NETWORK_ERROR`, `TIMEOUT`, `REQUEST_ABORTED`; native device evidence còn mở |
+| Offline/timeout presentation | Đạt mapping và retry unit test cho `NETWORK_ERROR`, `TIMEOUT`, `REQUEST_ABORTED`; Home/Account Detail/History giữ nguyên lỗi API để hiển thị đúng loại lỗi, account reveal/copy có retry notice; native device evidence còn mở |
 | OpenAPI required paths | Đạt, 36 path bắt buộc |
 | Native E2E | Android emulator `Pixel_7_API_35`: M0–M4, M6, M8 và Credit sandbox flow đạt; gồm hiện/sao chép đầy đủ số tài khoản, eKYC mô phỏng, beneficiary, QR manual fallback, savings quote/review/OTP và notification deep link |
 | Maestro | 9 flow hợp lệ; M0–M4/M8, M6 savings, credit payment, pending-resume, Credit card lock/restart/unlock và Credit overdue notification chạy thành công trên Android emulator bằng Maestro 2.8.0 |
@@ -35,7 +35,7 @@ Backend verification checkpoint: code/evidence checkpoint `079e9d2`; implementat
 - Đã có APK release local, package/checksum và log Maestro trên emulator; chưa có video cold start/crash-resume, camera thật hoặc biometric prompt thật.
 - Transfer kill app trước/sau submit và session restore sau force-stop chưa có kết quả native lặp lại; riêng credit pending → restart → resume đã pass bằng flow dedicated.
 - Chưa có staging URL/partner integration đã phê duyệt.
-- Handoff Git: implementation/evidence checkpoint `079e9d2` và hardening commit `0f06b77` đã commit toàn bộ source/workflow/contract/tài liệu trong phạm vi; clone sạch đã chạy `npm ci` và các gate chính. Chưa push/PR trong phiên này.
+- Handoff Git: implementation/evidence checkpoint hiện hành `8c49c67` và code hardening `8f4dce5` đã commit toàn bộ source/workflow/contract/tài liệu trong phạm vi; clone sạch đã chạy `npm ci` và các gate chính. Chưa push/PR trong phiên này.
 - Chưa có kết quả usability/accessibility với người dùng và chưa có approver cho 14 cảnh báo High.
 
 ## Kết luận

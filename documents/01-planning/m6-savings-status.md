@@ -1,6 +1,6 @@
 # M6 - Trạng thái triển khai tiền gửi sandbox
 
-Ngày kiểm tra: 2026-08-16
+Ngày kiểm tra: 2026-08-17
 
 ## Đã triển khai
 
@@ -20,7 +20,7 @@ Ngày kiểm tra: 2026-08-16
 - Database source validator: đạt 20 table definitions/invariants; khi không cấu hình `DATABASE_URL`, live check được bỏ qua.
 - PostgreSQL 16 container tạm: migration 001/002, live schema validator và toàn bộ persistence/concurrency/restart test đều đạt; container đã được dọn sau kiểm thử.
 - Mobile lint/typecheck: đạt.
-- Mobile Jest: 36 suite, 167 test pass.
+- Mobile Jest: 37 suite, 170 test pass.
 - OpenAPI và Maestro syntax validator: đạt.
 - Web export: đạt với placeholder HTTPS; export mặc định HTTP bị chặn đúng production guard.
 - Maestro 2.8.0 chạy thành công flow M6 trên Android emulator `Pixel_7_API_35`: login/MFA → quote → review → step-up OTP → mở khoản → danh sách tiền gửi. Artifact: `C:\Users\admin\.maestro\tests\2026-08-16_013045`.

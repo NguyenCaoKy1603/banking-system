@@ -22,14 +22,7 @@ import {
 } from "@/features/accounts/presentation/accountPresentation";
 import type { PaymentAccount } from "@/features/accounts/types/account";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
-import { ApiError } from "@/services/api/ApiError";
 import { colors, spacing } from "@/theme";
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof ApiError
-    ? error.message
-    : "Không thể tải chi tiết tài khoản. Vui lòng thử lại.";
-}
 
 export function AccountDetailScreen() {
   const router = useRouter();
@@ -48,6 +41,7 @@ export function AccountDetailScreen() {
   const [revealedAccountNumber, setRevealedAccountNumber] = useState<string | null>(null);
   const [isRevealingNumber, setIsRevealingNumber] = useState(false);
   const [isCopyingNumber, setIsCopyingNumber] = useState(false);
+  const [accountNumberError, setAccountNumberError] = useState<unknown>();
 
   const loadAccount = useCallback(async () => {
     if (!accessToken || !accountId) {
@@ -60,13 +54,14 @@ export function AccountDetailScreen() {
     setError(undefined);
     setIsNumberVisible(false);
     setRevealedAccountNumber(null);
+    setAccountNumberError(undefined);
 
     try {
       const response = await listAccounts(auth);
       setAccount(response.accounts.find((item) => item.id === accountId) ?? null);
     } catch (requestError: unknown) {
       setAccount(null);
-      setError(getErrorMessage(requestError));
+      setError(requestError);
     } finally {
       setIsLoading(false);
     }
@@ -86,12 +81,13 @@ export function AccountDetailScreen() {
     }
 
     setIsRevealingNumber(true);
+    setAccountNumberError(undefined);
     try {
       const response = await getAccountNumber(account.id, auth);
       setRevealedAccountNumber(response.accountNumber);
       return response.accountNumber;
     } catch (requestError: unknown) {
-      Alert.alert("Không thể hiện số tài khoản", getErrorMessage(requestError));
+      setAccountNumberError(requestError);
       return null;
     } finally {
       setIsRevealingNumber(false);
@@ -225,6 +221,14 @@ export function AccountDetailScreen() {
                 <Text style={styles.securityNote}>
                   Số đầy đủ chỉ được tải từ server khi bạn bấm Hiện hoặc Sao chép.
                 </Text>
+                {accountNumberError ? (
+                  <RequestErrorNotice
+                    error={accountNumberError}
+                    fallbackMessage="Không thể tải số tài khoản đầy đủ. Vui lòng thử lại."
+                    onRetry={() => void revealAccountNumber()}
+                    testID="account-detail-number-error"
+                  />
+                ) : null}
               </View>
               <View style={styles.balanceGrid}>
                 <View style={styles.balanceCell}>

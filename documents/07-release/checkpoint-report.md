@@ -1,10 +1,10 @@
 # Working-tree checkpoint report
 
-> Cập nhật hiện hành 2026-08-17: branch thực tế là `codex/mini-core-banking-sandbox`; code commit `08e8d33`, documentation/evidence commit `d5fe672`. Backend đạt 68/68 test với PostgreSQL, relational regression 1/1, Mobile 36 suite/167 test, coverage đạt, web export 33 route; M0–M4/M8 và transfer pending-resume đã có evidence emulator. Manifest bàn giao nằm tại [`handoff-manifest-2026-08-17.json`](../05-testing/handoff-manifest-2026-08-17.json).
+> Cập nhật hiện hành 2026-08-17: branch thực tế là `codex/mini-core-banking-sandbox`; code commit `8f4dce5`, documentation/evidence commit `8c49c67`. Backend đạt 68/68 test với PostgreSQL, relational regression 1/1, Mobile 37 suite/170 test, coverage đạt, web export 33 route; M0–M4/M8 và transfer pending-resume đã có evidence emulator. Manifest bàn giao nằm tại [`handoff-manifest-2026-08-17.json`](../05-testing/handoff-manifest-2026-08-17.json).
 
-Ngày ghi nhận: 2026-08-16
-Nhánh: `feature/mobile-authentication`
-Implementation/evidence checkpoint: `079e9d2` (`Verify M6 M7 native flows and account reveal`); implementation hardening `0f06b77`; previous verification `2af2f2f` (`Expand credit date boundary regression coverage`)
+Ngày ghi nhận: 2026-08-17
+Nhánh: `codex/mini-core-banking-sandbox`
+Implementation/evidence checkpoint hiện hành: `8c49c67`; code hardening hiện hành: `8f4dce5`. Các hash cũ bên dưới chỉ giữ để truy vết lịch sử.
 
 ## Trạng thái
 

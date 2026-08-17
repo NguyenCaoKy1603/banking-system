@@ -15,12 +15,6 @@ import { QuickActionTile } from "@/features/home/components/QuickActionTile";
 import { ApiError } from "@/services/api/ApiError";
 import { colors, spacing } from "@/theme";
 
-function getErrorMessage(error: unknown): string {
-  return error instanceof ApiError
-    ? error.message
-    : "Không thể tải dữ liệu tài khoản. Vui lòng thử lại.";
-}
-
 export function HomeScreen() {
   const router = useRouter();
   const { deviceId, refreshAccessToken, session } = useAuth();
@@ -38,11 +32,13 @@ export function HomeScreen() {
   const [revealedAccountNumber, setRevealedAccountNumber] = useState<string | null>(null);
   const [isAccountNumberLoading, setIsAccountNumberLoading] = useState(false);
   const [isCopyingAccountNumber, setIsCopyingAccountNumber] = useState(false);
+  const [accountNumberError, setAccountNumberError] = useState<unknown>();
 
   const loadAccounts = useCallback(async () => {
     setIsBalanceVisible(false);
     setIsAccountNumberVisible(false);
     setRevealedAccountNumber(null);
+    setAccountNumberError(undefined);
 
     if (!accessToken) {
       setAccount(null);
@@ -62,7 +58,7 @@ export function HomeScreen() {
     } catch (requestError: unknown) {
       setAccount(null);
       setIsSessionExpired(requestError instanceof ApiError && requestError.status === 401);
-      setError(getErrorMessage(requestError));
+      setError(requestError);
     } finally {
       setIsLoading(false);
     }
@@ -78,12 +74,13 @@ export function HomeScreen() {
     }
 
     setIsAccountNumberLoading(true);
+    setAccountNumberError(undefined);
     try {
       const response = await getAccountNumber(account.id, auth);
       setRevealedAccountNumber(response.accountNumber);
       return response.accountNumber;
     } catch (requestError: unknown) {
-      Alert.alert("Không thể hiện số tài khoản", getErrorMessage(requestError));
+      setAccountNumberError(requestError);
       return null;
     } finally {
       setIsAccountNumberLoading(false);
@@ -173,12 +170,14 @@ export function HomeScreen() {
               isAccountNumberLoading={isAccountNumberLoading}
               isCopyingAccountNumber={isCopyingAccountNumber}
               revealedAccountNumber={revealedAccountNumber}
+              accountNumberError={accountNumberError}
               onPress={() =>
                 router.push({ pathname: "/account/[accountId]", params: { accountId: account.id } })
               }
               onToggleBalance={() => setIsBalanceVisible((current) => !current)}
               onToggleAccountNumber={() => void handleToggleAccountNumber()}
               onCopyAccountNumber={() => void handleCopyAccountNumber()}
+              onRetryAccountNumber={() => void revealAccountNumber()}
             />
           ) : (
             <View style={styles.stateCard} testID="home-account-empty">

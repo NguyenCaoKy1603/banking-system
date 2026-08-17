@@ -2,7 +2,7 @@
 
 ## Trạng thái
 
-Đã bổ sung package Android, EAS profile preview APK, environment mapping và công cụ kiểm tra release. Chưa có APK thực tế vì workspace hiện không có EAS CLI/Android build runner; không ghi nhận giả kết quả cài đặt thiết bị.
+Đã bổ sung package Android, EAS profile preview APK, environment mapping và công cụ kiểm tra release. Đã build APK release local, cài và mở thành công trên Android emulator; checksum và bằng chứng nằm trong [`../05-testing/device-evidence.md`](../05-testing/device-evidence.md). EAS CLI/staging signing vẫn chưa có nên artifact này chỉ là sandbox local, không phải release candidate.
 
 ## Kiểm tra cấu hình
 

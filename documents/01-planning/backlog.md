@@ -4,7 +4,7 @@
 
 | Mã | Hạng mục | Owner | Trạng thái hiện tại | Việc còn lại / cổng |
 | --- | --- | --- | --- | --- |
-| M0 | Sẵn sàng dự án | Phối hợp | Baseline và checkpoint Git sạch `079e9d2` đã có | Owner review/push, board chính thức và evidence thiết bị thật |
+| M0 | Sẵn sàng dự án | Phối hợp | Baseline và checkpoint Git sạch `8c49c67` đã có | Owner review/push, board chính thức và evidence thiết bị thật |
 | M1 | Nền Mobile | Thành viên 2 | Đã kiểm chứng local | Chạy emulator/điện thoại thật và chốt APK toolchain |
 | M2 | Auth và eKYC mô phỏng | Phối hợp | Auth và eKYC mô phỏng đã có local | API KYC thật/test data, forgot/change password nếu được duyệt |
 | M3 | Account, dashboard, history | Thành viên 2 | Account detail, cursor history và filter đã có ở reference local | Device/integration evidence và đối soát staging |
@@ -40,4 +40,4 @@ Auth/session, Account/History, Transfer/idempotency/pending, error handling, tes
 | S4 — Device evidence | Android thật cho camera QR, permission, background/resume; iOS nếu được duyệt | Có report/video/ảnh không chứa secret; emulator và thiết bị thật phân biệt rõ |
 | S5 — Bàn giao đồ án | Commit SHA, test report, health JSON, APK checksum, runbook demo | Người khác tái hiện được bằng dữ liệu giả lập và biết rõ giới hạn reference |
 
-Thứ tự ưu tiên là S1 → S2 → S4 → S5. S3 là bước nâng cấp persistence khi cần chứng minh dữ liệu dài hạn/relational; không mở rộng sang core banking, payment rail hoặc tiền thật. Savings/Credit giữ ở mức bonus/reference, Chatbot AI ngoài scope.
+Thứ tự ưu tiên hiện hành là S1 → S2 → S3 → S4 → S5. S1–S3 đã hoàn tất ở mức reference sandbox; S4 còn mở ở thiết bị thật/native, S5 đã có hồ sơ bàn giao. Không mở rộng sang core banking, payment rail hoặc tiền thật. Savings/Credit giữ ở mức bonus/reference, Chatbot AI ngoài scope.

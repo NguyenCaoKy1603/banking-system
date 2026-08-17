@@ -8,8 +8,8 @@
 | `mobile-app/src/app/` | Router, public/authenticated routes và screen entry points | Thành viên 2 | Có Login, Register, Home, Profile, KYC, QR, Beneficiaries, History, Transfer, Notification, Fraud, Transaction Detail, Card list/detail |
 | `mobile-app/src/features/` | Feature services, types, validators, state/domain tests | Thành viên 2 | Có auth, accounts, history, transfers/beneficiaries, KYC, QR, notifications, fraud, control, Savings và Credit; Card mock chỉ là fixture legacy |
 | `mobile-app/e2e/maestro/` | Native E2E flow syntax và test IDs | Phối hợp | Có 9 flow; critical M0–M4/M8, M6 savings, credit payment, pending-resume và overdue notification đã chạy trên Android emulator, chưa chạy trên thiết bị thật |
-| `backend/` | Reference HTTP/backend sandbox, PostgreSQL snapshot adapter, core adapter, ledger, audit, outbox | Thành viên 1/reference | Persistent snapshot sandbox; chưa phải relational production |
-| `backend/database/` | Boundary SQL draft và validator | Thành viên 1/reference | Chưa wire vào runtime |
+| `backend/` | Reference HTTP/backend sandbox, PostgreSQL relational reference, core adapter, ledger, audit, outbox | Thành viên 1/reference | Core M0–M4/M8 persistent relational sandbox; chưa phải production toàn domain |
+| `backend/database/` | Boundary SQL draft, migration và validator | Thành viên 1/reference | Core M0–M4/M8 đã wire qua relational reference; toàn domain chưa phải production repository |
 | `documents/api/` | Auth, session, accounts/transfers contract và OpenAPI | Phối hợp | Auth v1 approved nội bộ; banking contract/OpenAPI còn Draft |
 | `documents/architecture/` | Scope, threat model, data classification và phase gates | Phối hợp | Có risk/scope baseline |
 | `documents/mobile-pilot-runbook.md` | Quality gate, pilot limitation, rollback/incident notes | Phối hợp | Đã cập nhật snapshot local |
@@ -22,7 +22,7 @@
 
 - Chưa có root planning board/Git PR evidence, thiết bị mục tiêu và staging URL được phê duyệt.
 - Card vẫn có fixture mock/reference; Savings và Credit đã có reference sandbox; Chatbot chưa triển khai; eKYC/QR hiện là flow mô phỏng/reference.
-- Chưa có backend NestJS/PostgreSQL/Redis/LLM production boundary; PostgreSQL snapshot chỉ phục vụ restart/concurrency contract test.
+- Chưa có backend NestJS/PostgreSQL/Redis/LLM production boundary; PostgreSQL relational reference hiện phục vụ core sandbox, còn auth runtime/M6/M7 vẫn record-level reference.
 ## Đồng bộ M6/M7 — 2026-08-15
 
 - `mobile-app/src/features/savings/` là M6 reference flow; `mobile-app/src/features/credit/` là M7 Credit sandbox flow.

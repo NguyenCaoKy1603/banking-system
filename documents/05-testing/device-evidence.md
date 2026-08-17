@@ -7,7 +7,7 @@ Dùng bản ghi này cho smoke test local ngày 2026-08-16. Không ghi password,
 | Trường | Giá trị |
 | --- | --- |
 | Build version/package | `1.0.0` / `com.example.digitalbanking.mobile` (debug dev-client dùng cho E2E; release cũng đã build) |
-| APK SHA-256 | Release `CE23E7CC31C065217C885404FCFF2F23A788DB1D8727EE7681EA1C067A2DC661` (bản vừa build/cài trên emulator) |
+| APK SHA-256 | Release `7AE55E9E388A64AFA01B0058AE7ADC4D31FADCBA84F93ADB296CAC3EA078738D` (bản vừa build/cài trên emulator) |
 | Device/emulator model | `Pixel_7_API_35` / `sdk_gphone64_x86_64` / `emulator-5554` |
 | OS version | Android 15, API 35 |
 | Build/install time | 2026-08-17 local time; release APK force-rebuild/install/launch completed successfully |
@@ -47,6 +47,7 @@ Evidence: Maestro run thành công tương ứng nằm tại `C:\Users\admin\.ma
 - Không ghi password, OTP, token hoặc số tài khoản đầy đủ vào artifact/report. Thiết bị Android thật, QR camera native, biometric native và staging vẫn là gate mở.
 - Mobile đã có trạng thái hiển thị riêng cho mất kết nối, timeout và yêu cầu bị hủy, kèm nút thử lại; unit test đã kiểm tra mapping này. Kiểm thử các trạng thái đó khi tắt mạng trên thiết bị thật vẫn chưa chạy.
 - APK release sau thay đổi UI đã được force-rebuild với cấu hình sandbox HTTP, cài lại và mở thành công trên emulator; tiến trình app còn sống và logcat không có chữ ký crash.
+- Bản APK hiện hành đã bao gồm retry notice cho lỗi mất mạng/timeout khi tải tài khoản, lịch sử và khi hiện/sao chép số tài khoản; force-stop/launch sau cài đặt vẫn giữ app chạy, logcat không có chữ ký crash.
 
 ## Preflight trước mỗi lần chạy thiết bị
 
