@@ -1,6 +1,6 @@
 # Device evidence — Android emulator smoke
 
-> Cập nhật 2026-08-17: evidence trong file này thuộc APK/snapshot trước branch Mini Core. Chưa được dùng làm bằng chứng cho clean registration, dynamic OTP hoặc credit activation trên branch mới; cần chạy lại APK hiện tại.
+> Cập nhật hiện hành 2026-08-17: phần evidence cũ bên dưới được giữ để truy vết; bằng chứng APK hiện tại cho M0–M4/M8 và transfer pending-resume nằm ở các artifact mới trong phần bổ sung cuối file.
 
 Dùng bản ghi này cho smoke test local ngày 2026-08-16. Không ghi password, OTP, token, PIN, CVV hoặc dữ liệu tài chính nhạy cảm vào ảnh/video.
 
@@ -23,7 +23,7 @@ Dùng bản ghi này cho smoke test local ngày 2026-08-16. Không ghi password,
 - [x] M2 eKYC mock, beneficiary list and QR manual payload validation/fallback.
 - [x] Transfer quote → review → step-up → result with immediate sandbox settlement.
 - [x] Credit payment pending → stop app → launch app → mở lại payment detail → resume thành công; flow lưu tại `critical-credit-pending-resume.yaml`.
-- [ ] Transfer double-tap/retry protection và kill app trước/sau submit cần bổ sung bằng chứng native riêng.
+- [x] Transfer pending: quote → review → step-up → submit → stop app → launch app → refresh trạng thái `PENDING` trên emulator; idempotency/double-submit được kiểm chứng riêng ở critical API.
 - [ ] QR camera permission/camera scanning, pending/restart/resume and manual fallback after a native lifecycle interruption.
 - [ ] Real biometric prompt and negative/cancel path.
 - [x] Credit sandbox card lock/unlock: khóa thẻ, stop/launch giữ trạng thái khóa và mở khóa bằng OTP sandbox trên emulator.
@@ -39,3 +39,9 @@ Evidence: Maestro run thành công tương ứng nằm tại `C:\Users\admin\.ma
 - Maestro hien co 9 flow hop le; `critical-credit.yaml`, `critical-credit-pending-resume.yaml`, `critical-card.yaml` va `critical-credit-overdue-notification.yaml` da chay pass tren `Pixel_7_API_35`, trong do flow card da kiem tra khoa → restart → mo khoa bang OTP va flow overdue da kiem tra notification → deep-link ve card detail.
 - `critical-savings.yaml` da chay pass tren APK release moi sau khi sua xu ly ban phim; artifact la `C:\Users\admin\.maestro\tests\2026-08-16_013045`.
 - Ket qua M7 chi bao pham vi Android emulator sandbox. Physical device, camera, biometric va staging/partner integration van mo.
+
+## Bổ sung evidence hiện hành — 2026-08-17
+
+- APK release hiện tại đã chạy lại M0–M4/M8 trên Android emulator; artifact: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
+- Transfer pending-resume đã pass với PostgreSQL persistent: tạo transfer `PENDING`, force-stop, mở lại và cập nhật trạng thái; artifact: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
+- Không ghi password, OTP, token hoặc số tài khoản đầy đủ vào artifact/report. Thiết bị Android thật, QR camera native, biometric native và staging vẫn là gate mở.

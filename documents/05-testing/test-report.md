@@ -1,6 +1,6 @@
 # Test report — Mobile banking reference preview
 
-> Cập nhật hiện hành 2026-08-17: Mobile trên branch `codex/mini-core-banking-sandbox` đạt lint/typecheck, 36 suite/167 test, 9 Maestro flow syntax và web export 33 route. Backend hiện 65 test, 61 đạt/4 skip PostgreSQL. Artifact thiết bị trong báo cáo này thuộc snapshot trước branch và cần chạy lại cho clean registration, full account reveal/copy và credit activation.
+> Cập nhật hiện hành 2026-08-17: Mobile trên branch `codex/mini-core-banking-sandbox` đạt lint/typecheck, 36 suite/167 test, coverage gate, 9 Maestro flow syntax và web export 33 route. Backend đạt 68/68 test với PostgreSQL và critical API 8/8. Bằng chứng emulator mới cho M0–M4/M8 và transfer pending-resume đã được bổ sung bên dưới.
 
 Ngày lập: 2026-08-16
 Phạm vi: M0–M4, M6–M8 và Card mock bonus
@@ -18,8 +18,8 @@ Backend verification checkpoint: code/evidence checkpoint `079e9d2`; implementat
 | OpenAPI required paths | Đạt, 36 path bắt buộc |
 | Native E2E | Android emulator `Pixel_7_API_35`: M0–M4, M6, M8 và Credit sandbox flow đạt; gồm hiện/sao chép đầy đủ số tài khoản, eKYC mô phỏng, beneficiary, QR manual fallback, savings quote/review/OTP và notification deep link |
 | Maestro | 9 flow hợp lệ; M0–M4/M8, M6 savings, credit payment, pending-resume, Credit card lock/restart/unlock và Credit overdue notification chạy thành công trên Android emulator bằng Maestro 2.8.0 |
-| Backend reference | 58 test definition; không có `DATABASE_URL`: 54 pass và 4 skip PostgreSQL; bằng chứng PostgreSQL 16 tạm: 58/58 pass; seed E2E smoke thành công |
-| Expo web export | Đạt, 32 static route; dùng URL HTTPS placeholder cho static export vì `.env` local là HTTP sandbox và bị production guard từ chối |
+| Backend reference | PostgreSQL 16 local: 68/68 test đạt, critical API 8/8, migration/validator đạt; seed E2E smoke thành công |
+| Expo web export | Đạt, 33 static route; dùng URL HTTPS placeholder cho static export vì `.env` local là HTTP sandbox và bị production guard từ chối |
 | Dependency audit | **Không đạt**: 14 High từ `image-size`, chờ risk acceptance/upstream fix |
 
 ## Smoke seed
@@ -38,6 +38,13 @@ Backend verification checkpoint: code/evidence checkpoint `079e9d2`; implementat
 ## Kết luận
 
 Các kiểm tra local cùng E2E emulator chứng minh reference implementation có thể cài/chạy trong một môi trường Android sandbox và contract boundary, nhưng không chứng minh sẵn sàng pilot. Bằng chứng Maestro mới của flow M0–M4/M8, M6 savings, credit payment, pending-resume, Credit card lock/restart/unlock và Credit overdue notification lần lượt được lưu tại `C:\Users\admin\.maestro\tests\2026-08-16_014619`, `C:\Users\admin\.maestro\tests\2026-08-16_013045`, `C:\Users\admin\.maestro\tests\2026-08-16_000436`, `C:\Users\admin\.maestro\tests\2026-08-16_000714`, `C:\Users\admin\.maestro\tests\2026-08-16_003018` và `C:\Users\admin\.maestro\tests\2026-08-16_004626`; M11 chỉ được đóng khi có device matrix trên thiết bị được duyệt, native lifecycle E2E đầy đủ, staging approval và quyết định dependency risk.
+
+## Xác nhận hiện hành — 2026-08-17
+
+- Clone sạch backend/mobile đã chạy `npm ci`; backend migration từ database rỗng, 68/68 test và Mobile typecheck/9 flow syntax đạt.
+- M0–M4/M8 pass trên APK release hiện tại: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
+- Transfer pending-resume pass sau force-stop/mở lại: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
+- Mobile audit vẫn có 14 High transitive từ Expo/Metro; đây là risk mở, không tuyên bố production-ready.
 
 ## Cap nhat xac nhan cuoi M6/M7 va account reveal - 2026-08-15
 

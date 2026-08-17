@@ -20,9 +20,9 @@ Phạm vi: reference sandbox cho đồ án; không phải hệ thống xử lý 
 | Hạng mục | Kết quả |
 | --- | --- |
 | Backend typecheck/build | Đạt |
-| Backend unit + HTTP | 65 test, 61 đạt, 4 skip do chưa đặt `DATABASE_URL` cho PostgreSQL |
+| Backend unit + HTTP | 68/68 đạt với PostgreSQL persistent local; không có `DATABASE_URL` thì 4 test persistence được skip có chủ ý |
 | Mini Core regression | 7/7 đạt |
-| Database boundary validator | Đạt kiểm tra source schema; live database chưa chạy |
+| Database boundary validator | Đạt live PostgreSQL: 27 bảng, cột và constraint chính |
 | Backend OpenAPI validator | 44 path bắt buộc, 49 exact route guards |
 | Mobile lint/typecheck | Đạt |
 | Mobile unit test | 36 suite, 167 test đạt |

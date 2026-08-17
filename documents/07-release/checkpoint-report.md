@@ -1,5 +1,7 @@
 # Working-tree checkpoint report
 
+> Cập nhật hiện hành 2026-08-17: branch thực tế là `codex/mini-core-banking-sandbox`; các checkpoint lịch sử bên dưới được giữ để truy vết. Backend hiện đạt 68/68 test với PostgreSQL, Mobile 36 suite/167 test, coverage đạt, web export 33 route; M0–M4/M8 và transfer pending-resume đã có evidence emulator.
+
 Ngày ghi nhận: 2026-08-16
 Nhánh: `feature/mobile-authentication`
 Implementation/evidence checkpoint: `079e9d2` (`Verify M6 M7 native flows and account reveal`); implementation hardening `0f06b77`; previous verification `2af2f2f` (`Expand credit date boundary regression coverage`)

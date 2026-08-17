@@ -1,6 +1,6 @@
 # Verification report M0–M4 và M8
 
-> Lưu ý 2026-08-17: báo cáo này ghi bằng chứng snapshot cũ. Code hiện hành trên branch `codex/mini-core-banking-sandbox` đã giữ M0–M4/M8 và đổi registration/transfer sang clean sandbox; cần chạy lại device flow trên APK mới. Bảng trạng thái canonical nằm tại [`mini-core-sandbox-status.md`](mini-core-sandbox-status.md).
+> Cập nhật hiện hành 2026-08-17: phần bằng chứng M0–M4/M8 đã được chạy lại trên APK release hiện tại; transfer pending-resume có artifact riêng. Các checkpoint cũ bên dưới được giữ để truy vết. Bảng trạng thái canonical nằm tại [`mini-core-sandbox-status.md`](mini-core-sandbox-status.md).
 
 Ngày kiểm tra: 2026-08-16
 Evidence checkpoint: `079e9d2` (`Verify M6 M7 native flows and account reveal`); implementation hardening `0f06b77`; earlier implementation baseline `aa0e3de`.
@@ -19,7 +19,7 @@ Evidence checkpoint: `079e9d2` (`Verify M6 M7 native flows and account reveal`);
 ## Bằng chứng local
 
 - Mobile: lint, typecheck, 36 test suites/167 tests, OpenAPI 36 required paths, Maestro syntax 9 flows và web export 32 routes đều đạt.
-- Backend reference: typecheck, build, database boundary validation source + live PostgreSQL, 58 test definition (khi không có `DATABASE_URL`: 54 pass và 4 skip; PostgreSQL 16 tạm: 58/58 pass) và 8 critical HTTP tests; correctness P1/P2, beneficiary fingerprint, quote one-time, reconciliation drift, exact route, async HTTP auth và outbox retry đều có regression test.
+- Backend reference: typecheck, build, database boundary validation source + live PostgreSQL, 68/68 test với PostgreSQL và 8 critical HTTP tests; correctness P1/P2, beneficiary fingerprint, quote one-time, reconciliation drift, exact route, async HTTP auth, persistent body validation và outbox retry đều có regression test.
 - Full critical flow đã chạy lại trên Android emulator `Pixel_7_API_35` (Android 15/API 35) bằng Maestro 2.8.0: cold launch, login + server-driven MFA, dashboard, hiện/che số dư, account detail với hiện và sao chép số tài khoản đầy đủ, M2 eKYC, M4 beneficiary và QR manual fallback, M8 notification detail → transaction/profile deep link. Bằng chứng bản APK hiện tại: `C:\Users\admin\.maestro\tests\2026-08-16_014619`.
 - Credit pending → stop/launch → resume, Credit card lock → stop/launch → OTP unlock và Credit overdue notification → card detail đã có bằng chứng native trên emulator; chưa có bằng chứng lặp lại cho transfer kill app trước/sau submit, session restore sau force-stop, QR camera permission/biometric thật, thiết bị thật hoặc staging partner. Đây vẫn là gate bắt buộc trước preview/pilot.
 - Seed E2E sandbox đã có tại `backend/scripts/seed-e2e.ts`; lần smoke local đã tạo dữ liệu tester/beneficiary/transfer mà không ghi credential vào source.
