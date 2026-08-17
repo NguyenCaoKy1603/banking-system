@@ -47,6 +47,8 @@ npm run e2e:sandbox
 
 Lệnh dùng credential ngẫu nhiên trong bộ nhớ, gọi `backend` seed, lấy số tài khoản đầy đủ qua API bảo vệ, chạy flow mặc định M0–M4/M8 và xóa artifact Maestro tạm sau khi chạy. Dữ liệu nghiệp vụ được tạo trong database sandbox hiện tại; nếu cần làm sạch, dùng `backend/npm run reset:sandbox` với xác nhận theo [`e2e-sandbox-seed.md`](../../../documents/05-testing/e2e-sandbox-seed.md).
 
+`E2E_MFA_OTP` dùng cho bước đăng nhập MFA; `E2E_TRANSFER_OTP` dùng cho bước đăng ký của reference backend và các bước xác nhận giao dịch. Hai biến phải khớp với các giá trị `BANKING_SANDBOX_MFA_OTP` và `BANKING_SANDBOX_OTP` của server đang chạy.
+
 ## Coverage
 
 - `critical-auth-and-logout.yaml`: login MFA, session entry và logout tất cả thiết bị.

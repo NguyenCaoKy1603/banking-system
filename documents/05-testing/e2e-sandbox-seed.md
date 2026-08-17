@@ -42,7 +42,7 @@ $env:E2E_TRANSFER_OTP = $env:BANKING_SANDBOX_OTP
 npm run seed:e2e
 ```
 
-Lệnh seed sẽ đăng ký hoặc đăng nhập `tester@example.com`, xác thực MFA nếu server yêu cầu, lấy account, tạo beneficiary nếu cần, tạo một transfer để có notification và in JSON/PowerShell variables không nhạy cảm gồm `BENEFICIARY_ID`, `QR_PAYLOAD`, `SEEDED_TRANSFER_ID` và các biến Maestro. Password/OTP không được in ra stdout; giữ chúng trong environment của caller.
+Lệnh seed sẽ đăng ký hoặc đăng nhập `tester@example.com`, xác thực MFA nếu server yêu cầu, lấy account, tạo beneficiary nếu cần, tạo một transfer để có notification và in JSON/PowerShell variables không nhạy cảm gồm `BENEFICIARY_ID`, `QR_PAYLOAD`, `SEEDED_TRANSFER_ID` và các biến Maestro. Trong reference backend, đăng ký dùng `BANKING_SANDBOX_OTP` còn đăng nhập MFA dùng `BANKING_SANDBOX_MFA_OTP`; vì vậy seed dùng `E2E_TRANSFER_OTP` cho bước đăng ký và giao dịch. Password/OTP không được in ra stdout; giữ chúng trong environment của caller.
 
 ## Ánh xạ biến cho Maestro
 
