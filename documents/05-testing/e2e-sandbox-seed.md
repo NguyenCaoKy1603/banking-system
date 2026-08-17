@@ -4,6 +4,18 @@
 
 `backend` có lệnh `npm run seed:e2e` để chuẩn bị dữ liệu cho các flow Maestro mà không phải tự lấy ID bằng tay.
 
+Khi cần làm sạch dữ liệu demo trên PostgreSQL local, dùng lệnh reset có xác nhận rõ ràng:
+
+```powershell
+$env:E2E_RESET_CONFIRM = "RESET_REFERENCE_SANDBOX"
+npm run reset:sandbox
+npm run seed:e2e
+```
+
+Lệnh reset chỉ chạy khi `BANKING_ENV` không phải `production`, database là PostgreSQL local
+(`localhost`, `127.0.0.1` hoặc `::1`) và tên database kết thúc bằng `test`, `sandbox` hoặc `e2e`.
+Lệnh không xóa migration schema; nó chỉ xóa dữ liệu reference sandbox để tạo lại bộ dữ liệu E2E.
+
 ## Chạy lại từ trạng thái sạch
 
 Reference backend mặc định dùng PostgreSQL relational store. Dừng và khởi động lại server không reset dữ liệu; muốn làm sạch hãy dùng database disposable riêng hoặc chạy seed với user/test data mới. Chế độ `BANKING_STORAGE=in-memory` chỉ dành cho test nhanh.

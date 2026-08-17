@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
+      RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
       BANKING_ENV: development
       BANKING_MFA_REQUIRED: "0"
       BANKING_SANDBOX_MFA_OTP: "654321"
