@@ -1,4 +1,5 @@
 const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
 const path = require("node:path");
 
 const DEFAULT_PACKAGE = "com.example.digitalbanking.mobile";
@@ -55,10 +56,25 @@ function findAdb() {
   return "adb";
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, {
+function run(command, args, options = {}) {
+  let executable = command;
+  let commandArgs = args;
+  if (process.platform === "win32" && command.toLowerCase().endsWith(".bat")) {
+    const quoteForCmd = (value) => `"${String(value).replaceAll('"', '""')}"`;
+    executable = process.env.ComSpec || "cmd.exe";
+    const commandForCmd = command.includes(" ") ? quoteForCmd(command) : command;
+    commandArgs = [
+      "/d",
+      "/s",
+      "/c",
+      `call ${commandForCmd} ${args.map((value) => String(value)).join(" ")}`,
+    ];
+  }
+
+  const result = spawnSync(executable, commandArgs, {
     encoding: "utf8",
     windowsHide: true,
+    ...options,
   });
 
   return {
@@ -144,11 +160,74 @@ async function checkHealth(url) {
   }
 }
 
+function findJavaHome() {
+  const configured = process.env.JAVA_HOME?.trim();
+  if (configured) {
+    const configuredJava = path.join(configured, "bin", process.platform === "win32" ? "java.exe" : "java");
+    if (fs.existsSync(configuredJava)) {
+      return configured;
+    }
+
+    if (path.basename(configured).toLowerCase() === "bin") {
+      const parentHome = path.dirname(configured);
+      const parentJava = path.join(parentHome, "bin", process.platform === "win32" ? "java.exe" : "java");
+      if (fs.existsSync(parentJava)) {
+        return parentHome;
+      }
+    }
+  }
+
+  const javaLookup = run(process.platform === "win32" ? "where.exe" : "which", ["java"]);
+  const javaPath = javaLookup.stdout.split(/\r?\n/).find((value) => value.trim());
+  if (javaPath) {
+    return path.dirname(path.dirname(javaPath.trim()));
+  }
+
+  return null;
+}
+
+function findMaestro() {
+  const configured = process.env.MAESTRO?.trim();
+  if (configured) {
+    return configured;
+  }
+
+  const userProfile = process.env.USERPROFILE || process.env.HOME;
+  if (userProfile) {
+    const localBinary = path.join(
+      userProfile,
+      ".maestro",
+      "maestro",
+      "bin",
+      process.platform === "win32" ? "maestro.bat" : "maestro",
+    );
+    if (fs.existsSync(localBinary)) {
+      return localBinary;
+    }
+  }
+
+  return "maestro";
+}
+
 function checkMaestro() {
-  const result = run("maestro", ["--version"]);
+  const command = findMaestro();
+  const javaHome = findJavaHome();
+  const result = run(command, ["--version"], {
+    env: javaHome ? { ...process.env, JAVA_HOME: javaHome } : process.env,
+  });
+  const failureReason = result.status === 0
+    ? null
+    : result.error
+      ? "command-not-found"
+      : result.stderr.toLowerCase().includes("java_home")
+        ? "java-not-ready"
+        : "command-failed";
   return {
     installed: result.status === 0,
     version: result.status === 0 ? result.stdout.split(/\r?\n/)[0] : null,
+    command: command,
+    javaConfigured: Boolean(javaHome),
+    failureReason,
   };
 }
 

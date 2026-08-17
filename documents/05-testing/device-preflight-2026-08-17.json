@@ -10,7 +10,10 @@
     "reconciliation": "ok",
     "outbox": "ok"
   },
-  "maestroInstalled": false,
+  "maestroInstalled": true,
+  "maestroVersion": "2.8.0",
+  "maestroCommand": "C:\\Users\\admin\\.maestro\\maestro\\bin\\maestro.bat",
+  "javaConfigured": true,
   "devices": [
     {
       "serial": "emulator-5554",
@@ -27,7 +30,7 @@
     "appInstalled": true,
     "backendHealth": true,
     "physicalDevice": false,
-    "maestro": false
+    "maestro": true
   },
-  "note": "Local preflight evidence only; physical Android device and Maestro CLI remain open gates."
+  "note": "Local preflight evidence only; physical Android device, native camera/biometric and current flow execution remain open gates."
 }

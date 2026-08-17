@@ -32,7 +32,7 @@
     "outbox": "ok",
     "device": "Android emulator emulator-5554",
     "physicalDevice": false,
-    "maestroAvailableInCurrentShell": false
+    "maestroAvailableInCurrentShell": true
   },
   "manualReproduction": [
     "Run backend npm run db:migrate, then npm start.",
