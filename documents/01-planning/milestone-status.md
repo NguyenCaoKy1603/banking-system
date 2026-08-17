@@ -56,3 +56,8 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 - Artifact: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
 - M4 hiện có bằng chứng emulator cho quote/review/step-up/submit và pending-resume. Gate còn lại là thiết bị thật, camera QR/permission native, concurrency quy mô lớn và staging.
 - Các bước tiếp theo theo phạm vi: reproducible CI → hardening lỗi mạng/concurrency → repository relational canonical (nếu bàn giao persistent dài hạn) → Android thật → bộ bằng chứng và runbook.
+
+## Cập nhật hardening request boundary — 2026-08-17
+
+- Persistent server đã tách bước đọc/parse body khỏi transaction snapshot; body không hợp lệ được trả lỗi validation trước khi lấy advisory lock.
+- Regression suite PostgreSQL đạt 67/67; critical API đạt 8/8. Đây là hardening reference sandbox, chưa thay thế rate-limit phân tán hoặc gateway production.

@@ -69,3 +69,4 @@ Local server mặc định cho phép CORS `*`; production phải cấu hình `BA
 - Reconciliation trả `differenceMinor = coreAvailableMinor - computedAvailableMinor`; transaction-derived balance được giữ riêng để phát hiện lệch nguồn.
 - HTTP registration/login dùng PBKDF2 async; API sync methods chỉ giữ cho unit/reference test.
 - Registration và transfer step-up có rate-limit; outbox có retry backoff, attempts và health threshold.
+- Persistent HTTP đọc và validate toàn bộ request body trước khi mở snapshot transaction, tránh giữ advisory lock trong lúc chờ client gửi dữ liệu.

@@ -328,6 +328,8 @@ export async function handleRequest(
   response: ServerResponse,
   system: BankingSystem,
   options: HttpOptions = {},
+  parsedBody?: unknown,
+  bodyAlreadyRead = false,
 ): Promise<void> {
   const traceId = getRequestId(request);
   const configuredOrigins = options.allowedOrigins ?? ["*"];
@@ -359,7 +361,7 @@ export async function handleRequest(
     }
     const routePath = requestUrl.pathname.slice(API_PREFIX.length) || "/";
     const segments = pathSegments(routePath);
-    const body = await readJson(request);
+    const body = bodyAlreadyRead ? parsedBody : await readJson(request);
 
     if (
       request.method === "POST" &&
@@ -1029,25 +1031,34 @@ export function createPersistentBankingServer(
   options: HttpOptions = {},
 ): Server {
   return createServer((request, response) => {
+    const traceId = getRequestId(request);
     const bufferedResponse = new BufferedResponse(response);
-    void repository
-      .withState(system.exportState(), async (state) => {
-        system.importState(state as never);
-        await handleRequest(
-          request,
-          bufferedResponse as unknown as ServerResponse,
-          system,
-          options,
-        );
-        return { result: undefined, nextState: system.exportState() };
-      })
+    void readJson(request)
+      .then((parsedBody) =>
+        repository.withState(system.exportState(), async (state) => {
+          system.importState(state as never);
+          await handleRequest(
+            request,
+            bufferedResponse as unknown as ServerResponse,
+            system,
+            options,
+            parsedBody,
+            true,
+          );
+          return { result: undefined, nextState: system.exportState() };
+        }),
+      )
       .then(() => bufferedResponse.flush())
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!response.headersSent) {
+          if (error instanceof DomainError) {
+            writeError(response, error.status, traceId, error);
+            return;
+          }
           writeError(
             response,
             503,
-            getRequestId(request),
+            traceId,
             new DomainError(
               503,
               "PERSISTENCE_UNAVAILABLE",

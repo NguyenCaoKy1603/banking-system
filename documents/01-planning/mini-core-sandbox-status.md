@@ -80,3 +80,8 @@ Sau khi sửa code, khởi động lại backend và reload/rebuild Mobile. Đă
 5. Hồ sơ bàn giao: chốt commit SHA, test report, health JSON, checksum APK, runbook giả lập và video/ảnh không chứa OTP, token hoặc số tài khoản đầy đủ.
 
 Savings/Credit tiếp tục là module bonus/reference; Chatbot AI, payment rail, core banking và tiền thật nằm ngoài phạm vi này.
+
+## Hardening persistent request boundary — 2026-08-17
+
+- Persistent HTTP server hiện đọc và validate request body trước khi mở transaction/advisory lock PostgreSQL; request JSON lỗi trả `422 VALIDATION_ERROR` mà không giữ lock trong lúc chờ body.
+- Regression test mới nằm trong bộ PostgreSQL persistence test; backend hiện đạt 67/67 test với `DATABASE_URL`.

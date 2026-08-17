@@ -90,6 +90,42 @@ test("snapshot newer than the runtime is rejected explicitly", () => {
   );
 });
 
+test("persistent HTTP validates the request body before opening the snapshot transaction", {
+  skip: !databaseUrl,
+}, async (t) => {
+  const repository = new PostgresSnapshotRepository({
+    connectionString: databaseUrl,
+    snapshotKey: `invalid-body-${randomUUID()}`,
+  });
+  await repository.initialize();
+  const system = new BankingSystem({ sandboxOtp: "123456" });
+  const server = createPersistentBankingServer(repository, system);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    await repository.deleteSnapshot();
+    await repository.close();
+  });
+
+  const address = server.address() as AddressInfo;
+  const response = await fetch(
+    `http://127.0.0.1:${address.port}/api/v1/auth/register`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Device-ID": "invalid-body-device",
+      },
+      body: "not-json",
+    },
+  );
+  assert.equal(response.status, 422);
+  const payload = (await response.json()) as { code: string };
+  assert.equal(payload.code, "VALIDATION_ERROR");
+});
+
 test("PostgreSQL snapshot persists users and serializes concurrent transfer submit", {
   skip: !databaseUrl,
 }, async (t) => {
