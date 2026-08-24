@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
@@ -13,9 +13,17 @@ import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import type { AuthChallengeResponse } from "@/features/auth/types/auth";
 import { listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
+import type { ClientIntentPhase } from "@/features/banking/domain/clientIntentLifecycle";
+import {
+  requiresManualReview,
+  shouldKeepSubmitUnknown,
+  type ManualReviewCode,
+} from "@/features/banking/domain/submitFailure";
+import { createIdempotencyKey } from "@/features/banking/validation/idempotencyKey";
 import { getControlPolicy } from "@/features/control/services/controlPolicyApi";
 import type {
   ControlPolicy,
@@ -28,10 +36,12 @@ import {
 } from "@/services/security/biometricAuth";
 import {
   lookupBeneficiary,
+  lookupInternalRecipient,
   quoteTransfer,
   submitTransfer,
   getTransfer,
 } from "@/features/transfers/services/transfersApi";
+import { createOtpChallenge } from "@/features/auth/services/otpApi";
 import type {
   Beneficiary,
   TransferQuote,
@@ -46,15 +56,20 @@ import { colors, spacing } from "@/theme";
 
 type TransferStep = "beneficiary" | "amount" | "review" | "stepUp" | "result";
 
-function createTransferIntentId(): string {
-  return `transfer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
-
 function getErrorMessage(error: unknown): string {
+  if (
+    error instanceof ApiError &&
+    error.code === "STEP_UP_VERIFICATION_FAILED"
+  ) {
+    return "Xác thực bước hai không thành công. Vui lòng tạo challenge mới và thử lại.";
+  }
   return error instanceof ApiError
     ? error.message
     : "Không thể thực hiện yêu cầu. Vui lòng thử lại.";
 }
+
+const MANUAL_REVIEW_MESSAGE =
+  "Yêu cầu này cần được đối soát thủ công. Không gửi lại hoặc tạo challenge mới; vui lòng liên hệ hỗ trợ.";
 
 function getReceiptStatusLabel(status: TransferReceipt["status"]): string {
   switch (status) {
@@ -84,20 +99,52 @@ export function TransferScreen() {
   const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [sourceAccountId, setSourceAccountId] = useState<string | null>(null);
   const [beneficiaryId, setBeneficiaryId] = useState(initialBeneficiaryId);
+  const [recipientAccountNumber, setRecipientAccountNumber] = useState("");
+  const [recipientLookupId, setRecipientLookupId] = useState<string | null>(null);
   const [beneficiary, setBeneficiary] = useState<Beneficiary | null>(null);
   const [amountMinor, setAmountMinor] = useState("");
   const [quote, setQuote] = useState<TransferQuote | null>(null);
   const [stepUpMethod, setStepUpMethod] = useState<StepUpMethod>("OTP");
   const [stepUpProof, setStepUpProof] = useState("");
+  const [transferChallenge, setTransferChallenge] =
+    useState<AuthChallengeResponse | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
+  const [intentPhase, setIntentPhase] = useState<ClientIntentPhase | null>(null);
+  const [manualReviewCode, setManualReviewCode] =
+    useState<ManualReviewCode | null>(null);
   const [receipt, setReceipt] = useState<TransferReceipt | null>(null);
+  const [recoveryTransferId, setRecoveryTransferId] = useState<string | null>(null);
   const [step, setStep] = useState<TransferStep>("beneficiary");
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
   const [controlPolicy, setControlPolicy] = useState<ControlPolicy | null>(null);
   const [isLoadingControlPolicy, setIsLoadingControlPolicy] = useState(true);
   const [isRestoringIntent, setIsRestoringIntent] = useState(true);
+  const [recoveryBlocked, setRecoveryBlocked] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [clockMs, setClockMs] = useState(() => Date.now());
+  const submitLockRef = useRef(false);
+
+  useEffect(() => {
+    const timer = setInterval(() => setClockMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const applyTransferChallenge = useCallback(
+    (challenge: AuthChallengeResponse) => {
+      if (challenge.purpose && challenge.purpose !== "TRANSFER") {
+        throw new Error("Máy chủ trả challenge không đúng mục đích chuyển tiền.");
+      }
+      setTransferChallenge(challenge);
+      setStepUpMethod((currentMethod) =>
+        challenge.methods.includes(currentMethod)
+          ? currentMethod
+          : challenge.methods[0] ?? "OTP",
+      );
+      setStepUpProof("");
+    },
+    [],
+  );
 
   const loadAccounts = useCallback(async () => {
     if (!accessToken) {
@@ -166,41 +213,76 @@ export function TransferScreen() {
       const intent = await loadTransferIntent(userId);
 
       if (!intent) {
+        setRecoveryBlocked(false);
         return;
       }
 
+      setRecoveryBlocked(false);
       setQuote(intent.quote);
       setBeneficiary(intent.quote.beneficiary);
       setBeneficiaryId(intent.quote.beneficiary.id);
+      setRecipientLookupId(null);
       setSourceAccountId(intent.quote.sourceAccountId);
       setAmountMinor(intent.quote.amount.amountMinor);
       setIdempotencyKey(intent.idempotencyKey);
+      setIntentPhase(intent.phase);
+      setManualReviewCode(intent.manualReviewCode ?? null);
 
       if (intent.transferId) {
+        setRecoveryTransferId(intent.transferId);
+        setReceipt(intent.receipt ?? null);
+        setStep("result");
         const latestReceipt = await getTransfer(intent.transferId, auth);
         setReceipt(latestReceipt);
-        setStep("result");
-
-        if (latestReceipt.status !== "PENDING") {
-          await clearTransferIntent();
-        }
+        const latestPhase =
+          latestReceipt.status === "PENDING"
+            ? "ACCEPTED_PENDING"
+            : "ACCEPTED_TERMINAL";
+        setIntentPhase(latestPhase);
+        setManualReviewCode(null);
+        await saveTransferIntent({
+          phase: latestPhase,
+          submitAttempted: true,
+          userId,
+          idempotencyKey: intent.idempotencyKey,
+          quote: intent.quote,
+          createdAt: intent.createdAt,
+          transferId: latestReceipt.transferId,
+          receipt: latestReceipt,
+        });
       } else {
         setStep("stepUp");
+        if (intent.manualReviewCode) {
+          setTransferChallenge(null);
+          setStepUpProof("");
+          setError(MANUAL_REVIEW_MESSAGE);
+          return;
+        }
+        const challenge = await createOtpChallenge(
+          { purpose: "TRANSFER", resourceId: intent.quote.quoteId },
+          auth,
+        );
+        applyTransferChallenge(challenge);
       }
     } catch (requestError: unknown) {
+      setRecoveryBlocked(true);
       setError(getErrorMessage(requestError));
     } finally {
       setIsRestoringIntent(false);
     }
-  }, [auth, userId]);
+  }, [applyTransferChallenge, auth, userId]);
 
   useEffect(() => {
     void Promise.resolve().then(() => restoreTransferIntent());
   }, [restoreTransferIntent]);
 
   const handleLookupBeneficiary = useCallback(async () => {
-    if (!beneficiaryId.trim()) {
-      setError("Mã người nhận là bắt buộc.");
+    if (recoveryBlocked) {
+      setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
+      return;
+    }
+    if (!beneficiaryId.trim() && !recipientAccountNumber.trim()) {
+      setError("Nhập số tài khoản người nhận hoặc chọn người nhận đã lưu.");
       return;
     }
 
@@ -208,6 +290,26 @@ export function TransferScreen() {
     setError(undefined);
 
     try {
+      if (recipientAccountNumber.trim()) {
+        const response = await lookupInternalRecipient(recipientAccountNumber, auth);
+        if (response.recipient.status !== "ACTIVE") {
+          setError("Tài khoản người nhận hiện không khả dụng.");
+          return;
+        }
+        setRecipientLookupId(response.recipient.lookupId);
+        setBeneficiaryId("");
+        setBeneficiary({
+          id: response.recipient.lookupId,
+          displayName: response.recipient.accountHolderName,
+          accountHolderName: response.recipient.accountHolderName,
+          maskedAccountNumber: response.recipient.maskedAccountNumber,
+          bankName: response.recipient.bankName,
+          status: response.recipient.status,
+        });
+        setStep("amount");
+        return;
+      }
+
       const response = await lookupBeneficiary(beneficiaryId, auth);
 
       if (response.beneficiary.status !== "ACTIVE") {
@@ -216,15 +318,20 @@ export function TransferScreen() {
       }
 
       setBeneficiary(response.beneficiary);
+      setRecipientLookupId(null);
       setStep("amount");
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
     } finally {
       setIsSubmitting(false);
     }
-  }, [auth, beneficiaryId]);
+  }, [auth, beneficiaryId, recoveryBlocked, recipientAccountNumber]);
 
   const handleCreateQuote = useCallback(async () => {
+    if (recoveryBlocked) {
+      setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
+      return;
+    }
     if (!sourceAccountId) {
       setError("Chưa có tài khoản nguồn khả dụng.");
       return;
@@ -264,7 +371,9 @@ export function TransferScreen() {
       const response = await quoteTransfer(
         {
           sourceAccountId,
-          beneficiaryId: beneficiary.id,
+          ...(recipientLookupId
+            ? { lookupId: recipientLookupId }
+            : { beneficiaryId: beneficiary.id }),
           amount: { currency: "VND", amountMinor: normalizedAmount },
         },
         auth,
@@ -276,9 +385,17 @@ export function TransferScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [amountMinor, auth, beneficiary, controlPolicy, sourceAccountId]);
+  }, [amountMinor, auth, beneficiary, controlPolicy, recoveryBlocked, recipientLookupId, sourceAccountId]);
 
   const handleContinueToStepUp = useCallback(async () => {
+    if (recoveryBlocked) {
+      setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
+      return;
+    }
+    if (submitLockRef.current) {
+      return;
+    }
+
     if (!quote) {
       setError("Chưa có báo giá hợp lệ.");
       return;
@@ -289,30 +406,73 @@ export function TransferScreen() {
       return;
     }
 
+    if (Date.now() >= Date.parse(quote.expiresAt)) {
+      setError("Báo giá đã hết hạn. Vui lòng tạo báo giá mới.");
+      return;
+    }
+
+    submitLockRef.current = true;
     setIsSubmitting(true);
     setError(undefined);
 
     try {
-      const nextIdempotencyKey = idempotencyKey ?? createTransferIntentId();
+      const nextIdempotencyKey =
+        idempotencyKey ?? createIdempotencyKey("transfer");
 
       await saveTransferIntent({
+        phase: "DRAFT_QUOTE",
+        submitAttempted: false,
         userId,
         idempotencyKey: nextIdempotencyKey,
         quote,
         createdAt: Date.now(),
       });
+      const challenge = await createOtpChallenge(
+        { purpose: "TRANSFER", resourceId: quote.quoteId },
+        auth,
+      );
+      applyTransferChallenge(challenge);
       setIdempotencyKey(nextIdempotencyKey);
+      setIntentPhase("DRAFT_QUOTE");
+      setManualReviewCode(null);
       setStep("stepUp");
     } catch (storageError: unknown) {
       setError(getErrorMessage(storageError));
     } finally {
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
-  }, [idempotencyKey, quote, userId]);
+  }, [applyTransferChallenge, auth, idempotencyKey, quote, recoveryBlocked, userId]);
 
   const handleSubmitTransfer = useCallback(async () => {
+    if (recoveryBlocked) {
+      setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
+      return;
+    }
+    if (submitLockRef.current) {
+      return;
+    }
+
+    if (manualReviewCode) {
+      setError(MANUAL_REVIEW_MESSAGE);
+      return;
+    }
+
     if (!quote || !idempotencyKey) {
       setError("Phiên chuyển tiền chưa sẵn sàng. Vui lòng thực hiện lại.");
+      return;
+    }
+
+    if (!userId) {
+      setError("Phiên đăng nhập không còn hợp lệ.");
+      return;
+    }
+
+    if (
+      intentPhase !== "SUBMIT_UNKNOWN" &&
+      Date.now() >= Date.parse(quote.expiresAt)
+    ) {
+      setError("Báo giá đã hết hạn. Vui lòng tạo báo giá mới.");
       return;
     }
 
@@ -321,41 +481,132 @@ export function TransferScreen() {
       return;
     }
 
+    if (
+      !transferChallenge ||
+      clockMs >= Date.parse(transferChallenge.expiresAt)
+    ) {
+      setError("Challenge xác thực đã hết hạn. Vui lòng tạo challenge mới.");
+      return;
+    }
+
+    if (!transferChallenge.methods.includes(stepUpMethod)) {
+      setError("Phương thức xác thực không được challenge hiện tại cho phép.");
+      return;
+    }
+
+    submitLockRef.current = true;
     setIsSubmitting(true);
     setError(undefined);
 
+    let requestStarted = false;
     try {
+      await saveTransferIntent({
+        phase: "SUBMIT_UNKNOWN",
+        submitAttempted: true,
+        userId,
+        idempotencyKey,
+        quote,
+        createdAt: Date.now(),
+      });
+      setIntentPhase("SUBMIT_UNKNOWN");
+      requestStarted = true;
       const response = await submitTransfer(
         {
           quoteId: quote.quoteId,
-          stepUp: { method: stepUpMethod, proof: stepUpProof },
+          stepUp: {
+            method: stepUpMethod,
+            proof: stepUpProof,
+            challengeId: transferChallenge.challengeId,
+          },
         },
         { auth, idempotencyKey },
       );
-      if (userId) {
+      const acceptedPhase =
+        response.status === "PENDING"
+          ? "ACCEPTED_PENDING"
+          : "ACCEPTED_TERMINAL";
+      await saveTransferIntent({
+        phase: acceptedPhase,
+        submitAttempted: true,
+        userId,
+        idempotencyKey,
+        quote,
+        createdAt: Date.now(),
+        transferId: response.transferId,
+        receipt: response,
+      }).catch(() => undefined);
+      setReceipt(response);
+      setRecoveryTransferId(response.transferId);
+      setIntentPhase(acceptedPhase);
+      setManualReviewCode(null);
+      setStep("result");
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError));
+      if (
+        requestStarted &&
+        requestError instanceof ApiError &&
+        (requestError.code === "QUOTE_EXPIRED" ||
+          requestError.code === "NOT_FOUND")
+      ) {
+        await clearTransferIntent(userId).catch(() => undefined);
+        setTransferChallenge(null);
+        setIdempotencyKey(null);
+        setIntentPhase(null);
+        setManualReviewCode(null);
+        setQuote(null);
+        setRecoveryTransferId(null);
+        setStep("amount");
+      } else if (requestStarted && requiresManualReview(requestError)) {
         await saveTransferIntent({
+          phase: "SUBMIT_UNKNOWN",
+          submitAttempted: true,
           userId,
           idempotencyKey,
           quote,
           createdAt: Date.now(),
-          transferId: response.transferId,
-          receipt: response,
+          manualReviewCode: requestError.code,
         }).catch(() => undefined);
+        setManualReviewCode(requestError.code);
+        setTransferChallenge(null);
+        setStepUpProof("");
+        setError(MANUAL_REVIEW_MESSAGE);
+      } else if (requestStarted && !shouldKeepSubmitUnknown(requestError)) {
+        setTransferChallenge(null);
+        setStepUpProof("");
+        await saveTransferIntent({
+          phase: "DRAFT_QUOTE",
+          submitAttempted: false,
+          userId,
+          idempotencyKey,
+          quote,
+          createdAt: Date.now(),
+        }).catch(() => undefined);
+        setIntentPhase("DRAFT_QUOTE");
+        setManualReviewCode(null);
       }
-      setReceipt(response);
-      setStep("result");
-
-      if (response.status !== "PENDING") {
-        await clearTransferIntent().catch(() => undefined);
-      }
-    } catch (requestError: unknown) {
-      setError(getErrorMessage(requestError));
     } finally {
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
-  }, [auth, idempotencyKey, quote, stepUpMethod, stepUpProof, userId]);
+  }, [auth, clockMs, idempotencyKey, intentPhase, manualReviewCode, quote, recoveryBlocked, stepUpMethod, stepUpProof, transferChallenge, userId]);
 
   const handleBiometricStepUp = useCallback(async () => {
+    if (recoveryBlocked) {
+      setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
+      return;
+    }
+    if (manualReviewCode) {
+      setError(MANUAL_REVIEW_MESSAGE);
+      return;
+    }
+    if (!transferChallenge?.methods.includes("BIOMETRIC")) {
+      setError("Challenge hiện tại không cho phép xác thực sinh trắc học.");
+      return;
+    }
+    if (Date.now() >= Date.parse(transferChallenge.expiresAt)) {
+      setError("Challenge xác thực đã hết hạn. Vui lòng tạo challenge mới.");
+      return;
+    }
     setIsSubmitting(true);
     setError(undefined);
 
@@ -374,22 +625,57 @@ export function TransferScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, []);
+  }, [manualReviewCode, recoveryBlocked, transferChallenge]);
+
+  const handleRenewTransferChallenge = useCallback(async () => {
+    if (!quote || submitLockRef.current || manualReviewCode || recoveryBlocked) {
+      if (manualReviewCode) setError(MANUAL_REVIEW_MESSAGE);
+      return;
+    }
+    submitLockRef.current = true;
+    setIsSubmitting(true);
+    setError(undefined);
+    try {
+      const challenge = await createOtpChallenge(
+        { purpose: "TRANSFER", resourceId: quote.quoteId },
+        auth,
+      );
+      applyTransferChallenge(challenge);
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError));
+    } finally {
+      submitLockRef.current = false;
+      setIsSubmitting(false);
+    }
+  }, [applyTransferChallenge, auth, manualReviewCode, quote, recoveryBlocked]);
 
   const handleRefreshTransferStatus = useCallback(async () => {
-    if (!receipt?.transferId) {
+    if (submitLockRef.current) {
+      return;
+    }
+    const transferId = receipt?.transferId ?? recoveryTransferId;
+    if (!transferId) {
       return;
     }
 
+    submitLockRef.current = true;
     setIsSubmitting(true);
     setError(undefined);
 
     try {
-      const latestReceipt = await getTransfer(receipt.transferId, auth);
+      const latestReceipt = await getTransfer(transferId, auth);
       setReceipt(latestReceipt);
+      setRecoveryTransferId(latestReceipt.transferId);
+      const latestPhase =
+        latestReceipt.status === "PENDING"
+          ? "ACCEPTED_PENDING"
+          : "ACCEPTED_TERMINAL";
+      setIntentPhase(latestPhase);
 
       if (userId && quote && idempotencyKey) {
         await saveTransferIntent({
+          phase: latestPhase,
+          submitAttempted: true,
           userId,
           idempotencyKey,
           quote,
@@ -398,26 +684,47 @@ export function TransferScreen() {
           receipt: latestReceipt,
         });
       }
-
-      if (latestReceipt.status !== "PENDING") {
-        await clearTransferIntent().catch(() => undefined);
-      }
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
     } finally {
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
-  }, [auth, idempotencyKey, quote, receipt, userId]);
+  }, [auth, idempotencyKey, quote, receipt, recoveryTransferId, userId]);
+
+  const handleBack = useCallback(async () => {
+    if (isSubmitting || submitLockRef.current) {
+      return;
+    }
+    if (intentPhase === "ACCEPTED_TERMINAL" && userId) {
+      await clearTransferIntent(userId).catch(() => undefined);
+    }
+    router.back();
+  }, [intentPhase, isSubmitting, router, userId]);
+
+  const handleGoHome = useCallback(async () => {
+    if (isSubmitting || submitLockRef.current) {
+      return;
+    }
+    if (intentPhase === "ACCEPTED_TERMINAL" && userId) {
+      await clearTransferIntent(userId).catch(() => undefined);
+    }
+    router.replace("/");
+  }, [intentPhase, isSubmitting, router, userId]);
 
   const sourceAccount = accounts.find((account) => account.id === sourceAccountId);
+  const isTransferChallengeUnavailable =
+    !transferChallenge || clockMs >= Date.parse(transferChallenge.expiresAt);
 
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{ disabled: isSubmitting }}
+          disabled={isSubmitting}
           hitSlop={8}
-          onPress={() => router.back()}
+          onPress={handleBack}
           style={styles.backButton}
         >
           <Text style={styles.backLabel}>‹ Quay lại</Text>
@@ -434,6 +741,21 @@ export function TransferScreen() {
         {isLoadingAccounts || isLoadingControlPolicy || isRestoringIntent ? (
           <View style={styles.centerState}>
             <ActivityIndicator color={colors.primary} size="large" />
+          </View>
+        ) : recoveryBlocked ? (
+          <View style={styles.formCard}>
+            <Text style={styles.stepTitle}>Chưa thể khôi phục an toàn</Text>
+            <Text style={styles.errorText}>
+              {error ?? "Không thể đọc trạng thái yêu cầu trước đó. Chưa cho phép tạo giao dịch mới để tránh trùng lệnh."}
+            </Text>
+            <PrimaryButton
+              label="Kiểm tra lại dữ liệu khôi phục"
+              onPress={() => {
+                setError(undefined);
+                void restoreTransferIntent();
+              }}
+              testID="transfer-recovery-retry"
+            />
           </View>
         ) : !controlPolicy ||
           controlPolicy.globalKillSwitch ||
@@ -456,18 +778,24 @@ export function TransferScreen() {
               testID="transfer-open-beneficiaries"
             />
             <TextField
-              accessibilityLabel="Mã người nhận"
+              accessibilityLabel="Số tài khoản người nhận"
               autoCapitalize="none"
               error={error}
-              label="Mã người nhận"
+              keyboardType="number-pad"
+              label="Số tài khoản người nhận"
               onChangeText={(value) => {
-                setBeneficiaryId(value);
+                setRecipientAccountNumber(value.replace(/\D/g, ""));
+                setBeneficiaryId("");
+                setRecipientLookupId(null);
                 setError(undefined);
               }}
-              placeholder="Nhập mã người nhận"
+              placeholder="Nhập đủ 6–34 chữ số"
               testID="transfer-beneficiary-id"
-              value={beneficiaryId}
+              value={recipientAccountNumber}
             />
+            {beneficiaryId ? (
+              <Text style={styles.description}>Người nhận đã lưu: {beneficiary?.displayName ?? beneficiaryId}</Text>
+            ) : null}
             <PrimaryButton
               disabled={isSubmitting}
               label={isSubmitting ? "Đang tra cứu..." : "Tiếp tục"}
@@ -516,6 +844,10 @@ export function TransferScreen() {
                 <Text style={styles.summaryLabel}>Người nhận</Text>
                 <Text style={styles.summaryValue}>{quote?.beneficiary.displayName}</Text>
               </View>
+            <Text style={styles.description}>
+              {beneficiary?.accountHolderName ?? beneficiary?.maskedAccountNumber}
+              {beneficiary?.bankName ? ` · ${beneficiary.bankName}` : ""}
+            </Text>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Số tiền</Text>
                 <Text style={styles.summaryValue}>
@@ -549,7 +881,7 @@ export function TransferScreen() {
             <Text style={styles.description}>
               Backend/risk engine sẽ quyết định chính sách OTP hoặc sinh trắc học.
             </Text>
-            {controlPolicy?.stepUpMethods.includes("OTP") ? (
+            {transferChallenge?.methods.includes("OTP") ? (
               <PrimaryButton
                 disabled={isSubmitting}
                 label={stepUpMethod === "OTP" ? "Đang dùng OTP" : "Dùng OTP"}
@@ -561,7 +893,7 @@ export function TransferScreen() {
                 testID="transfer-step-up-otp"
               />
             ) : null}
-            {controlPolicy?.stepUpMethods.includes("BIOMETRIC") ? (
+            {transferChallenge?.methods.includes("BIOMETRIC") ? (
               <PrimaryButton
                 disabled={isSubmitting}
                 label={
@@ -577,6 +909,7 @@ export function TransferScreen() {
               <TextField
                 accessibilityLabel="Mã xác thực bước hai"
                 autoCapitalize="none"
+                editable={!manualReviewCode}
                 error={error}
                 label="Mã xác thực OTP"
                 onChangeText={(value) => {
@@ -595,10 +928,41 @@ export function TransferScreen() {
                   : "Chọn xác thực sinh trắc học để tiếp tục."}
               </Text>
             )}
+            {manualReviewCode ? (
+              <Text style={styles.errorText}>
+                Mã đối soát: {manualReviewCode}
+              </Text>
+            ) : null}
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {isTransferChallengeUnavailable ? (
+              <PrimaryButton
+                disabled={isSubmitting || Boolean(manualReviewCode)}
+                label={
+                  manualReviewCode
+                    ? "Đang chờ đối soát"
+                    : isSubmitting
+                      ? "Đang tạo lại..."
+                      : "Tạo challenge mới"
+                }
+                onPress={handleRenewTransferChallenge}
+                testID="transfer-step-up-renew"
+              />
+            ) : null}
             <PrimaryButton
-              disabled={isSubmitting}
-              label={isSubmitting ? "Đang gửi..." : "Gửi giao dịch"}
+              disabled={
+                isSubmitting ||
+                isTransferChallengeUnavailable ||
+                Boolean(manualReviewCode)
+              }
+              label={
+                manualReviewCode
+                  ? "Không thể gửi lại"
+                  : isSubmitting
+                    ? "Đang gửi..."
+                    : isTransferChallengeUnavailable
+                      ? "Challenge đã hết hạn"
+                      : "Gửi giao dịch"
+              }
               onPress={handleSubmitTransfer}
               testID="transfer-submit"
             />
@@ -615,7 +979,7 @@ export function TransferScreen() {
             <Text style={styles.description}>
               Nếu trạng thái là đang xử lý, hãy mở lại lịch sử sau khi app khởi động lại.
             </Text>
-            {receipt?.status === "PENDING" ? (
+            {receipt?.status === "PENDING" || (!receipt && recoveryTransferId) ? (
               <PrimaryButton
                 disabled={isSubmitting}
                 label={isSubmitting ? "Đang cập nhật..." : "Cập nhật trạng thái"}
@@ -623,7 +987,7 @@ export function TransferScreen() {
                 testID="transfer-status-refresh"
               />
             ) : null}
-            <PrimaryButton label="Về trang chủ" onPress={() => router.replace("/")} />
+            <PrimaryButton disabled={isSubmitting} label="Về trang chủ" onPress={handleGoHome} />
           </View>
         )}
       </ScrollView>

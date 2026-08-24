@@ -1,6 +1,7 @@
--- DRAFT: PostgreSQL boundary for the banking MVP.
--- This migration is not wired to the reference in-memory backend yet.
--- Apply only after partner, legal/compliance and data-retention approval.
+-- DRAFT: PostgreSQL relational boundary for the virtual-money reference MVP.
+-- PostgresRelationalRepository wires the core M0-M4/M8 records to these
+-- tables. Apply only after partner, legal/compliance and data-retention
+-- approval before any production use.
 
 CREATE TABLE customers (
   id uuid PRIMARY KEY,
@@ -228,9 +229,9 @@ CREATE INDEX outbox_unpublished_idx
   ON outbox_events (occurred_at)
   WHERE published_at IS NULL;
 
--- Reference-only persistence checkpoint for the sandbox adapter. Production
--- must replace this JSON snapshot with repository writes across the relational
--- tables above before any real-money use.
+-- Legacy-only persistence checkpoint used to migrate an older sandbox install.
+-- New runtime writes use the relational tables and 005 runtime record table;
+-- this table is not a source of truth for new data.
 CREATE TABLE reference_state_snapshots (
   snapshot_key text PRIMARY KEY,
   state jsonb NOT NULL,

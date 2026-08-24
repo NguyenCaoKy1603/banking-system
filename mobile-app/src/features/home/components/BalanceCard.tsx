@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import type { PaymentAccount } from "@/features/accounts/types/account";
 import {
   getAccountNumberDisplay,
@@ -15,10 +16,12 @@ type BalanceCardProps = {
   isAccountNumberLoading: boolean;
   isCopyingAccountNumber: boolean;
   revealedAccountNumber: string | null;
+  accountNumberError?: unknown;
   onPress: () => void;
   onToggleBalance: () => void;
   onToggleAccountNumber: () => void;
   onCopyAccountNumber: () => void;
+  onRetryAccountNumber: () => void;
 };
 
 export function BalanceCard({
@@ -28,13 +31,16 @@ export function BalanceCard({
   isAccountNumberLoading,
   isCopyingAccountNumber,
   revealedAccountNumber,
+  accountNumberError,
   onPress,
   onToggleBalance,
   onToggleAccountNumber,
   onCopyAccountNumber,
+  onRetryAccountNumber,
 }: BalanceCardProps) {
   return (
-    <Pressable
+    <>
+      <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Mở chi tiết ${account.displayName}`}
       onPress={onPress}
@@ -116,7 +122,16 @@ export function BalanceCard({
           </View>
         </View>
       </View>
-    </Pressable>
+      </Pressable>
+      {accountNumberError ? (
+        <RequestErrorNotice
+          error={accountNumberError}
+          fallbackMessage="Không thể tải số tài khoản đầy đủ. Vui lòng thử lại."
+          onRetry={onRetryAccountNumber}
+          testID="home-account-number-error"
+        />
+      ) : null}
+    </>
   );
 }
 

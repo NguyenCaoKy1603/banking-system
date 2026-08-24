@@ -48,6 +48,9 @@ const requiredTablesByMigration: Record<string, string[]> = {
     "credit_payment_quotes",
     "credit_payments",
   ],
+  "005_relational_reference_runtime": [
+    "reference_runtime_records",
+  ],
 };
 
 const pool = new Pool({ connectionString: databaseUrl });
@@ -74,11 +77,11 @@ try {
       );
       if (applied.rowCount) {
         await pool.query("COMMIT");
-        console.log(`PostgreSQL draft migration already applied: ${migrationKey}.`);
+        console.log(`PostgreSQL migration already applied: ${migrationKey}.`);
         continue;
       }
 
-      const existingTables = await pool.query(
+      const existingTables = await pool.query<{ count: number }>(
         `
           SELECT COUNT(*)::int AS count
           FROM information_schema.tables
@@ -88,18 +91,20 @@ try {
         `,
         [requiredTables],
       );
-      if (requiredTables.length > 0 && existingTables.rows[0]?.count !== requiredTables.length) {
-        await pool.query(migration);
+      const existingTableCount = Number(existingTables.rows[0]?.count ?? 0);
+      if (requiredTables.length > 0 && existingTableCount > 0) {
+        throw new Error(
+          `Migration ${migrationKey} is not recorded but ${existingTableCount}/${requiredTables.length} expected tables already exist. Refusing to guess migration state; restore a clean database or record the reviewed migration explicitly.`,
+        );
       }
+      await pool.query(migration);
       await pool.query(
         "INSERT INTO reference_schema_migrations (migration_key, applied_at) VALUES ($1, NOW())",
         [migrationKey],
       );
       await pool.query("COMMIT");
       console.log(
-        requiredTables.length > 0 && existingTables.rows[0]?.count === requiredTables.length
-          ? `PostgreSQL draft migration recorded as already applied: ${migrationKey}.`
-          : `PostgreSQL draft migration applied successfully: ${migrationKey}.`,
+        `PostgreSQL migration applied successfully: ${migrationKey}.`,
       );
     } catch (error) {
       await pool.query("ROLLBACK").catch(() => undefined);

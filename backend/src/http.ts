@@ -6,9 +6,9 @@ import {
 } from "node:http";
 import { randomUUID } from "node:crypto";
 
-import { BankingSystem } from "./bankingSystem.js";
+import { BankingSystem, type BankingSystemState } from "./bankingSystem.js";
 import { DomainError, invalidRequest, notFound, unauthorized } from "./errors.js";
-import { PostgresSnapshotRepository } from "./postgresSnapshotRepository.js";
+import type { RelationalStateOperation } from "./postgresRelationalRepository.js";
 
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 1_000_000;
@@ -16,6 +16,57 @@ const MAX_BODY_BYTES = 1_000_000;
 export type HttpOptions = {
   allowedOrigins?: string[];
 };
+
+type RequestStateDisposition =
+  | "COMMIT_ALL"
+  | "COMMIT_SECURITY_ONLY"
+  | "ROLLBACK_ALL";
+
+type RequestStateBoundary = {
+  rejectDomainRequest(): void;
+  rejectUnexpectedFailure(): void;
+};
+
+const PERSISTED_SECURITY_FAILURE_AUDIT_EVENTS = new Set([
+  "STEP_UP_VERIFICATION_FAILED",
+  "CREDIT_STEP_UP_VERIFICATION_FAILED",
+]);
+
+/**
+ * Domain rejections can intentionally mutate abuse-prevention state before
+ * returning a 4xx response (for example, refresh-token family revocation or a
+ * failed OTP counter). Preserve only those security controls and roll every
+ * business aggregate back to its transaction-start snapshot.
+ */
+function mergeRejectedSecurityState(
+  transactionStartState: BankingSystemState,
+  rejectedState: BankingSystemState,
+): BankingSystemState {
+  const existingAuditIds = new Set(
+    transactionStartState.auditEventStore.map((event) => event.id),
+  );
+  const securityFailureAuditEvents = rejectedState.auditEventStore.filter(
+    (event) =>
+      !existingAuditIds.has(event.id) &&
+      PERSISTED_SECURITY_FAILURE_AUDIT_EVENTS.has(event.eventType),
+  );
+  return {
+    ...transactionStartState,
+    accessSessions: rejectedState.accessSessions,
+    authChallenges: rejectedState.authChallenges,
+    authAttemptWindows: rejectedState.authAttemptWindows,
+    registrationAttemptWindows: rejectedState.registrationAttemptWindows,
+    transferStepUpAttemptWindows: rejectedState.transferStepUpAttemptWindows,
+    savingsStepUpAttemptWindows: rejectedState.savingsStepUpAttemptWindows,
+    creditStepUpAttemptWindows: rejectedState.creditStepUpAttemptWindows,
+    refreshSessions: rejectedState.refreshSessions,
+    refreshFamilies: rejectedState.refreshFamilies,
+    auditEventStore: [
+      ...transactionStartState.auditEventStore,
+      ...securityFailureAuditEvents,
+    ],
+  };
+}
 
 function header(request: IncomingMessage, name: string): string | undefined {
   const value = request.headers[name.toLowerCase()];
@@ -189,6 +240,26 @@ function isAuthenticatedRoute(
   if (method === "POST" && segments.length === 1 && segments[0] === "fraud-reports") {
     return true;
   }
+  if (method === "GET" && segments.length === 2 && segments[0] === "fraud-reports") {
+    return true;
+  }
+  if (
+    method === "POST" &&
+    segments.length === 2 &&
+    segments[0] === "internal-recipients" &&
+    segments[1] === "lookup"
+  ) {
+    return true;
+  }
+  if (
+    method === "POST" &&
+    segments.length === 3 &&
+    segments[0] === "auth" &&
+    segments[1] === "otp" &&
+    segments[2] === "challenges"
+  ) {
+    return true;
+  }
   if (method === "GET" && segments.length === 1 && segments[0] === "accounts") {
     return true;
   }
@@ -253,6 +324,14 @@ function isAuthenticatedRoute(
   if (method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "accounts") {
     return true;
   }
+  if (
+    (method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") ||
+    (method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") ||
+    (method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "applications") ||
+    (method === "POST" && segments.length === 4 && segments[0] === "credit" && segments[1] === "applications" && segments[3] === "activate")
+  ) {
+    return true;
+  }
   if (method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "accounts") {
     return true;
   }
@@ -303,6 +382,9 @@ export async function handleRequest(
   response: ServerResponse,
   system: BankingSystem,
   options: HttpOptions = {},
+  parsedBody?: unknown,
+  bodyAlreadyRead = false,
+  stateBoundary?: RequestStateBoundary,
 ): Promise<void> {
   const traceId = getRequestId(request);
   const configuredOrigins = options.allowedOrigins ?? ["*"];
@@ -313,7 +395,7 @@ export async function handleRequest(
     response.setHeader("Access-Control-Allow-Origin", origin);
   }
   response.setHeader("Vary", "Origin");
-  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID, X-Sandbox-Operator-Key");
   response.setHeader("Access-Control-Allow-Methods", "DELETE,GET,PATCH,POST,OPTIONS");
 
   if (request.method === "OPTIONS") {
@@ -334,7 +416,71 @@ export async function handleRequest(
     }
     const routePath = requestUrl.pathname.slice(API_PREFIX.length) || "/";
     const segments = pathSegments(routePath);
-    const body = await readJson(request);
+    const body = bodyAlreadyRead ? parsedBody : await readJson(request);
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "sandbox" &&
+      segments[1] === "fundings"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.fundSandbox(
+          header(request, "x-sandbox-operator-key") ?? "",
+          header(request, "idempotency-key") ?? "",
+          data as never,
+        ),
+      );
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 3 &&
+      segments[0] === "sandbox" &&
+      segments[1] === "otp"
+    ) {
+      writeResponse(
+        response,
+        200,
+        traceId,
+        { otp: system.getSandboxOtp(header(request, "x-sandbox-operator-key") ?? "", segments[2]) },
+      );
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "sandbox" &&
+      segments[1] === "process-scheduled"
+    ) {
+      const data = body === undefined ? {} : requireObject(body);
+      const unsupportedField = Object.keys(data).find((key) => key !== "userId");
+      if (unsupportedField) {
+        throw invalidRequest(`Unsupported scheduled-work field: ${unsupportedField}.`);
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(data, "userId") &&
+        (typeof data.userId !== "string" || !data.userId.trim())
+      ) {
+        throw invalidRequest("userId must be a non-empty string when provided.");
+      }
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.processScheduledWork(
+          header(request, "x-sandbox-operator-key") ?? "",
+          typeof data.userId === "string" ? data.userId.trim() : undefined,
+        ),
+      );
+      return;
+    }
 
     if (
       request.method === "POST" &&
@@ -345,9 +491,36 @@ export async function handleRequest(
       const data = requireObject(body);
       writeResponse(
         response,
+        202,
+        traceId,
+        await system.beginRegistrationAsync(
+          data as never,
+          getRateLimitKey(request),
+          requireDeviceId(request),
+        ),
+      );
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 3 &&
+      segments[0] === "auth" &&
+      segments[1] === "register" &&
+      segments[2] === "verify"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
         201,
         traceId,
-        await system.registerAsync(data as never, getRateLimitKey(request)),
+        await Promise.resolve(
+          system.verifyRegistrationChallenge(
+            data.challengeId as string,
+            data.proof as string,
+            requireDeviceId(request),
+          ),
+        ),
       );
       return;
     }
@@ -453,6 +626,29 @@ export async function handleRequest(
 
     const userId = requireBearer(request, system);
 
+    if (
+      request.method === "POST" &&
+      segments.length === 3 &&
+      segments[0] === "auth" &&
+      segments[1] === "otp" &&
+      segments[2] === "challenges"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        201,
+        traceId,
+        system.createOtpChallenge(
+          userId,
+          requireDeviceId(request),
+          data.purpose as never,
+          typeof data.resourceId === "string" ? data.resourceId : null,
+          typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
+        ),
+      );
+      return;
+    }
+
     if (request.method === "GET" && segments.length === 1 && segments[0] === "notifications") {
       writeResponse(response, 200, traceId, { items: system.listNotifications(userId) });
       return;
@@ -470,6 +666,14 @@ export async function handleRequest(
 
     if (request.method === "POST" && segments.length === 1 && segments[0] === "fraud-reports") {
       const data = requireObject(body);
+      const unsupportedField = Object.keys(data).find(
+        (key) => key !== "accountId" && key !== "transactionId" && key !== "reason",
+      );
+      if (unsupportedField) {
+        throw invalidRequest(`Unsupported fraud report field: ${unsupportedField}.`, {
+          [unsupportedField]: "This field is not supported.",
+        });
+      }
       writeResponse(
         response,
         201,
@@ -479,8 +683,36 @@ export async function handleRequest(
           data.accountId as string,
           data.transactionId as string,
           data.reason as string,
+          header(request, "idempotency-key") ?? "",
         ),
       );
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 2 &&
+      segments[0] === "fraud-reports"
+    ) {
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.getFraudReport(userId, segments[1]),
+      );
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "internal-recipients" &&
+      segments[1] === "lookup"
+    ) {
+      const data = requireObject(body);
+      writeResponse(response, 200, traceId, {
+        recipient: system.lookupInternalRecipient(userId, data.accountNumber as string),
+      });
       return;
     }
 
@@ -491,6 +723,55 @@ export async function handleRequest(
 
     if (request.method === "GET" && segments.length === 1 && segments[0] === "cards") {
       writeResponse(response, 200, traceId, { items: system.listCards(userId) });
+      return;
+    }
+
+    if (request.method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") {
+      writeResponse(response, 200, traceId, { items: system.listCreditApplications(userId) });
+      return;
+    }
+
+    if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        201,
+        traceId,
+        system.submitCreditApplication(
+          userId,
+          header(request, "idempotency-key") ?? "",
+          data as never,
+          requireDeviceId(request),
+        ),
+      );
+      return;
+    }
+
+    if (request.method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "applications") {
+      writeResponse(response, 200, traceId, system.getCreditApplication(userId, segments[2]));
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 4 &&
+      segments[0] === "credit" &&
+      segments[1] === "applications" &&
+      segments[3] === "activate"
+    ) {
+      const data = requireObject(body);
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.activateCreditApplication(
+          userId,
+          segments[2],
+          header(request, "idempotency-key") ?? "",
+          data as never,
+          requireDeviceId(request),
+        ),
+      );
       return;
     }
 
@@ -517,7 +798,7 @@ export async function handleRequest(
     ) {
       const data = requireObject(body);
       writeResponse(response, 200, traceId, {
-        card: system.unlockCard(userId, segments[1], data as never),
+        card: system.unlockCard(userId, segments[1], data as never, requireDeviceId(request)),
       });
       return;
     }
@@ -603,6 +884,7 @@ export async function handleRequest(
         userId,
         header(request, "idempotency-key") ?? "",
         data as never,
+        requireDeviceId(request),
       );
       writeResponse(response, payment.status === "PENDING" ? 202 : 200, traceId, payment);
       return;
@@ -692,6 +974,7 @@ export async function handleRequest(
         userId,
         header(request, "idempotency-key") ?? "",
         data as never,
+        requireDeviceId(request),
       );
       writeResponse(response, opening.status === "PENDING" ? 202 : 200, traceId, opening);
       return;
@@ -804,6 +1087,7 @@ export async function handleRequest(
         userId,
         header(request, "idempotency-key") ?? "",
         data as never,
+        requireDeviceId(request),
       );
       writeResponse(
         response,
@@ -826,10 +1110,12 @@ export async function handleRequest(
     throw notFound("API route not found.");
   } catch (error: unknown) {
     if (error instanceof DomainError) {
+      stateBoundary?.rejectDomainRequest();
       writeError(response, error.status, traceId, error);
       return;
     }
 
+    stateBoundary?.rejectUnexpectedFailure();
     writeError(
       response,
       500,
@@ -849,30 +1135,63 @@ export function createBankingServer(
 }
 
 export function createPersistentBankingServer(
-  repository: PostgresSnapshotRepository,
+  repository: {
+    withState<T>(initialState: unknown, operation: RelationalStateOperation<T>): Promise<T>;
+  },
   system = new BankingSystem(),
   options: HttpOptions = {},
 ): Server {
   return createServer((request, response) => {
+    const traceId = getRequestId(request);
     const bufferedResponse = new BufferedResponse(response);
-    void repository
-      .withState(system.exportState(), async (state) => {
-        system.importState(state as never);
-        await handleRequest(
-          request,
-          bufferedResponse as unknown as ServerResponse,
-          system,
-          options,
-        );
-        return { result: undefined, nextState: system.exportState() };
-      })
+    void readJson(request)
+      .then((parsedBody) =>
+        repository.withState(system.exportState(), async (state) => {
+          system.importState(state as never);
+          const transactionStartState = system.exportState();
+          const requestState = {
+            disposition: "COMMIT_ALL" as RequestStateDisposition,
+          };
+          await handleRequest(
+            request,
+            bufferedResponse as unknown as ServerResponse,
+            system,
+            options,
+            parsedBody,
+            true,
+            {
+              rejectDomainRequest: () => {
+                requestState.disposition = "COMMIT_SECURITY_ONLY";
+              },
+              rejectUnexpectedFailure: () => {
+                requestState.disposition = "ROLLBACK_ALL";
+              },
+            },
+          );
+          const requestEndState = system.exportState();
+          const nextState =
+            requestState.disposition === "COMMIT_ALL"
+              ? requestEndState
+              : requestState.disposition === "COMMIT_SECURITY_ONLY"
+                ? mergeRejectedSecurityState(transactionStartState, requestEndState)
+                : transactionStartState;
+          return {
+            result: undefined,
+            nextState,
+          };
+        }),
+      )
       .then(() => bufferedResponse.flush())
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!response.headersSent) {
+          if (error instanceof DomainError) {
+            writeError(response, error.status, traceId, error);
+            return;
+          }
           writeError(
             response,
             503,
-            getRequestId(request),
+            traceId,
             new DomainError(
               503,
               "PERSISTENCE_UNAVAILABLE",

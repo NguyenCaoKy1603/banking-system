@@ -14,7 +14,6 @@ import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
 import {
   getMockKycApplication,
-  setMockKycStatus,
   submitMockKycApplication,
 } from "@/features/kyc/services/kycMock";
 import type { KycApplication, KycDraft, KycStatus } from "@/features/kyc/types/kyc";
@@ -33,7 +32,7 @@ function getStatusLabel(status: KycStatus): string {
     case "PENDING":
       return "Đang chờ duyệt";
     case "APPROVED":
-      return "Đã duyệt mô phỏng";
+      return "Đã duyệt";
     case "REJECTED":
       return "Cần bổ sung";
   }
@@ -128,18 +127,6 @@ export function KycScreen() {
     }
   }, [draft, userId]);
 
-  const handleSimulatedDecision = useCallback(
-    async (status: Extract<KycStatus, "APPROVED" | "REJECTED">) => {
-      if (!userId) {
-        return;
-      }
-
-      const updated = await setMockKycStatus(userId, status);
-      setApplication(updated);
-    },
-    [userId],
-  );
-
   const isEditable = !application || application.status === "DRAFT" || application.status === "REJECTED";
 
   return (
@@ -159,7 +146,7 @@ export function KycScreen() {
           <Text style={styles.eyebrow}>M2 · eKYC</Text>
           <Text style={styles.title}>Hồ sơ định danh</Text>
           <Text style={styles.description}>
-            Luồng eKYC mô phỏng để kiểm thử form, upload mẫu và các trạng thái DRAFT/PENDING/APPROVED/REJECTED.
+            Ứng dụng khách hàng chỉ gửi hồ sơ và đọc trạng thái. Quyết định duyệt phải đến từ dịch vụ có thẩm quyền phía server.
           </Text>
         </View>
 
@@ -171,7 +158,9 @@ export function KycScreen() {
           <View style={styles.card}>
             <Text style={styles.statusTitle}>{getStatusLabel(application.status)}</Text>
             <Text style={styles.description}>
-              Hồ sơ {application.status === "APPROVED" ? "đã được duyệt trong dữ liệu mô phỏng." : "đang chờ xử lý."}
+              {application.status === "PENDING"
+                ? "Hồ sơ đã được gửi và đang chờ dịch vụ kiểm duyệt xử lý."
+                : "Đây là trạng thái chỉ đọc từ nguồn kiểm duyệt; ứng dụng khách hàng không thể thay đổi quyết định."}
             </Text>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Họ tên</Text>
@@ -186,19 +175,9 @@ export function KycScreen() {
             ) : null}
             <PrimaryButton label="Tải lại trạng thái" onPress={loadApplication} testID="kyc-refresh-status" />
             {application.status === "PENDING" ? (
-              <View style={styles.demoActions}>
-                <Text style={styles.demoLabel}>Điều khiển demo nội bộ</Text>
-                <PrimaryButton
-                  label="Mô phỏng APPROVED"
-                  onPress={() => void handleSimulatedDecision("APPROVED")}
-                  testID="kyc-simulate-approved"
-                />
-                <PrimaryButton
-                  label="Mô phỏng REJECTED"
-                  onPress={() => void handleSimulatedDecision("REJECTED")}
-                  testID="kyc-simulate-rejected"
-                />
-              </View>
+              <Text style={styles.noteText} testID="kyc-pending-entitlement-note">
+                Bản reference chưa có entitlement/API kiểm duyệt phía server nên hồ sơ sẽ giữ trạng thái chờ; không có thao tác tự duyệt trên ứng dụng này.
+              </Text>
             ) : null}
           </View>
         ) : (
@@ -351,16 +330,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
-  demoActions: {
-    gap: spacing.sm,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  demoLabel: {
+  noteText: {
     color: colors.muted,
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase",
+    fontSize: 13,
+    lineHeight: 19,
   },
 });

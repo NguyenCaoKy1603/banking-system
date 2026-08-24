@@ -4,19 +4,35 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { addMonthsClamped, calculateMinimumPayment, nextStatementCloseAt } from "../credit.js";
 
+const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
+
 function createSystem(options: ConstructorParameters<typeof BankingSystem>[0] = {}) {
   let now = Date.parse("2026-08-14T00:00:00.000Z");
-  const system = new BankingSystem({ ...options, clock: () => now, sandboxOtp: "123456" });
+  const system = new BankingSystem({
+    ...options,
+    clock: () => now,
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
   return { system, advance: (milliseconds: number) => { now += milliseconds; } };
 }
 
 function register(system: BankingSystem, suffix: string) {
-  return system.register({
+  const user = system.register({
     fullName: "Credit Sandbox User",
     email: `credit-${suffix}@example.com`,
     phoneNumber: `0912345${suffix.padStart(3, "0")}`,
     password: "Password1",
   }).user;
+  const paymentAccount = system.listAccounts(user.id)[0];
+  assert.ok(paymentAccount);
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, `credit-funding-${suffix}`, {
+    recipientAccountNumber: system.getAccountNumber(user.id, paymentAccount.id),
+    amount: { currency: "VND", amountMinor: "10000000" },
+    reason: "test fixture funding",
+  });
+  system.seedCreditSandbox(SANDBOX_OPERATOR_KEY, user.id);
+  return user;
 }
 
 test("credit statement schedule closes on the 25th in Asia/Ho_Chi_Minh", () => {
@@ -66,10 +82,16 @@ test("statement close is idempotent and emits one credit notification", () => {
   assert.equal(system.listCreditStatements(user.id, account.creditAccountId).items.length, 1);
 
   advance(10 * 24 * 60 * 60 * 1000 + 17 * 60 * 60 * 1000);
+  const firstProcessing = system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
   const firstRun = system.listCreditStatements(user.id, account.creditAccountId).items;
+  const stateAfterFirstRead = system.exportState();
   const secondRun = system.listCreditStatements(user.id, account.creditAccountId).items;
+  const secondProcessing = system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  assert.equal(firstProcessing.creditStatements, 1);
+  assert.equal(secondProcessing.creditStatements, 0);
   assert.equal(firstRun.length, 2);
   assert.equal(secondRun.length, 2);
+  assert.deepEqual(system.exportState(), stateAfterFirstRead);
   assert.deepEqual(
     secondRun.map((statement) => statement.statementId),
     firstRun.map((statement) => statement.statementId),
@@ -80,11 +102,40 @@ test("statement close is idempotent and emits one credit notification", () => {
   );
 });
 
+test("credit statement cursor does not duplicate rows when a newer cycle closes", () => {
+  const { system, advance } = createSystem();
+  const user = register(system, "712");
+  const account = system.listCreditAccounts(user.id)[0]!;
+  advance(11 * 24 * 60 * 60 * 1000);
+  system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  const first = system.listCreditStatements(
+    user.id,
+    account.creditAccountId,
+    undefined,
+    1,
+  );
+  assert.equal(first.items.length, 1);
+  assert.ok(first.nextCursor);
+
+  advance(31 * 24 * 60 * 60 * 1000);
+  system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  const second = system.listCreditStatements(
+    user.id,
+    account.creditAccountId,
+    first.nextCursor,
+    10,
+  );
+  assert.equal(second.items.length, 1);
+  assert.notEqual(second.items[0]?.statementId, first.items[0]?.statementId);
+  assert.equal(second.nextCursor, null);
+});
+
 test("overdue credit seed emits one notification that targets the card", () => {
   const { system } = createSystem({ creditOverdueSeed: true });
   const user = register(system, "708");
   const card = system.listCards(user.id)[0]!;
   const account = system.listCreditAccounts(user.id)[0]!;
+  system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
   const statement = system.listCreditStatements(user.id, account.creditAccountId).items[0]!;
 
   assert.equal(statement.status, "OVERDUE");
@@ -144,9 +195,147 @@ test("credit payment applies once, updates statement and reconciles to ledger", 
   assert.equal(latest.minimumPaymentRemaining.amountMinor, "0");
   assert.equal(latest.payments.length, 1);
   assert.equal(system.reconcileCredit()[0]?.differenceMinor, "0");
+  const auditCount = system.auditEvents.length;
+  const outboxCount = system.outboxEvents.length;
+  const recoveredWithNewKey = system.submitCreditPayment(
+    user.id,
+    "credit-payment-key-b",
+    { quoteId: quote.quoteId, stepUp: { method: "OTP", proof: "not-rechecked" } },
+  );
+  assert.equal(recoveredWithNewKey.paymentId, payment.paymentId);
+  assert.equal(system.auditEvents.length, auditCount);
+  assert.equal(system.outboxEvents.length, outboxCount);
+
+  const corruptedState = system.exportState();
+  corruptedState.creditPayments = (corruptedState.creditPayments ?? []).filter(
+    ([paymentId]) => paymentId !== payment.paymentId,
+  );
+  const corruptedSystem = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
+  corruptedSystem.importState(corruptedState);
   assert.throws(
-    () => system.submitCreditPayment(user.id, "credit-payment-key-b", { quoteId: quote.quoteId, stepUp: { method: "OTP", proof: "123456" } }),
-    (error: unknown) => (error as { code?: string }).code === "QUOTE_ALREADY_USED",
+    () =>
+      corruptedSystem.submitCreditPayment(user.id, "credit-recovery-key-c", {
+        quoteId: quote.quoteId,
+        stepUp: { method: "OTP", proof: "not-rechecked" },
+      }),
+    (error: unknown) =>
+      (error as { status?: number; code?: string }).status === 409 &&
+      (error as { code?: string }).code === "IDEMPOTENCY_STATE_MISSING",
+  );
+
+  const stateWithoutEphemeralQuote = system.exportState();
+  stateWithoutEphemeralQuote.creditQuotes = [];
+  system.importState(stateWithoutEphemeralQuote);
+  const lateReplay = system.submitCreditPayment(user.id, "credit-payment-key-a", {
+    quoteId: quote.quoteId,
+    stepUp: { method: "OTP", proof: "proof-is-not-rechecked" },
+  });
+  assert.equal(lateReplay.paymentId, payment.paymentId);
+});
+
+test("credit payment cannot target a superseded statement or make outstanding negative", () => {
+  const { system, advance } = createSystem();
+  const user = register(system, "709");
+  const source = system.listAccounts(user.id)[0]!;
+  const account = system.listCreditAccounts(user.id)[0]!;
+  const original = system.listCreditStatements(user.id, account.creditAccountId).items[0]!;
+
+  advance(11 * 24 * 60 * 60 * 1000);
+  system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  const statements = system.listCreditStatements(user.id, account.creditAccountId).items;
+  const current = statements[0]!;
+  assert.notEqual(current.statementId, original.statementId);
+  assert.throws(
+    () =>
+      system.createCreditPaymentQuote(user.id, {
+        sourceAccountId: source.id,
+        creditAccountId: account.creditAccountId,
+        statementId: original.statementId,
+        paymentOption: "FULL_STATEMENT",
+      }),
+    (error: unknown) => (error as { code?: string }).code === "STATEMENT_SUPERSEDED",
+  );
+
+  const quote = system.createCreditPaymentQuote(user.id, {
+    sourceAccountId: source.id,
+    creditAccountId: account.creditAccountId,
+    statementId: current.statementId,
+    paymentOption: "FULL_STATEMENT",
+  });
+  system.submitCreditPayment(user.id, "credit-rollover-payment", {
+    quoteId: quote.quoteId,
+    stepUp: { method: "OTP", proof: "123456" },
+  });
+  const paidAccount = system.getCreditAccount(user.id, account.creditAccountId);
+  assert.equal(paidAccount.postedOutstanding.amountMinor, "0");
+  assert.equal(paidAccount.availableCredit.amountMinor, paidAccount.creditLimit.amountMinor);
+  assert.equal(system.reconcileCredit()[0]?.invariantValid, true);
+});
+
+test("paying the minimum before or after due date clears delinquency", () => {
+  const { system } = createSystem({ creditOverdueSeed: true });
+  const user = register(system, "710");
+  const source = system.listAccounts(user.id)[0]!;
+  const account = system.listCreditAccounts(user.id)[0]!;
+  system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  const statement = system.listCreditStatements(user.id, account.creditAccountId).items[0]!;
+  assert.equal(statement.status, "OVERDUE");
+  const quote = system.createCreditPaymentQuote(user.id, {
+    sourceAccountId: source.id,
+    creditAccountId: account.creditAccountId,
+    statementId: statement.statementId,
+    paymentOption: "MINIMUM",
+  });
+  system.submitCreditPayment(user.id, "credit-minimum-clears-delinquency", {
+    quoteId: quote.quoteId,
+    stepUp: { method: "OTP", proof: "123456" },
+  });
+  const updated = system.getCreditStatement(
+    user.id,
+    account.creditAccountId,
+    statement.statementId,
+  );
+  assert.equal(updated.minimumPaymentRemaining.amountMinor, "0");
+  assert.equal(updated.status, "PARTIALLY_PAID");
+});
+
+test("credit reversal preserves history and recomputes minimum allocation", () => {
+  const { system } = createSystem();
+  const user = register(system, "711");
+  const source = system.listAccounts(user.id)[0]!;
+  const account = system.listCreditAccounts(user.id)[0]!;
+  const statement = system.listCreditStatements(user.id, account.creditAccountId).items[0]!;
+  const pay = (key: string, amountMinor: string) => {
+    const quote = system.createCreditPaymentQuote(user.id, {
+      sourceAccountId: source.id,
+      creditAccountId: account.creditAccountId,
+      statementId: statement.statementId,
+      paymentOption: "CUSTOM",
+      amount: { currency: "VND", amountMinor },
+    });
+    return system.submitCreditPayment(user.id, key, {
+      quoteId: quote.quoteId,
+      stepUp: { method: "OTP", proof: "123456" },
+    });
+  };
+  const first = pay("credit-allocation-a", "200000");
+  pay("credit-allocation-b", "50000");
+  system.reverseCreditPayment(user.id, first.paymentId);
+
+  const updated = system.getCreditStatement(
+    user.id,
+    account.creditAccountId,
+    statement.statementId,
+  );
+  assert.equal(updated.paidAmount.amountMinor, "50000");
+  assert.equal(updated.minimumPaymentRemaining.amountMinor, "150000");
+  assert.equal(updated.payments.length, 2);
+  assert.equal(
+    updated.payments.find((payment) => payment.paymentId === first.paymentId)?.status,
+    "REVERSED",
   );
 });
 
@@ -169,11 +358,65 @@ test("pending credit payment resumes without a second source debit", () => {
   });
   assert.equal(pending.status, "PENDING");
   assert.equal(system.listAccounts(user.id)[0]!.availableBalance.amountMinor, "9800000");
+  const stateBeforeRead = system.exportState();
+  const readOnly = system.getCreditPayment(user.id, pending.paymentId);
+  assert.equal(readOnly.status, "PENDING");
+  assert.deepEqual(system.exportState(), stateBeforeRead);
+  const processing = system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  assert.equal(processing.creditPaymentsSettled, 1);
   const resumed = system.getCreditPayment(user.id, pending.paymentId);
   assert.equal(resumed.status, "SUCCEEDED");
   assert.equal(system.listAccounts(user.id)[0]!.availableBalance.amountMinor, "9800000");
-  assert.equal(system.listTransactions(user.id, source.id).items.length, 1);
+  assert.equal(system.listTransactions(user.id, source.id).items.length, 2);
   assert.equal(system.getCreditAccount(user.id, account.creditAccountId).postedOutstanding.amountMinor, "3800000");
+});
+
+test("pending payment settles before rollover and late reversal requires review", () => {
+  const { system, advance } = createSystem({
+    settleCreditPaymentsImmediately: false,
+  });
+  const user = register(system, "713");
+  const source = system.listAccounts(user.id)[0]!;
+  const account = system.listCreditAccounts(user.id)[0]!;
+  const original = system.listCreditStatements(
+    user.id,
+    account.creditAccountId,
+  ).items[0]!;
+  const quote = system.createCreditPaymentQuote(user.id, {
+    sourceAccountId: source.id,
+    creditAccountId: account.creditAccountId,
+    statementId: original.statementId,
+    paymentOption: "CUSTOM",
+    amount: { currency: "VND", amountMinor: "3000000" },
+  });
+  const pending = system.submitCreditPayment(user.id, "rollover-pending-key", {
+    quoteId: quote.quoteId,
+    stepUp: { method: "OTP", proof: "123456" },
+  });
+  assert.equal(pending.status, "PENDING");
+
+  advance(11 * 24 * 60 * 60 * 1000);
+  const processing = system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  assert.equal(processing.creditPaymentsSettled, 1);
+  assert.equal(processing.creditStatements, 1);
+  const latest = system.listCreditStatements(
+    user.id,
+    account.creditAccountId,
+  ).items[0]!;
+  assert.equal(latest.remainingAmountDue.amountMinor, "1000000");
+  assert.equal(
+    system.getCreditAccount(user.id, account.creditAccountId).postedOutstanding
+      .amountMinor,
+    "1000000",
+  );
+  assert.equal(system.getHealth().status, "ok");
+
+  assert.throws(
+    () => system.reverseCreditPayment(user.id, pending.paymentId),
+    (error: unknown) =>
+      (error as { code?: string }).code === "REVERSAL_REQUIRES_REVIEW",
+  );
+  assert.equal(system.getHealth().status, "ok");
 });
 
 test("failed and reversed credit payments restore source and debt balances", () => {
@@ -211,7 +454,8 @@ test("failed and reversed credit payments restore source and debt balances", () 
     quoteId: reversedQuote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
-  assert.equal(system.getCreditPayment(user.id, succeeded.paymentId).status, "SUCCEEDED");
+  assert.equal(system.getCreditPayment(user.id, succeeded.paymentId).status, "PENDING");
+  assert.equal(system.settleCreditPayment(user.id, succeeded.paymentId).status, "SUCCEEDED");
   const reversed = system.reverseCreditPayment(user.id, succeeded.paymentId);
   assert.equal(reversed.status, "REVERSED");
   assert.equal(system.listAccounts(user.id)[0]!.availableBalance.amountMinor, "10000000");
@@ -225,7 +469,7 @@ test("credit card lock is persistent in the exported state and unlock requires s
   const user = register(system, "704");
   const card = system.listCards(user.id)[0]!;
   assert.equal(system.lockCard(user.id, card.cardId).status, "LOCKED");
-  assert.throws(() => system.unlockCard(user.id, card.cardId, { method: "OTP", proof: "000000" }), /verification failed/);
+  assert.throws(() => system.unlockCard(user.id, card.cardId, { method: "OTP", proof: "000000" }), /Step-up challenge is invalid/);
   assert.equal(system.unlockCard(user.id, card.cardId, { method: "OTP", proof: "123456" }).status, "ACTIVE");
 });
 

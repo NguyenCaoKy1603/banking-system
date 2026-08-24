@@ -1,6 +1,6 @@
 # Mobile banking foundation
 
-Ứng dụng Expo/React Native này là client cho MVP ngân hàng số cá nhân. Repo đã có mobile foundation và backend reference sandbox để kiểm chứng end-to-end; backend đó dùng in-memory store và không đại diện cho production/core banking.
+Ứng dụng Expo/React Native này là client cho MVP ngân hàng số cá nhân. Repo đã có mobile foundation và backend reference sandbox để kiểm chứng end-to-end; backend đó dùng PostgreSQL persistent cho dữ liệu core, còn in-memory chỉ dành cho test nhanh và không đại diện cho production/core banking.
 
 ## Phạm vi hiện tại
 

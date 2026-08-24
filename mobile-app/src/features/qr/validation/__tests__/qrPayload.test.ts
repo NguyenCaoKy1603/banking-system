@@ -10,13 +10,12 @@ describe("receive QR payload", () => {
       displayName: "Nguyễn Văn A",
       maskedAccountNumber: "****1234",
       bankName: "Demo Bank",
-      beneficiaryId: "beneficiary-1",
     });
 
     expect(parseReceiveQrPayload(raw)).toMatchObject({
       accountId: "account-1",
-      beneficiaryId: "beneficiary-1",
       currency: "VND",
+      trust: "UNVERIFIED",
     });
   });
 
@@ -27,5 +26,40 @@ describe("receive QR payload", () => {
         JSON.stringify({ version: 1, kind: "PAYMENT", currency: "VND" }),
       ),
     ).toThrow();
+  });
+
+  it("drops untrusted beneficiary metadata instead of making it actionable", () => {
+    const parsed = parseReceiveQrPayload(
+      JSON.stringify({
+        version: 1,
+        kind: "RECEIVE_MONEY",
+        accountId: "account-1",
+        displayName: "Nguyễn Văn A",
+        maskedAccountNumber: "****1234",
+        bankName: "Demo Bank",
+        currency: "VND",
+        beneficiaryId: "attacker-controlled-beneficiary",
+      }),
+    );
+
+    expect(parsed).not.toHaveProperty("beneficiaryId");
+    expect(parsed.trust).toBe("UNVERIFIED");
+  });
+
+  it("rejects oversized and control-character display data", () => {
+    expect(() =>
+      parseReceiveQrPayload(
+        JSON.stringify({
+          version: 1,
+          kind: "RECEIVE_MONEY",
+          accountId: "account-1",
+          displayName: "Tên giả\u202e",
+          maskedAccountNumber: "****1234",
+          bankName: "Demo Bank",
+          currency: "VND",
+        }),
+      ),
+    ).toThrow();
+    expect(() => parseReceiveQrPayload("x".repeat(4097))).toThrow();
   });
 });

@@ -10,6 +10,7 @@ import {
 } from "react-native";
 
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import {
@@ -19,14 +20,7 @@ import {
 import type { Transaction } from "@/features/accounts/types/account";
 import { filterTransactions, type HistoryDirectionFilter, type HistoryStatusFilter } from "@/features/history/presentation/historyFilters";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
-import { ApiError } from "@/services/api/ApiError";
 import { colors, spacing } from "@/theme";
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof ApiError
-    ? error.message
-    : "Không thể tải lịch sử giao dịch. Vui lòng thử lại.";
-}
 
 function getTransactionAmount(transaction: Transaction): string {
   const prefix = transaction.direction === "CREDIT" ? "+" : "-";
@@ -73,7 +67,7 @@ export function HistoryScreen() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [error, setError] = useState<string | undefined>();
+  const [error, setError] = useState<unknown>();
   const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>("ALL");
   const [directionFilter, setDirectionFilter] = useState<HistoryDirectionFilter>("ALL");
 
@@ -105,7 +99,7 @@ export function HistoryScreen() {
       setTransactions(page.items);
       setNextCursor(page.nextCursor);
     } catch (requestError: unknown) {
-      setError(getErrorMessage(requestError));
+      setError(requestError);
     } finally {
       setIsLoading(false);
     }
@@ -136,7 +130,7 @@ export function HistoryScreen() {
       ]);
       setNextCursor(page.nextCursor);
     } catch (requestError: unknown) {
-      setError(getErrorMessage(requestError));
+      setError(requestError);
     } finally {
       setIsLoadingMore(false);
     }
@@ -209,10 +203,12 @@ export function HistoryScreen() {
             <ActivityIndicator color={colors.primary} size="large" />
           </View>
         ) : error ? (
-          <View style={styles.stateCard}>
-            <Text style={styles.errorText}>{error}</Text>
-            <PrimaryButton label="Thử lại" onPress={loadInitial} />
-          </View>
+          <RequestErrorNotice
+            error={error}
+            fallbackMessage="Không thể tải lịch sử giao dịch. Vui lòng thử lại."
+            onRetry={loadInitial}
+            testID="history-error"
+          />
         ) : !selectedAccountId ? (
           <View style={styles.stateCard}>
             <Text style={styles.emptyState}>Chưa có tài khoản để hiển thị.</Text>
@@ -378,11 +374,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: spacing.md,
     backgroundColor: colors.surface,
-  },
-  errorText: {
-    color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
   },
   emptyState: {
     color: colors.text,

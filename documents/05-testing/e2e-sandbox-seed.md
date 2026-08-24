@@ -1,10 +1,25 @@
 # E2E sandbox seed
 
+> Cập nhật 2026-08-17: seed hiện dùng registration hai bước, Sandbox Funding operator, recipient account thật và credit application → activation. Nếu chưa có `E2E_BENEFICIARY_ACCOUNT`, cần cấp `E2E_RECIPIENT_PASSWORD` (kèm email/phone tùy chọn) để seed tự tạo người nhận; không còn số tài khoản mặc định giả.
+
 `backend` có lệnh `npm run seed:e2e` để chuẩn bị dữ liệu cho các flow Maestro mà không phải tự lấy ID bằng tay.
+
+Khi cần làm sạch dữ liệu demo trên PostgreSQL local, dùng lệnh reset có xác nhận rõ ràng:
+
+```powershell
+$env:E2E_RESET_CONFIRM = "RESET_REFERENCE_SANDBOX"
+npm run reset:sandbox
+npm run seed:e2e
+```
+
+Lệnh reset chỉ chạy khi `BANKING_ENV` không phải `production`, database là PostgreSQL local
+(`localhost`, `127.0.0.1` hoặc `::1`) và tên database kết thúc bằng `test`, `sandbox` hoặc `e2e`.
+Lệnh không xóa migration schema; nó chỉ xóa dữ liệu reference sandbox để tạo lại bộ dữ liệu E2E.
+Đã diễn tập trên một PostgreSQL database tạm: migration thành công, bản ghi giả được xóa về 0 và database tạm được dọn sau kiểm tra.
 
 ## Chạy lại từ trạng thái sạch
 
-Reference backend mặc định dùng in-memory store. Dừng và khởi động lại server để reset dữ liệu. Persistent PostgreSQL sandbox không dùng reset này; hãy dùng snapshot key/database disposable riêng cho test.
+Reference backend mặc định dùng PostgreSQL relational store. Dừng và khởi động lại server không reset dữ liệu; muốn làm sạch hãy dùng database disposable riêng hoặc chạy seed với user/test data mới. Chế độ `BANKING_STORAGE=in-memory` chỉ dành cho test nhanh.
 
 ```powershell
 cd backend
@@ -27,7 +42,7 @@ $env:E2E_TRANSFER_OTP = $env:BANKING_SANDBOX_OTP
 npm run seed:e2e
 ```
 
-Lệnh seed sẽ đăng ký hoặc đăng nhập `tester@example.com`, xác thực MFA nếu server yêu cầu, lấy account, tạo beneficiary nếu cần, tạo một transfer để có notification và in JSON/PowerShell variables không nhạy cảm gồm `BENEFICIARY_ID`, `QR_PAYLOAD`, `SEEDED_TRANSFER_ID` và các biến Maestro. Password/OTP không được in ra stdout; giữ chúng trong environment của caller.
+Lệnh seed sẽ đăng ký hoặc đăng nhập `tester@example.com`, xác thực MFA nếu server yêu cầu, lấy account, tạo beneficiary nếu cần, tạo một transfer để có notification và in JSON/PowerShell variables không nhạy cảm gồm `BENEFICIARY_ID`, `QR_PAYLOAD`, `SEEDED_TRANSFER_ID` và các biến Maestro. Trong reference backend, đăng ký dùng `BANKING_SANDBOX_OTP` còn đăng nhập MFA dùng `BANKING_SANDBOX_MFA_OTP`; vì vậy seed dùng `E2E_TRANSFER_OTP` cho bước đăng ký và giao dịch. Password/OTP không được in ra stdout; giữ chúng trong environment của caller.
 
 ## Ánh xạ biến cho Maestro
 
@@ -70,7 +85,7 @@ Khởi động server với `$env:BANKING_SETTLE_IMMEDIATELY = "0"` trước khi
 
 - `E2E_PASSWORD` chỉ tồn tại trong shell/secret của môi trường test, không commit vào repository.
 - Seed output chỉ dùng cho local/preview sandbox; không dùng OTP sandbox hoặc account ID này cho staging/production.
-- Chạy lại từ trạng thái sạch bằng cách restart in-memory backend; không coi đây là persistence test.
+- Với PostgreSQL relational, không reset bằng restart; dùng database disposable riêng hoặc user seed mới. Restart chỉ kiểm tra dữ liệu có còn sau khi backend khởi động lại.
 
 ## M7 credit
 

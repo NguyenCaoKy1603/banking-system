@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useRouter } from "expo-router";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
@@ -37,6 +37,21 @@ export function ProfileScreen() {
     } finally {
       setIsLoggingOut(false);
     }
+  }
+
+  function confirmLogoutAll() {
+    Alert.alert(
+      "Đăng xuất mọi thiết bị?",
+      "Tất cả phiên đang hoạt động sẽ bị thu hồi. Nếu đang ngoại tuyến, ứng dụng sẽ báo rõ khi máy chủ chưa xác nhận.",
+      [
+        { text: "Hủy", style: "cancel" },
+        {
+          text: "Đăng xuất tất cả",
+          style: "destructive",
+          onPress: () => void handleLogoutAll(),
+        },
+      ],
+    );
   }
 
   return (
@@ -99,7 +114,7 @@ export function ProfileScreen() {
         <PrimaryButton
           disabled={isLoggingOut}
           label="Đăng xuất mọi thiết bị"
-          onPress={handleLogoutAll}
+          onPress={confirmLogoutAll}
           testID="logout-all-devices"
         />
       </ScrollView>

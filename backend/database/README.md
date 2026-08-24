@@ -1,6 +1,6 @@
 # Database boundary (DRAFT)
 
-`001_banking_mvp.sql` là schema PostgreSQL dự kiến cho production adapter. Schema này chưa được nối vào các bảng production của `BankingSystem`; bảng `reference_state_snapshots` chỉ là checkpoint JSON cho persistent sandbox và không được dùng cho tiền thật. Schema phải được partner/core banking, legal/compliance, data retention và security review phê duyệt trước khi áp dụng.
+`001_banking_mvp.sql` và `005_relational_reference_runtime.sql` là schema PostgreSQL DRAFT cho reference adapter của đồ án. `PostgresRelationalRepository` đã nối các bản ghi nghiệp vụ M0–M4/M8 vào các bảng relational; `reference_state_snapshots` chỉ giữ vai trò tương thích để nâng dữ liệu sandbox cũ một lần. `reference_runtime_records` lưu state tạm thời/bonus theo từng record, không phải một snapshot tổng. Schema vẫn phải được partner/core banking, legal/compliance, data retention và security review phê duyệt trước khi áp dụng vào hệ thống tiền thật.
 
 Các invariant chính:
 

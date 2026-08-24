@@ -72,4 +72,15 @@ describe("biometricAuth", () => {
 
     expect(getSandboxBiometricProof()).toBe("provider-assertion");
   });
+
+  it("không đóng gói proof tĩnh vào bản production", () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    process.env.EXPO_PUBLIC_SANDBOX_BIOMETRIC_PROOF = "must-not-leak";
+    try {
+      expect(getSandboxBiometricProof()).toBe("");
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+  });
 });

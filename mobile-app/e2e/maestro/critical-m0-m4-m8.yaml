@@ -95,10 +95,10 @@ appId: ${APP_ID}
     id: kyc-submit
 - extendedWaitUntil:
     visible:
-      id: kyc-simulate-approved
+      id: kyc-pending-entitlement-note
     timeout: 10000
 - tapOn:
-    id: kyc-simulate-approved
+    id: kyc-refresh-status
 - tapOn:
     id: kyc-back
 - tapOn:
@@ -131,6 +131,8 @@ appId: ${APP_ID}
     visible:
       id: qr-valid-payload
     timeout: 10000
+- assertVisible:
+    id: qr-transfer-blocked
 - tapOn:
     id: tab-profile
 - tapOn:

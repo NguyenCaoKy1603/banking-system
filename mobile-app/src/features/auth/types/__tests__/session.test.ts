@@ -21,11 +21,12 @@ describe("AuthSession helpers", () => {
   it("tính accessTokenExpiresAt theo Unix timestamp millisecond", () => {
     const now = 1_700_000_000_000;
 
-    const session = createAuthSession(loginResponse, now);
+    const session = createAuthSession(loginResponse, now, "session-epoch-1");
 
     expect(session.accessTokenExpiresAt).toBe(now + 900 * 1000);
     expect(session.accessToken).toBe(loginResponse.accessToken);
     expect(session.refreshToken).toBe(loginResponse.refreshToken);
+    expect(session.sessionEpoch).toBe("session-epoch-1");
     expect(session.user).toEqual(loginResponse.user);
   });
 
@@ -33,25 +34,41 @@ describe("AuthSession helpers", () => {
     "từ chối expiresInSeconds không hợp lệ: %s",
     (expiresInSeconds) => {
       expect(() =>
-        createAuthSession({ ...loginResponse, expiresInSeconds }, 1_700_000_000_000),
+        createAuthSession(
+          { ...loginResponse, expiresInSeconds },
+          1_700_000_000_000,
+          "session-epoch-1",
+        ),
       ).toThrow(RangeError);
     },
   );
 
   it("xác định token chưa hết hạn trước expiresAt", () => {
-    const session = createAuthSession(loginResponse, 1_700_000_000_000);
+    const session = createAuthSession(
+      loginResponse,
+      1_700_000_000_000,
+      "session-epoch-1",
+    );
 
     expect(isAccessTokenExpired(session, session.accessTokenExpiresAt - 1)).toBe(false);
   });
 
   it("xác định token hết hạn đúng tại expiresAt", () => {
-    const session = createAuthSession(loginResponse, 1_700_000_000_000);
+    const session = createAuthSession(
+      loginResponse,
+      1_700_000_000_000,
+      "session-epoch-1",
+    );
 
     expect(isAccessTokenExpired(session, session.accessTokenExpiresAt)).toBe(true);
   });
 
   it("xác định token hết hạn sau expiresAt", () => {
-    const session = createAuthSession(loginResponse, 1_700_000_000_000);
+    const session = createAuthSession(
+      loginResponse,
+      1_700_000_000_000,
+      "session-epoch-1",
+    );
 
     expect(isAccessTokenExpired(session, session.accessTokenExpiresAt + 1)).toBe(true);
   });

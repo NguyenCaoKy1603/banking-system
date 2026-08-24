@@ -1,8 +1,8 @@
-# APPROVED v1 — Auth API Contract
+# DRAFT v2 — Reference Auth API Contract
 
-> **Trạng thái:** APPROVED v1.
+> **Trạng thái:** DRAFT v2 cho reference sandbox; thay thế state machine đăng ký trực tiếp của v1 trong workspace này.
 >
-> Contract này chốt phạm vi đăng ký và đăng nhập cho checkpoint Auth API client foundation. Mọi thay đổi không tương thích cần được Mobile và Backend thống nhất thành phiên bản contract mới.
+> Registration reference dùng OTP hai bước để tạo dữ liệu demo, không phải account-opening/eKYC production. Mọi thay đổi cần Mobile, Backend, Identity và legal/compliance thống nhất.
 
 ## 1. Base URL và quy ước
 
@@ -48,7 +48,7 @@ http://10.0.2.2:5000/api/v1/auth/register
 
 ### Mục đích
 
-Tạo tài khoản mới. Đăng ký thành công không tự đăng nhập và không trả token.
+Bắt đầu đăng ký reference và bind một challenge OTP với đúng snapshot thông tin đã gửi. Bước này chưa tạo user, chưa tạo payment account, không tự đăng nhập và không trả token.
 
 ### Request body
 
@@ -72,7 +72,32 @@ type RegisterRequest = {
 
 `confirmPassword` chỉ thuộc form Mobile và không được gửi lên API.
 
-### Success response — `201 Created`
+### Success response — `202 Accepted`
+
+```ts
+type AuthChallengeResponse = {
+  challengeId: string;
+  expiresAt: string;
+  methods: Array<"OTP">;
+  purpose: "REGISTRATION_VERIFY";
+};
+```
+
+Mobile phải khóa các trường đăng ký sau khi nhận challenge. Nếu người dùng muốn sửa dữ liệu, client phải bỏ challenge cũ và gọi lại `/auth/register`; không được hiển thị dữ liệu mới rồi verify challenge đã bind với dữ liệu cũ.
+
+### POST `/auth/register/verify`
+
+Client gửi `X-Device-ID` giống bước bắt đầu và body:
+
+```ts
+type VerifyRegistrationRequest = {
+  challengeId: string;
+  method: "OTP";
+  proof: string;
+};
+```
+
+Chỉ khi challenge còn hạn, đúng device/purpose và proof hợp lệ, server mới tạo user cùng một payment account reference số dư `0 VND`, rồi trả `201 Created`:
 
 ```ts
 type AuthUser = {
@@ -102,7 +127,8 @@ type RegisterResponse = {
 
 ### HTTP status
 
-- `201 Created`: đăng ký thành công.
+- `202 Accepted`: challenge đăng ký đã được tạo, chưa có user/account.
+- `201 Created` trên `/auth/register/verify`: verify thành công và user/account reference được tạo đúng một lần.
 - `400 Bad Request`: request body không đọc được.
 - `409 Conflict`: email hoặc số điện thoại đã tồn tại.
 - `422 Unprocessable Entity`: validation không đạt.
@@ -182,6 +208,7 @@ type AuthChallengeResponse = {
   challengeId: string;
   expiresAt: string;
   methods: Array<"OTP" | "BIOMETRIC">;
+  purpose: "LOGIN";
 };
 ```
 
@@ -195,7 +222,7 @@ type VerifyAuthChallengeRequest = {
 };
 ```
 
-`200 OK` trả `LoginResponse`. Challenge phải one-time, có TTL, bind với device và được audit ở server. OTP/provider thật không được hard-code trong mobile; backend/risk engine quyết định policy.
+`200 OK` trả `LoginResponse`. Challenge phải one-time, có TTL, bind purpose/resource/device và được audit ở server. Reference mặc định chỉ bật OTP. Proof sinh trắc học tĩnh bị tắt trừ khi local test bật cờ unsafe tường minh; preview/production phải dùng provider assertion ký và không được hard-code proof trong Mobile.
 
 ## 5. Bảo mật và phạm vi Mobile
 

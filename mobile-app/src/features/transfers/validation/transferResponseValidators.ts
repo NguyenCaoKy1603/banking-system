@@ -21,6 +21,7 @@ function isBeneficiary(value: unknown): value is Beneficiary {
     isRecord(value) &&
     isNonEmptyString(value.id) &&
     isNonEmptyString(value.displayName) &&
+    (value.accountHolderName === undefined || isNonEmptyString(value.accountHolderName)) &&
     isNonEmptyString(value.maskedAccountNumber) &&
     isNonEmptyString(value.bankName) &&
     (value.status === "ACTIVE" || value.status === "BLOCKED")

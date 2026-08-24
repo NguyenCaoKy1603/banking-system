@@ -16,6 +16,7 @@ import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import type {
+  AuthChallengeResponse,
   RegisterFieldErrors,
   RegisterFormValues,
 } from "@/features/auth/types/auth";
@@ -33,11 +34,14 @@ const initialValues: RegisterFormValues = {
 
 export function RegisterScreen() {
   const router = useRouter();
-  const { register } = useAuth();
+  const { register, verifyRegistrationChallenge } = useAuth();
   const [values, setValues] = useState<RegisterFormValues>(initialValues);
   const [errors, setErrors] = useState<RegisterFieldErrors>({});
   const [serverError, setServerError] = useState<string | undefined>();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [registrationChallenge, setRegistrationChallenge] =
+    useState<AuthChallengeResponse | null>(null);
+  const [registrationOtp, setRegistrationOtp] = useState("");
 
   function updateField(field: keyof RegisterFormValues, value: string) {
     setValues((currentValues) => ({ ...currentValues, [field]: value }));
@@ -46,6 +50,42 @@ export function RegisterScreen() {
   }
 
   async function handleRegister() {
+    if (registrationChallenge) {
+      if (!/^\d{6}$/.test(registrationOtp.trim())) {
+        setServerError("Mã OTP phải gồm 6 chữ số.");
+        return;
+      }
+      setIsSubmitting(true);
+      setServerError(undefined);
+      try {
+        if (Date.now() >= Date.parse(registrationChallenge.expiresAt)) {
+          setServerError(
+            "Yêu cầu OTP đã hết hạn. Chọn thay đổi thông tin để đăng ký lại.",
+          );
+          return;
+        }
+        await verifyRegistrationChallenge({
+          challengeId: registrationChallenge.challengeId,
+          method: "OTP",
+          proof: registrationOtp.trim(),
+        });
+        Alert.alert(
+          "Đăng ký thành công",
+          "Tài khoản thanh toán đã được tạo với số dư 0 VND.",
+          [{ text: "Đăng nhập", onPress: () => router.replace("/login") }],
+        );
+      } catch (error: unknown) {
+        setServerError(
+          error instanceof ApiError
+            ? error.message
+            : "Không thể xác minh OTP đăng ký. Vui lòng thử lại.",
+        );
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     const result = validateRegisterForm(values);
 
     setValues(result.values);
@@ -59,18 +99,15 @@ export function RegisterScreen() {
     setIsSubmitting(true);
 
     try {
-      await register({
+      const registrationResult = await register({
         fullName: result.values.fullName,
         email: result.values.email,
         phoneNumber: result.values.phoneNumber,
         password: result.values.password,
       });
 
-      Alert.alert(
-        "Đăng ký thành công",
-        "Bạn có thể sử dụng thông tin vừa đăng ký để đăng nhập.",
-        [{ text: "Đăng nhập", onPress: () => router.replace("/login") }],
-      );
+      setRegistrationChallenge(registrationResult);
+      setServerError("Mã OTP đã được yêu cầu. Nhập mã để hoàn tất đăng ký.");
     } catch (error: unknown) {
       if (error instanceof ApiError) {
         setErrors({
@@ -113,6 +150,7 @@ export function RegisterScreen() {
               autoCapitalize="words"
               autoComplete="name"
               error={errors.fullName}
+              editable={!registrationChallenge}
               label="Họ và tên"
               onChangeText={(value) => updateField("fullName", value)}
               placeholder="Nhập họ và tên"
@@ -124,6 +162,7 @@ export function RegisterScreen() {
               autoCapitalize="none"
               autoComplete="email"
               error={errors.email}
+              editable={!registrationChallenge}
               keyboardType="email-address"
               label="Email"
               onChangeText={(value) => updateField("email", value)}
@@ -135,6 +174,7 @@ export function RegisterScreen() {
               accessibilityLabel="Số điện thoại đăng ký"
               autoComplete="tel"
               error={errors.phoneNumber}
+              editable={!registrationChallenge}
               keyboardType="phone-pad"
               label="Số điện thoại"
               onChangeText={(value) => updateField("phoneNumber", value)}
@@ -147,6 +187,7 @@ export function RegisterScreen() {
               autoCapitalize="none"
               autoComplete="new-password"
               error={errors.password}
+              editable={!registrationChallenge}
               label="Mật khẩu"
               onChangeText={(value) => updateField("password", value)}
               placeholder="Nhập mật khẩu"
@@ -159,6 +200,7 @@ export function RegisterScreen() {
               autoCapitalize="none"
               autoComplete="new-password"
               error={errors.confirmPassword}
+              editable={!registrationChallenge}
               label="Xác nhận mật khẩu"
               onChangeText={(value) => updateField("confirmPassword", value)}
               placeholder="Nhập lại mật khẩu"
@@ -166,14 +208,56 @@ export function RegisterScreen() {
               testID="register-confirm-password"
               value={values.confirmPassword}
             />
-            {serverError ? (
+            {registrationChallenge ? (
+              <>
+                <Text style={styles.challengeNotice}>
+                  Thông tin đăng ký đã được khóa theo OTP này. Muốn sửa email, số điện thoại hoặc mật khẩu, hãy hủy bước OTP và đăng ký lại.
+                </Text>
+                <TextField
+                  accessibilityLabel="Mã OTP đăng ký"
+                  autoCapitalize="none"
+                  autoComplete="one-time-code"
+                  error={serverError}
+                  keyboardType="number-pad"
+                  label="Mã OTP đăng ký"
+                  onChangeText={(value) => {
+                    setRegistrationOtp(value.replace(/\D/g, "").slice(0, 6));
+                    setServerError(undefined);
+                  }}
+                  placeholder="Nhập mã 6 chữ số"
+                  secureTextEntry
+                  testID="register-otp"
+                  value={registrationOtp}
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setRegistrationChallenge(null);
+                    setRegistrationOtp("");
+                    setServerError(undefined);
+                  }}
+                  testID="register-challenge-cancel"
+                >
+                  <Text style={styles.link}>Thay đổi thông tin đăng ký</Text>
+                </Pressable>
+              </>
+            ) : null}
+            {serverError && !registrationChallenge ? (
               <Text accessibilityLiveRegion="polite" style={styles.serverError}>
                 {serverError}
               </Text>
             ) : null}
             <PrimaryButton
               disabled={isSubmitting}
-              label={isSubmitting ? "Đang đăng ký..." : "Đăng ký"}
+              label={
+                isSubmitting
+                  ? registrationChallenge
+                    ? "Đang xác minh..."
+                    : "Đang đăng ký..."
+                  : registrationChallenge
+                    ? "Xác minh OTP"
+                    : "Đăng ký"
+              }
               onPress={handleRegister}
               testID="register-submit"
             />
@@ -235,6 +319,11 @@ const styles = StyleSheet.create({
   },
   serverError: {
     color: colors.danger,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  challengeNotice: {
+    color: colors.muted,
     fontSize: 14,
     lineHeight: 20,
   },

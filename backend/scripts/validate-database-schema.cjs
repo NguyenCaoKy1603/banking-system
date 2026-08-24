@@ -7,6 +7,8 @@ const savingsSchemaPath = path.resolve(__dirname, "../database/002_savings_sandb
 const savingsSchema = fs.readFileSync(savingsSchemaPath, "utf8");
 const creditSchemaPath = path.resolve(__dirname, "../database/003_credit_sandbox.sql");
 const creditSchema = fs.readFileSync(creditSchemaPath, "utf8");
+const runtimeSchemaPath = path.resolve(__dirname, "../database/005_relational_reference_runtime.sql");
+const runtimeSchema = fs.readFileSync(runtimeSchemaPath, "utf8");
 
 const requiredTables = [
   "customers",
@@ -41,6 +43,7 @@ const creditTables = [
   "credit_payment_quotes",
   "credit_payments",
 ];
+const runtimeTables = ["reference_runtime_records"];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -66,6 +69,9 @@ const savingsTableBlocks = new Map(
 );
 const creditTableBlocks = new Map(
   creditTables.map((tableName) => [tableName, tableBlock(creditSchema, tableName)]),
+);
+const runtimeTableBlocks = new Map(
+  runtimeTables.map((tableName) => [tableName, tableBlock(runtimeSchema, tableName)]),
 );
 
 function requireColumn(tableName, columnName, definitionPattern) {
@@ -176,6 +182,13 @@ for (const tableName of savingsTables) {
   }
 }
 
+for (const tableName of runtimeTables) {
+  const block = runtimeTableBlocks.get(tableName);
+  if (!/\bcollection\s+text\s+NOT\s+NULL/i.test(block) || !/\bpayload\s+jsonb\s+NOT\s+NULL/i.test(block)) {
+    throw new Error(`Runtime table ${tableName} must keep relational keys and JSONB record payloads.`);
+  }
+}
+
 for (const [tableName, columnName, pattern] of [
   ["savings_quotes", "customer_id", /\buuid\b.*\bREFERENCES\s+customers\b/i],
   ["savings_quotes", "principal_minor", /\bbigint\b.*\bCHECK\s*\(principal_minor\s*>\s*0\)/i],
@@ -216,7 +229,7 @@ async function validateLiveDatabase() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     console.log(
-        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
+        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
     );
     return;
   }
@@ -233,7 +246,7 @@ async function validateLiveDatabase() {
       `,
     );
     const liveTables = new Set(tableResult.rows.map((row) => row.table_name));
-    for (const tableName of [...requiredTables, ...savingsTables, ...creditTables]) {
+    for (const tableName of [...requiredTables, ...savingsTables, ...creditTables, ...runtimeTables]) {
       if (!liveTables.has(tableName)) {
         throw new Error(`Live PostgreSQL database is missing table: ${tableName}`);
       }
@@ -289,6 +302,9 @@ async function validateLiveDatabase() {
       ["credit_payment_quotes", "statement_id", "uuid"],
       ["credit_payments", "idempotency_key", "text"],
       ["control_policy", "card_unlock_step_up_methods", "_text"],
+      ["payment_accounts", "account_number", "text"],
+      ["payment_accounts", "held_minor", "int8"],
+      ["reference_runtime_records", "payload", "jsonb"],
     ]) {
       if (liveColumns.get(`${tableName}.${columnName}`) !== expectedType) {
         throw new Error(
@@ -327,7 +343,7 @@ async function validateLiveDatabase() {
     }
 
     console.log(
-      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
+      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
     );
   } finally {
     await pool.end();

@@ -9,6 +9,8 @@
 - MVP kích hoạt digital banking cho khách hàng đã có quan hệ với ngân hàng/BaaS partner.
 - Không tự mở tài khoản mới trong phase này; eKYC, AML, consent và account opening là workstream riêng.
 
+Ngoại lệ chỉ để kiểm thử local: reference backend có registration OTP hai bước rồi tạo một payment account demo `0 VND`. Luồng này không cấp KYC entitlement và không thay đổi phạm vi production ở trên; customer app không có quyền tự duyệt KYC.
+
 ### In scope
 
 - Login, OTP/MFA theo policy từ backend, device binding, session restore và logout tất cả thiết bị.

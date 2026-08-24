@@ -120,6 +120,27 @@ export type CreditStatementResponse = { statement: CreditStatement };
 export type CreditStepUp = {
   method: CreditStepUpMethod;
   proof: string;
+  challengeId?: string;
+};
+
+export type CreditApplicationStatus = "PENDING_ACTIVATION" | "ACTIVE" | "REJECTED";
+
+export type CreditApplication = {
+  applicationId: string;
+  requestedLimit: Money;
+  approvedLimit: Money | null;
+  status: CreditApplicationStatus;
+  decisionReason: string | null;
+  creditAccountId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreditApplicationsResponse = { items: CreditApplication[] };
+
+export type CreditApplicationRequest = {
+  requestedLimit?: Money;
+  stepUp: CreditStepUp;
 };
 
 export type CreditPaymentQuoteRequest = {

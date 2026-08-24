@@ -1,6 +1,8 @@
 import type {
   CreditAccount,
   CreditAccountsResponse,
+  CreditApplication,
+  CreditApplicationsResponse,
   CreditCard,
   CreditCardDetailResponse,
   CreditCardsResponse,
@@ -29,6 +31,20 @@ function isNullableString(value: unknown): value is string | null {
 
 function isDateOrNull(value: unknown): value is string | null {
   return value === null || isNonEmptyDateTime(value);
+}
+
+function isCreditApplicationValue(value: unknown): value is CreditApplication {
+  return (
+    isRecord(value) &&
+    isString(value.applicationId) &&
+    isMoney(value.requestedLimit) &&
+    (value.approvedLimit === null || isMoney(value.approvedLimit)) &&
+    ["PENDING_ACTIVATION", "ACTIVE", "REJECTED"].includes(String(value.status)) &&
+    isNullableString(value.decisionReason) &&
+    (value.creditAccountId === null || isString(value.creditAccountId)) &&
+    isNonEmptyDateTime(value.createdAt) &&
+    isNonEmptyDateTime(value.updatedAt)
+  );
 }
 
 function isPositiveMoney(value: unknown): boolean {
@@ -166,6 +182,14 @@ export function isCreditCardDetailResponse(value: unknown): value is CreditCardD
 
 export function isCreditAccountsResponse(value: unknown): value is CreditAccountsResponse {
   return isRecord(value) && Array.isArray(value.items) && value.items.every(isCreditAccount);
+}
+
+export function isCreditApplication(value: unknown): value is CreditApplication {
+  return isCreditApplicationValue(value);
+}
+
+export function isCreditApplicationsResponse(value: unknown): value is CreditApplicationsResponse {
+  return isRecord(value) && Array.isArray(value.items) && value.items.every(isCreditApplicationValue);
 }
 
 export function isCreditAccountResponse(value: unknown): value is CreditAccount {

@@ -29,6 +29,7 @@ function isPaymentAccount(value: unknown): value is PaymentAccount {
     isNonEmptyString(value.maskedNumber) &&
     isNonEmptyString(value.bankName) &&
     value.currency === "VND" &&
+    isMoney(value.heldAmount) &&
     isMoney(value.availableBalance) &&
     isMoney(value.currentBalance) &&
     (value.status === "ACTIVE" || value.status === "BLOCKED") &&
@@ -47,6 +48,12 @@ function hasTransactionFields(value: Record<string, unknown>): boolean {
       value.status === "SUCCEEDED" ||
       value.status === "FAILED" ||
       value.status === "REVERSED") &&
+    (value.kind === undefined ||
+      value.kind === "TRANSFER" ||
+      value.kind === "SANDBOX_FUNDING" ||
+      value.kind === "SAVINGS" ||
+      value.kind === "CREDIT_PAYMENT" ||
+      value.kind === "MATURITY") &&
     typeof value.description === "string" &&
     isNullableString(value.counterpartyName) &&
     isNonEmptyDateTime(value.occurredAt)

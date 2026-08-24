@@ -1,0 +1,12 @@
+{
+  "checkedAt": "2026-08-17T06:51:47.554Z",
+  "branch": "codex/mini-core-banking-sandbox",
+  "codeCommit": "fc8380c",
+  "storage": "postgres",
+  "scope": "simulated banking with virtual money only",
+  "status": "ok",
+  "reconciliation": "ok",
+  "outbox": "ok",
+  "pendingOutboxEvents": 11,
+  "note": "Local reference sandbox health check; not production readiness evidence."
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "expo-router";
 import { ActivityIndicator, Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
@@ -8,7 +8,16 @@ import { TextField } from "@/components/ui/TextField";
 import { listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import type { AuthChallengeResponse } from "@/features/auth/types/auth";
+import { createOtpChallenge } from "@/features/auth/services/otpApi";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
+import type { ClientIntentPhase } from "@/features/banking/domain/clientIntentLifecycle";
+import {
+  requiresManualReview,
+  shouldKeepSubmitUnknown,
+  type ManualReviewCode,
+} from "@/features/banking/domain/submitFailure";
+import { createIdempotencyKey } from "@/features/banking/validation/idempotencyKey";
 import { getControlPolicy } from "@/features/control/services/controlPolicyApi";
 import type { ControlPolicy } from "@/features/control/types/controlPolicy";
 import { getMaturityInstructionLabel, formatSavingsRate, getSavingsOpeningStatusLabel } from "@/features/savings/presentation/savingsPresentation";
@@ -35,15 +44,20 @@ import { colors, spacing } from "@/theme";
 
 type OpenSavingsStep = "input" | "review" | "stepUp" | "result";
 
-function createSavingsIntentId(): string {
-  return `savings-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
-
 function getErrorMessage(error: unknown): string {
+  if (
+    error instanceof ApiError &&
+    error.code === "STEP_UP_VERIFICATION_FAILED"
+  ) {
+    return "Xác thực bước hai không thành công. Vui lòng tạo challenge mới và thử lại.";
+  }
   return error instanceof ApiError
     ? error.message
     : "Không thể thực hiện yêu cầu. Vui lòng thử lại.";
 }
+
+const MANUAL_REVIEW_MESSAGE =
+  "Yêu cầu này cần được đối soát thủ công. Không gửi lại, chỉnh sửa hoặc tạo challenge mới; vui lòng liên hệ hỗ trợ.";
 
 function formatRemainingSeconds(value: number | null): string {
   if (value === null) {
@@ -83,20 +97,44 @@ export function OpenSavingsScreen() {
   );
   const [quote, setQuote] = useState<SavingsQuote | null>(null);
   const [opening, setOpening] = useState<SavingsOpening | null>(null);
+  const [recoveryOpeningId, setRecoveryOpeningId] = useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
+  const [intentPhase, setIntentPhase] = useState<ClientIntentPhase | null>(null);
+  const [manualReviewCode, setManualReviewCode] =
+    useState<ManualReviewCode | null>(null);
   const [stepUpMethod, setStepUpMethod] = useState<"OTP" | "BIOMETRIC">("OTP");
   const [stepUpProof, setStepUpProof] = useState("");
+  const [savingsChallenge, setSavingsChallenge] =
+    useState<AuthChallengeResponse | null>(null);
   const [step, setStep] = useState<OpenSavingsStep>("input");
   const [isLoading, setIsLoading] = useState(true);
   const [isRestoringIntent, setIsRestoringIntent] = useState(true);
+  const [recoveryBlocked, setRecoveryBlocked] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [clockMs, setClockMs] = useState(() => Date.now());
+  const submitLockRef = useRef(false);
 
   useEffect(() => {
     const timer = setInterval(() => setClockMs(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const applySavingsChallenge = useCallback(
+    (challenge: AuthChallengeResponse) => {
+      if (challenge.purpose && challenge.purpose !== "SAVINGS_OPENING") {
+        throw new Error("Máy chủ trả challenge không đúng mục đích tiền gửi.");
+      }
+      setSavingsChallenge(challenge);
+      setStepUpMethod((currentMethod) =>
+        challenge.methods.includes(currentMethod)
+          ? currentMethod
+          : challenge.methods[0] ?? "OTP",
+      );
+      setStepUpProof("");
+    },
+    [],
+  );
 
   const loadInitialData = useCallback(async () => {
     if (!accessToken) {
@@ -142,30 +180,61 @@ export function OpenSavingsScreen() {
     try {
       const intent = await loadSavingsIntent(userId);
       if (!intent) {
+        setRecoveryBlocked(false);
         return;
       }
+      setRecoveryBlocked(false);
       setQuote(intent.quote);
       setSourceAccountId(intent.quote.sourceAccountId);
       setProductId(intent.quote.productId);
       setAmountMinor(intent.quote.principal.amountMinor);
       setMaturityInstruction(intent.quote.maturityInstruction);
       setIdempotencyKey(intent.idempotencyKey);
+      setIntentPhase(intent.phase);
+      setManualReviewCode(intent.manualReviewCode ?? null);
       if (intent.openingId) {
-        const latestOpening = intent.opening ?? (await getSavingsOpening(intent.openingId, auth));
-        setOpening(latestOpening);
+        setRecoveryOpeningId(intent.openingId);
+        setOpening(intent.opening ?? null);
         setStep("result");
-        if (latestOpening.status !== "PENDING") {
-          await clearSavingsIntent();
-        }
+        const latestOpening = await getSavingsOpening(intent.openingId, auth);
+        setOpening(latestOpening);
+        const latestPhase =
+          latestOpening.status === "PENDING"
+            ? "ACCEPTED_PENDING"
+            : "ACCEPTED_TERMINAL";
+        setIntentPhase(latestPhase);
+        setManualReviewCode(null);
+        await saveSavingsIntent({
+          phase: latestPhase,
+          submitAttempted: true,
+          userId,
+          idempotencyKey: intent.idempotencyKey,
+          quote: intent.quote,
+          createdAt: intent.createdAt,
+          openingId: latestOpening.openingId,
+          opening: latestOpening,
+        });
       } else {
         setStep("stepUp");
+        if (intent.manualReviewCode) {
+          setSavingsChallenge(null);
+          setStepUpProof("");
+          setError(MANUAL_REVIEW_MESSAGE);
+          return;
+        }
+        const challenge = await createOtpChallenge(
+          { purpose: "SAVINGS_OPENING", resourceId: intent.quote.quoteId },
+          auth,
+        );
+        applySavingsChallenge(challenge);
       }
     } catch (requestError: unknown) {
+      setRecoveryBlocked(true);
       setError(getErrorMessage(requestError));
     } finally {
       setIsRestoringIntent(false);
     }
-  }, [auth, userId]);
+  }, [applySavingsChallenge, auth, userId]);
 
   useEffect(() => {
     void Promise.resolve().then(() => restoreIntent());
@@ -177,6 +246,14 @@ export function OpenSavingsScreen() {
     ? Math.max(0, Math.ceil((Date.parse(quote.expiresAt) - clockMs) / 1000))
     : null;
   const isQuoteExpired = quoteRemainingSeconds !== null && quoteRemainingSeconds <= 0;
+  const challengeRemainingSeconds = savingsChallenge
+    ? Math.max(
+        0,
+        Math.ceil((Date.parse(savingsChallenge.expiresAt) - clockMs) / 1000),
+      )
+    : null;
+  const isSavingsChallengeUnavailable =
+    challengeRemainingSeconds === null || challengeRemainingSeconds <= 0;
   const isAvailable = Boolean(
     controlPolicy &&
       !controlPolicy.globalKillSwitch &&
@@ -185,6 +262,10 @@ export function OpenSavingsScreen() {
   );
 
   const handleQuote = useCallback(async () => {
+    if (recoveryBlocked) {
+      setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
+      return;
+    }
     Keyboard.dismiss();
     if (!sourceAccountId || !selectedProduct) {
       setError("Vui lòng chọn tài khoản nguồn và kỳ hạn.");
@@ -228,9 +309,17 @@ export function OpenSavingsScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [amountMinor, auth, controlPolicy, isAvailable, maturityInstruction, selectedProduct, sourceAccountId]);
+  }, [amountMinor, auth, controlPolicy, isAvailable, maturityInstruction, recoveryBlocked, selectedProduct, sourceAccountId]);
 
   const handleConfirmReview = useCallback(async () => {
+    if (recoveryBlocked) {
+      setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
+      return;
+    }
+    if (submitLockRef.current) {
+      return;
+    }
+
     if (!quote || !userId) {
       setError("Báo giá hoặc phiên đăng nhập không còn hợp lệ.");
       return;
@@ -239,36 +328,86 @@ export function OpenSavingsScreen() {
       setError("Báo giá đã hết hạn. Vui lòng tạo báo giá mới.");
       return;
     }
+    submitLockRef.current = true;
     setIsSubmitting(true);
     setError(undefined);
     try {
-      const nextKey = idempotencyKey ?? createSavingsIntentId();
-      await saveSavingsIntent({ userId, idempotencyKey: nextKey, quote, createdAt: Date.now() });
+      const nextKey = idempotencyKey ?? createIdempotencyKey("savings");
+      await saveSavingsIntent({
+        phase: "DRAFT_QUOTE",
+        submitAttempted: false,
+        userId,
+        idempotencyKey: nextKey,
+        quote,
+        createdAt: Date.now(),
+      });
+      const challenge = await createOtpChallenge(
+        { purpose: "SAVINGS_OPENING", resourceId: quote.quoteId },
+        auth,
+      );
+      applySavingsChallenge(challenge);
       setIdempotencyKey(nextKey);
+      setIntentPhase("DRAFT_QUOTE");
+      setManualReviewCode(null);
       setStep("stepUp");
     } catch (storageError: unknown) {
       setError(getErrorMessage(storageError));
     } finally {
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
-  }, [idempotencyKey, isQuoteExpired, quote, userId]);
+  }, [applySavingsChallenge, auth, idempotencyKey, isQuoteExpired, quote, recoveryBlocked, userId]);
 
   const handleEditInput = useCallback(() => {
+    if (manualReviewCode) {
+      setError(MANUAL_REVIEW_MESSAGE);
+      setStep("stepUp");
+      return;
+    }
+    if (intentPhase === "SUBMIT_UNKNOWN") {
+      setError(
+        "Yêu cầu trước chưa xác định kết quả. Vui lòng thử lại với cùng khóa yêu cầu.",
+      );
+      setStep("stepUp");
+      return;
+    }
     setQuote(null);
     setOpening(null);
+    setRecoveryOpeningId(null);
     setIdempotencyKey(null);
+    setIntentPhase(null);
+    setManualReviewCode(null);
+    setSavingsChallenge(null);
     setStepUpProof("");
     setError(undefined);
     setStep("input");
-    void clearSavingsIntent().catch(() => undefined);
-  }, []);
+    if (userId) {
+      void clearSavingsIntent(userId).catch(() => undefined);
+    }
+  }, [intentPhase, manualReviewCode, userId]);
 
   const handleSubmit = useCallback(async () => {
+    if (recoveryBlocked) {
+      setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
+      return;
+    }
+    if (submitLockRef.current) {
+      return;
+    }
+    if (manualReviewCode) {
+      setError(MANUAL_REVIEW_MESSAGE);
+      return;
+    }
+
     if (!quote || !idempotencyKey) {
       setError("Phiên mở tiền gửi chưa sẵn sàng. Vui lòng tạo lại báo giá.");
       return;
     }
-    if (isQuoteExpired) {
+    if (!userId) {
+      setError("Phiên đăng nhập không còn hợp lệ.");
+      return;
+    }
+    if (isQuoteExpired && intentPhase !== "SUBMIT_UNKNOWN") {
       setError("Báo giá đã hết hạn. Vui lòng tạo báo giá mới.");
       return;
     }
@@ -276,36 +415,128 @@ export function OpenSavingsScreen() {
       setError("Mã xác thực bước hai là bắt buộc.");
       return;
     }
+    if (!savingsChallenge || isSavingsChallengeUnavailable) {
+      setError("Challenge xác thực đã hết hạn. Vui lòng tạo challenge mới.");
+      return;
+    }
+    if (!savingsChallenge.methods.includes(stepUpMethod)) {
+      setError("Phương thức xác thực không được challenge hiện tại cho phép.");
+      return;
+    }
+    submitLockRef.current = true;
     setIsSubmitting(true);
     setError(undefined);
+    let requestStarted = false;
     try {
+      await saveSavingsIntent({
+        phase: "SUBMIT_UNKNOWN",
+        submitAttempted: true,
+        userId,
+        idempotencyKey,
+        quote,
+        createdAt: Date.now(),
+      });
+      setIntentPhase("SUBMIT_UNKNOWN");
+      requestStarted = true;
       const response = await submitSavingsOpening(
-        { quoteId: quote.quoteId, stepUp: { method: stepUpMethod, proof: stepUpProof } },
+        {
+          quoteId: quote.quoteId,
+          stepUp: {
+            method: stepUpMethod,
+            proof: stepUpProof,
+            challengeId: savingsChallenge.challengeId,
+          },
+        },
         { auth, idempotencyKey },
       );
       setOpening(response);
+      setRecoveryOpeningId(response.openingId);
       setStep("result");
-      if (userId) {
+      const acceptedPhase =
+        response.status === "PENDING"
+          ? "ACCEPTED_PENDING"
+          : "ACCEPTED_TERMINAL";
+      await saveSavingsIntent({
+        phase: acceptedPhase,
+        submitAttempted: true,
+        userId,
+        idempotencyKey,
+        quote,
+        createdAt: Date.now(),
+        openingId: response.openingId,
+        opening: response,
+      }).catch(() => undefined);
+      setIntentPhase(acceptedPhase);
+      setManualReviewCode(null);
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError));
+      if (
+        requestStarted &&
+        requestError instanceof ApiError &&
+        (requestError.code === "QUOTE_EXPIRED" ||
+          requestError.code === "NOT_FOUND")
+      ) {
+        await clearSavingsIntent(userId).catch(() => undefined);
+        setSavingsChallenge(null);
+        setStepUpProof("");
+        setIdempotencyKey(null);
+        setIntentPhase(null);
+        setManualReviewCode(null);
+        setQuote(null);
+        setOpening(null);
+        setRecoveryOpeningId(null);
+        setStep("input");
+      } else if (requestStarted && requiresManualReview(requestError)) {
         await saveSavingsIntent({
+          phase: "SUBMIT_UNKNOWN",
+          submitAttempted: true,
           userId,
           idempotencyKey,
           quote,
           createdAt: Date.now(),
-          openingId: response.openingId,
-          opening: response,
+          manualReviewCode: requestError.code,
         }).catch(() => undefined);
+        setManualReviewCode(requestError.code);
+        setSavingsChallenge(null);
+        setStepUpProof("");
+        setError(MANUAL_REVIEW_MESSAGE);
+      } else if (requestStarted && !shouldKeepSubmitUnknown(requestError)) {
+        setSavingsChallenge(null);
+        setStepUpProof("");
+        await saveSavingsIntent({
+          phase: "DRAFT_QUOTE",
+          submitAttempted: false,
+          userId,
+          idempotencyKey,
+          quote,
+          createdAt: Date.now(),
+        }).catch(() => undefined);
+        setIntentPhase("DRAFT_QUOTE");
+        setManualReviewCode(null);
       }
-      if (response.status !== "PENDING") {
-        await clearSavingsIntent().catch(() => undefined);
-      }
-    } catch (requestError: unknown) {
-      setError(getErrorMessage(requestError));
     } finally {
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
-  }, [auth, idempotencyKey, isQuoteExpired, quote, stepUpMethod, stepUpProof, userId]);
+  }, [auth, idempotencyKey, intentPhase, isQuoteExpired, isSavingsChallengeUnavailable, manualReviewCode, quote, recoveryBlocked, savingsChallenge, stepUpMethod, stepUpProof, userId]);
 
   const handleBiometric = useCallback(async () => {
+    if (recoveryBlocked) {
+      setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
+      return;
+    }
+    if (manualReviewCode) {
+      setError(MANUAL_REVIEW_MESSAGE);
+      return;
+    }
+    if (!savingsChallenge?.methods.includes("BIOMETRIC")) {
+      setError("Challenge hiện tại không cho phép xác thực sinh trắc học.");
+      return;
+    }
+    if (Date.now() >= Date.parse(savingsChallenge.expiresAt)) {
+      setError("Challenge xác thực đã hết hạn. Vui lòng tạo challenge mới.");
+      return;
+    }
     setIsSubmitting(true);
     setError(undefined);
     try {
@@ -322,19 +553,54 @@ export function OpenSavingsScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, []);
+  }, [manualReviewCode, recoveryBlocked, savingsChallenge]);
 
-  const handleRefreshOpening = useCallback(async () => {
-    if (!opening?.openingId) {
+  const handleRenewSavingsChallenge = useCallback(async () => {
+    if (!quote || submitLockRef.current || manualReviewCode || recoveryBlocked) {
+      if (manualReviewCode) setError(MANUAL_REVIEW_MESSAGE);
       return;
     }
+    submitLockRef.current = true;
     setIsSubmitting(true);
     setError(undefined);
     try {
-      const latestOpening = await getSavingsOpening(opening.openingId, auth);
+      const challenge = await createOtpChallenge(
+        { purpose: "SAVINGS_OPENING", resourceId: quote.quoteId },
+        auth,
+      );
+      applySavingsChallenge(challenge);
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError));
+    } finally {
+      submitLockRef.current = false;
+      setIsSubmitting(false);
+    }
+  }, [applySavingsChallenge, auth, manualReviewCode, quote, recoveryBlocked]);
+
+  const handleRefreshOpening = useCallback(async () => {
+    if (submitLockRef.current) {
+      return;
+    }
+    const openingId = opening?.openingId ?? recoveryOpeningId;
+    if (!openingId) {
+      return;
+    }
+    submitLockRef.current = true;
+    setIsSubmitting(true);
+    setError(undefined);
+    try {
+      const latestOpening = await getSavingsOpening(openingId, auth);
       setOpening(latestOpening);
+      setRecoveryOpeningId(latestOpening.openingId);
+      const latestPhase =
+        latestOpening.status === "PENDING"
+          ? "ACCEPTED_PENDING"
+          : "ACCEPTED_TERMINAL";
+      setIntentPhase(latestPhase);
       if (userId && quote && idempotencyKey) {
         await saveSavingsIntent({
+          phase: latestPhase,
+          submitAttempted: true,
           userId,
           idempotencyKey,
           quote,
@@ -343,20 +609,38 @@ export function OpenSavingsScreen() {
           opening: latestOpening,
         });
       }
-      if (latestOpening.status !== "PENDING") {
-        await clearSavingsIntent().catch(() => undefined);
-      }
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
     } finally {
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
-  }, [auth, idempotencyKey, opening, quote, userId]);
+  }, [auth, idempotencyKey, opening, quote, recoveryOpeningId, userId]);
+
+  const handleBack = useCallback(async () => {
+    if (isSubmitting || submitLockRef.current) {
+      return;
+    }
+    if (intentPhase === "ACCEPTED_TERMINAL" && userId) {
+      await clearSavingsIntent(userId).catch(() => undefined);
+    }
+    router.back();
+  }, [intentPhase, isSubmitting, router, userId]);
+
+  const handleOpenSavingsList = useCallback(async () => {
+    if (isSubmitting || submitLockRef.current) {
+      return;
+    }
+    if (intentPhase === "ACCEPTED_TERMINAL" && userId) {
+      await clearSavingsIntent(userId).catch(() => undefined);
+    }
+    router.replace("/savings");
+  }, [intentPhase, isSubmitting, router, userId]);
 
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Pressable accessibilityRole="button" hitSlop={8} onPress={() => router.back()} style={styles.backButton} testID="savings-open-back">
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: isSubmitting }} disabled={isSubmitting} hitSlop={8} onPress={handleBack} style={styles.backButton} testID="savings-open-back">
           <Text style={styles.backLabel}>‹ Quay lại</Text>
         </Pressable>
         <View style={styles.header}>
@@ -368,6 +652,21 @@ export function OpenSavingsScreen() {
         {isLoading || isRestoringIntent ? (
           <View style={styles.centerState} testID="savings-open-loading">
             <ActivityIndicator color={colors.primary} size="large" />
+          </View>
+        ) : recoveryBlocked ? (
+          <View style={styles.card} testID="savings-recovery-blocked">
+            <Text style={styles.cardTitle}>Chưa thể khôi phục an toàn</Text>
+            <Text style={styles.description}>
+              {error ?? "Không thể đọc trạng thái yêu cầu trước đó. Chưa cho phép tạo khoản mới để tránh trùng lệnh."}
+            </Text>
+            <PrimaryButton
+              label="Kiểm tra lại dữ liệu khôi phục"
+              onPress={() => {
+                setError(undefined);
+                void restoreIntent();
+              }}
+              testID="savings-recovery-retry"
+            />
           </View>
         ) : !isAvailable ? (
           <View style={styles.card} testID="savings-open-disabled">
@@ -453,41 +752,49 @@ export function OpenSavingsScreen() {
               onPress={handleConfirmReview}
               testID="savings-review-confirm"
             />
-            <PrimaryButton label="Chỉnh sửa thông tin" onPress={handleEditInput} testID="savings-edit-input" />
+            <PrimaryButton
+              disabled={Boolean(manualReviewCode)}
+              label={manualReviewCode ? "Đang chờ đối soát" : "Chỉnh sửa thông tin"}
+              onPress={handleEditInput}
+              testID="savings-edit-input"
+            />
           </View>
         ) : step === "stepUp" ? (
           <View style={styles.card}>
             <Text style={styles.stepTitle}>3. Xác thực bước hai</Text>
             <Text style={styles.description}>OTP/biometric chỉ được dùng trong request; không lưu vào intent.</Text>
             <Text style={styles.description}>Báo giá còn hiệu lực: {formatRemainingSeconds(quoteRemainingSeconds)}</Text>
-            {controlPolicy?.savingsStepUpMethods.includes("OTP") ? (
+            <Text style={styles.description}>Challenge còn hiệu lực: {formatRemainingSeconds(challengeRemainingSeconds)}</Text>
+            {savingsChallenge?.methods.includes("OTP") ? (
               <PrimaryButton disabled={isSubmitting} label={stepUpMethod === "OTP" ? "Đang dùng OTP" : "Dùng OTP"} onPress={() => { setStepUpMethod("OTP"); setStepUpProof(""); }} testID="savings-step-up-otp" />
             ) : null}
-            {controlPolicy?.savingsStepUpMethods.includes("BIOMETRIC") ? (
+            {savingsChallenge?.methods.includes("BIOMETRIC") ? (
               <PrimaryButton disabled={isSubmitting} label={stepUpMethod === "BIOMETRIC" ? "Xác thực lại bằng sinh trắc học" : "Dùng sinh trắc học"} onPress={handleBiometric} testID="savings-step-up-biometric" />
             ) : null}
             {stepUpMethod === "OTP" ? (
-              <TextField accessibilityLabel="Mã xác thực mở tiền gửi" error={error} label="Mã OTP sandbox" onChangeText={(value) => { setStepUpProof(value); setError(undefined); }} placeholder="Nhập mã xác thực" secureTextEntry testID="savings-step-up-code" value={stepUpProof} />
+              <TextField accessibilityLabel="Mã xác thực mở tiền gửi" editable={!manualReviewCode} error={error} label="Mã OTP sandbox" onChangeText={(value) => { setStepUpProof(value); setError(undefined); }} placeholder="Nhập mã xác thực" secureTextEntry testID="savings-step-up-code" value={stepUpProof} />
             ) : (
               <Text style={styles.description}>{stepUpProof ? "Đã xác thực trên thiết bị. Có thể gửi yêu cầu." : "Chọn xác thực sinh trắc học để tiếp tục."}</Text>
             )}
+            {manualReviewCode ? <Text style={styles.errorText}>Mã đối soát: {manualReviewCode}</Text> : null}
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            <PrimaryButton disabled={isSubmitting || isQuoteExpired} label={isSubmitting ? "Đang mở..." : isQuoteExpired ? "Báo giá đã hết hạn" : "Mở khoản tiền gửi"} onPress={handleSubmit} testID="savings-submit" />
-            <PrimaryButton label="Chỉnh sửa thông tin" onPress={handleEditInput} testID="savings-edit-input" />
+            {isSavingsChallengeUnavailable ? <PrimaryButton disabled={isSubmitting || Boolean(manualReviewCode)} label={manualReviewCode ? "Đang chờ đối soát" : isSubmitting ? "Đang tạo lại..." : "Tạo challenge mới"} onPress={handleRenewSavingsChallenge} testID="savings-step-up-renew" /> : null}
+            <PrimaryButton disabled={isSubmitting || Boolean(manualReviewCode) || isSavingsChallengeUnavailable || (isQuoteExpired && intentPhase !== "SUBMIT_UNKNOWN")} label={manualReviewCode ? "Không thể gửi lại" : isSubmitting ? "Đang mở..." : isSavingsChallengeUnavailable ? "Challenge đã hết hạn" : isQuoteExpired && intentPhase !== "SUBMIT_UNKNOWN" ? "Báo giá đã hết hạn" : "Mở khoản tiền gửi"} onPress={handleSubmit} testID="savings-submit" />
+            <PrimaryButton disabled={Boolean(manualReviewCode)} label={manualReviewCode ? "Đang chờ đối soát" : "Chỉnh sửa thông tin"} onPress={handleEditInput} testID="savings-edit-input" />
           </View>
         ) : (
           <View style={styles.card} testID="savings-open-result">
             <Text style={styles.stepTitle}>4. Kết quả mở khoản</Text>
             <Text style={styles.resultTitle}>{opening ? getSavingsOpeningStatusLabel(opening.status) : "Chưa có kết quả"}</Text>
             <Text style={styles.description}>Mã tham chiếu: {opening?.reference ?? "—"}</Text>
-            {opening?.status === "PENDING" ? (
+            {opening?.status === "PENDING" || (!opening && recoveryOpeningId) ? (
               <>
                 <Text style={styles.description}>Yêu cầu đang xử lý. Khi timeout hoặc mở lại app, hãy cập nhật bằng cùng openingId và idempotency key.</Text>
                 <PrimaryButton disabled={isSubmitting} label={isSubmitting ? "Đang cập nhật..." : "Cập nhật trạng thái"} onPress={handleRefreshOpening} testID="savings-opening-refresh" />
               </>
             ) : null}
             {opening?.status === "FAILED" || opening?.status === "REVERSED" ? <Text style={styles.errorText}>{opening.failureReason ?? "Yêu cầu không hoàn tất."}</Text> : null}
-            <PrimaryButton label="Xem danh sách tiền gửi" onPress={() => router.replace("/savings")} testID="savings-open-list" />
+            <PrimaryButton disabled={isSubmitting} label="Xem danh sách tiền gửi" onPress={handleOpenSavingsList} testID="savings-open-list" />
           </View>
         )}
       </ScrollView>

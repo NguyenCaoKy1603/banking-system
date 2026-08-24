@@ -1,14 +1,14 @@
+import * as kycMock from "@/features/kyc/services/kycMock";
 import {
   getMockKycApplication,
   resetMockKycStore,
-  setMockKycStatus,
   submitMockKycApplication,
 } from "@/features/kyc/services/kycMock";
 
 describe("kycMock", () => {
   beforeEach(() => resetMockKycStore());
 
-  it("submits and tracks the simulated KYC lifecycle", async () => {
+  it("only submits and reads a pending application in the customer client", async () => {
     const submitted = await submitMockKycApplication("user-1", {
       fullName: "Nguyễn Văn A",
       identityNumber: "012345678901",
@@ -17,20 +17,27 @@ describe("kycMock", () => {
     });
 
     expect(submitted.status).toBe("PENDING");
-    expect((await setMockKycStatus("user-1", "APPROVED"))?.status).toBe("APPROVED");
-    expect((await getMockKycApplication("user-1"))?.status).toBe("APPROVED");
+    expect(await getMockKycApplication("user-1")).toEqual(submitted);
+    expect(kycMock).not.toHaveProperty("setMockKycStatus");
   });
 
-  it("keeps a rejected status with a safe demo reason", async () => {
-    await submitMockKycApplication("user-2", {
+  it("keeps a resubmission pending instead of granting a local decision", async () => {
+    const first = await submitMockKycApplication("user-2", {
       fullName: "Trần B",
       identityNumber: "123456789",
       address: "Địa chỉ mẫu",
       documentUri: "mock://identity-card-front",
     });
 
-    const rejected = await setMockKycStatus("user-2", "REJECTED");
-    expect(rejected?.status).toBe("REJECTED");
-    expect(rejected?.rejectionReason).toBeTruthy();
+    const resubmitted = await submitMockKycApplication("user-2", {
+      fullName: "Trần B đã cập nhật",
+      identityNumber: "123456789",
+      address: "Địa chỉ mẫu mới",
+      documentUri: "mock://identity-card-front",
+    });
+
+    expect(resubmitted.id).toBe(first.id);
+    expect(resubmitted.status).toBe("PENDING");
+    expect(resubmitted.rejectionReason).toBeNull();
   });
 });

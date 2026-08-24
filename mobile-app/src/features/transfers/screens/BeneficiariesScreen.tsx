@@ -40,7 +40,6 @@ export function BeneficiariesScreen() {
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([]);
   const [displayName, setDisplayName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
-  const [bankName, setBankName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -80,20 +79,19 @@ export function BeneficiariesScreen() {
 
     try {
       const response = await createBeneficiary(
-        { displayName, accountNumber, bankName },
+        { displayName, accountNumber },
         auth,
       );
       setBeneficiaries((current) => [...current, response.beneficiary]);
       setDisplayName("");
       setAccountNumber("");
-      setBankName("");
       setNotice("Đã thêm người nhận vào danh bạ.");
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
     } finally {
       setIsSaving(false);
     }
-  }, [accountNumber, auth, bankName, displayName]);
+  }, [accountNumber, auth, displayName]);
 
   const startRename = useCallback((beneficiary: Beneficiary) => {
     setEditingId(beneficiary.id);
@@ -196,13 +194,6 @@ export function BeneficiariesScreen() {
             placeholder="Nhập 6–34 chữ số"
             testID="beneficiary-account-number"
             value={accountNumber}
-          />
-          <TextField
-            label="Ngân hàng"
-            onChangeText={setBankName}
-            placeholder="Ví dụ: Ngân hàng reference"
-            testID="beneficiary-bank-name"
-            value={bankName}
           />
           <PrimaryButton
             disabled={isSaving}

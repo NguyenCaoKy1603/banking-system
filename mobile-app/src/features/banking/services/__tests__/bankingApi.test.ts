@@ -3,6 +3,7 @@ import {
   listAccounts,
   listTransactions,
 } from "@/features/accounts/services/accountsApi";
+import { submitSavingsOpening } from "@/features/savings/services/savingsApi";
 import { quoteTransfer, submitTransfer } from "@/features/transfers/services/transfersApi";
 
 const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>();
@@ -31,6 +32,7 @@ const account = {
   bankName: "Ngân hàng reference",
   currency: "VND",
   availableBalance: { currency: "VND", amountMinor: "100000" },
+  heldAmount: { currency: "VND", amountMinor: "0" },
   currentBalance: { currency: "VND", amountMinor: "100000" },
   status: "ACTIVE",
   updatedAt: "2026-08-14T00:00:00Z",
@@ -150,29 +152,38 @@ describe("accounts/transfers API services", () => {
       },
       {
         auth: { accessToken: "access-token" },
-        idempotencyKey: "intent-1",
+        idempotencyKey: "transfer-intent-1",
       },
     );
 
     expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual(
       expect.objectContaining({
         Authorization: "Bearer access-token",
-        "Idempotency-Key": "intent-1",
+        "Idempotency-Key": "transfer-intent-1",
       }),
     );
   });
 
-  it("chặn submit khi thiếu idempotency key hoặc step-up proof", () => {
+  it("chặn submit khi idempotency key ngắn hơn contract hoặc thiếu step-up proof", () => {
     expect(() =>
       submitTransfer(
         { quoteId: "quote-1", stepUp: { method: "OTP", proof: "proof" } },
-        { auth: {}, idempotencyKey: " " },
+        { auth: {}, idempotencyKey: "short-key" },
       ),
-    ).toThrow("idempotencyKey không được để trống.");
+    ).toThrow("idempotencyKey phải có ít nhất 16 ký tự.");
+    expect(() =>
+      submitSavingsOpening(
+        {
+          quoteId: "quote-1",
+          stepUp: { method: "OTP", proof: "proof" },
+        },
+        { auth: {}, idempotencyKey: "short-key" },
+      ),
+    ).toThrow("idempotencyKey phải có ít nhất 16 ký tự.");
     expect(() =>
       submitTransfer(
         { quoteId: "quote-1", stepUp: { method: "OTP", proof: " " } },
-        { auth: {}, idempotencyKey: "intent-1" },
+        { auth: {}, idempotencyKey: "transfer-intent-1" },
       ),
     ).toThrow("stepUp.proof không được để trống.");
     expect(fetchMock).not.toHaveBeenCalled();

@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
 import { getAccountNumber, listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
@@ -13,12 +14,6 @@ import { HomeHeader } from "@/features/home/components/HomeHeader";
 import { QuickActionTile } from "@/features/home/components/QuickActionTile";
 import { ApiError } from "@/services/api/ApiError";
 import { colors, spacing } from "@/theme";
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof ApiError
-    ? error.message
-    : "Không thể tải dữ liệu tài khoản. Vui lòng thử lại.";
-}
 
 export function HomeScreen() {
   const router = useRouter();
@@ -30,18 +25,20 @@ export function HomeScreen() {
   );
   const [account, setAccount] = useState<PaymentAccount | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | undefined>();
+  const [error, setError] = useState<unknown>();
   const [isSessionExpired, setIsSessionExpired] = useState(false);
   const [isBalanceVisible, setIsBalanceVisible] = useState(false);
   const [isAccountNumberVisible, setIsAccountNumberVisible] = useState(false);
   const [revealedAccountNumber, setRevealedAccountNumber] = useState<string | null>(null);
   const [isAccountNumberLoading, setIsAccountNumberLoading] = useState(false);
   const [isCopyingAccountNumber, setIsCopyingAccountNumber] = useState(false);
+  const [accountNumberError, setAccountNumberError] = useState<unknown>();
 
   const loadAccounts = useCallback(async () => {
     setIsBalanceVisible(false);
     setIsAccountNumberVisible(false);
     setRevealedAccountNumber(null);
+    setAccountNumberError(undefined);
 
     if (!accessToken) {
       setAccount(null);
@@ -61,7 +58,7 @@ export function HomeScreen() {
     } catch (requestError: unknown) {
       setAccount(null);
       setIsSessionExpired(requestError instanceof ApiError && requestError.status === 401);
-      setError(getErrorMessage(requestError));
+      setError(requestError);
     } finally {
       setIsLoading(false);
     }
@@ -77,12 +74,13 @@ export function HomeScreen() {
     }
 
     setIsAccountNumberLoading(true);
+    setAccountNumberError(undefined);
     try {
       const response = await getAccountNumber(account.id, auth);
       setRevealedAccountNumber(response.accountNumber);
       return response.accountNumber;
     } catch (requestError: unknown) {
-      Alert.alert("Không thể hiện số tài khoản", getErrorMessage(requestError));
+      setAccountNumberError(requestError);
       return null;
     } finally {
       setIsAccountNumberLoading(false);
@@ -158,13 +156,12 @@ export function HomeScreen() {
               />
             </View>
           ) : error ? (
-            <View style={styles.stateCard} testID="home-account-error">
-              <Text style={styles.stateTitle}>Không thể kết nối</Text>
-              <Text accessibilityLiveRegion="polite" style={styles.errorText}>
-                {error}
-              </Text>
-              <PrimaryButton label="Thử lại" onPress={loadAccounts} testID="home-account-retry" />
-            </View>
+            <RequestErrorNotice
+              error={error}
+              fallbackMessage="Không thể tải dữ liệu tài khoản. Vui lòng thử lại."
+              onRetry={loadAccounts}
+              testID="home-account-error"
+            />
           ) : account ? (
             <BalanceCard
               account={account}
@@ -173,12 +170,14 @@ export function HomeScreen() {
               isAccountNumberLoading={isAccountNumberLoading}
               isCopyingAccountNumber={isCopyingAccountNumber}
               revealedAccountNumber={revealedAccountNumber}
+              accountNumberError={accountNumberError}
               onPress={() =>
                 router.push({ pathname: "/account/[accountId]", params: { accountId: account.id } })
               }
               onToggleBalance={() => setIsBalanceVisible((current) => !current)}
               onToggleAccountNumber={() => void handleToggleAccountNumber()}
               onCopyAccountNumber={() => void handleCopyAccountNumber()}
+              onRetryAccountNumber={() => void revealAccountNumber()}
             />
           ) : (
             <View style={styles.stateCard} testID="home-account-empty">
@@ -276,11 +275,6 @@ const styles = StyleSheet.create({
   },
   stateText: {
     color: colors.muted,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  errorText: {
-    color: colors.danger,
     fontSize: 14,
     lineHeight: 20,
   },

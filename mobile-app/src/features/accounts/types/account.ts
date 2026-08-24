@@ -8,6 +8,7 @@ export type PaymentAccount = {
   maskedNumber: string;
   bankName: string;
   currency: "VND";
+  heldAmount: Money;
   availableBalance: Money;
   currentBalance: Money;
   status: AccountStatus;
@@ -30,6 +31,13 @@ export type TransactionStatus =
   | "FAILED"
   | "REVERSED";
 
+export type TransactionKind =
+  | "TRANSFER"
+  | "SANDBOX_FUNDING"
+  | "SAVINGS"
+  | "CREDIT_PAYMENT"
+  | "MATURITY";
+
 export type Transaction = {
   id: string;
   accountId: string;
@@ -37,6 +45,7 @@ export type Transaction = {
   amount: Money;
   fee: Money;
   status: TransactionStatus;
+  kind?: TransactionKind;
   description: string;
   counterpartyName: string | null;
   occurredAt: string;

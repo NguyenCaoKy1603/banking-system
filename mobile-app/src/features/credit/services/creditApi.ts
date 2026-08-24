@@ -1,10 +1,18 @@
 import type { RequestAuth } from "@/services/api/httpClient";
 import { requestJson } from "@/services/api/httpClient";
 import type { Money } from "@/features/banking/types/money";
+import {
+  COMMAND_IDEMPOTENCY_KEY_MIN_LENGTH,
+  GENERAL_IDEMPOTENCY_KEY_MIN_LENGTH,
+  requireIdempotencyKey,
+} from "@/features/banking/validation/idempotencyKey";
 import { isMoney } from "@/features/banking/validation/moneyValidators";
 import type {
   CreditAccount,
   CreditAccountsResponse,
+  CreditApplication,
+  CreditApplicationsResponse,
+  CreditApplicationRequest,
   CreditCard,
   CreditCardDetailResponse,
   CreditCardsResponse,
@@ -19,6 +27,8 @@ import type {
 import {
   isCreditAccountResponse,
   isCreditAccountsResponse,
+  isCreditApplication,
+  isCreditApplicationsResponse,
   isCreditCardDetailResponse,
   isCreditCardResponse,
   isCreditCardsResponse,
@@ -107,7 +117,7 @@ export function lockCreditCard(cardId: string, auth: RequestAuth): Promise<{ car
 
 export function unlockCreditCard(
   cardId: string,
-  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string },
+  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string },
   auth: RequestAuth,
 ): Promise<{ card: CreditCard }> {
   if (!stepUp.proof.trim()) throw new TypeError("stepUp.proof không được để trống.");
@@ -120,6 +130,46 @@ export function unlockCreditCard(
 
 export function listCreditAccounts(auth: RequestAuth): Promise<CreditAccountsResponse> {
   return requestJson("/credit/accounts", { auth }, isCreditAccountsResponse);
+}
+
+export function listCreditApplications(auth: RequestAuth): Promise<CreditApplicationsResponse> {
+  return requestJson("/credit/applications", { auth }, isCreditApplicationsResponse);
+}
+
+export function submitCreditApplication(
+  request: CreditApplicationRequest,
+  options: { auth: RequestAuth; idempotencyKey: string },
+): Promise<CreditApplication> {
+  validateStepUp({ quoteId: "credit-application", stepUp: request.stepUp });
+  const idempotencyKey = requireIdempotencyKey(
+    options.idempotencyKey,
+    GENERAL_IDEMPOTENCY_KEY_MIN_LENGTH,
+  );
+  if (request.requestedLimit !== undefined) {
+    validateMoney(request.requestedLimit, "requestedLimit");
+  }
+  return requestJson(
+    "/credit/applications",
+    { method: "POST", body: request, auth: options.auth, idempotencyKey },
+    isCreditApplication,
+  );
+}
+
+export function activateCreditApplication(
+  applicationId: string,
+  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string },
+  options: { auth: RequestAuth; idempotencyKey: string },
+): Promise<CreditApplication> {
+  validateStepUp({ quoteId: applicationId, stepUp });
+  const idempotencyKey = requireIdempotencyKey(
+    options.idempotencyKey,
+    GENERAL_IDEMPOTENCY_KEY_MIN_LENGTH,
+  );
+  return requestJson(
+    `/credit/applications/${requireResourceId(applicationId, "applicationId")}/activate`,
+    { method: "POST", body: { stepUp }, auth: options.auth, idempotencyKey },
+    isCreditApplication,
+  );
 }
 
 export function getCreditAccount(creditAccountId: string, auth: RequestAuth): Promise<CreditAccount> {
@@ -177,10 +227,13 @@ export function submitCreditPayment(
   options: { auth: RequestAuth; idempotencyKey: string },
 ): Promise<CreditPayment> {
   validateStepUp(request);
-  if (!options.idempotencyKey.trim()) throw new TypeError("idempotencyKey không được để trống.");
+  const idempotencyKey = requireIdempotencyKey(
+    options.idempotencyKey,
+    COMMAND_IDEMPOTENCY_KEY_MIN_LENGTH,
+  );
   return requestJson(
     "/credit/payments",
-    { method: "POST", body: request, auth: options.auth, idempotencyKey: options.idempotencyKey },
+    { method: "POST", body: request, auth: options.auth, idempotencyKey },
     isCreditPayment,
   );
 }
@@ -199,6 +252,9 @@ export const creditApi = {
   lockCreditCard,
   unlockCreditCard,
   listCreditAccounts,
+  listCreditApplications,
+  submitCreditApplication,
+  activateCreditApplication,
   getCreditAccount,
   listCreditTransactions,
   listCreditStatements,

@@ -3,6 +3,10 @@ appId: ${APP_ID}
 ---
 - launchApp:
     clearState: true
+- extendedWaitUntil:
+    visible:
+      id: login-email
+    timeout: 90000
 - tapOn:
     id: login-email
 - inputText: ${TEST_EMAIL}
@@ -31,8 +35,17 @@ appId: ${APP_ID}
       id: transfer-beneficiary-id
     timeout: 10000
 - tapOn:
-    id: transfer-beneficiary-id
-- inputText: ${BENEFICIARY_ID}
+    id: transfer-open-beneficiaries
+- extendedWaitUntil:
+    visible:
+      id: beneficiary-list
+    timeout: 10000
+- tapOn:
+    id: beneficiary-row-${BENEFICIARY_ID}
+- extendedWaitUntil:
+    visible:
+      id: transfer-beneficiary-id
+    timeout: 10000
 - tapOn:
     id: transfer-lookup-beneficiary
 - extendedWaitUntil:
@@ -42,6 +55,8 @@ appId: ${APP_ID}
 - tapOn:
     id: transfer-amount
 - inputText: ${TRANSFER_AMOUNT_MINOR}
+- tapOn:
+    id: transfer-create-quote
 - tapOn:
     id: transfer-create-quote
 - extendedWaitUntil:
@@ -57,8 +72,12 @@ appId: ${APP_ID}
 - tapOn:
     id: transfer-step-up-code
 - inputText: ${TRANSFER_OTP}
-- tapOn:
-    id: transfer-submit
+- pressKey: BACK
+- scrollUntilVisible:
+    element:
+      id: transfer-submit
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     id: transfer-submit
 - extendedWaitUntil:

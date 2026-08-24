@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Banking MVP Accounts and Transfers API
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   description: |
     DRAFT only. This contract requires backend, core-banking partner and
     legal/compliance approval before any real-money pilot. Authenticated
@@ -14,18 +14,23 @@ tags:
   - name: Control
   - name: Notifications
   - name: Fraud
+  - name: Sandbox
+  - name: Recipients
   - name: Accounts
   - name: Transfers
   - name: Savings
   - name: Credit
 security:
   - bearerAuth: []
+    deviceBinding: []
 paths:
   /auth/register:
     post:
       tags: [Auth]
       operationId: register
       security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
       requestBody:
         required: true
         content:
@@ -33,14 +38,139 @@ paths:
             schema:
               $ref: '#/components/schemas/RegisterRequest'
       responses:
+        '202':
+          description: Registration is awaiting one-time verification.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthChallengeResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /auth/register/verify:
+    post:
+      tags: [Auth]
+      operationId: verifyRegistrationChallenge
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyAuthChallengeRequest'
+      responses:
         '201':
-          description: Account registered without creating a session.
+          description: User and the empty payment account are created after OTP verification.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/RegisterResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /auth/otp/challenges:
+    post:
+      tags: [Auth]
+      operationId: createOtpChallenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOtpChallengeRequest'
+      responses:
+        '201':
+          description: One-time step-up challenge created without returning the OTP.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthChallengeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /sandbox/fundings:
+    post:
+      tags: [Sandbox]
+      operationId: createSandboxFunding
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/SandboxOperatorKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SandboxFundingRequest'
+      responses:
+        '200':
+          description: Sandbox funding journal posted exactly once.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FundingReceipt'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /sandbox/otp/{challengeId}:
+    get:
+      tags: [Sandbox]
+      operationId: readSandboxOtp
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/ChallengeId'
+        - $ref: '#/components/parameters/SandboxOperatorKey'
+      responses:
+        '200':
+          description: Test-only OTP lookup for an authorized sandbox operator.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxOtpResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /sandbox/process-scheduled:
+    post:
+      tags: [Sandbox]
+      operationId: processSandboxScheduledWork
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SandboxOperatorKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SandboxScheduledWorkRequest'
+      responses:
+        '200':
+          description: Pending sandbox transfers, savings openings and credit payments are settled before due savings maturities and credit statements are processed explicitly.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxScheduledWorkResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '422':
           $ref: '#/components/responses/ValidationError'
   /auth/login:
@@ -145,8 +275,6 @@ paths:
     post:
       tags: [Auth]
       operationId: revokeAllSessions
-      parameters:
-        - $ref: '#/components/parameters/DeviceId'
       responses:
         '204':
           description: All sessions owned by the authenticated user were revoked.
@@ -199,6 +327,8 @@ paths:
     post:
       tags: [Fraud]
       operationId: submitFraudReport
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -207,7 +337,31 @@ paths:
               $ref: '#/components/schemas/FraudReportRequest'
       responses:
         '201':
-          description: Fraud report accepted for risk review.
+          description: Fraud report accepted for risk review, or the matching open report reused idempotently.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudReportResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /fraud-reports/{reportId}:
+    get:
+      tags: [Fraud]
+      operationId: getFraudReport
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current server-authoritative fraud report status.
           content:
             application/json:
               schema:
@@ -216,8 +370,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/ValidationError'
   /accounts:
     get:
       tags: [Accounts]
@@ -231,6 +383,29 @@ paths:
                 $ref: '#/components/schemas/AccountsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /internal-recipients/lookup:
+    post:
+      tags: [Recipients]
+      operationId: lookupInternalRecipient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InternalRecipientLookupRequest'
+      responses:
+        '200':
+          description: Short-lived recipient confirmation data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalRecipientLookupResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/ServerError'
   /accounts/{accountId}/number:
@@ -401,6 +576,10 @@ paths:
                 $ref: '#/components/schemas/TransferQuote'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
   /transfers:
@@ -435,14 +614,14 @@ paths:
                 $ref: '#/components/schemas/TransferReceipt'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
-          description: Idempotency key conflict or duplicate request fingerprint.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiErrorPayload'
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /transfers/{transferId}:
     get:
       tags: [Transfers]
@@ -499,6 +678,8 @@ paths:
                 $ref: '#/components/schemas/SavingsQuote'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
@@ -547,10 +728,14 @@ paths:
                 $ref: '#/components/schemas/SavingsOpening'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /savings/openings/{openingId}:
     get:
       tags: [Savings]
@@ -632,6 +817,8 @@ paths:
                 $ref: '#/components/schemas/CreditCardResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
   /cards/{cardId}/unlock:
@@ -655,8 +842,14 @@ paths:
                 $ref: '#/components/schemas/CreditCardResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /credit/accounts:
     get:
       tags: [Credit]
@@ -670,6 +863,92 @@ paths:
                 $ref: '#/components/schemas/CreditAccountsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /credit/applications:
+    get:
+      tags: [Credit]
+      operationId: listCreditApplications
+      responses:
+        '200':
+          description: Explicit credit applications owned by the customer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditApplicationsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Credit]
+      operationId: submitCreditApplication
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreditApplicationRequest'
+      responses:
+        '201':
+          description: Sandbox application approved but not activated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditApplication'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /credit/applications/{applicationId}:
+    get:
+      tags: [Credit]
+      operationId: getCreditApplication
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      responses:
+        '200':
+          description: Credit application status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditApplication'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /credit/applications/{applicationId}/activate:
+    post:
+      tags: [Credit]
+      operationId: activateCreditApplication
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreditStepUpRequest'
+      responses:
+        '200':
+          description: Credit product activated after explicit customer confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreditApplication'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /credit/accounts/{creditAccountId}:
     get:
       tags: [Credit]
@@ -758,6 +1037,8 @@ paths:
                 $ref: '#/components/schemas/CreditPaymentQuote'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
@@ -794,10 +1075,14 @@ paths:
                 $ref: '#/components/schemas/CreditPayment'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /credit/payments/{paymentId}:
     get:
       tags: [Credit]
@@ -821,6 +1106,10 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+    deviceBinding:
+      type: apiKey
+      in: header
+      name: X-Device-ID
   parameters:
     AccountId:
       name: accountId
@@ -885,6 +1174,13 @@ components:
       schema:
         type: string
         format: uuid
+    ApplicationId:
+      name: applicationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     StatementId:
       name: statementId
       in: path
@@ -927,6 +1223,20 @@ components:
       schema:
         type: string
         format: uuid
+    ChallengeId:
+      name: challengeId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    SandboxOperatorKey:
+      name: X-Sandbox-Operator-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
   responses:
     Unauthorized:
       description: Access token missing, expired or revoked.
@@ -935,7 +1245,7 @@ components:
           schema:
             $ref: '#/components/schemas/ApiErrorPayload'
     Conflict:
-      description: Resource or credential conflict.
+      description: Resource, idempotency, credential or financial step-up business conflict. `STEP_UP_VERIFICATION_FAILED` never means the bearer token is invalid and must not trigger token refresh/replay.
       content:
         application/json:
           schema:
@@ -1035,14 +1345,91 @@ components:
         - $ref: '#/components/schemas/LoginResponse'
     AuthChallengeResponse:
       type: object
-      required: [challengeId, expiresAt, methods]
+      required: [challengeId, expiresAt, methods, purpose]
       properties:
         challengeId: { type: string, minLength: 1 }
         expiresAt: { type: string, format: date-time }
+        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK] }
         methods:
           type: array
           minItems: 1
           items: { type: string, enum: [OTP, BIOMETRIC] }
+    CreateOtpChallengeRequest:
+      type: object
+      required: [purpose]
+      example:
+        purpose: TRANSFER
+        resourceId: quote-example
+        requestFingerprint: fingerprint-example
+      properties:
+        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK] }
+        resourceId:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        requestFingerprint:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+    SandboxFundingRequest:
+      type: object
+      required: [recipientAccountNumber, amount, reason]
+      properties:
+        recipientAccountNumber: { type: string, pattern: '^\d{6,34}$' }
+        amount: { $ref: '#/components/schemas/Money' }
+        reason: { type: string, minLength: 1, maxLength: 160 }
+    FundingReceipt:
+      type: object
+      required: [fundingId, reference, status, amount, transactionId, recipientMaskedAccountNumber, createdAt]
+      properties:
+        fundingId: { type: string }
+        reference: { type: string }
+        status: { type: string, enum: [SUCCEEDED] }
+        amount: { $ref: '#/components/schemas/Money' }
+        transactionId: { type: string }
+        recipientMaskedAccountNumber: { type: string }
+        createdAt: { type: string, format: date-time }
+    SandboxOtpResponse:
+      type: object
+      required: [otp]
+      properties:
+        otp: { type: string, pattern: '^\d{6}$', writeOnly: true }
+    SandboxScheduledWorkRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        userId: { type: string, minLength: 1 }
+    SandboxScheduledWorkResponse:
+      type: object
+      additionalProperties: false
+      required: [usersProcessed, transfersSettled, savingsOpeningsSettled, creditPaymentsSettled, savingsMaturities, creditStatements]
+      properties:
+        usersProcessed: { type: integer, minimum: 0 }
+        transfersSettled: { type: integer, minimum: 0 }
+        savingsOpeningsSettled: { type: integer, minimum: 0 }
+        creditPaymentsSettled: { type: integer, minimum: 0 }
+        savingsMaturities: { type: integer, minimum: 0 }
+        creditStatements: { type: integer, minimum: 0 }
+    InternalRecipientLookupRequest:
+      type: object
+      required: [accountNumber]
+      properties:
+        accountNumber: { type: string, pattern: '^\d{6,34}$', writeOnly: true }
+    InternalRecipientLookup:
+      type: object
+      required: [lookupId, accountHolderName, maskedAccountNumber, bankName, status, expiresAt]
+      properties:
+        lookupId: { type: string }
+        accountHolderName: { type: string }
+        maskedAccountNumber: { type: string }
+        bankName: { type: string }
+        status: { type: string, enum: [ACTIVE, BLOCKED] }
+        expiresAt: { type: string, format: date-time }
+    InternalRecipientLookupResponse:
+      type: object
+      required: [recipient]
+      properties:
+        recipient: { $ref: '#/components/schemas/InternalRecipientLookup' }
     VerifyAuthChallengeRequest:
       type: object
       required: [challengeId, method, proof]
@@ -1098,7 +1485,7 @@ components:
       required: [id, type, title, body, resourceId, resourceAccountId, read, createdAt]
       properties:
         id: { type: string }
-        type: { type: string, enum: [TRANSFER, SAVINGS, CREDIT, SECURITY] }
+        type: { type: string, enum: [TRANSFER, SANDBOX_FUNDING, SAVINGS, CREDIT, SECURITY] }
         title: { type: string }
         body: { type: string }
         resourceId:
@@ -1120,11 +1507,12 @@ components:
           items: { $ref: '#/components/schemas/Notification' }
     FraudReportRequest:
       type: object
+      additionalProperties: false
       required: [accountId, transactionId, reason]
       properties:
         accountId: { type: string, minLength: 1 }
         transactionId: { type: string, minLength: 1 }
-        reason: { type: string, minLength: 5 }
+        reason: { type: string, minLength: 5, maxLength: 1000 }
     FraudReportResponse:
       type: object
       required: [reportId, status, createdAt]
@@ -1145,10 +1533,11 @@ components:
           pattern: '^(0|[1-9][0-9]*)$'
     Beneficiary:
       type: object
-      required: [id, displayName, maskedAccountNumber, bankName, status]
+      required: [id, displayName, accountHolderName, maskedAccountNumber, bankName, status]
       properties:
         id: { type: string }
         displayName: { type: string }
+        accountHolderName: { type: string }
         maskedAccountNumber: { type: string }
         bankName: { type: string }
         status: { type: string, enum: [ACTIVE, BLOCKED] }
@@ -1167,11 +1556,11 @@ components:
           items: { $ref: '#/components/schemas/Beneficiary' }
     CreateBeneficiaryRequest:
       type: object
-      required: [displayName, accountNumber, bankName]
+      required: [displayName, accountNumber]
       properties:
         displayName: { type: string, minLength: 2, maxLength: 80 }
         accountNumber: { type: string, pattern: '^\\d{6,34}$', writeOnly: true }
-        bankName: { type: string, minLength: 1, maxLength: 120 }
+        bankName: { type: string, minLength: 1, maxLength: 120, deprecated: true }
     RenameBeneficiaryRequest:
       type: object
       required: [displayName]
@@ -1179,13 +1568,14 @@ components:
         displayName: { type: string, minLength: 2, maxLength: 80 }
     PaymentAccount:
       type: object
-      required: [id, displayName, maskedNumber, bankName, currency, availableBalance, currentBalance, status, updatedAt]
+      required: [id, displayName, maskedNumber, bankName, currency, heldAmount, availableBalance, currentBalance, status, updatedAt]
       properties:
         id: { type: string }
         displayName: { type: string }
         maskedNumber: { type: string }
         bankName: { type: string, minLength: 1, maxLength: 120 }
         currency: { type: string, enum: [VND] }
+        heldAmount: { $ref: '#/components/schemas/Money' }
         availableBalance: { $ref: '#/components/schemas/Money' }
         currentBalance: { $ref: '#/components/schemas/Money' }
         status: { type: string, enum: [ACTIVE, BLOCKED] }
@@ -1207,7 +1597,7 @@ components:
           example: '970400000001'
     Transaction:
       type: object
-      required: [id, accountId, direction, amount, fee, status, description, counterpartyName, occurredAt]
+      required: [id, accountId, direction, amount, fee, status, kind, description, counterpartyName, occurredAt]
       properties:
         id: { type: string }
         accountId: { type: string }
@@ -1215,6 +1605,7 @@ components:
         amount: { $ref: '#/components/schemas/Money' }
         fee: { $ref: '#/components/schemas/Money' }
         status: { type: string, enum: [PENDING, SUCCEEDED, FAILED, REVERSED] }
+        kind: { type: string, enum: [TRANSFER, SANDBOX_FUNDING, SAVINGS, CREDIT_PAYMENT, MATURITY] }
         description: { type: string }
         counterpartyName:
           oneOf:
@@ -1246,7 +1637,7 @@ components:
                 - { type: 'null' }
     TransferQuoteRequest:
       type: object
-      required: [sourceAccountId, beneficiaryId, amount]
+      required: [sourceAccountId, amount]
       example:
         sourceAccountId: account-example
         beneficiaryId: beneficiary-example
@@ -1256,6 +1647,7 @@ components:
       properties:
         sourceAccountId: { type: string }
         beneficiaryId: { type: string }
+        lookupId: { type: string }
         amount: { $ref: '#/components/schemas/Money' }
     TransferQuote:
       type: object
@@ -1276,14 +1668,16 @@ components:
         stepUp:
           method: OTP
           proof: <provided-by-test-factor>
+          challengeId: challenge-example
       properties:
         quoteId: { type: string }
         stepUp:
           type: object
-          required: [method, proof]
+          required: [method, proof, challengeId]
           properties:
             method: { type: string, enum: [OTP, BIOMETRIC] }
             proof: { type: string, minLength: 1, writeOnly: true }
+            challengeId: { type: string, minLength: 1, writeOnly: true }
     TransferReceipt:
       type: object
       required: [transferId, reference, status, amount, fee, createdAt, updatedAt]
@@ -1355,14 +1749,16 @@ components:
         stepUp:
           method: OTP
           proof: <provided-by-test-factor>
+          challengeId: challenge-example
       properties:
         quoteId: { type: string, minLength: 1 }
         stepUp:
           type: object
-          required: [method, proof]
+          required: [method, proof, challengeId]
           properties:
             method: { type: string, enum: [OTP, BIOMETRIC] }
             proof: { type: string, minLength: 1, writeOnly: true }
+            challengeId: { type: string, minLength: 1, writeOnly: true }
     SavingsOpening:
       type: object
       required: [openingId, quoteId, depositId, status, reference, failureReason, createdAt, updatedAt]
@@ -1420,13 +1816,15 @@ components:
         totalPrincipal: { $ref: '#/components/schemas/Money' }
     CreditStepUpRequest:
       type: object
-      required: [method, proof]
+      required: [method, proof, challengeId]
       example:
         method: OTP
         proof: <provided-by-test-factor>
+        challengeId: challenge-example
       properties:
         method: { type: string, enum: [OTP, BIOMETRIC] }
         proof: { type: string, minLength: 1, writeOnly: true }
+        challengeId: { type: string, minLength: 1, writeOnly: true }
     CreditCard:
       type: object
       required: [cardId, creditAccountId, displayName, brand, maskedNumber, lastFour, expiryMonth, expiryYear, status, updatedAt, creditLimit, availableCredit, postedOutstanding, pendingAuthorizations, nextDueAt, remainingAmountDue, minimumPaymentRemaining, sandbox]
@@ -1495,6 +1893,48 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/CreditAccount' }
+    CreditApplication:
+      type: object
+      required: [applicationId, requestedLimit, approvedLimit, status, decisionReason, creditAccountId, createdAt, updatedAt]
+      properties:
+        applicationId: { type: string, format: uuid }
+        requestedLimit: { $ref: '#/components/schemas/Money' }
+        approvedLimit:
+          oneOf:
+            - { $ref: '#/components/schemas/Money' }
+            - { type: 'null' }
+        status: { type: string, enum: [PENDING_ACTIVATION, ACTIVE, REJECTED] }
+        decisionReason:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        creditAccountId:
+          oneOf:
+            - { type: string, format: uuid }
+            - { type: 'null' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreditApplicationsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CreditApplication' }
+    CreditApplicationRequest:
+      type: object
+      required: [stepUp]
+      example:
+        requestedLimit:
+          currency: VND
+          amountMinor: '20000000'
+        stepUp:
+          method: OTP
+          proof: <provided-by-test-factor>
+          challengeId: challenge-example
+      properties:
+        requestedLimit: { $ref: '#/components/schemas/Money' }
+        stepUp: { $ref: '#/components/schemas/CreditStepUpRequest' }
     CreditTransaction:
       type: object
       required: [transactionId, creditAccountId, statementId, type, status, description, merchantName, amount, debtEffect, occurredAt, postedAt]
@@ -1635,6 +2075,7 @@ components:
         stepUp:
           method: OTP
           proof: <provided-by-test-factor>
+          challengeId: challenge-example
       properties:
         quoteId: { type: string, format: uuid }
         stepUp: { $ref: '#/components/schemas/CreditStepUpRequest' }

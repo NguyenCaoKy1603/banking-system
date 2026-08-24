@@ -54,6 +54,9 @@
     "validate:openapi": "node scripts/validate-openapi.cjs",
     "validate:e2e": "node scripts/validate-maestro.cjs",
     "validate:release": "node scripts/validate-release.cjs",
+    "device:preflight": "node scripts/device-preflight.cjs",
+    "e2e:maestro": "node scripts/run-maestro.cjs",
+    "e2e:sandbox": "node scripts/run-sandbox-e2e.cjs",
     "release:checksum": "node scripts/create-release-checksum.cjs",
     "typecheck": "npm run generate:routes && tsc --noEmit",
     "test": "jest",
@@ -62,7 +65,8 @@
     "export:web": "expo export --platform web"
   },
   "overrides": {
-    "uuid": "^11.1.1"
+    "uuid": "^11.1.1",
+    "metro": "0.84.5"
   },
   "private": true
 }

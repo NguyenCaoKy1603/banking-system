@@ -27,6 +27,31 @@ export type CreditDebtEffect = "INCREASE" | "DECREASE" | "NONE";
 export type CreditStatementStatus = "ISSUED" | "PARTIALLY_PAID" | "PAID" | "OVERDUE";
 export type CreditPaymentStatus = "PENDING" | "SUCCEEDED" | "FAILED" | "REVERSED";
 export type CreditPaymentOption = "MINIMUM" | "FULL_STATEMENT" | "CUSTOM";
+export type CreditApplicationStatus =
+  | "PENDING_ACTIVATION"
+  | "ACTIVE"
+  | "REJECTED";
+
+export type CreditApplication = {
+  applicationId: string;
+  requestedLimit: Money;
+  approvedLimit: Money | null;
+  status: CreditApplicationStatus;
+  decisionReason: string | null;
+  creditAccountId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreditApplicationRequest = {
+  requestedLimit?: Money;
+  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string };
+};
+
+export type CreditApplicationRecord = CreditApplication & {
+  userId: string;
+  requestFingerprint: string;
+};
 
 export type CardInstrument = {
   cardId: string;
@@ -145,7 +170,7 @@ export type CreditStatementsResponse = { items: CreditStatement[]; nextCursor: s
 
 export type CreditPaymentRequest = {
   quoteId: string;
-  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string };
+  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string };
 };
 
 export type CreditPaymentQuoteRequest = {
@@ -189,6 +214,9 @@ export function newCreditId(): string {
 }
 
 export function money(amountMinor: bigint): Money {
+  if (amountMinor < 0n) {
+    throw new RangeError("Credit money cannot be negative.");
+  }
   return { currency: "VND", amountMinor: amountMinor.toString() };
 }
 
@@ -272,6 +300,7 @@ export function calculateAvailableCredit(
 
 export function getStatementStatus(
   remainingAmountDueMinor: bigint,
+  minimumPaymentRemainingMinor: bigint,
   paidAmountMinor: bigint,
   dueAt: string,
   now: number,
@@ -279,7 +308,7 @@ export function getStatementStatus(
   if (remainingAmountDueMinor <= 0n) {
     return "PAID";
   }
-  if (Date.parse(dueAt) <= now) {
+  if (Date.parse(dueAt) <= now && minimumPaymentRemainingMinor > 0n) {
     return "OVERDUE";
   }
   if (paidAmountMinor > 0n) {

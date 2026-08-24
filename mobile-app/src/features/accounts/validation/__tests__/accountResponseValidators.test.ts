@@ -17,6 +17,7 @@ const account = {
   maskedNumber: "•••• 1234",
   bankName: "Ngân hàng reference",
   currency: "VND" as const,
+  heldAmount: { currency: "VND" as const, amountMinor: "0" },
   availableBalance: money,
   currentBalance: money,
   status: "ACTIVE" as const,

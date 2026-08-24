@@ -1,4 +1,4 @@
-import type { KycApplication, KycDraft, KycStatus } from "@/features/kyc/types/kyc";
+import type { KycApplication, KycDraft } from "@/features/kyc/types/kyc";
 
 const applications = new Map<string, KycApplication>();
 
@@ -37,26 +37,6 @@ export async function submitMockKycApplication(
 
   applications.set(userId, application);
   return application;
-}
-
-export async function setMockKycStatus(
-  userId: string,
-  status: Extract<KycStatus, "APPROVED" | "REJECTED">,
-): Promise<KycApplication | null> {
-  const current = applications.get(userId);
-
-  if (!current) {
-    return null;
-  }
-
-  const updated: KycApplication = {
-    ...current,
-    status,
-    rejectionReason: status === "REJECTED" ? "Mô phỏng cần bổ sung giấy tờ." : null,
-    updatedAt: now(),
-  };
-  applications.set(userId, updated);
-  return updated;
 }
 
 export function resetMockKycStore(): void {

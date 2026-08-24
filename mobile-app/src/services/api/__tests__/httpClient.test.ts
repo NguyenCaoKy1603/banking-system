@@ -161,4 +161,55 @@ describe("httpClient", () => {
     expect(refreshAccessToken).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("không chia sẻ refresh single-flight giữa hai session", async () => {
+    const refreshA = createDeferred<string | null>();
+    const refreshB = createDeferred<string | null>();
+    let fetchCount = 0;
+    fetchMock.mockImplementation(async () => {
+      fetchCount += 1;
+      return fetchCount <= 2
+        ? createApiErrorResponse()
+        : createJsonResponse({ ok: true });
+    });
+    const refreshAccessTokenA = jest.fn(() => refreshA.promise);
+    const refreshAccessTokenB = jest.fn(() => refreshB.promise);
+
+    const requestA = requestJson("/accounts/a", {
+      auth: {
+        accessToken: "access-token-a",
+        refreshAccessToken: refreshAccessTokenA,
+      },
+    });
+    const requestB = requestJson("/accounts/b", {
+      auth: {
+        accessToken: "access-token-b",
+        refreshAccessToken: refreshAccessTokenB,
+      },
+    });
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(refreshAccessTokenA).toHaveBeenCalledTimes(1);
+    expect(refreshAccessTokenB).toHaveBeenCalledTimes(1);
+
+    refreshA.resolve("fresh-token-a");
+    refreshB.resolve("fresh-token-b");
+
+    await expect(requestA).resolves.toEqual({ ok: true });
+    await expect(requestB).resolves.toEqual({ ok: true });
+    const retryA = fetchMock.mock.calls.find(
+      ([url, request]) =>
+        String(url).endsWith("/accounts/a") &&
+        (request?.headers as Record<string, string> | undefined)?.Authorization ===
+          "Bearer fresh-token-a",
+    );
+    const retryB = fetchMock.mock.calls.find(
+      ([url, request]) =>
+        String(url).endsWith("/accounts/b") &&
+        (request?.headers as Record<string, string> | undefined)?.Authorization ===
+          "Bearer fresh-token-b",
+    );
+    expect(retryA).toBeDefined();
+    expect(retryB).toBeDefined();
+  });
 });

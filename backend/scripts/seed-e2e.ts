@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 type JsonRecord = Record<string, unknown>;
 
 const baseUrl = (
@@ -6,18 +8,13 @@ const baseUrl = (
 const email = process.env.E2E_EMAIL ?? "tester@example.com";
 const password = process.env.E2E_PASSWORD?.trim();
 const deviceId = process.env.E2E_DEVICE_ID ?? "e2e-device-android";
-const mfaOtp = process.env.E2E_MFA_OTP ?? process.env.BANKING_SANDBOX_MFA_OTP;
-const transferOtp = process.env.E2E_TRANSFER_OTP ?? process.env.BANKING_SANDBOX_OTP;
+const operatorKey = process.env.E2E_SANDBOX_OPERATOR_KEY ?? process.env.BANKING_SANDBOX_OPERATOR_KEY ?? "sandbox-operator-local";
+const mfaOtp = process.env.E2E_MFA_OTP?.trim() ?? process.env.BANKING_SANDBOX_MFA_OTP?.trim();
+const transferOtp = process.env.E2E_TRANSFER_OTP?.trim() ?? process.env.BANKING_SANDBOX_OTP?.trim();
 
 if (!password) {
   throw new Error(
     "E2E_PASSWORD is required; do not put test credentials in the repository.",
-  );
-}
-
-if (!mfaOtp || !transferOtp) {
-  throw new Error(
-    "Set E2E_MFA_OTP/E2E_TRANSFER_OTP or the BANKING_SANDBOX_* equivalents.",
   );
 }
 
@@ -51,50 +48,90 @@ function requireBody<T extends JsonRecord>(result: { status: number; body: unkno
   return result.body as T;
 }
 
-async function main(): Promise<void> {
+function fingerprint(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+async function getSandboxOtp(challengeId: string): Promise<string> {
+  const result = await request(`/sandbox/otp/${encodeURIComponent(challengeId)}`, {
+    headers: { "X-Sandbox-Operator-Key": operatorKey },
+  });
+  return requireBody<{ otp: string }>(result, "sandbox OTP").otp;
+}
+
+async function createOtpChallenge(
+  accessToken: string,
+  purpose: string,
+  resourceId?: string,
+  requestFingerprint?: string,
+): Promise<string> {
+  const result = await request(
+    "/auth/otp/challenges",
+    {
+      method: "POST",
+      body: json({ purpose, resourceId: resourceId ?? null, requestFingerprint: requestFingerprint ?? null }),
+    },
+    accessToken,
+  );
+  return requireBody<{ challengeId: string }>(result, `${purpose} OTP challenge`).challengeId;
+}
+
+async function registerIfNeeded(
+  input: { fullName: string; email: string; phoneNumber: string; password: string },
+): Promise<void> {
   const register = await request("/auth/register", {
     method: "POST",
-    body: json({
-      fullName: "E2E Tester",
-      email,
-      phoneNumber: process.env.E2E_PHONE ?? "0900000099",
-      password,
-    }),
+    body: json(input),
   });
+  if (register.status === 202) {
+    const challenge = requireBody<{ challengeId: string }>(register, "registration");
+    // The reference backend uses BANKING_SANDBOX_OTP for registration verification.
+    const proof = transferOtp ?? await getSandboxOtp(challenge.challengeId);
+    requireBody(
+      await request("/auth/register/verify", {
+        method: "POST",
+        body: json({ challengeId: challenge.challengeId, method: "OTP", proof }),
+      }),
+      "registration verification",
+    );
+    return;
+  }
   if (register.status !== 201 && register.status !== 409) {
     requireBody(register, "register");
   }
+}
 
+async function loginUser(userEmail: string, userPassword: string): Promise<string> {
   const login = await request("/auth/login", {
     method: "POST",
-    body: json({ email, password }),
+    body: json({ email: userEmail, password: userPassword }),
   });
-
-  let session = requireBody<{
-    accessToken?: string;
-    challengeId?: string;
-  }>(login, "login");
-
+  let session = requireBody<{ accessToken?: string; challengeId?: string }>(login, "login");
   if (login.status === 202) {
-    if (!session.challengeId) {
-      throw new Error("Login returned MFA status without challengeId.");
-    }
-    const verified = await request("/auth/verify", {
-      method: "POST",
-      body: json({
-        challengeId: session.challengeId,
-        method: "OTP",
-        proof: mfaOtp,
+    if (!session.challengeId) throw new Error("Login returned MFA status without challengeId.");
+    const proof = mfaOtp ?? await getSandboxOtp(session.challengeId);
+    session = requireBody<{ accessToken?: string }>(
+      await request("/auth/verify", {
+        method: "POST",
+        body: json({ challengeId: session.challengeId, method: "OTP", proof }),
       }),
-    });
-    session = requireBody<{ accessToken?: string }>(verified, "MFA verification");
+      "MFA verification",
+    );
   }
+  if (!session.accessToken) throw new Error("Login did not return an access token.");
+  return session.accessToken;
+}
 
-  if (!session.accessToken) {
-    throw new Error("Login did not return an access token.");
-  }
-
-  const accessToken = session.accessToken;
+async function main(): Promise<void> {
+  if (!password) throw new Error("E2E_PASSWORD is required.");
+  const requiredPassword = password;
+  await registerIfNeeded({
+    fullName: "E2E Tester",
+    email,
+    phoneNumber: process.env.E2E_PHONE ?? "0900000099",
+    password: requiredPassword,
+  });
+  const accessToken = await loginUser(email, requiredPassword);
   const accounts = requireBody<{
     accounts: Array<{
       id: string;
@@ -107,6 +144,26 @@ async function main(): Promise<void> {
     throw new Error("Seed user has no payment account.");
   }
 
+  const fullAccountNumber = requireBody<{ accountNumber: string }>(
+    await request(`/accounts/${account.id}/number`, {}, accessToken),
+    "account number",
+  ).accountNumber;
+  requireBody(
+    await request("/sandbox/fundings", {
+      method: "POST",
+      headers: {
+        "X-Sandbox-Operator-Key": operatorKey,
+        "Idempotency-Key": `e2e-funding-${email}`,
+      },
+      body: json({
+        recipientAccountNumber: fullAccountNumber,
+        amount: { currency: "VND", amountMinor: process.env.E2E_FUNDING_AMOUNT_MINOR ?? "10000000" },
+        reason: "E2E sandbox funding",
+      }),
+    }),
+    "sandbox funding",
+  );
+
   const beneficiaries = requireBody<{
     items: Array<{
       id: string;
@@ -118,6 +175,32 @@ async function main(): Promise<void> {
 
   let beneficiary = beneficiaries.items[0];
   if (!beneficiary) {
+    let destinationAccountNumber = process.env.E2E_BENEFICIARY_ACCOUNT?.trim();
+    if (!destinationAccountNumber) {
+      const recipientPassword = process.env.E2E_RECIPIENT_PASSWORD?.trim();
+      if (!recipientPassword) {
+        throw new Error(
+          "E2E_BENEFICIARY_ACCOUNT or E2E_RECIPIENT_PASSWORD is required to create a real recipient account.",
+        );
+      }
+      const recipientEmail = process.env.E2E_RECIPIENT_EMAIL ?? "recipient@example.com";
+      await registerIfNeeded({
+        fullName: "E2E Recipient",
+        email: recipientEmail,
+        phoneNumber: process.env.E2E_RECIPIENT_PHONE ?? "0900000100",
+        password: recipientPassword,
+      });
+      const recipientAccessToken = await loginUser(recipientEmail, recipientPassword);
+      const recipientAccounts = requireBody<{
+        accounts: Array<{ id: string }>;
+      }>(await request("/accounts", {}, recipientAccessToken), "recipient accounts");
+      const recipientAccount = recipientAccounts.accounts[0];
+      if (!recipientAccount) throw new Error("Recipient user has no payment account.");
+      destinationAccountNumber = requireBody<{ accountNumber: string }>(
+        await request(`/accounts/${recipientAccount.id}/number`, {}, recipientAccessToken),
+        "recipient account number",
+      ).accountNumber;
+    }
     const created = requireBody<{
       beneficiary: {
         id: string;
@@ -132,7 +215,7 @@ async function main(): Promise<void> {
           method: "POST",
           body: json({
             displayName: "E2E Recipient",
-            accountNumber: process.env.E2E_BENEFICIARY_ACCOUNT ?? "987654321012",
+            accountNumber: destinationAccountNumber,
             bankName: "Reference Bank",
           }),
         },
@@ -159,6 +242,13 @@ async function main(): Promise<void> {
     ),
     "transfer quote",
   );
+  const transferChallengeId = await createOtpChallenge(
+    accessToken,
+    "TRANSFER",
+    quote.quoteId,
+    fingerprint({ quoteId: quote.quoteId, amountMinor: transferAmount }),
+  );
+  const transferProof = transferOtp ?? await getSandboxOtp(transferChallengeId);
   const transfer = requireBody<{ transferId: string; status: string }>(
     await request(
       "/transfers",
@@ -169,7 +259,7 @@ async function main(): Promise<void> {
         },
         body: json({
           quoteId: quote.quoteId,
-          stepUp: { method: "OTP", proof: transferOtp },
+          stepUp: { method: "OTP", proof: transferProof, challengeId: transferChallengeId },
         }),
       },
       accessToken,
@@ -200,6 +290,13 @@ async function main(): Promise<void> {
     ),
     "savings quote",
   );
+  const savingsChallengeId = await createOtpChallenge(
+    accessToken,
+    "SAVINGS_OPENING",
+    savingsQuote.quoteId,
+    fingerprint({ quoteId: savingsQuote.quoteId }),
+  );
+  const savingsProof = transferOtp ?? await getSandboxOtp(savingsChallengeId);
   const savingsOpening = requireBody<{
     openingId: string;
     depositId: string | null;
@@ -212,7 +309,7 @@ async function main(): Promise<void> {
         headers: { "Idempotency-Key": `e2e-savings-seed-${Date.now()}` },
         body: json({
           quoteId: savingsQuote.quoteId,
-          stepUp: { method: "OTP", proof: transferOtp },
+          stepUp: { method: "OTP", proof: savingsProof, challengeId: savingsChallengeId },
         }),
       },
       accessToken,
@@ -227,6 +324,50 @@ async function main(): Promise<void> {
     savingsOpening.depositId = resumed.depositId;
     savingsOpening.status = resumed.status;
   }
+
+  const requestedLimitMinor = process.env.E2E_CREDIT_LIMIT_MINOR ?? "20000000";
+  const creditApplicationChallengeId = await createOtpChallenge(
+    accessToken,
+    "CREDIT_APPLICATION",
+    undefined,
+    fingerprint({ requestedLimitMinor }),
+  );
+  const creditApplicationProof = transferOtp ?? await getSandboxOtp(creditApplicationChallengeId);
+  const application = requireBody<{ applicationId: string; status: string }>(
+    await request(
+      "/credit/applications",
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": `e2e-credit-application-${email}` },
+        body: json({
+          requestedLimit: { currency: "VND", amountMinor: requestedLimitMinor },
+          stepUp: { method: "OTP", proof: creditApplicationProof, challengeId: creditApplicationChallengeId },
+        }),
+      },
+      accessToken,
+    ),
+    "credit application",
+  );
+  const creditActivationChallengeId = await createOtpChallenge(
+    accessToken,
+    "CARD_ACTIVATION",
+    application.applicationId,
+  );
+  const creditActivationProof = transferOtp ?? await getSandboxOtp(creditActivationChallengeId);
+  requireBody(
+    await request(
+      `/credit/applications/${application.applicationId}/activate`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": `e2e-credit-activation-${email}` },
+        body: json({
+          stepUp: { method: "OTP", proof: creditActivationProof, challengeId: creditActivationChallengeId },
+        }),
+      },
+      accessToken,
+    ),
+    "credit activation",
+  );
 
   const creditCards = requireBody<{
     items: Array<{ cardId: string; creditAccountId: string; lastFour: string; postedOutstanding: { amountMinor: string }; minimumPaymentRemaining: { amountMinor: string } }>;

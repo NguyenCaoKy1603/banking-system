@@ -34,21 +34,37 @@ maestro test `
   e2e/maestro
 ```
 
-`APP_ID` và dữ liệu test phải do môi trường preview cấp; không ghi credential thật vào flow hoặc repository. Flow cố ý dùng các `testID` ổn định trong app để tránh phụ thuộc vào text hiển thị.
+`APP_ID` và dữ liệu test phải do môi trường preview cấp; không ghi credential thật vào flow hoặc repository. Flow cố ý dùng các `testID` ổn định trong app để tránh phụ thuộc vào text hiển thị. Có thể dùng `npm run e2e:maestro -- test ...` thay cho gọi Maestro trực tiếp; wrapper tự chuẩn hóa `JAVA_HOME` nếu biến môi trường đang trỏ nhầm vào thư mục `bin`.
+
+Để tự chuẩn bị một user/recipient E2E mới mà không nhập credential thủ công, khởi động backend đã migrate rồi chạy:
+
+```powershell
+cd mobile-app
+$env:E2E_MFA_OTP = $env:BANKING_SANDBOX_MFA_OTP
+$env:E2E_TRANSFER_OTP = $env:BANKING_SANDBOX_OTP
+npm run e2e:sandbox
+```
+
+Lệnh dùng credential ngẫu nhiên trong bộ nhớ, gọi `backend` seed, lấy số tài khoản đầy đủ qua API bảo vệ, chạy flow mặc định M0–M4/M8 và xóa artifact Maestro tạm sau khi chạy. Dữ liệu nghiệp vụ được tạo trong database sandbox hiện tại; nếu cần làm sạch, dùng `backend/npm run reset:sandbox` với xác nhận theo [`e2e-sandbox-seed.md`](../../../documents/05-testing/e2e-sandbox-seed.md).
+
+`E2E_MFA_OTP` dùng cho bước đăng nhập MFA; `E2E_TRANSFER_OTP` dùng cho bước đăng ký của reference backend và các bước xác nhận giao dịch. Hai biến phải khớp với các giá trị `BANKING_SANDBOX_MFA_OTP` và `BANKING_SANDBOX_OTP` của server đang chạy.
 
 ## Coverage
 
 - `critical-auth-and-logout.yaml`: login MFA, session entry và logout tất cả thiết bị.
 - `critical-transfer-retry.yaml`: quote, step-up, double-tap, pending status và khôi phục sau stop/start app.
 - `critical-fraud-report.yaml`: mở chi tiết giao dịch và gửi fraud report.
-- `critical-m0-m4-m8.yaml`: login, trang chủ với thẻ số dư hiện/che, hiện và sao chép số tài khoản đầy đủ, eKYC mô phỏng, danh bạ người nhận, My QR/QR payload fallback, notification detail và deep link.
+- `critical-m0-m4-m8.yaml`: login, trang chủ với thẻ số dư hiện/che, hiện và sao chép số tài khoản đầy đủ, eKYC submit → `PENDING`/read-only, danh bạ người nhận, My QR/QR payload fallback chỉ hiển thị dữ liệu chưa xác minh và chặn chuyển tiền, notification detail và deep link.
 - `critical-savings.yaml`: Home → Tiền gửi → quote/review → step-up OTP → mở khoản → danh sách tiền gửi.
 - `critical-card.yaml`: mở danh sách/chi tiết Credit sandbox, khóa thẻ, stop/launch để kiểm tra trạng thái được giữ lại và mở khóa bằng OTP sandbox.
 - `critical-credit.yaml`: mở thẻ tín dụng sandbox, xem giao dịch/sao kê, tạo quote MINIMUM, MFA step-up và hoàn tất thanh toán.
 - `critical-credit-pending-resume.yaml`: tạo thanh toán PENDING, stop/launch app, mở lại chi tiết và resume đến SUCCEEDED mà không debit lần hai.
 - `critical-credit-overdue-notification.yaml`: mở thông báo sao kê Credit quá hạn và deep-link tới đúng chi tiết thẻ.
+- `critical-offline-retry.yaml`: mô phỏng API không reachable, kiểm tra banner mất kết nối và retry ở màn hình đăng nhập.
 
-Maestro CLI 2.8.0 đã chạy thành công trên Android emulator `Pixel_7_API_35` cho `critical-m0-m4-m8.yaml`, `critical-savings.yaml`, `critical-credit.yaml`, `critical-credit-pending-resume.yaml`, `critical-card.yaml` và `critical-credit-overdue-notification.yaml`. Các run thành công gần nhất nằm trong `C:\Users\admin\.maestro\tests\2026-08-16_014619`, `C:\Users\admin\.maestro\tests\2026-08-16_013045`, `C:\Users\admin\.maestro\tests\2026-08-16_000436`, `C:\Users\admin\.maestro\tests\2026-08-16_000714`, `C:\Users\admin\.maestro\tests\2026-08-16_003018` và `C:\Users\admin\.maestro\tests\2026-08-16_004626`. Bộ thư mục hiện có 9 flow hợp lệ; M0–M4/M8 đã kiểm tra hiện và sao chép số tài khoản đầy đủ trên APK hiện tại, M6 đã kiểm tra quote/review/OTP/mở khoản, còn M7 đã kiểm tra payment, pending → stop/launch → resume, khóa → restart → mở khóa thẻ bằng OTP và thông báo sao kê quá hạn → mở đúng thẻ. Camera permission, biometric prompt, transfer lifecycle native đầy đủ và thiết bị thật vẫn cần chạy bổ sung.
+Maestro CLI 2.8.0 đã chạy thành công trên Android emulator `Pixel_7_API_35` cho các flow M0–M4/M8, M6, M7 và `critical-offline-retry.yaml`. Bộ thư mục hiện có 10 flow hợp lệ; M0–M4/M8 đã kiểm tra hiện và sao chép số tài khoản đầy đủ trên APK hiện tại, M6 đã kiểm tra quote/review/OTP/mở khoản, M7 đã kiểm tra payment, pending → stop/launch → resume, khóa → restart → mở khóa thẻ bằng OTP, thông báo sao kê quá hạn → mở đúng thẻ, còn offline retry đã kiểm tra banner mất kết nối và retry. Artifact raw của offline flow đã được xóa để không lưu dữ liệu test nhạy cảm. Camera permission, biometric prompt, transfer lifecycle native đầy đủ và thiết bị thật vẫn cần chạy bổ sung.
+
+Thay đổi trust boundary eKYC/QR ngày 2026-08-23 mới đạt unit test, lint, type-check và Maestro syntax validation; chưa chạy lại trên emulator. Bằng chứng emulator trước đó không được dùng để tuyên bố UI mới đã qua native E2E.
 
 ## Cap nhat M7
 

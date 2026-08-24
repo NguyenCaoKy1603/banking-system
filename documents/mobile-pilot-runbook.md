@@ -1,5 +1,7 @@
 # Mobile banking pilot runbook
 
+> Cập nhật hiện hành 2026-08-17: branch `codex/mini-core-banking-sandbox` giữ M0–M4/M8 và bổ sung clean registration, operator Funding, recipient lookup, dynamic step-up và opt-in Savings/Credit. Sau khi đổi code phải restart backend và reload/rebuild Mobile trước khi test; nút `Hiện đầy đủ`/`Sao chép` lấy số đầy đủ qua endpoint riêng, không lấy từ 4 số cuối. Xem [`mini-core-sandbox-status.md`](01-planning/mini-core-sandbox-status.md).
+
 Tài liệu này là checklist tối thiểu cho bản preview/pilot của mobile app. Nó không thay thế runbook vận hành của ngân hàng/BaaS partner.
 
 Scope, threat model và data classification tham chiếu tại [`architecture/banking-mvp-scope-and-risk.md`](architecture/banking-mvp-scope-and-risk.md).
@@ -8,7 +10,7 @@ Scope, threat model và data classification tham chiếu tại [`architecture/ba
 
 Reference backend sandbox và mobile flow đã được nối end-to-end ở mức contract: auth/session/device binding, MFA OTP/biometric, accounts/history/detail, transfer quote/step-up/idempotency, pending recovery, notifications, fraud report và Card mock. Backend server áp allowlist, kill switch, hạn mức minor-unit và policy step-up; không dùng component này cho tiền thật.
 
-Snapshot kiểm tra ngày 2026-08-16: mobile lint/typecheck đạt, 36 suites và 167 tests đạt; backend typecheck/build, database boundary validation và 58 test definition đạt; OpenAPI validation đạt với 36 path; 9 flow Maestro đạt syntax validation; APK release local build thành công và web export đạt 32 route. Trang chủ mới có header NOVA, thẻ số dư hiện/che, ba dịch vụ nhanh và thanh điều hướng 4 mục; Tiền gửi hiển thị Sắp ra mắt, Thẻ tín dụng ghi rõ dữ liệu sandbox. Account detail có reveal và sao chép số tài khoản đầy đủ qua endpoint riêng, còn danh sách accounts chỉ trả số đã che. Critical flow M0–M4, M6, M8, credit payment, credit pending-resume, Credit card lock/restart/unlock và Credit overdue notification đã chạy lại trên APK hiện tại trên Android emulator `Pixel_7_API_35` bằng Maestro 2.8.0, gồm cold launch, login + MFA, hiện/sao chép số tài khoản đầy đủ, eKYC mô phỏng, beneficiary, QR manual fallback, M4 transfer, M6 quote/review/OTP/mở khoản, M8 notification deep link, resume sau stop/launch và notification quá hạn mở đúng thẻ. Bằng chứng M0–M4/M8 nằm tại `C:\Users\admin\.maestro\tests\2026-08-16_014619`, M6 tại `C:\Users\admin\.maestro\tests\2026-08-16_013045`. Transfer lifecycle native đầy đủ, session restore, thiết bị thật, camera/biometric thật và staging vẫn chưa đạt. Đây là bằng chứng cho reference implementation, không thay thế E2E thiết bị thật hoặc certification với partner.
+Snapshot hiện hành ngày 2026-08-17: mobile lint/typecheck đạt, 37 suites và 170 tests đạt, coverage gate đạt; backend typecheck/build, database boundary validation, 70/70 test PostgreSQL và relational regression 1/1 đạt; OpenAPI validation đạt với 36 path; 10 flow Maestro đạt syntax validation; APK release local build thành công và web export đạt 33 route. Trang chủ mới có header NOVA, thẻ số dư hiện/che, ba dịch vụ nhanh và thanh điều hướng 4 mục; Tiền gửi hiển thị Sắp ra mắt, Thẻ tín dụng ghi rõ dữ liệu sandbox. Account detail có reveal và sao chép số tài khoản đầy đủ qua endpoint riêng, còn danh sách accounts chỉ trả số đã che. Critical flow M0–M4, M6, M8, credit payment, credit pending-resume, Credit card lock/restart/unlock, Credit overdue notification và offline login retry đã chạy trên Android emulator `Pixel_7_API_35` bằng Maestro 2.8.0, gồm cold launch, login + MFA, hiện/sao chép số tài khoản đầy đủ, eKYC mô phỏng, beneficiary, QR manual fallback, M4 transfer, M6 quote/review/OTP/mở khoản, M8 notification deep link, resume sau stop/launch, notification quá hạn mở đúng thẻ và retry khi API mất kết nối. Thiết bị thật, camera/biometric native thật và staging vẫn chưa đạt. Đây là bằng chứng cho reference implementation, không thay thế E2E thiết bị thật hoặc certification với partner.
 
 ## Cấu hình môi trường
 
@@ -31,9 +33,23 @@ Các màn hình đã có test ID ổn định cho automation: `login-email`, `lo
 
 Không phát hành nếu còn lỗi High/Critical, nếu API URL production chưa được kiểm tra HTTPS, hoặc nếu chưa có người phụ trách hỗ trợ pilot.
 
-Hiện `uuid` đã được pin ở `11.1.1` cho nhánh transitive qua xcode. `npm audit --omit=dev` vẫn còn 14 cảnh báo High từ `image-size` nằm dưới Metro của Expo 57. Override `image-size` lên 2.x đã được thử nhưng làm web export của Expo/Metro lỗi nên không giữ; `npm audit fix --force` đề xuất đổi React Native/Expo theo breaking change. Không phát hành pilot khi cảnh báo High/Critical này chưa có upstream patch hoặc phương án nâng cấp được kiểm thử và phê duyệt.
+## Xác nhận chạy local mới nhất — 2026-08-17
 
-CI có release gate `npm audit --omit=dev --audit-level=high`; vì vậy pipeline mobile hiện phải fail ở gate bảo mật cho tới khi finding này được xử lý hợp lệ.
+- Backend local chạy ở chế độ PostgreSQL persistent; `.env` bị ignore và chỉ chứa cấu hình database giả lập local. Chạy `npm run db:migrate` trước `npm start` trên clone mới.
+- M0–M4/M8 đã pass trên Android emulator với APK release mới: login/MFA, Home, hiện và sao chép số tài khoản đầy đủ, Account Detail, KYC mô phỏng, beneficiary, QR manual fallback và notification deep-link.
+- Artifact Maestro: `C:\Users\admin\.maestro\tests\2026-08-17_121849`. Không lưu password, OTP, token hoặc số tài khoản đầy đủ vào artifact báo cáo.
+- Trước khi test sau mỗi lần đổi code: restart backend, rebuild/reload Mobile nếu có thay đổi Mobile, rồi chạy lại flow. Tiền trong toàn bộ luồng là tiền ảo phục vụ mô phỏng; không dùng cho giao dịch thật.
+
+## Xác nhận pending-resume mới nhất — 2026-08-17
+
+- Flow `critical-transfer-retry.yaml` đã pass trên Android emulator với PostgreSQL persistent: tạo quote/step-up/transfer pending, stop app, launch app và refresh trạng thái.
+- Artifact Maestro: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
+- Backend critical API test vẫn là nơi xác nhận idempotency khi submit lặp; flow thiết bị xác nhận lifecycle và khả năng đọc lại trạng thái sau restart.
+- Khi demo thủ công, chỉ dùng dữ liệu giả lập; không đưa password, OTP, access token, refresh token hoặc số tài khoản đầy đủ vào video/ảnh/báo cáo.
+
+Hiện `uuid` đã được pin ở `11.1.1` cho nhánh transitive qua xcode. Lượt audit trước từng còn cảnh báo High từ `image-size` nằm dưới Metro của Expo 57; đã xử lý bằng `npm audit fix` không dùng `--force`, cập nhật `@expo/metro` lên `56.0.2` và khóa toàn bộ Metro ở `0.84.5`. `npm audit --omit=dev --audit-level=high` local hiện trả 0 vulnerability; override `image-size` lên 2.x không được giữ vì từng làm web export lỗi. Vẫn không phát hành pilot chỉ dựa trên audit local: cần remote CI, thiết bị thật, staging và phê duyệt tương thích.
+
+CI có release gate `npm audit --omit=dev --audit-level=high`; pipeline phải xác nhận lockfile/Metro `0.84.5` và giữ gate này xanh trên remote.
 
 ## Pilot có kiểm soát
 
@@ -56,6 +72,6 @@ Sau khi thay code, dung backend/mobile dang chay, khoi dong lai backend va Expo 
 
 ## Xác nhận gate cuối ngày 2026-08-15
 
-- Mobile: typecheck/lint, 36 suite/167 test, OpenAPI, 9 flow syntax, web export và release config đã đạt.
-- Backend: 58/58 test đạt khi có PostgreSQL 16 tạm thời; database migration/live validator đã đạt. Mobile audit còn 14 High transitive từ Expo/Metro và phải được xử lý trước pilot.
+- Mobile: typecheck/lint, 37 suite/170 test, OpenAPI, 10 flow syntax, web export và release config đã đạt.
+- Backend: 70/70 test đạt khi có PostgreSQL 16 tạm thời; database migration/live validator đã đạt. Mobile audit local hiện 0 vulnerability sau bản vá Metro không breaking; remote CI, thiết bị thật và risk review vẫn cần trước pilot.
 - Emulator: M0–M4/M8, M6 savings, credit payment, credit pending → stop app → launch app → resume, Credit card lock → stop/launch → OTP unlock và Credit overdue notification → card detail đều đã pass; bằng chứng mới nằm trong `C:\Users\admin\.maestro\tests\2026-08-16_014619`, `C:\Users\admin\.maestro\tests\2026-08-16_013045`, `C:\Users\admin\.maestro\tests\2026-08-16_000436`, `C:\Users\admin\.maestro\tests\2026-08-16_000714`, `C:\Users\admin\.maestro\tests\2026-08-16_003018` và `C:\Users\admin\.maestro\tests\2026-08-16_004626`.

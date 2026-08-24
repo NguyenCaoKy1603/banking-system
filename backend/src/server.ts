@@ -1,6 +1,6 @@
 import { createBankingServer, createPersistentBankingServer } from "./http.js";
 import { BankingSystem } from "./bankingSystem.js";
-import { PostgresSnapshotRepository } from "./postgresSnapshotRepository.js";
+import { PostgresRelationalRepository } from "./postgresRelationalRepository.js";
 
 type StepUpMethod = "OTP" | "BIOMETRIC";
 
@@ -35,6 +35,7 @@ if (process.env.NODE_ENV === "production" || process.env.BANKING_ENV === "produc
 }
 
 const port = Number(process.env.PORT ?? 5000);
+const storage = (process.env.BANKING_STORAGE ?? "postgres").trim().toLowerCase();
 const allowedOrigins = (process.env.BANKING_ALLOWED_ORIGINS ?? "")
   .split(",")
   .map((origin) => origin.trim())
@@ -46,22 +47,28 @@ async function start(): Promise<void> {
     authChallengeMethods: readConfiguredMethods(),
   });
   const httpOptions = allowedOrigins.length > 0 ? { allowedOrigins } : undefined;
-  let repository: PostgresSnapshotRepository | undefined;
-  const server =
-    process.env.BANKING_STORAGE === "postgres"
-      ? (() => {
-          repository = new PostgresSnapshotRepository();
-          return createPersistentBankingServer(repository, system, httpOptions);
-        })()
-      : createBankingServer(system, httpOptions);
+  let repository: PostgresRelationalRepository | undefined;
+  let server;
+
+  if (storage === "postgres") {
+    repository = new PostgresRelationalRepository();
+    await repository.initialize();
+    server = createPersistentBankingServer(repository, system, httpOptions);
+  } else if (storage === "in-memory") {
+    server = createBankingServer(system, httpOptions);
+  } else {
+    throw new Error(
+      `BANKING_STORAGE must be either postgres or in-memory; received ${storage || "empty"}.`,
+    );
+  }
 
   if (repository) {
-    await repository.initialize();
+    await repository.healthCheck();
   }
 
   server.listen(port, "0.0.0.0", () => {
     console.log(
-      `Banking reference backend listening on http://localhost:${port}/api/v1 (${process.env.BANKING_STORAGE === "postgres" ? "postgres snapshot" : "in-memory"} storage)`,
+      `Banking simulated backend listening on http://localhost:${port}/api/v1 (${storage === "postgres" ? "PostgreSQL persistent" : "in-memory test"} mode)`,
     );
   });
 

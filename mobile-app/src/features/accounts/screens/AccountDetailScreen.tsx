@@ -12,6 +12,7 @@ import {
 } from "react-native";
 
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { getAccountNumber, listAccounts } from "@/features/accounts/services/accountsApi";
@@ -21,14 +22,7 @@ import {
 } from "@/features/accounts/presentation/accountPresentation";
 import type { PaymentAccount } from "@/features/accounts/types/account";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
-import { ApiError } from "@/services/api/ApiError";
 import { colors, spacing } from "@/theme";
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof ApiError
-    ? error.message
-    : "Không thể tải chi tiết tài khoản. Vui lòng thử lại.";
-}
 
 export function AccountDetailScreen() {
   const router = useRouter();
@@ -42,11 +36,12 @@ export function AccountDetailScreen() {
   );
   const [account, setAccount] = useState<PaymentAccount | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | undefined>();
+  const [error, setError] = useState<unknown>();
   const [isNumberVisible, setIsNumberVisible] = useState(false);
   const [revealedAccountNumber, setRevealedAccountNumber] = useState<string | null>(null);
   const [isRevealingNumber, setIsRevealingNumber] = useState(false);
   const [isCopyingNumber, setIsCopyingNumber] = useState(false);
+  const [accountNumberError, setAccountNumberError] = useState<unknown>();
 
   const loadAccount = useCallback(async () => {
     if (!accessToken || !accountId) {
@@ -59,13 +54,14 @@ export function AccountDetailScreen() {
     setError(undefined);
     setIsNumberVisible(false);
     setRevealedAccountNumber(null);
+    setAccountNumberError(undefined);
 
     try {
       const response = await listAccounts(auth);
       setAccount(response.accounts.find((item) => item.id === accountId) ?? null);
     } catch (requestError: unknown) {
       setAccount(null);
-      setError(getErrorMessage(requestError));
+      setError(requestError);
     } finally {
       setIsLoading(false);
     }
@@ -85,12 +81,13 @@ export function AccountDetailScreen() {
     }
 
     setIsRevealingNumber(true);
+    setAccountNumberError(undefined);
     try {
       const response = await getAccountNumber(account.id, auth);
       setRevealedAccountNumber(response.accountNumber);
       return response.accountNumber;
     } catch (requestError: unknown) {
-      Alert.alert("Không thể hiện số tài khoản", getErrorMessage(requestError));
+      setAccountNumberError(requestError);
       return null;
     } finally {
       setIsRevealingNumber(false);
@@ -163,10 +160,12 @@ export function AccountDetailScreen() {
             <ActivityIndicator color={colors.primary} size="large" />
           </View>
         ) : error ? (
-          <View style={styles.card}>
-            <Text style={styles.errorText}>{error}</Text>
-            <PrimaryButton label="Thử lại" onPress={loadAccount} testID="account-detail-retry" />
-          </View>
+          <RequestErrorNotice
+            error={error}
+            fallbackMessage="Không thể tải chi tiết tài khoản. Vui lòng thử lại."
+            onRetry={loadAccount}
+            testID="account-detail-error"
+          />
         ) : !account ? (
           <View style={styles.card}>
             <Text style={styles.emptyText}>Không tìm thấy tài khoản trong phạm vi phiên hiện tại.</Text>
@@ -222,6 +221,14 @@ export function AccountDetailScreen() {
                 <Text style={styles.securityNote}>
                   Số đầy đủ chỉ được tải từ server khi bạn bấm Hiện hoặc Sao chép.
                 </Text>
+                {accountNumberError ? (
+                  <RequestErrorNotice
+                    error={accountNumberError}
+                    fallbackMessage="Không thể tải số tài khoản đầy đủ. Vui lòng thử lại."
+                    onRetry={() => void revealAccountNumber()}
+                    testID="account-detail-number-error"
+                  />
+                ) : null}
               </View>
               <View style={styles.balanceGrid}>
                 <View style={styles.balanceCell}>
@@ -411,11 +418,6 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 12,
     lineHeight: 18,
-  },
-  errorText: {
-    color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
   },
   emptyText: {
     color: colors.text,

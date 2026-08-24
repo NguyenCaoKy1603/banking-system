@@ -1,6 +1,10 @@
 import type { RequestAuth } from "@/services/api/httpClient";
 import { requestJson } from "@/services/api/httpClient";
 import type { Money } from "@/features/banking/types/money";
+import {
+  COMMAND_IDEMPOTENCY_KEY_MIN_LENGTH,
+  requireIdempotencyKey,
+} from "@/features/banking/validation/idempotencyKey";
 import { isMoney } from "@/features/banking/validation/moneyValidators";
 import type {
   SavingsDeposit,
@@ -85,16 +89,17 @@ export function submitSavingsOpening(
   options: { auth: RequestAuth; idempotencyKey: string },
 ): Promise<SavingsOpening> {
   validateSubmitRequest(request);
-  if (!options.idempotencyKey.trim()) {
-    throw new TypeError("idempotencyKey không được để trống.");
-  }
+  const idempotencyKey = requireIdempotencyKey(
+    options.idempotencyKey,
+    COMMAND_IDEMPOTENCY_KEY_MIN_LENGTH,
+  );
   return requestJson<SavingsOpening>(
     "/savings/deposits",
     {
       method: "POST",
       body: request,
       auth: options.auth,
-      idempotencyKey: options.idempotencyKey,
+      idempotencyKey,
     },
     isSavingsOpening,
   );

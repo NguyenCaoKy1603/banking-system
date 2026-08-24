@@ -16,16 +16,23 @@ if (!String(document.info?.version).endsWith("-draft") || !String(document.info?
 
 const requiredPaths = [
   "/auth/register",
+  "/auth/register/verify",
+  "/auth/otp/challenges",
   "/auth/login",
   "/auth/verify",
   "/auth/refresh",
   "/auth/logout",
   "/auth/logout-all",
   "/mobile/control-policy",
+  "/sandbox/fundings",
+  "/sandbox/otp/{challengeId}",
+  "/sandbox/process-scheduled",
   "/notifications",
   "/notifications/{notificationId}/read",
   "/fraud-reports",
+  "/fraud-reports/{reportId}",
   "/accounts",
+  "/internal-recipients/lookup",
   "/accounts/{accountId}/number",
   "/accounts/{accountId}/transactions",
   "/accounts/{accountId}/transactions/{transactionId}",
@@ -44,6 +51,9 @@ const requiredPaths = [
   "/cards/{cardId}/lock",
   "/cards/{cardId}/unlock",
   "/credit/accounts",
+  "/credit/applications",
+  "/credit/applications/{applicationId}",
+  "/credit/applications/{applicationId}/activate",
   "/credit/accounts/{creditAccountId}",
   "/credit/accounts/{creditAccountId}/transactions",
   "/credit/accounts/{creditAccountId}/statements",
@@ -92,16 +102,23 @@ const segmentGuard = (index, value) => `segments[${index}] === "${value}"`;
 
 const routeContracts = [
   ["POST", "/auth/register", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "register")]],
+  ["POST", "/auth/register/verify", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "auth"), segmentGuard(1, "register"), segmentGuard(2, "verify")]],
+  ["POST", "/auth/otp/challenges", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "auth"), segmentGuard(1, "otp"), segmentGuard(2, "challenges")]],
   ["POST", "/auth/login", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "login")]],
   ["POST", "/auth/verify", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "verify")]],
   ["POST", "/auth/refresh", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "refresh")]],
   ["POST", "/auth/logout", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "logout")]],
   ["POST", "/auth/logout-all", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "logout-all")]],
   ["GET", "/mobile/control-policy", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "mobile"), segmentGuard(1, "control-policy")]],
+  ["POST", "/sandbox/fundings", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "sandbox"), segmentGuard(1, "fundings")]],
+  ["GET", "/sandbox/otp/{challengeId}", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "sandbox"), segmentGuard(1, "otp")]],
+  ["POST", "/sandbox/process-scheduled", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "sandbox"), segmentGuard(1, "process-scheduled")]],
   ["GET", "/notifications", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "notifications")]],
   ["POST", "/notifications/{notificationId}/read", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "notifications"), segmentGuard(2, "read")]],
   ["POST", "/fraud-reports", [methodGuard("POST"), "segments.length === 1", segmentGuard(0, "fraud-reports")]],
+  ["GET", "/fraud-reports/{reportId}", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "fraud-reports")]],
   ["GET", "/accounts", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "accounts")]],
+  ["POST", "/internal-recipients/lookup", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "internal-recipients"), segmentGuard(1, "lookup")]],
   ["GET", "/accounts/{accountId}/number", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "accounts"), segmentGuard(2, "number")]],
   ["GET", "/accounts/{accountId}/transactions", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "accounts"), segmentGuard(2, "transactions")]],
   ["GET", "/accounts/{accountId}/transactions/{transactionId}", [methodGuard("GET"), "segments.length === 4", segmentGuard(0, "accounts"), segmentGuard(2, "transactions")]],
@@ -124,6 +141,10 @@ const routeContracts = [
   ["POST", "/cards/{cardId}/lock", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "cards"), segmentGuard(2, "lock")]],
   ["POST", "/cards/{cardId}/unlock", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "cards"), segmentGuard(2, "unlock")]],
   ["GET", "/credit/accounts", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "credit"), segmentGuard(1, "accounts")]],
+  ["GET", "/credit/applications", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "credit"), segmentGuard(1, "applications")]],
+  ["POST", "/credit/applications", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "credit"), segmentGuard(1, "applications")]],
+  ["GET", "/credit/applications/{applicationId}", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "credit"), segmentGuard(1, "applications")]],
+  ["POST", "/credit/applications/{applicationId}/activate", [methodGuard("POST"), "segments.length === 4", segmentGuard(0, "credit"), segmentGuard(1, "applications"), segmentGuard(3, "activate")]],
   ["GET", "/credit/accounts/{creditAccountId}", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "credit"), segmentGuard(1, "accounts")]],
   ["GET", "/credit/accounts/{creditAccountId}/transactions", [methodGuard("GET"), "segments.length === 4", segmentGuard(0, "credit"), segmentGuard(1, "accounts"), segmentGuard(3, "transactions")]],
   ["GET", "/credit/accounts/{creditAccountId}/statements", [methodGuard("GET"), "segments.length === 4", segmentGuard(0, "credit"), segmentGuard(1, "accounts"), segmentGuard(3, "statements")]],
@@ -179,6 +200,22 @@ if (!submitCreditPayment.parameters?.some((parameter) => parameter.name === "Ide
 if (!submitCreditPayment.responses?.["200"] || !submitCreditPayment.responses?.["202"]) {
   throw new Error("POST /credit/payments must document synchronous and pending responses.");
 }
+const submitFraudReport = document.paths["/fraud-reports"].post;
+if (!submitFraudReport?.parameters?.some((parameter) =>
+  (parameter.name === "Idempotency-Key" && parameter.required === true) ||
+  (parameter.$ref === "#/components/parameters/IdempotencyKey" &&
+    document.components?.parameters?.IdempotencyKey?.required === true)
+)) {
+  throw new Error("POST /fraud-reports must require Idempotency-Key.");
+}
+const registerResponses = document.paths["/auth/register"].post?.responses;
+if (!registerResponses?.["202"] || registerResponses?.["201"] || registerResponses?.["200"]) {
+  throw new Error("POST /auth/register must expose only the two-step challenge success response.");
+}
+const authChallengeSchema = document.components?.schemas?.AuthChallengeResponse;
+if (!authChallengeSchema?.required?.includes("purpose")) {
+  throw new Error("AuthChallengeResponse must require a bound purpose.");
+}
 const loginResponses = document.paths["/auth/login"].post?.responses;
 if (!loginResponses?.["200"] || !loginResponses?.["202"]) {
   throw new Error("POST /auth/login must document both session and MFA responses.");
@@ -193,6 +230,250 @@ if (document.components?.parameters?.DeviceId?.name !== "X-Device-ID") {
   throw new Error("The contract must define X-Device-ID device binding.");
 }
 
+
+const deviceBindingScheme =
+  document.components?.securitySchemes?.deviceBinding;
+if (
+  deviceBindingScheme?.type !== "apiKey" ||
+  deviceBindingScheme?.in !== "header" ||
+  deviceBindingScheme?.name !== "X-Device-ID"
+) {
+  throw new Error(
+    "The contract must define deviceBinding as the X-Device-ID header API key.",
+  );
+}
+
+const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete"]);
+const PUBLIC_OR_OPERATOR_OPERATIONS = new Set([
+  "POST /auth/register",
+  "POST /auth/register/verify",
+  "POST /auth/login",
+  "POST /auth/refresh",
+  "POST /auth/verify",
+  "POST /auth/logout",
+  "POST /sandbox/fundings",
+  "GET /sandbox/otp/{challengeId}",
+  "POST /sandbox/process-scheduled",
+]);
+for (const [routePath, pathItem] of Object.entries(document.paths ?? {})) {
+  for (const [method, operation] of Object.entries(pathItem ?? {})) {
+    if (!HTTP_METHODS.has(method) || !operation || typeof operation !== "object") {
+      continue;
+    }
+    const effectiveSecurity = operation.security ?? document.security ?? [];
+    const operationKey = `${method.toUpperCase()} ${routePath}`;
+    if (PUBLIC_OR_OPERATOR_OPERATIONS.has(operationKey)) {
+      if (effectiveSecurity.length !== 0) {
+        throw new Error(`${operationKey} must use its documented public/operator boundary.`);
+      }
+      continue;
+    }
+
+    const requirement = effectiveSecurity[0];
+    if (
+      effectiveSecurity.length !== 1 ||
+      !requirement ||
+      !Object.prototype.hasOwnProperty.call(requirement, "bearerAuth") ||
+      !Object.prototype.hasOwnProperty.call(requirement, "deviceBinding") ||
+      Object.keys(requirement).length !== 2
+    ) {
+      throw new Error(
+        `${operationKey} must require bearerAuth and deviceBinding together with no weaker alternative.`,
+      );
+    }
+  }
+}
+
+function resolveParameter(parameter) {
+  const prefix = "#/components/parameters/";
+  if (parameter?.$ref?.startsWith(prefix)) {
+    return document.components?.parameters?.[parameter.$ref.slice(prefix.length)];
+  }
+  return parameter;
+}
+
+for (const [method, routePath] of [
+  ["post", "/auth/register"],
+  ["post", "/auth/register/verify"],
+  ["post", "/auth/login"],
+  ["post", "/auth/verify"],
+  ["post", "/auth/refresh"],
+  ["post", "/auth/logout"],
+]) {
+  const pathItem = document.paths?.[routePath];
+  const operation = pathItem?.[method];
+  const parameters = [
+    ...(pathItem?.parameters ?? []),
+    ...(operation?.parameters ?? []),
+  ].map(resolveParameter);
+  if (
+    !parameters.some(
+      (parameter) =>
+        parameter?.name === "X-Device-ID" &&
+        parameter?.in === "header" &&
+        parameter?.required === true,
+    )
+  ) {
+    throw new Error(
+      `${method.toUpperCase()} ${routePath} must require X-Device-ID without bearer auth.`,
+    );
+  }
+}
+
+function resolveSchema(schema) {
+  const prefix = "#/components/schemas/";
+  if (schema?.$ref?.startsWith(prefix)) {
+    return document.components?.schemas?.[schema.$ref.slice(prefix.length)];
+  }
+  return schema;
+}
+
+function requireChallengeBoundStepUp(schema, label) {
+  const resolved = resolveSchema(schema);
+  if (
+    !resolved?.required?.includes("challengeId") ||
+    !resolved?.properties?.challengeId
+  ) {
+    throw new Error(`${label} must require a challenge-bound challengeId.`);
+  }
+}
+
+requireChallengeBoundStepUp(
+  document.components?.schemas?.SubmitTransferRequest?.properties?.stepUp,
+  "SubmitTransferRequest.stepUp",
+);
+requireChallengeBoundStepUp(
+  document.components?.schemas?.SubmitSavingsOpeningRequest?.properties?.stepUp,
+  "SubmitSavingsOpeningRequest.stepUp",
+);
+requireChallengeBoundStepUp(
+  document.components?.schemas?.CreditStepUpRequest,
+  "CreditStepUpRequest",
+);
+
+for (const [schemaName, schema] of Object.entries(
+  document.components?.schemas ?? {},
+)) {
+  const stepUpSchema = resolveSchema(schema?.properties?.stepUp);
+  if (
+    stepUpSchema?.required?.includes("challengeId") &&
+    !schema?.example?.stepUp?.challengeId
+  ) {
+    throw new Error(
+      `${schemaName}.example.stepUp must include its required challengeId.`,
+    );
+  }
+}
+
+if (!document.components?.schemas?.CreditStepUpRequest?.example?.challengeId) {
+  throw new Error("CreditStepUpRequest.example must include challengeId.");
+}
+
+function requireResponses(method, routePath, statuses) {
+  const responses = document.paths?.[routePath]?.[method]?.responses ?? {};
+  for (const status of statuses) {
+    if (!responses[status]) {
+      throw new Error(
+        `${method.toUpperCase()} ${routePath} must document HTTP ${status}.`,
+      );
+    }
+  }
+}
+
+for (const routePath of [
+  "/transfers",
+  "/savings/deposits",
+  "/credit/payments",
+]) {
+  requireResponses("post", routePath, ["401", "404", "409", "422", "429"]);
+}
+requireResponses("post", "/credit/applications", ["401", "409", "422", "429"]);
+for (const routePath of [
+  "/credit/applications/{applicationId}/activate",
+  "/cards/{cardId}/unlock",
+]) {
+  requireResponses("post", routePath, ["401", "404", "409", "422", "429"]);
+}
+for (const routePath of [
+  "/transfers/quote",
+  "/savings/quotes",
+  "/credit/payment-quotes",
+]) {
+  requireResponses("post", routePath, ["401", "404", "409", "422"]);
+}
+requireResponses("post", "/auth/register", ["409", "422", "429"]);
+requireResponses("post", "/auth/register/verify", ["401", "409", "422", "429"]);
+requireResponses("post", "/auth/otp/challenges", ["401", "422", "429"]);
+requireResponses("post", "/sandbox/fundings", ["401", "409", "422"]);
+
+function requireIdempotencyMinimum(routePath, minimum) {
+  const operation = document.paths?.[routePath]?.post;
+  const parameter = (operation?.parameters ?? [])
+    .map(resolveParameter)
+    .find(
+      (candidate) =>
+        candidate?.name === "Idempotency-Key" && candidate?.in === "header",
+    );
+  if (
+    parameter?.required !== true ||
+    parameter?.schema?.minLength !== minimum
+  ) {
+    throw new Error(
+      `POST ${routePath} must require Idempotency-Key minLength ${minimum}.`,
+    );
+  }
+}
+
+for (const routePath of [
+  "/transfers",
+  "/savings/deposits",
+  "/credit/payments",
+]) {
+  requireIdempotencyMinimum(routePath, 16);
+}
+for (const routePath of [
+  "/sandbox/fundings",
+  "/fraud-reports",
+  "/credit/applications",
+  "/credit/applications/{applicationId}/activate",
+]) {
+  requireIdempotencyMinimum(routePath, 8);
+}
+
+const conflictDescription = String(
+  document.components?.responses?.Conflict?.description ?? "",
+);
+if (
+  !conflictDescription.includes("STEP_UP_VERIFICATION_FAILED") ||
+  !conflictDescription.includes("must not trigger token refresh/replay")
+) {
+  throw new Error(
+    "HTTP 409 must distinguish financial step-up rejection from bearer-token HTTP 401.",
+  );
+}
+
+const publicChallengePurposes =
+  document.components?.schemas?.CreateOtpChallengeRequest?.properties?.purpose?.enum ?? [];
+for (const purpose of ["REGISTRATION_VERIFY", "LOGIN"]) {
+  if (publicChallengePurposes.includes(purpose)) {
+    throw new Error(
+      `POST /auth/otp/challenges must not issue internal ${purpose} challenges.`,
+    );
+  }
+}
+for (const purpose of [
+  "TRANSFER",
+  "SAVINGS_OPENING",
+  "CREDIT_APPLICATION",
+  "CARD_ACTIVATION",
+  "CREDIT_PAYMENT",
+  "CARD_UNLOCK",
+]) {
+  if (!publicChallengePurposes.includes(purpose)) {
+    throw new Error(`POST /auth/otp/challenges must support ${purpose}.`);
+  }
+}
+
 console.log(
-  `OpenAPI draft valid: ${requiredPaths.length} required paths, ${routeContracts.length} exact method/segment guards, examples and notification target contract verified.`,
+  `OpenAPI draft valid: ${requiredPaths.length} required paths, ${routeContracts.length} exact method/segment guards, device binding, challenge-bound step-up, financial response/idempotency matrices, examples and notification target contract verified.`,
 );
