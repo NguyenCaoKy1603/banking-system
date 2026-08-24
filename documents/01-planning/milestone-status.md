@@ -4,7 +4,7 @@
 
 Implementation evidence checkpoint hiện hành: `edbc9bb`; safety checkpoint: `e1b7b8c` trên branch local `codex/stage0-safety-20260824`. Historical gate `595afc3` (`Harden database and OpenAPI quality gates`) chỉ dùng để truy vết.
 
-Các thay đổi hardening ngày 2026-08-24 đã được tách thành commit logic trên working tree sạch; chưa push/upstream/PR. Bằng chứng checkpoint 2026-08-17 bên dưới vẫn là lịch sử tái hiện gần nhất; không được dùng số liệu cũ để tuyên bố các thay đổi mới đã qua device/staging gate.
+Các thay đổi hardening ngày 2026-08-24 đã được tách thành commit logic trên working tree sạch; implementation branch đã push và có upstream, nhưng chưa có `main`/PR/branch protection. Bằng chứng checkpoint 2026-08-17 bên dưới vẫn là lịch sử tái hiện gần nhất; không được dùng số liệu cũ để tuyên bố các thay đổi mới đã qua device/staging gate.
 
 - Worktree Mobile lint, type-check, 46 suite/260 test, coverage 85,53% statement/86,57% branch, OpenAPI, Maestro syntax và web export đạt.
 - Worktree Backend type-check/build, 88 definition (82 pass, 6 PostgreSQL skip), 8 critical HTTP flow và static database contract 28 bảng đạt. Mốc PostgreSQL 70/70 + relational 1/1 bên dưới là bằng chứng lịch sử 2026-08-17, chưa được rerun cho hardening mới.
@@ -41,7 +41,7 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 
 - Safety branch local `codex/stage0-safety-20260824` giữ snapshot nguyên khối `e1b7b8c`, không push.
 - Nhánh implementation có chuỗi commit: `556db67` baseline → `0a9454c` Backend atomic → `59bc63d` Mobile auth → `b186be5` intent primitives → `84e6239` mobile flows → `82d4457` mobile security → `edbc9bb` E2E/tài liệu.
-- `git status` sạch; secret scan, `npm ci`, Backend/Mobile local gates đã chạy. Remote `main`, upstream, branch protection, PR và clone sạch vẫn là gate mở.
+- `git status` sạch; secret scan, `npm ci`, Backend/Mobile local gates đã chạy. Upstream implementation branch đã đạt; remote `main`, branch protection, PR và clone sạch vẫn là gate mở.
 ## Cập nhật sau đồng bộ M6 và triển khai M7 — 2026-08-15
 
 - M6 Savings đã có quote/MFA/idempotency/PENDING-resume/maturity, Mobile list/open/detail và notification deep link; flow native emulator đã pass, nhưng chưa đóng vì thiếu repository relational production, thiết bị thật và staging.

@@ -178,7 +178,8 @@ Nếu `backend/src/bankingSystem.ts` không thể tách mà vẫn giữ từng c
 | Safety branch/WIP checkpoint | Đã tạo `codex/stage0-safety-20260824` tại `e1b7b8c`; không push |
 | Chuỗi commit logic | Đã tạo; backend giữ atomic vì `bankingSystem.ts` dùng chung nhiều invariant |
 | Local quality gates | Đã chạy lại sau tách commit; Backend pass static/logic, Mobile pass ngoại trừ dependency audit High và PostgreSQL live skip |
-| Remote main/upstream/PR | Chưa thể xác nhận; remote hiện chưa có `main` |
+| Remote branch/upstream | Đã push `codex/mini-core-banking-sandbox` và đặt upstream tại `origin`; remote vẫn chưa có `main` |
+| PR/branch protection | Chưa tạo; cần maintainer có quyền GitHub |
 | Clone sạch | Chưa thực hiện |
 
 ## Kết quả sau khi tách commit

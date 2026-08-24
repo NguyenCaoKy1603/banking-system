@@ -37,7 +37,7 @@ Backend verification checkpoint hiện hành: implementation tip `edbc9bb`; safe
 - Đã có APK release local, package/checksum và log Maestro trên emulator; chưa có video cold start/crash-resume, camera thật hoặc biometric prompt thật.
 - Transfer kill app trước/sau submit và session restore sau force-stop chưa có kết quả native lặp lại; riêng credit pending → restart → resume đã pass bằng flow dedicated.
 - Chưa có staging URL/partner integration đã phê duyệt.
-- Handoff Git: implementation tip `edbc9bb`, safety branch `codex/stage0-safety-20260824` tại `e1b7b8c`; working tree sạch sau khi tách commit. Chưa push/upstream/PR vì remote chưa có `main` và workspace không có GitHub CLI.
+- Handoff Git: implementation tip `edbc9bb`, documentation tip `2a61b10`, safety branch `codex/stage0-safety-20260824` tại `e1b7b8c`; working tree sạch và branch đã push/đặt upstream. Chưa có PR vì remote chưa có `main` và workspace không có GitHub CLI.
 - Chưa có kết quả usability/accessibility với người dùng và chưa có approver cho 11 cảnh báo High.
 
 ## Stage 0 — Git/CI checkpoint
