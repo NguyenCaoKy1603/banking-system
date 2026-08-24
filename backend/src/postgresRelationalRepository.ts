@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { Pool, type PoolClient } from "pg";
+import type { PoolClient } from "pg";
 
 import {
   BANKING_SYSTEM_STATE_VERSION,
   type BankingSystemState,
 } from "./bankingSystem.js";
+import { DatabasePool, type DatabasePoolMetrics } from "./database/pool.js";
+import { UnitOfWork } from "./database/unitOfWork.js";
 
 export type RelationalStateOperation<T> = (state: unknown) => Promise<{
   result: T;
@@ -82,8 +84,9 @@ function arrayEntries(value: unknown): Array<[string, unknown]> {
  * money sandbox and is not a production core-banking repository.
  */
 export class PostgresRelationalRepository {
-  private readonly pool: Pool;
+  private readonly pool: DatabasePool;
   private readonly legacySnapshotKey: string;
+  readonly unitOfWork: UnitOfWork;
 
   constructor(options: PostgresRelationalRepositoryOptions = {}) {
     const connectionString = options.connectionString ?? process.env.DATABASE_URL;
@@ -93,10 +96,11 @@ export class PostgresRelationalRepository {
 
     this.legacySnapshotKey =
       options.legacySnapshotKey ?? process.env.BANKING_SNAPSHOT_KEY ?? "banking-reference-sandbox";
-    this.pool = new Pool({
+    this.pool = new DatabasePool({
       connectionString,
       max: options.maxConnections ?? 4,
     });
+    this.unitOfWork = new UnitOfWork(this.pool);
   }
 
   async initialize(): Promise<void> {
@@ -157,7 +161,15 @@ export class PostgresRelationalRepository {
   }
 
   async close(): Promise<void> {
-    await this.pool.end();
+    await this.pool.close();
+  }
+
+  poolMetrics(): DatabasePoolMetrics {
+    return this.pool.metrics();
+  }
+
+  unitOfWorkMetrics() {
+    return this.unitOfWork.metrics();
   }
 
   async clear(): Promise<void> {
