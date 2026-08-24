@@ -7,7 +7,7 @@ Implementation evidence checkpoint hiện hành: `edbc9bb`; safety checkpoint: `
 Các thay đổi hardening ngày 2026-08-24 đã được tách thành commit logic trên working tree sạch; implementation branch đã push và có upstream, nhưng chưa có `main`/PR/branch protection. Bằng chứng checkpoint 2026-08-17 bên dưới vẫn là lịch sử tái hiện gần nhất; không được dùng số liệu cũ để tuyên bố các thay đổi mới đã qua device/staging gate.
 
 - Worktree Mobile lint, type-check, 46 suite/260 test, coverage 85,53% statement/86,57% branch, OpenAPI, Maestro syntax và web export đạt.
-- Worktree Backend type-check/build, 90 definition (84 pass, 6 PostgreSQL skip), 8 critical HTTP flow và static database contract 28 bảng đạt. Mốc PostgreSQL 70/70 + relational 1/1 bên dưới là bằng chứng lịch sử 2026-08-17.
+- Worktree Backend type-check/build, 90 definition (84 pass, 6 PostgreSQL skip), 10 critical HTTP flow và static database contract 28 bảng đạt. Mốc PostgreSQL 70/70 + relational 1/1 bên dưới là bằng chứng lịch sử 2026-08-17.
 
 ## Cập nhật mới nhất — relational reference adapter
 
@@ -95,7 +95,7 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 
 ### Bằng chứng local hiện có cho worktree
 
-- Backend `npm run typecheck`, `npm run build`, static database contract, OpenAPI và `npm test` đã đạt: 90 test definition, 84 pass, 6 PostgreSQL test skip; `test:critical` 8/8 pass.
+- Backend `npm run typecheck`, `npm run build`, static database contract, OpenAPI và `npm test` đã đạt: 90 test definition, 84 pass, 6 PostgreSQL test skip; `test:critical` 10/10 pass.
 - Mobile full gate đã đạt: lint, typecheck, 46 suite/260 unit test, coverage 85,53% statement/86,57% branch, OpenAPI 43 path, 10 Maestro flow syntax và web export 33 route với build-time HTTPS URL.
 
 ### Chưa đóng

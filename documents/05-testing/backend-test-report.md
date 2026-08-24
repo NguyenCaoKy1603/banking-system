@@ -1,6 +1,6 @@
 # Backend hardening test report
 
-> Cập nhật hiện hành 2026-08-24: Stage 1 worktree có 90 test definition, 84 pass và 6 PostgreSQL/relational skip khi Docker chưa chạy; critical API 8/8, static source contract 28 bảng đạt. Bằng chứng PostgreSQL 70/70 và relational 1/1 ngày 2026-08-17 vẫn là lịch sử.
+> Cập nhật hiện hành 2026-08-24: Stage 1 worktree có 90 test definition, 84 pass và 6 PostgreSQL/relational skip khi Docker chưa chạy; critical API 10/10, static source contract 28 bảng đạt. Bằng chứng PostgreSQL 70/70 và relational 1/1 ngày 2026-08-17 vẫn là lịch sử.
 
 Ngày kiểm tra: 2026-08-24
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
@@ -70,7 +70,7 @@ Persistent mode dùng `PostgresRelationalRepository` với advisory transaction 
 | Build | Đạt |
 | Full test không DB | 90 definition; 84 pass, 6 PostgreSQL skip, 0 fail |
 | Persistent HTTP security boundary | 4/4 pass, không skip |
-| Critical HTTP | 8/8 pass |
+| Critical HTTP | 10/10 pass |
 | OpenAPI contract/route | Đạt, 46 required paths và 51 exact method/segment guards |
 | Static database source contract | Đạt, 28 table definitions/invariants; live DB chưa đạt trong môi trường hiện tại |
 | Dependency audit | Đạt, 0 vulnerability |
@@ -99,7 +99,7 @@ Regression mới/chỉnh sửa kiểm tra:
 
 Lượt CI tiếp theo còn hai assertion cũ trong `persistence.test.ts`: HTTP test chờ `409` và Credit test chờ một promise bị reject. Contract hiện hành quy định idempotency key mới sau khi quote đã consume phải alias operation canonical, nên cả hai request trả receipt/payment cùng ID. Đã cập nhật test để kiểm tra `200/200`, cùng `transferId` và hai kết quả fulfilled cùng `paymentId`; production behavior không đổi.
 
-Kết quả local sau triage: typecheck, build, OpenAPI, static database contract, backend dependency audit (0 vulnerability), `npm test` không DB (84 pass, 6 PostgreSQL skip) và critical API (8/8) đạt. Mobile audit đã về 0 vulnerability sau `npm audit fix` không dùng `--force`, `@expo/metro@56.0.2` và Metro `0.84.5` override; web export/test gates vẫn đạt. Live PostgreSQL chưa thể chạy lại vì Docker daemon không kết nối được; Stage 1 có workflow container smoke để remote CI xác nhận.
+Kết quả local sau triage: typecheck, build, OpenAPI, static database contract, backend dependency audit (0 vulnerability), `npm test` không DB (84 pass, 6 PostgreSQL skip) và critical API (10/10) đạt. Mobile audit đã về 0 vulnerability sau `npm audit fix` không dùng `--force`, `@expo/metro@56.0.2` và Metro `0.84.5` override; web export/test gates vẫn đạt. Live PostgreSQL chưa thể chạy lại vì Docker daemon không kết nối được; Stage 1 có workflow container smoke để remote CI xác nhận.
 
 ### Data flow đã kiểm chứng ở mức reference
 
