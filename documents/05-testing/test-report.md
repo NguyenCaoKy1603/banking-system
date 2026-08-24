@@ -27,6 +27,14 @@ Backend verification checkpoint hiện hành: implementation tip `edbc9bb`; safe
 | Expo web export | Đạt, 33 static route; dùng URL HTTPS placeholder cho static export vì `.env` local là HTTP sandbox và bị production guard từ chối |
 | Mobile dependency audit | **Chưa đạt**: 11 High theo chuỗi Expo/Metro → `image-size@1.2.1`; advisories `GHSA-w3rx-r6r6-pgpr` và `GHSA-5p2g-fcmc-qvqq`; npm chỉ đề xuất nâng breaking React Native. Không force fix; cần upstream patch/risk acceptance |
 
+## Triage CI và phạm vi sửa cục bộ — 2026-08-24
+
+- 5 check trên PR fail cùng lúc vì nhóm Backend PostgreSQL persistence dùng OTP trực tiếp sau khi policy step-up chuyển sang fail-closed. Fixture test chưa bật `allowUnsafeDirectSandboxStepUp`, nên mọi submit bị `STEP_UP_VERIFICATION_FAILED` và kéo theo các assertion concurrency/restart fail.
+- Đã bật switch này chỉ trong các fixture test liên quan ở Backend; không sửa production API, HTTP server mặc định hoặc workflow GitHub.
+- Các gate Mobile ngoài audit đã chạy lại và đạt: lint, typecheck, OpenAPI, 10 Maestro flow syntax, release config, Expo public config, 46 suite/260 test, coverage 85,53% statements/86,57% branches và web export 33 route.
+- Mobile audit vẫn fail 11 High từ `image-size` trong Metro; `npm audit fix --dry-run` không cung cấp bản vá không-breaking và `--force` đề xuất React Native 0.87.0. Giữ nguyên lockfile, không che giấu lỗi.
+- Không có live PostgreSQL trong workspace (Docker daemon chưa chạy), nên kết quả remote của 5 check vẫn cần được xác nhận sau khi chủ repo tự push commit này lên GitHub.
+
 ## Smoke seed
 
 `backend/scripts/seed-e2e.ts` tạo user thử nghiệm, bật MFA sandbox theo biến môi trường, tạo beneficiary nếu thiếu, tạo một transfer reference và in ra các biến môi trường cần cho Maestro. Password/OTP chỉ truyền qua biến môi trường, không ghi vào source hoặc report.

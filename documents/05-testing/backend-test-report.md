@@ -91,6 +91,14 @@ Regression mới/chỉnh sửa kiểm tra:
 - Financial step-up rejection dùng `409 STEP_UP_VERIFICATION_FAILED`, không kích hoạt refresh/replay từ `401`; canonical replay của quote đã consume không tạo ledger/audit/outbox mới và state thiếu trả `IDEMPOTENCY_STATE_MISSING`.
 - Stage 0 secret scan và safety checkpoint hoàn tất; working tree được tách thành commit logic, không đưa `.env`/credential/build output vào Git.
 
+## Triage lỗi CI — 2026-08-24
+
+Ảnh PR cho thấy 5 check fail: Backend `quality` (pull request), Mobile `backend-quality` (pull request/push) và Mobile `quality` (pull request/push). Log Backend có 5 lỗi PostgreSQL persistence/concurrency, nhưng cùng một nguyên nhân: hardening commit `0a9454c` đặt `allowUnsafeDirectSandboxStepUp` mặc định là `false`; các fixture persistence vẫn submit OTP trực tiếp thay vì bật compatibility switch test-only. Vì vậy step-up bị từ chối, giao dịch bị rollback và các assertion fulfilled/HTTP status thất bại.
+
+Đã sửa cục bộ trong `backend/src/tests/persistence.test.ts` và `backend/src/tests/relationalPersistence.test.ts`: chỉ các fixture sandbox gọi submit trực tiếp bật `allowUnsafeDirectSandboxStepUp: true`; HTTP server production và mặc định runtime vẫn fail-closed, không thay đổi workflow CI.
+
+Kết quả sau sửa: typecheck, build, OpenAPI, static database contract, backend dependency audit (0 vulnerability), `npm test` không DB (82 pass, 6 PostgreSQL skip) và critical API (8/8) đạt. Live PostgreSQL chưa thể chạy lại vì Docker daemon không kết nối được; cần push commit cục bộ và chờ remote CI để xác nhận 5 check. Mobile audit vẫn là R-05 (11 High, chưa có bản vá tương thích; không dùng `--force`).
+
 ### Data flow đã kiểm chứng ở mức reference
 
 ```text

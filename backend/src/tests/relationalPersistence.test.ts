@@ -83,6 +83,7 @@ test("relational adapter persists restart state, serializes one quote submission
         const system = new BankingSystem({
           sandboxOtp: "123456",
           settleTransfersImmediately: false,
+          allowUnsafeDirectSandboxStepUp: true,
         });
         system.importState(state as BankingSystemState);
         const receipt = system.submitTransfer(fixture.senderId, idempotencyKey, {

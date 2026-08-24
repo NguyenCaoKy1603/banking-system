@@ -268,7 +268,10 @@ test("PostgreSQL snapshot persists users and serializes concurrent transfer subm
   );
 
   const submit = async (idempotencyKey: string) => {
-    const system = new BankingSystem({ sandboxOtp: "123456" });
+    const system = new BankingSystem({
+      sandboxOtp: "123456",
+      allowUnsafeDirectSandboxStepUp: true,
+    });
     return repository.withState(system.exportState(), async (state) => {
       system.importState(state as BankingSystemState);
       const receipt = system.submitTransfer(registered.id, idempotencyKey, {
@@ -389,7 +392,11 @@ test("PostgreSQL persistent HTTP server restores state across restart", {
   await closeServer(first.server);
 
   const second = await startServer(
-    new BankingSystem({ sandboxOtp: "123456", mfaRequired: false }),
+    new BankingSystem({
+      sandboxOtp: "123456",
+      mfaRequired: false,
+      allowUnsafeDirectSandboxStepUp: true,
+    }),
   );
   await repository.withState(
     new BankingSystem({ sandboxOtp: "123456" }).exportState(),
@@ -509,7 +516,10 @@ test("PostgreSQL snapshot persists a savings opening across restart", {
   });
   await repository.initialize();
 
-  const firstSystem = new BankingSystem({ sandboxOtp: "123456" });
+  const firstSystem = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
   const created = await repository.withState(
     firstSystem.exportState(),
     async (state) => {
@@ -670,7 +680,10 @@ test("PostgreSQL snapshot persists M7 credit state and serializes concurrent pay
     repository.withState(
       new BankingSystem({ sandboxOtp: "123456" }).exportState(),
       async (state) => {
-        const system = new BankingSystem({ sandboxOtp: "123456" });
+        const system = new BankingSystem({
+          sandboxOtp: "123456",
+          allowUnsafeDirectSandboxStepUp: true,
+        });
         system.importState(state as BankingSystemState);
         const payment = system.submitCreditPayment(created.userId, idempotencyKey, {
           quoteId: created.quoteId,
