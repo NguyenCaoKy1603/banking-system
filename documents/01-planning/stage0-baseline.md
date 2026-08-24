@@ -176,7 +176,21 @@ Nếu `backend/src/bankingSystem.ts` không thể tách mà vẫn giữ từng c
 | Baseline và phân loại file | Đã ghi |
 | Secret scan | Đạt; fixture/example đã được phân loại |
 | Safety branch/WIP checkpoint | Đã tạo `codex/stage0-safety-20260824` tại `e1b7b8c`; không push |
-| Chuỗi commit logic | Chưa tạo |
-| Local quality gates | Đã có kết quả trước baseline; sẽ chạy lại sau tách commit |
+| Chuỗi commit logic | Đã tạo; backend giữ atomic vì `bankingSystem.ts` dùng chung nhiều invariant |
+| Local quality gates | Đã chạy lại sau tách commit; Backend pass static/logic, Mobile pass ngoại trừ dependency audit High và PostgreSQL live skip |
 | Remote main/upstream/PR | Chưa thể xác nhận; remote hiện chưa có `main` |
 | Clone sạch | Chưa thực hiện |
+
+## Kết quả sau khi tách commit
+
+| SHA | Nội dung |
+| --- | --- |
+| `556db67` | Baseline Git/CI và `.gitattributes` |
+| `0a9454c` | Backend atomic auth/banking/persistence và API contract |
+| `59bc63d` | Mobile auth/session/HTTP recovery |
+| `b186be5` | Mobile intent/idempotency primitives |
+| `84e6239` | Transfer/Savings/Credit/Fraud recovery |
+| `82d4457` | QR/KYC/biometric/navigation boundary |
+| `edbc9bb` | E2E flow và evidence/report synchronization |
+
+Quality gate snapshot: Backend `npm ci`, typecheck, build, OpenAPI, static database contract, full test 82/88, critical 8/8 và audit 0 vulnerability; Mobile `npm ci`, lint, typecheck, OpenAPI, Maestro syntax 10 flow, release validation, 46 suite/260 test, coverage 85,53%/86,57% và web export 33 route đạt. Mobile audit còn 11 High từ `image-size`; PostgreSQL/relational hiện skip vì Docker daemon không kết nối được.

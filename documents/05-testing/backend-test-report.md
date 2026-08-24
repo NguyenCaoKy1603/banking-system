@@ -1,6 +1,6 @@
 # Backend hardening test report
 
-> Cập nhật hiện hành 2026-08-24: worktree hardening có 88 test definition, 82 pass và 6 PostgreSQL skip khi không có live database; critical API 8/8, static source contract 28 bảng đạt. Bằng chứng PostgreSQL 70/70 và relational 1/1 ngày 2026-08-17 vẫn là lịch sử, chưa được rerun cho worktree hiện tại.
+> Cập nhật hiện hành 2026-08-24: Stage 0 implementation tip `edbc9bb` có 88 test definition, 82 pass và 6 PostgreSQL skip khi không có live database; critical API 8/8, static source contract 28 bảng đạt. Bằng chứng PostgreSQL 70/70 và relational 1/1 ngày 2026-08-17 vẫn là lịch sử, chưa được rerun cho worktree hiện tại.
 
 Ngày kiểm tra: 2026-08-24
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
@@ -12,11 +12,11 @@ Commit backend gần nhất: `dd515ad` (`Make sandbox handoff reproducible`)
 | Gate | Kết quả |
 | --- | --- |
 | Typecheck/build | Đạt |
-| Database boundary validator | Đạt, kiểm tra cấu trúc SQL và live PostgreSQL: 28 bảng, cột UUID/transfer/notification/runtime và constraint chính |
+| Database boundary validator | Đạt static source contract: 28 bảng, cột UUID/transfer/notification/runtime và constraint chính; live DB bị bỏ qua vì không có `DATABASE_URL` |
 | Unit + HTTP tests | Worktree không DB: 88 definition, 82 pass, 6 PostgreSQL skip; gồm body validation trước transaction và fail-closed khi DB unavailable |
-| Relational persistence | `npm run test:relational`: 1/1 đạt trên database disposable, gồm restart, pending settlement, reconciliation, concurrent quote submit và logical backup/restore rehearsal |
+| Relational persistence | `npm run test:relational`: 0 pass/1 skip trong lượt hiện tại vì Docker daemon không kết nối; historical 1/1 disposable database vẫn được giữ để truy vết |
 | Critical HTTP tests | 8 đạt |
-| Backend dependency audit | 0 vulnerability |
+| Backend dependency audit | `npm audit --omit=dev --audit-level=high`: 0 vulnerability |
 | Quote correctness | Snapshot beneficiary, one-time quote, idempotent retry |
 | Beneficiary identity | Full account fingerprint + bank, không dùng masked suffix |
 | Reconciliation | `differenceMinor = core - ledger` và test drift -1 |
@@ -65,6 +65,7 @@ Persistent mode dùng `PostgresRelationalRepository` với advisory transaction 
 
 | Gate | Kết quả |
 | --- | --- |
+| `npm ci` | Đạt; lockfile không đổi |
 | Typecheck | Đạt |
 | Build | Đạt |
 | Full test không DB | 88 definition; 82 pass, 6 PostgreSQL skip, 0 fail |
@@ -72,6 +73,7 @@ Persistent mode dùng `PostgresRelationalRepository` với advisory transaction 
 | Critical HTTP | 8/8 pass |
 | OpenAPI contract/route | Đạt, 46 required paths và 51 exact method/segment guards |
 | Static database source contract | Đạt, 28 table definitions/invariants; live DB chưa đạt trong môi trường hiện tại |
+| Dependency audit | Đạt, 0 vulnerability |
 
 Regression mới/chỉnh sửa kiểm tra:
 
@@ -87,6 +89,7 @@ Regression mới/chỉnh sửa kiểm tra:
 - Transaction/credit pagination dùng keyset; regression chèn record mới giữa hai lần đọc không tạo duplicate/skip.
 - Static biometric proof bị từ chối mặc định và chỉ hoạt động khi local test bật unsafe switch tường minh.
 - Financial step-up rejection dùng `409 STEP_UP_VERIFICATION_FAILED`, không kích hoạt refresh/replay từ `401`; canonical replay của quote đã consume không tạo ledger/audit/outbox mới và state thiếu trả `IDEMPOTENCY_STATE_MISSING`.
+- Stage 0 secret scan và safety checkpoint hoàn tất; working tree được tách thành commit logic, không đưa `.env`/credential/build output vào Git.
 
 ### Data flow đã kiểm chứng ở mức reference
 
@@ -108,7 +111,7 @@ fraud POST + Idempotency-Key
 
 ### Gate còn mở
 
-- Lần chạy live validator 2026-08-24 được chạy ở chế độ static với `DATABASE_URL` rỗng; static source contract đạt. Sáu PostgreSQL test bị skip; phải rerun migration, live validator, restart/concurrency và logical restore trước handoff mới.
+- Lần chạy live validator 2026-08-24 được chạy ở chế độ static với `DATABASE_URL` rỗng; static source contract đạt. Docker daemon không kết nối nên sáu PostgreSQL test và relational test bị skip; phải rerun migration, live validator, restart/concurrency và logical restore trước handoff mới.
 - Chưa có dedicated live PostgreSQL regression cho fraud reason/idempotency qua restart và concurrent retry.
 - Savings/Credit public GET đã read-only và có domain no-mutation regression; mutation được tách thành settlement/scheduled-work command reference. Dedicated HTTP/PostgreSQL no-mutation regression vẫn cần bổ sung. Durable worker/scheduler có lease/retry/backoff cho settlement, maturity, statement close/overdue chưa có; operator hook tuần tự không phải production settlement mechanism.
 - Transaction boundary hiện là reference snapshot/relational adapter; chưa thay thế distributed rate-limit, Identity provider, core callback, queue, RLS, encryption/retention policy hoặc production monitoring.

@@ -1,13 +1,13 @@
 # Test report — Mobile banking reference preview
 
-> Cập nhật hiện hành 2026-08-24: worktree hardening đạt Mobile lint/typecheck, 46 suite/260 test, coverage, OpenAPI, 10 Maestro flow syntax và web export 33 route; Backend đạt 88 definition/82 pass/6 PostgreSQL skip cùng critical 8/8. Bằng chứng PostgreSQL/emulator ngày 2026-08-17 bên dưới là lịch sử và chưa được chạy lại cho worktree mới.
+> Cập nhật hiện hành 2026-08-24: Stage 0 đã tạo safety checkpoint và tách working tree thành chuỗi commit logic; Mobile lint/typecheck, 46 suite/260 test, coverage, OpenAPI, 10 Maestro flow syntax và web export 33 route đạt; Backend đạt 88 definition/82 pass/6 PostgreSQL skip cùng critical 8/8. Bằng chứng PostgreSQL/emulator ngày 2026-08-17 bên dưới là lịch sử và chưa được chạy lại cho worktree mới.
 
 > Handoff manifest không chứa credential/token/OTP: [`handoff-manifest-2026-08-17.json`](handoff-manifest-2026-08-17.json).
 
 Ngày lập: 2026-08-24
 Phạm vi: M0–M4, M6–M8 và Card mock bonus
 Trạng thái: **Local reference pass; Android emulator E2E pass; device/staging gates còn mở**
-Backend verification checkpoint hiện hành: code `dd515ad`; documentation/evidence emulator giữ theo các artifact đã ghi trong manifest; historical backend gate `595afc3` remains referenced in the audit trail. The checkpoint includes the current M6/M7, account-reveal and offline-retry evidence.
+Backend verification checkpoint hiện hành: implementation tip `edbc9bb`; safety checkpoint `e1b7b8c`; documentation/evidence emulator giữ theo các artifact đã ghi trong manifest. Historical backend gate `595afc3` vẫn được giữ để truy vết.
 
 ## Kết quả đã chạy
 
@@ -17,13 +17,15 @@ Backend verification checkpoint hiện hành: code `dd515ad`; documentation/evid
 | Mobile typecheck | Đạt |
 | Mobile unit tests | 46 suite, 260 test đạt |
 | Mobile coverage | 85,53% statements, 86,57% branches, 93,39% functions, 85,97% lines |
+| `npm ci` | Backend và Mobile đạt; lockfile không đổi |
 | Offline/timeout presentation | Đạt mapping và retry unit test cho `NETWORK_ERROR`, `TIMEOUT`, `REQUEST_ABORTED`; Home/Account Detail/History/Login giữ nguyên lỗi API để hiển thị đúng loại lỗi, có retry notice; offline login retry đã pass trên emulator |
 | OpenAPI required paths | Đạt, 43 path bắt buộc phía Mobile; Backend kiểm tra 46 path và 51 exact route guard |
 | Native E2E | Android emulator `Pixel_7_API_35`: M0–M4, M6, M8 và Credit sandbox flow đạt; gồm hiện/sao chép đầy đủ số tài khoản, eKYC mô phỏng, beneficiary, QR manual fallback, savings quote/review/OTP và notification deep link |
 | Maestro | 10 flow hợp lệ; M0–M4/M8, M6 savings, credit payment, pending-resume, Credit card lock/restart/unlock, Credit overdue notification và offline login retry chạy thành công trên Android emulator bằng Maestro 2.8.0 |
 | Backend reference | Worktree không DB: 88 definition, 82 pass, 6 PostgreSQL skip; critical API 8/8; static schema 28 bảng đạt. PostgreSQL live và seed E2E là bằng chứng lịch sử 2026-08-17 |
+| Backend dependency audit | Đạt, 0 vulnerability |
 | Expo web export | Đạt, 33 static route; dùng URL HTTPS placeholder cho static export vì `.env` local là HTTP sandbox và bị production guard từ chối |
-| Dependency audit | **Không đạt**: 14 High theo chuỗi Expo/Metro → `image-size@1.2.1`; npm chỉ đề xuất hạ major Expo/React Native không tương thích. Không force fix; chờ bản vá upstream và risk acceptance |
+| Mobile dependency audit | **Chưa đạt**: 11 High theo chuỗi Expo/Metro → `image-size@1.2.1`; advisories `GHSA-w3rx-r6r6-pgpr` và `GHSA-5p2g-fcmc-qvqq`; npm chỉ đề xuất nâng breaking React Native. Không force fix; cần upstream patch/risk acceptance |
 
 ## Smoke seed
 
@@ -35,8 +37,16 @@ Backend verification checkpoint hiện hành: code `dd515ad`; documentation/evid
 - Đã có APK release local, package/checksum và log Maestro trên emulator; chưa có video cold start/crash-resume, camera thật hoặc biometric prompt thật.
 - Transfer kill app trước/sau submit và session restore sau force-stop chưa có kết quả native lặp lại; riêng credit pending → restart → resume đã pass bằng flow dedicated.
 - Chưa có staging URL/partner integration đã phê duyệt.
-- Handoff Git: code checkpoint hiện hành `cab97e0`; source/workflow/contract/tài liệu cập nhật đang được chốt trong cùng handoff; clone sạch đã chạy `npm ci` và các gate chính. Chưa push/PR trong phiên này.
-- Chưa có kết quả usability/accessibility với người dùng và chưa có approver cho 14 cảnh báo High.
+- Handoff Git: implementation tip `edbc9bb`, safety branch `codex/stage0-safety-20260824` tại `e1b7b8c`; working tree sạch sau khi tách commit. Chưa push/upstream/PR vì remote chưa có `main` và workspace không có GitHub CLI.
+- Chưa có kết quả usability/accessibility với người dùng và chưa có approver cho 11 cảnh báo High.
+
+## Stage 0 — Git/CI checkpoint
+
+- Safety branch chứa toàn bộ snapshot trước khi tách, không push.
+- Nhánh làm việc đã có 7 commit logic: baseline, Backend atomic, Mobile auth, intent primitives, mobile flows, mobile security và E2E/tài liệu.
+- Secret scan không phát hiện JWT/Bearer/private key/credential vận hành; các hit còn lại là fixture test hoặc PostgreSQL localhost example.
+- `git status` sạch; `.env`, `node_modules`, build output, coverage và log không nằm trong commit.
+- PostgreSQL relational hiện `1 test skip` vì Docker daemon không kết nối được; không dùng kết quả skip để tuyên bố live migration pass.
 
 ## Kết luận
 

@@ -2,9 +2,9 @@
 
 ## Đã kiểm chứng local
 
-Backend evidence checkpoint hiện hành: code checkpoint `dd515ad`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
+Implementation evidence checkpoint hiện hành: `edbc9bb`; safety checkpoint: `e1b7b8c` trên branch local `codex/stage0-safety-20260824`. Historical gate `595afc3` (`Harden database and OpenAPI quality gates`) chỉ dùng để truy vết.
 
-Các thay đổi hardening ngày 2026-08-24 hiện còn ở working tree, chưa có commit SHA/handoff manifest mới. Bằng chứng checkpoint 2026-08-17 bên dưới vẫn là lịch sử tái hiện gần nhất; không được dùng số liệu cũ để tuyên bố các thay đổi mới đã qua device/staging gate.
+Các thay đổi hardening ngày 2026-08-24 đã được tách thành commit logic trên working tree sạch; chưa push/upstream/PR. Bằng chứng checkpoint 2026-08-17 bên dưới vẫn là lịch sử tái hiện gần nhất; không được dùng số liệu cũ để tuyên bố các thay đổi mới đã qua device/staging gate.
 
 - Worktree Mobile lint, type-check, 46 suite/260 test, coverage 85,53% statement/86,57% branch, OpenAPI, Maestro syntax và web export đạt.
 - Worktree Backend type-check/build, 88 definition (82 pass, 6 PostgreSQL skip), 8 critical HTTP flow và static database contract 28 bảng đạt. Mốc PostgreSQL 70/70 + relational 1/1 bên dưới là bằng chứng lịch sử 2026-08-17, chưa được rerun cho hardening mới.
@@ -25,17 +25,23 @@ Các thay đổi hardening ngày 2026-08-24 hiện còn ở working tree, chưa 
 
 ## Chưa đủ điều kiện đóng milestone
 
-- M0: baseline tài liệu, evidence rules, device evidence và checkpoint Git sạch `cab97e0` đã có; owner review/push vẫn còn.
+- M0: baseline tài liệu, evidence rules, device evidence, safety checkpoint `e1b7b8c` và implementation tip `edbc9bb` đã có; owner review/push vẫn còn.
 - M1–M4 và M8: critical flow đã chạy trên Android emulator cho login/MFA, account detail, hiện/sao chép số tài khoản đầy đủ, eKYC, beneficiary, QR manual fallback, M4 transfer và M8 notification deep link; chưa có full device matrix, thiết bị thật hoặc staging partner.
 - M2: eKYC thật/API KYC và test data staging chưa có; phần hiện tại là mock có chủ đích.
 - M4: transfer, beneficiary CRUD, QR manual fallback và pending/restart/resume đã có bằng chứng Maestro trên emulator; QR camera/permission và lifecycle native trên thiết bị thật vẫn chưa có.
 - M6 và M7: đã có reference sandbox; M6 quote/review/step-up/mở khoản → danh sách, M7 payment pending → stop/launch → resume, card lock → stop/launch → OTP unlock và overdue notification → card detail đã có flow pass trên emulator. M5 vẫn là mock/fixture, chưa phải API/production card integration; M9 chưa triển khai.
-- M10: usability, accessibility, performance và native device regression chưa hoàn tất; audit Mobile còn 14 High; remote CI execution chưa có log trong workspace dù local PostgreSQL gate đã đạt.
+- M10: usability, accessibility, performance và native device regression chưa hoàn tất; audit Mobile còn 11 High; remote CI execution chưa có log trong workspace và Docker daemon hiện không khả dụng cho live PostgreSQL.
 - M11: đã build APK release local và lưu checksum/evidence; chưa có signing, cài đặt ngoài máy phát triển, staging, monitoring và hồ sơ bảo vệ đầy đủ.
 
 ## Quyết định persistence reference
 
 Các kết quả local là bằng chứng cho reference implementation, không phải chứng nhận production/pilot. Core M0–M4/M8 dùng bảng relational; auth runtime và M6/M7 bonus dùng record-level reference. Mọi trạng thái `HOÀN THÀNH` trong kế hoạch phải kèm test report, thiết bị, evidence và người review.
+
+## Giai đoạn 0 — Git/CI checkpoint 2026-08-24
+
+- Safety branch local `codex/stage0-safety-20260824` giữ snapshot nguyên khối `e1b7b8c`, không push.
+- Nhánh implementation có chuỗi commit: `556db67` baseline → `0a9454c` Backend atomic → `59bc63d` Mobile auth → `b186be5` intent primitives → `84e6239` mobile flows → `82d4457` mobile security → `edbc9bb` E2E/tài liệu.
+- `git status` sạch; secret scan, `npm ci`, Backend/Mobile local gates đã chạy. Remote `main`, upstream, branch protection, PR và clone sạch vẫn là gate mở.
 ## Cập nhật sau đồng bộ M6 và triển khai M7 — 2026-08-15
 
 - M6 Savings đã có quote/MFA/idempotency/PENDING-resume/maturity, Mobile list/open/detail và notification deep link; flow native emulator đã pass, nhưng chưa đóng vì thiếu repository relational production, thiết bị thật và staging.

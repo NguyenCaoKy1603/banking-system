@@ -1,0 +1,39 @@
+# Git workflow và branch strategy — Stage 0
+
+Ngày cập nhật: 2026-08-24
+
+## Trạng thái remote
+
+- Implementation branch: `codex/mini-core-banking-sandbox`.
+- Local implementation tip sau Stage 0: `edbc9bb` (sẽ thay đổi nếu chỉ thêm tài liệu bàn giao).
+- Safety branch: `codex/stage0-safety-20260824` tại `e1b7b8c`, không push và chỉ xóa sau khi clone sạch/CI/review được xác minh.
+- `origin` hiện có `feature/mobile-authentication` tại `b2eef7d`; chưa có remote `main` tại thời điểm kiểm tra.
+- Workspace không có GitHub CLI; chưa tạo được PR hoặc branch protection tự động.
+
+## Quy tắc làm việc
+
+1. Không push trực tiếp vào `main`; mọi thay đổi đi qua PR sau khi maintainer tạo và bảo vệ `main`.
+2. Commit nhỏ theo behavior, source và regression test đi cùng nhau; contract đi cùng API behavior.
+3. Không commit `.env`, token, password, OTP, device secret, database credential, `node_modules`, build output, coverage hoặc log.
+4. Không rewrite 50 commit lịch sử hiện có và không chạy `npm audit fix --force`.
+5. Trước commit chạy `git diff --cached --check` và xem lại danh sách staged; sau commit chạy backend/mobile quality gates.
+6. Khi phát hiện lỗi trong gate, tạo commit sửa lỗi riêng, không sửa lịch sử đã có.
+
+## Chuỗi commit Stage 0 hiện tại
+
+| Commit | Vai trò |
+| --- | --- |
+| `556db67` | Ghi baseline và quy tắc EOL |
+| `0a9454c` | Backend atomic auth/banking/persistence + API contract |
+| `59bc63d` | Mobile auth/session/HTTP recovery |
+| `b186be5` | Mobile intent/idempotency primitives |
+| `84e6239` | Transfer/Savings/Credit/Fraud recovery flows |
+| `82d4457` | QR/KYC/biometric/navigation boundaries |
+| `edbc9bb` | Maestro/evidence/report synchronization |
+
+## Việc maintainer cần thực hiện trên GitHub
+
+- Tạo remote `main` từ baseline được review, không dùng local `main` cũ `364018b` nếu chưa đối chiếu.
+- Push implementation branch và đặt upstream.
+- Tạo PR vào `main`, bật required Backend/Mobile checks, review tối thiểu một người và cấm direct push.
+- Sau khi CI xanh, clone SHA PR vào thư mục sạch, chạy lại `npm ci`, migration PostgreSQL và toàn bộ gate.
