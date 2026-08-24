@@ -29,10 +29,12 @@
   canonical `DISPATCHED=16`, `PENDING=0`, `PROCESSING=0`, `DEAD=0`. Không có
   `notification_deliveries` vì preview không cấu hình endpoint Push/Email; in-app
   notification đã có trong transaction/reconcile.
-- Sau khi dừng worker graceful, heartbeat chuyển `STOPPED=8`; backend khởi động
-  lại trả `/livez`, `/healthz`, `/readyz` HTTP 200 và inventory không còn legacy
-  PENDING. Customer=18, account=18, transfer=8, account transaction=24 vẫn giữ
-  nguyên; không có thao tác debit/ledger nào do worker thực hiện.
+- Sau khi dừng hai replica worker graceful ở lần xác minh cuối, cả hai heartbeat
+  mới chuyển `STOPPED` (bảng hiện có `STOPPED=10` gồm cả các lần rehearsal trước);
+  backend khởi động lại trả `/livez`, `/healthz`, `/readyz` HTTP 200 và inventory
+  không còn legacy PENDING. Customer=18, account=18, transfer=8, account
+  transaction=24 vẫn giữ nguyên; không có thao tác debit/ledger nào do worker
+  thực hiện.
 
 ## Bằng chứng code/test
 
