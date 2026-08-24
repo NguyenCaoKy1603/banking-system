@@ -8,5 +8,8 @@ export type ReceiveQrPayload = {
   maskedAccountNumber: string;
   bankName: string;
   currency: "VND";
-  beneficiaryId?: string;
+};
+
+export type UnverifiedReceiveQrData = ReceiveQrPayload & {
+  trust: "UNVERIFIED";
 };

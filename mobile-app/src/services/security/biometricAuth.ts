@@ -23,6 +23,9 @@ export async function requestBiometricAuthentication(
 }
 
 export function getSandboxBiometricProof(): string {
+  if (process.env.NODE_ENV === "production") {
+    return "";
+  }
   return (
     process.env.EXPO_PUBLIC_SANDBOX_BIOMETRIC_PROOF ??
     (process.env.NODE_ENV === "development" ? "sandbox-biometric" : "")

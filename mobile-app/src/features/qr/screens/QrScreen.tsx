@@ -18,7 +18,7 @@ import { useAuth } from "@/features/auth/context/AuthContext";
 import { listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
 import { createReceiveQrPayload, parseReceiveQrPayload } from "@/features/qr/validation/qrPayload";
-import type { ReceiveQrPayload } from "@/features/qr/types/qr";
+import type { UnverifiedReceiveQrData } from "@/features/qr/types/qr";
 import { ApiError } from "@/services/api/ApiError";
 import { colors, spacing } from "@/theme";
 
@@ -46,7 +46,7 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
   const [isLoadingAccount, setIsLoadingAccount] = useState(true);
   const [accountError, setAccountError] = useState<string | undefined>();
   const [manualPayload, setManualPayload] = useState("");
-  const [parsedPayload, setParsedPayload] = useState<ReceiveQrPayload | null>(null);
+  const [parsedPayload, setParsedPayload] = useState<UnverifiedReceiveQrData | null>(null);
   const [scanError, setScanError] = useState<string | undefined>();
   const [hasScanned, setHasScanned] = useState(false);
   const [cameraError, setCameraError] = useState<string | undefined>();
@@ -159,7 +159,7 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
           <Text style={styles.eyebrow}>M4 · QR</Text>
           <Text style={styles.title}>QR nhận tiền</Text>
           <Text style={styles.description}>
-            Payload được version hóa và kiểm tra trước khi sử dụng. Camera luôn có đường nhập tay dự phòng.
+            QR chỉ được kiểm tra định dạng và hiển thị để đối chiếu. Bản reference chưa dùng dữ liệu quét để khởi tạo chuyển tiền.
           </Text>
         </View>
 
@@ -249,26 +249,16 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
             />
             {parsedPayload ? (
               <View style={styles.resultBox} testID="qr-valid-payload">
-                <Text style={styles.resultTitle}>Payload hợp lệ</Text>
+                <Text style={styles.resultTitle}>Đã đọc định dạng · Chưa xác minh người nhận</Text>
                 <Text style={styles.summaryText}>{parsedPayload.displayName}</Text>
                 <Text style={styles.summaryText}>{parsedPayload.maskedAccountNumber}</Text>
                 <Text style={styles.summaryText}>{parsedPayload.bankName} · {parsedPayload.currency}</Text>
-                {parsedPayload.beneficiaryId ? (
-                  <PrimaryButton
-                    label="Dùng người nhận này để chuyển tiền"
-                    onPress={() =>
-                      router.push({
-                        pathname: "/transfer",
-                        params: { beneficiaryId: parsedPayload.beneficiaryId },
-                      })
-                    }
-                    testID="qr-use-beneficiary"
-                  />
-                ) : (
+                <View style={styles.blockedAction} testID="qr-transfer-blocked">
+                  <Text style={styles.blockedTitle}>Không thể chuyển tiền từ QR này</Text>
                   <Text style={styles.noteText}>
-                    Payload tài khoản này chưa có beneficiaryId; hãy xác nhận người nhận qua API trước khi chuyển tiền.
+                    Chưa có contract/API phía server để tra cứu và xác minh alias hoặc tài khoản trong QR. Hãy chọn người nhận đã được server xác nhận trong màn hình Chuyển tiền.
                   </Text>
-                )}
+                </View>
                 <PrimaryButton label="Quét mã khác" onPress={resetScanner} testID="qr-reset" />
               </View>
             ) : null}
@@ -366,8 +356,21 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   resultTitle: {
-    color: colors.success,
+    color: colors.text,
     fontSize: 18,
+    fontWeight: "700",
+  },
+  blockedAction: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: spacing.sm,
+    backgroundColor: colors.surface,
+  },
+  blockedTitle: {
+    color: colors.danger,
+    fontSize: 14,
     fontWeight: "700",
   },
   accountName: {
