@@ -31,6 +31,14 @@ const registrationSchema = fs.readFileSync(
   path.resolve(__dirname, "../database/011_registration_recovery.sql"),
   "utf8",
 );
+const outboxWorkerSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/012_outbox_worker.sql"),
+  "utf8",
+);
+const outboxWorkerOperationsSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/013_outbox_worker_operations.sql"),
+  "utf8",
+);
 
 const requiredTables = [
   "customers",
@@ -77,6 +85,13 @@ const identityV2Tables = [
 const savingsV2Tables = ["savings_idempotency", "savings_maturity_operations"];
 const creditV2Tables = ["credit_idempotency"];
 const registrationTables = ["registration_completions"];
+const outboxWorkerTables = [
+  "notification_endpoints",
+  "notification_preferences",
+  "notification_deliveries",
+  "dead_letter_events",
+  "worker_instances",
+];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -120,6 +135,9 @@ const creditV2TableBlocks = new Map(
 );
 const registrationTableBlocks = new Map(
   registrationTables.map((tableName) => [tableName, tableBlock(registrationSchema, tableName)]),
+);
+const outboxWorkerTableBlocks = new Map(
+  outboxWorkerTables.map((tableName) => [tableName, tableBlock(outboxWorkerSchema, tableName)]),
 );
 
 function requireColumn(tableName, columnName, definitionPattern) {
@@ -339,7 +357,56 @@ for (const [label, pattern] of [
   }
 }
 
-if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(`${schema}\n${savingsSchema}\n${creditSchema}\n${runtimeSchema}\n${v2Schema}\n${identityV2Schema}\n${transferV2Schema}\n${savingsV2Schema}\n${creditV2Schema}\n${registrationSchema}`)) {
+const outboxEventsColumns = [
+  ["event_version", /integer\s+NOT\s+NULL/i],
+  ["aggregate_type", /text\s+NOT\s+NULL/i],
+  ["aggregate_version", /bigint\s+NOT\s+NULL/i],
+  ["status", /text\s+NOT\s+NULL/i],
+  ["priority", /integer\s+NOT\s+NULL/i],
+  ["lease_expires_at", /timestamptz/i],
+  ["deduplication_key", /text/i],
+];
+for (const [columnName, pattern] of outboxEventsColumns) {
+  const columnPattern = new RegExp(
+    `ADD\\s+COLUMN\\s+IF\\s+NOT\\s+EXISTS\\s+${escapeRegExp(columnName)}\\s+([^,;\\n]+)`,
+    "i",
+  );
+  const match = `${v2Schema}\n${outboxWorkerSchema}`.match(columnPattern);
+  if (!match || !pattern.test(match[1])) {
+    throw new Error(`Outbox migration must declare outbox_events.${columnName}.`);
+  }
+}
+for (const [tableName, columnName, pattern] of [
+  ["notification_endpoints", "customer_id", /uuid\s+NOT\s+NULL\s+REFERENCES\s+customers/i],
+  ["notification_endpoints", "address_ciphertext", /text\s+NOT\s+NULL/i],
+  ["notification_endpoints", "address_fingerprint", /text\s+NOT\s+NULL/i],
+  ["notification_preferences", "enabled", /boolean\s+NOT\s+NULL/i],
+  ["notification_deliveries", "outbox_event_id", /uuid\s+NOT\s+NULL\s+REFERENCES\s+outbox_events/i],
+  ["notification_deliveries", "endpoint_id", /uuid\s+NOT\s+NULL\s+REFERENCES\s+notification_endpoints/i],
+  ["notification_deliveries", "status", /text\s+NOT\s+NULL/i],
+  ["dead_letter_events", "source_kind", /text\s+NOT\s+NULL/i],
+  ["dead_letter_events", "payload_snapshot", /jsonb\s+NOT\s+NULL/i],
+  ["worker_instances", "last_heartbeat_at", /timestamptz\s+NOT\s+NULL/i],
+]) {
+  const block = outboxWorkerTableBlocks.get(tableName);
+  const columnPattern = new RegExp(`^\\s*${escapeRegExp(columnName)}\\s+([^,\\n]+)`, "mi");
+  const match = block.match(columnPattern);
+  if (!match || !pattern.test(match[1])) {
+    throw new Error(`Column ${tableName}.${columnName} does not match the outbox-worker definition.`);
+  }
+}
+for (const [label, pattern] of [
+  ["outbox claim index", /outbox_events_claim_v2_idx/i],
+  ["outbox lease index", /outbox_events_lease_v2_idx/i],
+  ["delivery deduplication", /notification_deliveries_identity_idx/i],
+  ["dead-letter uniqueness", /UNIQUE\s*\(source_kind,\s*source_id\)/i],
+]) {
+  if (!pattern.test(outboxWorkerSchema)) {
+    throw new Error(`Missing outbox-worker invariant: ${label}`);
+  }
+}
+
+if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(`${schema}\n${savingsSchema}\n${creditSchema}\n${runtimeSchema}\n${v2Schema}\n${identityV2Schema}\n${transferV2Schema}\n${savingsV2Schema}\n${creditV2Schema}\n${registrationSchema}\n${outboxWorkerSchema}\n${outboxWorkerOperationsSchema}`)) {
   throw new Error("The draft migration must not contain destructive DROP statements.");
 }
 
@@ -347,7 +414,7 @@ async function validateLiveDatabase() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     console.log(
-        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
+        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
     );
     return;
   }
@@ -374,6 +441,7 @@ async function validateLiveDatabase() {
       ...savingsV2Tables,
       ...creditV2Tables,
       ...registrationTables,
+      ...outboxWorkerTables,
     ]) {
       if (!liveTables.has(tableName)) {
         throw new Error(`Live PostgreSQL database is missing table: ${tableName}`);
@@ -449,6 +517,19 @@ async function validateLiveDatabase() {
       ["credit_idempotency", "payment_id", "uuid"],
       ["registration_completions", "customer_id", "uuid"],
       ["registration_completions", "account_id", "uuid"],
+      ["outbox_events", "event_version", "int4"],
+      ["outbox_events", "aggregate_type", "text"],
+      ["outbox_events", "aggregate_version", "int8"],
+      ["outbox_events", "status", "text"],
+      ["outbox_events", "deduplication_key", "text"],
+      ["outbox_events", "lease_expires_at", "timestamptz"],
+      ["outbox_events", "updated_at", "timestamptz"],
+      ["notification_endpoints", "customer_id", "uuid"],
+      ["notification_endpoints", "address_ciphertext", "text"],
+      ["notification_deliveries", "outbox_event_id", "uuid"],
+      ["notification_deliveries", "endpoint_id", "uuid"],
+      ["dead_letter_events", "source_id", "uuid"],
+      ["worker_instances", "last_heartbeat_at", "timestamptz"],
     ]) {
       if (liveColumns.get(`${tableName}.${columnName}`) !== expectedType) {
         throw new Error(
@@ -486,6 +567,10 @@ async function validateLiveDatabase() {
       /savings_maturity_operations UNIQUE \(deposit_id, operation_key\)/i,
       /credit_idempotency UNIQUE \(customer_id, operation_type, idempotency_key\)/i,
       /registration_completions FOREIGN KEY \(customer_id\) REFERENCES customers/i,
+      /notification_endpoints FOREIGN KEY \(customer_id\) REFERENCES customers/i,
+      /notification_deliveries FOREIGN KEY \(outbox_event_id\) REFERENCES outbox_events/i,
+      /notification_deliveries FOREIGN KEY \(endpoint_id\) REFERENCES notification_endpoints/i,
+      /dead_letter_events UNIQUE \(source_kind, source_id\)/i,
     ]) {
       if (!definitions.some((definition) => pattern.test(definition))) {
         throw new Error(`Live PostgreSQL constraint missing: ${pattern}`);
@@ -493,7 +578,7 @@ async function validateLiveDatabase() {
     }
 
     console.log(
-      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
+      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
     );
   } finally {
     await pool.end();

@@ -19,6 +19,8 @@ jobs:
       DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
       RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
       P0_RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_p0_test
+      WORKER_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_worker_test
+      NOTIFICATION_ENDPOINT_ENCRYPTION_KEY: ci-worker-only-key
       BANKING_ENV: development
       BANKING_MFA_REQUIRED: "0"
       BANKING_SANDBOX_MFA_OTP: "654321"
@@ -58,7 +60,9 @@ jobs:
         run: npm ci
 
       - name: Create disposable P0 relational database
-        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_p0_test"
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_p0_test"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_worker_test"
 
       - name: Apply PostgreSQL migration from empty database
         run: npm run db:migrate
@@ -71,11 +75,21 @@ jobs:
           DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_p0_test
         run: npm run db:migrate
 
+      - name: Apply worker migrations to disposable database
+        env:
+          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_worker_test
+        run: npm run db:migrate
+
       - name: Validate database boundary
         run: npm run validate:database
 
       - name: Validate relational-v2 invariants
         run: npm run validate:relational-v2
+
+      - name: Validate transactional outbox worker boundary
+        env:
+          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_worker_test
+        run: npm run validate:outbox
 
       - name: Validate OpenAPI draft and implementation markers
         run: npm run validate:openapi
@@ -102,3 +116,6 @@ jobs:
 
       - name: Relational-v2 foundation regression
         run: npm run test:database
+
+      - name: Worker concurrency, lease and dead-letter regression
+        run: npm run test:worker

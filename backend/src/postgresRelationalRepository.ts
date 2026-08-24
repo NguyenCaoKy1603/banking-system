@@ -130,9 +130,33 @@ export class PostgresRelationalRepository {
   }
 
   async withState<T>(initialState: unknown, operation: RelationalStateOperation<T>): Promise<T> {
+    if (process.env.BANKING_PERSISTENCE_MODE?.trim() === "relational-v2") {
+      throw new Error(
+        "Legacy PostgresRelationalRepository is disabled in relational-v2 mode; use direct transactional repositories before enabling the worker.",
+      );
+    }
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Once a worker has a live heartbeat, the legacy full-state replay would
+      // delete/reinsert outbox and delivery rows. Refuse that write boundary
+      // instead of silently overwriting worker-owned state.
+      const workerTable = await client.query<{ table_name: string | null }>(
+        "SELECT to_regclass('public.worker_instances') AS table_name",
+      );
+      if (workerTable.rows[0]?.table_name) {
+        const activeWorker = await client.query(
+          `SELECT worker_id FROM worker_instances
+           WHERE status IN ('STARTING', 'READY', 'DRAINING')
+             AND last_heartbeat_at >= NOW() - INTERVAL '90 seconds'
+           LIMIT 1`,
+        );
+        if ((activeWorker.rowCount ?? 0) > 0) {
+          throw new Error(
+            "Legacy PostgresRelationalRepository refuses to write while an outbox worker heartbeat is active; complete the relational-v2 HTTP cutover first.",
+          );
+        }
+      }
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtextextended('banking-relational-reference', 0))",
       );
@@ -864,14 +888,19 @@ export class PostgresRelationalRepository {
       await client.query(
         `
           INSERT INTO outbox_events
-            (id, event_type, aggregate_id, payload, occurred_at,
-             published_at, attempts, next_attempt_at)
-          VALUES ($1, $2, $3, '{}'::jsonb, $4, $5, $6, $7)
+            (id, event_type, event_version, aggregate_type, aggregate_id,
+             aggregate_version, deduplication_key, payload, status, priority,
+             occurred_at, published_at, attempts, next_attempt_at,
+             created_at, updated_at)
+          VALUES ($1, $2, 1, 'legacy', $3, 1, $4, '{}'::jsonb, $5, 100,
+                  $6, $7, $8, $9, $6, $6)
         `,
         [
           event.id,
           event.eventType,
           event.aggregateId,
+          `legacy:${event.id}`,
+          event.published ? "DISPATCHED" : "PENDING",
           event.occurredAt,
           event.published ? event.occurredAt : null,
           event.attempts ?? 0,

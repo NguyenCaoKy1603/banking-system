@@ -55,6 +55,14 @@ const requiredTablesByMigration = {
   "009_savings_relational_v2": ["savings_idempotency", "savings_maturity_operations"],
   "010_credit_relational_v2": ["credit_idempotency"],
   "011_registration_recovery": ["registration_completions"],
+  "012_outbox_worker": [
+    "notification_endpoints",
+    "notification_preferences",
+    "notification_deliveries",
+    "dead_letter_events",
+    "worker_instances",
+  ],
+  "013_outbox_worker_operations": [],
 };
 
 async function main() {

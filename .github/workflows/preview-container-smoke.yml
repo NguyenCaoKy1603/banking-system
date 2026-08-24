@@ -53,7 +53,7 @@ jobs:
         run: docker compose config --quiet
 
       - name: Build runtime image
-        run: docker compose build --pull=false backend migrate
+        run: docker compose build --pull=false backend migrate worker
 
       - name: Start PostgreSQL
         run: docker compose up -d postgres

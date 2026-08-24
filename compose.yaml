@@ -76,5 +76,54 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  # Opt-in only: the current HTTP server still has a legacy full-state writer.
+  # Do not enable this profile until BANKING_PERSISTENCE_MODE is cut over to
+  # direct relational-v2 writes and the boundary regression is accepted.
+  worker:
+    profiles: ["worker"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+    environment:
+      BANKING_ENV: preview
+      NODE_ENV: preview
+      BANKING_STORAGE: postgres
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      BANKING_PERSISTENCE_MODE: ${WORKER_PERSISTENCE_MODE:-relational-v2}
+      WORKER_ENABLED: ${WORKER_ENABLED:-1}
+      WORKER_ALLOW_LEGACY_WRITER: ${WORKER_ALLOW_LEGACY_WRITER:-0}
+      WORKER_VERSION: ${COMMIT_SHA:-local}
+      WORKER_HEALTH_PORT: 9091
+      OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
+      OUTBOX_CONCURRENCY: ${OUTBOX_CONCURRENCY:-10}
+      OUTBOX_LEASE_SECONDS: ${OUTBOX_LEASE_SECONDS:-60}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-8}
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-10000}
+      WORKER_SHUTDOWN_TIMEOUT_MS: ${WORKER_SHUTDOWN_TIMEOUT_MS:-25000}
+      NOTIFICATION_ENDPOINT_ENCRYPTION_KEY: ${NOTIFICATION_ENDPOINT_ENCRYPTION_KEY:-local-only-change-me}
+      PUSH_PROVIDER: ${PUSH_PROVIDER:-disabled}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-disabled}
+      DB_POOL_MAX: ${DB_POOL_MAX:-4}
+      DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-5000}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
+      DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-3000}
+      DB_IDLE_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_TRANSACTION_TIMEOUT_MS:-15000}
+      DB_APPLICATION_NAME: ${DB_APPLICATION_NAME:-banking-reference-worker}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["node", "dist/worker.js"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9091/readyz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
 volumes:
   banking_preview_pgdata:

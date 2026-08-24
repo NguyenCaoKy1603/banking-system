@@ -81,6 +81,7 @@ export class RelationalRegistrationService {
         aggregateId: customer.id,
         deduplicationKey: `CUSTOMER_REGISTERED:${customer.id}`,
         occurredAt: now,
+        traceId: input.traceId,
         payload: { customerId: customer.id, accountId: account.id },
       });
       return { customerId: customer.id, accountId: account.id };

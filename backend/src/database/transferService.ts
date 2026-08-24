@@ -248,6 +248,29 @@ export class RelationalTransferService {
         });
         await input.fault?.("after_audit_written");
 
+        const senderNotificationId = randomUUID();
+        const recipientNotificationId = randomUUID();
+        await client.query(
+          `INSERT INTO notifications
+             (id, customer_id, notification_type, title, body, resource_id,
+              resource_account_id, is_read, created_at)
+           VALUES
+             ($1, $2, 'TRANSFER', 'Chuyển tiền thành công',
+              'Giao dịch chuyển tiền nội bộ đã hoàn tất.', $3, $4, false, $5),
+             ($6, $7, 'TRANSFER', 'Bạn nhận được tiền chuyển khoản',
+              'Tài khoản của bạn đã nhận một giao dịch chuyển tiền nội bộ.', $3, $8, false, $5)`,
+          [
+            senderNotificationId,
+            input.customerId,
+            transfer.id,
+            source.id,
+            now,
+            recipientNotificationId,
+            destination.customerId,
+            destination.id,
+          ],
+        );
+
         await outbox.append({
           id: randomUUID(),
           eventType: "TRANSFER_SUCCEEDED",
@@ -255,6 +278,9 @@ export class RelationalTransferService {
           deduplicationKey: `TRANSFER_SUCCEEDED:${transfer.id}`,
           occurredAt: now,
           payload: { transferId: transfer.id, reference },
+          traceId: input.traceId,
+          subjectCustomerIds: [input.customerId, destination.customerId],
+          notificationIds: [senderNotificationId, recipientNotificationId],
         });
         await input.fault?.("after_outbox_written");
 

@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 
 import { asIso, asString, requireUuid } from "../rowMappers.js";
+import { assertSafePayload, buildEnvelope, resolveEventPolicy } from "../../outbox/eventRegistry.js";
 
 export type OutboxRow = {
   id: string;
@@ -24,19 +25,53 @@ export class OutboxRepository {
     deduplicationKey?: string | null;
     payload?: unknown;
     occurredAt?: string;
+    eventVersion?: number;
+    aggregateType?: string;
+    aggregateVersion?: number;
+    traceId?: string | null;
+    subjectCustomerIds?: readonly string[];
+    notificationIds?: readonly string[];
   }): Promise<void> {
+    const occurredAt = input.occurredAt ?? new Date().toISOString();
+    assertSafePayload(input.payload ?? {});
+    const envelope = buildEnvelope({
+      eventId: input.id,
+      eventType: input.eventType,
+      eventVersion: input.eventVersion,
+      aggregateType: input.aggregateType,
+      aggregateId: input.aggregateId,
+      aggregateVersion: input.aggregateVersion,
+      occurredAt,
+      traceId: input.traceId,
+      subjectCustomerIds: input.subjectCustomerIds,
+      notificationIds: input.notificationIds,
+    });
+    const metadata = input.payload && typeof input.payload === "object" && !Array.isArray(input.payload)
+      ? input.payload as Record<string, unknown>
+      : {};
+    const payload = { ...metadata, ...envelope };
+    const deduplicationKey = input.deduplicationKey ?? `${envelope.eventType}:${input.aggregateId}:v${envelope.aggregate.version}`;
+    const priority = resolveEventPolicy(envelope.eventType, envelope.eventVersion)?.priority ?? 100;
     await this.client.query(
       `INSERT INTO outbox_events
-        (id, event_type, aggregate_id, deduplication_key, payload, occurred_at, attempts)
-       VALUES ($1, $2, $3, $4, $5::jsonb, COALESCE($6::timestamptz, NOW()), 0)
+        (id, event_type, event_version, aggregate_type, aggregate_id,
+         aggregate_version, deduplication_key, payload, status, priority,
+         occurred_at, next_attempt_at, attempts, trace_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, 'PENDING', $9,
+               $10::timestamptz, NOW(), 0, $11, $10::timestamptz, $10::timestamptz)
        ON CONFLICT DO NOTHING`,
       [
         requireUuid(input.id),
-        input.eventType,
+        envelope.eventType,
+        envelope.eventVersion,
+        envelope.aggregate.type,
         input.aggregateId,
-        input.deduplicationKey ?? null,
-        JSON.stringify(input.payload ?? {}),
-        input.occurredAt ?? null,
+        envelope.aggregate.version,
+        deduplicationKey,
+        JSON.stringify(payload),
+        priority,
+        occurredAt,
+        envelope.traceId,
       ],
     );
   }
@@ -45,7 +80,9 @@ export class OutboxRepository {
     const result = await this.client.query(
       `
         SELECT * FROM outbox_events
-        WHERE published_at IS NULL
+        WHERE status = 'PENDING'
+          AND aggregate_type <> 'legacy'
+          AND payload <> '{}'::jsonb
           AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
         ORDER BY occurred_at, id
         LIMIT $1
@@ -67,6 +104,9 @@ export class OutboxRepository {
   }
 
   async markPublished(id: string): Promise<void> {
-    await this.client.query("UPDATE outbox_events SET published_at = NOW(), attempts = attempts + 1 WHERE id = $1", [requireUuid(id)]);
+    await this.client.query(
+      "UPDATE outbox_events SET status = 'DISPATCHED', published_at = NOW(), attempts = attempts + 1, updated_at = NOW() WHERE id = $1 AND status = 'PROCESSING'",
+      [requireUuid(id)],
+    );
   }
 }

@@ -16,6 +16,12 @@ async function clearDatabase(database: DatabasePool): Promise<void> {
     "UPDATE transfer_quotes SET consumed_transfer_id = NULL WHERE consumed_transfer_id IS NOT NULL",
   );
   for (const table of [
+    "notification_deliveries",
+    "dead_letter_events",
+    "notification_endpoints",
+    "notification_preferences",
+    "worker_instances",
+    "notifications",
     "savings_maturity_operations",
     "savings_idempotency",
     "credit_idempotency",
@@ -196,15 +202,21 @@ test("direct transfer use case is idempotent, lock-ordered and atomically persis
        (SELECT COUNT(*) FROM account_transactions) AS transactions,
        (SELECT COUNT(*) FROM ledger_journals) AS journals,
        (SELECT COUNT(*) FROM audit_events) AS audits,
+       (SELECT COUNT(*) FROM notifications WHERE resource_id = $2) AS notifications,
        (SELECT COUNT(*) FROM outbox_events WHERE deduplication_key = $1) AS outbox,
-       (SELECT consumed_transfer_id FROM transfer_quotes WHERE id = $2) AS consumed`,
-    [`TRANSFER_SUCCEEDED:${first.id}`, fixture.quoteId],
+       (SELECT priority::text FROM outbox_events WHERE deduplication_key = $1) AS outbox_priority,
+       (SELECT trace_id FROM outbox_events WHERE deduplication_key = $1) AS outbox_trace,
+       (SELECT consumed_transfer_id FROM transfer_quotes WHERE id = $3) AS consumed`,
+    [`TRANSFER_SUCCEEDED:${first.id}`, first.id, fixture.quoteId],
   );
   assert.equal(integrity.rows[0].transfers, "1");
   assert.equal(integrity.rows[0].transactions, "2");
   assert.equal(integrity.rows[0].journals, "1");
   assert.equal(integrity.rows[0].audits, "1");
+  assert.equal(integrity.rows[0].notifications, "2");
   assert.equal(integrity.rows[0].outbox, "1");
+  assert.equal(integrity.rows[0].outbox_priority, "10");
+  assert.equal(integrity.rows[0].outbox_trace, "p0-test-trace");
   assert.equal(integrity.rows[0].consumed, first.id);
 
   const secondQuote = randomUUID();

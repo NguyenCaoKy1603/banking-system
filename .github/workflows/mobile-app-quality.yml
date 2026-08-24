@@ -84,6 +84,9 @@ jobs:
     env:
       DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
       RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
+      P0_RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_worker_test
+      WORKER_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_worker_test
+      NOTIFICATION_ENDPOINT_ENCRYPTION_KEY: ci-worker-only-key
       BANKING_ENV: development
       BANKING_MFA_REQUIRED: "0"
       BANKING_SANDBOX_MFA_OTP: "654321"
@@ -125,6 +128,11 @@ jobs:
       - name: Apply PostgreSQL migration
         run: npm run db:migrate
 
+      - name: Create and migrate worker database
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_worker_test"
+          DATABASE_URL="$WORKER_DATABASE_URL" npm run db:migrate
+
       - name: Re-run PostgreSQL migration idempotently
         run: npm run db:migrate
 
@@ -145,3 +153,6 @@ jobs:
 
       - name: Critical API integration flow
         run: npm run test:critical
+
+      - name: Worker concurrency, lease and dead-letter regression
+        run: npm run test:worker
