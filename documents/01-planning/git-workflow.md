@@ -10,6 +10,11 @@ Ngày cập nhật: 2026-08-24
 - `origin` hiện có `feature/mobile-authentication` tại `b2eef7d`, `main` cũng đã được tạo từ đúng SHA `b2eef7d`, và đã nhận `codex/mini-core-banking-sandbox`.
 - Workspace không có GitHub CLI; branch đã push và có upstream, nhưng chưa tạo được PR hoặc branch protection tự động.
 
+## Giai đoạn 1 branch
+
+- Branch triển khai local: `codex/stage1-docker-preview`, tách từ Stage 0 tip `6a512e9`.
+- Branch này chứa Docker/Compose/health/CI preview implementation; trước khi merge cần remote `Preview container smoke` xanh và maintainer bổ sung check mới vào branch protection nếu ruleset dùng danh sách cố định.
+
 ## Quy tắc làm việc
 
 1. Không push trực tiếp vào `main`; mọi thay đổi đi qua PR sau khi maintainer tạo và bảo vệ `main`.

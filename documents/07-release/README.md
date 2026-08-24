@@ -4,6 +4,8 @@
 
 Đã bổ sung package Android, EAS profile preview APK, environment mapping và công cụ kiểm tra release. Đã build APK release local, cài và mở thành công trên Android emulator; checksum và bằng chứng nằm trong [`../05-testing/device-evidence.md`](../05-testing/device-evidence.md). EAS CLI/staging signing vẫn chưa có nên artifact này chỉ là sandbox local, không phải release candidate.
 
+Runbook Docker/preview persistent của Giai đoạn 1 nằm tại [`preview-deployment-runbook.md`](preview-deployment-runbook.md), ma trận môi trường tại [`preview-environment-matrix.md`](preview-environment-matrix.md) và báo cáo kiểm chứng tại [`../05-testing/stage1-deployment-report.md`](../05-testing/stage1-deployment-report.md). Cloud provider, HTTPS domain, registry, managed PostgreSQL và EAS environment vẫn chưa được cấu hình.
+
 ## Kiểm tra cấu hình
 
 ```powershell

@@ -1,0 +1,127 @@
+name: Preview container smoke
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - "compose.yaml"
+      - ".env.compose.example"
+      - ".github/workflows/preview-container-smoke.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "compose.yaml"
+      - ".env.compose.example"
+      - ".github/workflows/preview-container-smoke.yml"
+
+jobs:
+  container-smoke:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: banking
+      POSTGRES_PASSWORD: banking-ci-only
+      POSTGRES_DB: banking_preview
+      DATABASE_URL: postgresql://banking:banking-ci-only@postgres:5432/banking_preview
+      POSTGRES_PORT: 55432
+      BACKEND_PORT: 55000
+      COMMIT_SHA: ${{ github.sha }}
+      BANKING_MFA_REQUIRED: "1"
+      BANKING_MFA_METHODS: OTP
+      BANKING_SANDBOX_MFA_OTP: banking-ci-mfa-only
+      BANKING_SANDBOX_OTP: banking-ci-transfer-only
+      BANKING_SANDBOX_OPERATOR_KEY: banking-ci-operator-only
+      BANKING_SETTLE_IMMEDIATELY: "1"
+      BANKING_ALLOWED_ORIGINS: https://preview.example.invalid
+      BANKING_SANDBOX_CREDIT_OVERDUE: "0"
+      SMOKE_EMAIL: container-smoke@example.invalid
+      SMOKE_PASSWORD: ContainerSmokePassword1
+      SMOKE_DEVICE_ID: container-smoke-device
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+      - name: Build runtime image
+        run: docker compose build --pull=false backend migrate
+
+      - name: Start PostgreSQL
+        run: docker compose up -d postgres
+
+      - name: Apply migrations from an empty database
+        run: docker compose run --rm migrate
+
+      - name: Re-run migrations idempotently
+        run: docker compose run --rm migrate
+
+      - name: Start backend container
+        run: docker compose up -d backend
+
+      - name: Verify runtime image is non-root and has no tsx compiler
+        run: >-
+          docker compose exec -T backend sh -c
+          'test "$(id -u)" != "0" && test ! -d node_modules/tsx'
+
+      - name: Wait for liveness and readiness
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/livez >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps
+          docker compose logs backend
+          exit 1
+
+      - name: Run API smoke flow through the container
+        run: >-
+          docker compose exec -T
+          -e SMOKE_EMAIL="$SMOKE_EMAIL"
+          -e SMOKE_PASSWORD="$SMOKE_PASSWORD"
+          -e SMOKE_DEVICE_ID="$SMOKE_DEVICE_ID"
+          backend node scripts/container-smoke.cjs
+
+      - name: Restart backend and verify persistent login
+        run: |
+          docker compose restart backend
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/healthz >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          docker compose exec -T \
+            -e SMOKE_EMAIL="$SMOKE_EMAIL" \
+            -e SMOKE_PASSWORD="$SMOKE_PASSWORD" \
+            -e SMOKE_DEVICE_ID="$SMOKE_DEVICE_ID" \
+            -e SMOKE_EXPECT_EXISTING=1 \
+            backend node scripts/container-smoke.cjs
+
+      - name: Restart the full Compose stack and keep the volume
+        run: |
+          docker compose down --remove-orphans
+          docker compose up -d backend
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/healthz >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          docker compose exec -T \
+            -e SMOKE_EMAIL="$SMOKE_EMAIL" \
+            -e SMOKE_PASSWORD="$SMOKE_PASSWORD" \
+            -e SMOKE_DEVICE_ID="$SMOKE_DEVICE_ID" \
+            -e SMOKE_EXPECT_EXISTING=1 \
+            backend node scripts/container-smoke.cjs
+
+      - name: Show service diagnostics
+        if: always()
+        run: docker compose ps && docker compose logs --no-color
+
+      - name: Tear down disposable preview
+        if: always()
+        run: docker compose down --volumes --remove-orphans

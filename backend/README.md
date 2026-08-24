@@ -48,6 +48,8 @@ npm start
 
 Server mặc định lắng nghe `http://localhost:5000/api/v1`; health/readiness tối giản ở `http://localhost:5000/healthz`. OTP transfer sandbox mặc định là `123456`; nếu bật `BANKING_MFA_REQUIRED=1` hoặc `BANKING_ENV=preview`, OTP login sandbox mặc định là `654321`. Có thể cấu hình challenge login server-driven bằng `BANKING_MFA_METHODS=OTP,BIOMETRIC`. Chỉ dùng các giá trị này trong local test.
 
+Giai đoạn 1 bổ sung `/livez` cho liveness độc lập database và `/readyz` là alias readiness của `/healthz`. Health response có service/environment/storage/commit SHA cùng reconciliation/outbox, không chứa credential hoặc dữ liệu tài chính nhạy cảm. Khi `BANKING_ALLOWED_ORIGINS` là allow-list, Origin ngoài danh sách bị từ chối bằng `403 CORS_ORIGIN_DENIED`.
+
 Để kiểm thử crash/restart, có thể tắt immediate settlement bằng `BANKING_SETTLE_IMMEDIATELY=0`, `BANKING_SETTLE_SAVINGS_IMMEDIATELY=0` hoặc `BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY=0`. Operator sandbox gọi `POST /api/v1/sandbox/process-scheduled` với `X-Sandbox-Operator-Key` để đưa transfer, savings opening và credit payment đang `PENDING` sang terminal trước khi xử lý đáo hạn/sao kê. Endpoint này chỉ là processor reference tuần tự; worker/core-banking adapter thật vẫn phải chịu trách nhiệm lease, retry, callback, concurrency và reconciliation ở môi trường production.
 
 Local server mặc định cho phép CORS `*`; production phải cấu hình `BANKING_ALLOWED_ORIGINS` bằng allowlist origin đã phê duyệt. Có thể giới hạn pilot bằng `BANKING_ALLOWLIST_ENABLED=1` và `BANKING_MAX_TRANSFER_AMOUNT_MINOR` (đơn vị minor-unit VND); các giới hạn này được áp ở server.
@@ -79,3 +81,16 @@ Local server mặc định cho phép CORS `*`; production phải cấu hình `BA
 - Registration và transfer step-up có rate-limit; outbox có retry backoff, attempts và health threshold.
 - Persistent HTTP đọc và validate toàn bộ request body trước khi mở relational transaction, tránh giữ advisory lock trong lúc chờ client gửi dữ liệu.
 - Persistent HTTP fail-closed với `503 PERSISTENCE_UNAVAILABLE` khi PostgreSQL không truy cập được; health không báo xanh khi storage lỗi.
+
+## Docker preview persistent
+
+`backend/Dockerfile` là multi-stage image dùng Node 22, build TypeScript ở builder nhưng runtime chỉ copy JavaScript đã build, production dependencies, SQL migration và chạy dưới user `node`. Runtime command là `node dist/server.js`; migration one-shot dùng Node-native `scripts/apply-migration.cjs`, không cần `tsx`.
+
+Compose đầy đủ nằm tại [`../compose.yaml`](../compose.yaml). Tạo `.env.compose` từ [`../.env.compose.example`](../.env.compose.example), thay các giá trị placeholder rồi chạy:
+
+```powershell
+docker compose --env-file .env.compose up -d --build
+docker compose --env-file .env.compose exec backend node scripts/container-smoke.cjs
+```
+
+`.env.compose` chỉ dành cho preview local và bị ignore. Database chỉ bind loopback local; cloud preview phải dùng PostgreSQL private/secret manager. Workflow [`../.github/workflows/preview-container-smoke.yml`](../.github/workflows/preview-container-smoke.yml) tái hiện build, migration database rỗng, health, smoke flow và restart-login trên GitHub Actions.

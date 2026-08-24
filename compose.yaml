@@ -1,0 +1,74 @@
+name: banking-reference-preview
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+    volumes:
+      - banking_preview_pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+    environment:
+      BANKING_ENV: preview
+      NODE_ENV: preview
+      BANKING_STORAGE: postgres
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["node", "scripts/apply-migration.cjs"]
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+    environment:
+      BANKING_ENV: preview
+      NODE_ENV: preview
+      BANKING_STORAGE: postgres
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      PORT: 5000
+      BANKING_MFA_REQUIRED: ${BANKING_MFA_REQUIRED:-1}
+      BANKING_MFA_METHODS: ${BANKING_MFA_METHODS:-OTP}
+      BANKING_SANDBOX_MFA_OTP: ${BANKING_SANDBOX_MFA_OTP:?BANKING_SANDBOX_MFA_OTP is required}
+      BANKING_SANDBOX_OTP: ${BANKING_SANDBOX_OTP:?BANKING_SANDBOX_OTP is required}
+      BANKING_SANDBOX_OPERATOR_KEY: ${BANKING_SANDBOX_OPERATOR_KEY:?BANKING_SANDBOX_OPERATOR_KEY is required}
+      BANKING_SETTLE_IMMEDIATELY: ${BANKING_SETTLE_IMMEDIATELY:-1}
+      BANKING_ALLOWED_ORIGINS: ${BANKING_ALLOWED_ORIGINS:?BANKING_ALLOWED_ORIGINS is required}
+      BANKING_SANDBOX_CREDIT_OVERDUE: ${BANKING_SANDBOX_CREDIT_OVERDUE:-0}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-5000}:5000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/healthz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  banking_preview_pgdata:

@@ -6,5 +6,7 @@
 **/.env
 **/.env.*
 !**/.env.example
+!.env.compose.example
+.env.compose
 *.log
 artifacts/

@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 
 import { BankingSystem } from "../bankingSystem.js";
-import { createBankingServer } from "../http.js";
+import { createBankingServer, createPersistentBankingServer } from "../http.js";
 
 const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
 
@@ -46,14 +46,51 @@ test("health endpoint reports reconciliation and outbox readiness", async (t) =>
   const response = await fetch(`http://127.0.0.1:${address.port}/healthz`);
   const health = (await response.json()) as {
     status: string;
+    service: string;
     reconciliation: string;
     pendingOutboxEvents: number;
   };
 
   assert.equal(response.status, 200);
   assert.equal(health.status, "ok");
+  assert.equal(health.service, "banking-reference-backend");
   assert.equal(health.reconciliation, "ok");
   assert.equal(health.pendingOutboxEvents, 0);
+});
+
+test("liveness stays available when the persistent repository is unavailable", async (t) => {
+  const repository = {
+    withState: async <T>(): Promise<T> => {
+      throw new Error("database unavailable");
+    },
+  };
+  const server = createPersistentBankingServer(repository, new BankingSystem());
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const live = await fetch(`http://127.0.0.1:${address.port}/livez`);
+  assert.equal(live.status, 200);
+  assert.equal((await live.json()).status, "ok");
+
+  const ready = await fetch(`http://127.0.0.1:${address.port}/healthz`);
+  assert.equal(ready.status, 503);
+});
+
+test("configured CORS rejects an origin outside the preview allow-list", async (t) => {
+  const server = createBankingServer(new BankingSystem(), {
+    allowedOrigins: ["https://preview.example.invalid"],
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const response = await fetch(`http://127.0.0.1:${address.port}/healthz`, {
+    headers: { Origin: "https://not-allowed.example.invalid" },
+  });
+  const payload = (await response.json()) as { code: string };
+  assert.equal(response.status, 403);
+  assert.equal(payload.code, "CORS_ORIGIN_DENIED");
 });
 
 test("HTTP router rejects trailing segments instead of dispatching a prefix route", async (t) => {

@@ -36,6 +36,8 @@ if (process.env.NODE_ENV === "production" || process.env.BANKING_ENV === "produc
 
 const port = Number(process.env.PORT ?? 5000);
 const storage = (process.env.BANKING_STORAGE ?? "postgres").trim().toLowerCase();
+const bankingEnvironment = (process.env.BANKING_ENV ?? "development").trim().toLowerCase();
+const buildCommitSha = process.env.BUILD_COMMIT_SHA?.trim() || "local";
 const allowedOrigins = (process.env.BANKING_ALLOWED_ORIGINS ?? "")
   .split(",")
   .map((origin) => origin.trim())
@@ -46,7 +48,12 @@ async function start(): Promise<void> {
     creditOverdueSeed: process.env.BANKING_SANDBOX_CREDIT_OVERDUE === "1",
     authChallengeMethods: readConfiguredMethods(),
   });
-  const httpOptions = allowedOrigins.length > 0 ? { allowedOrigins } : undefined;
+  const httpOptions = {
+    allowedOrigins: allowedOrigins.length > 0 ? allowedOrigins : undefined,
+    environment: bankingEnvironment,
+    storage,
+    commitSha: buildCommitSha,
+  };
   let repository: PostgresRelationalRepository | undefined;
   let server;
 
@@ -67,9 +74,15 @@ async function start(): Promise<void> {
   }
 
   server.listen(port, "0.0.0.0", () => {
-    console.log(
-      `Banking simulated backend listening on http://localhost:${port}/api/v1 (${storage === "postgres" ? "PostgreSQL persistent" : "in-memory test"} mode)`,
-    );
+    console.log(JSON.stringify({
+      event: "server_started",
+      startedAt: new Date().toISOString(),
+      service: "banking-reference-backend",
+      environment: bankingEnvironment,
+      storage,
+      port,
+      commitSha: buildCommitSha,
+    }));
   });
 
   const shutdown = (): void => {

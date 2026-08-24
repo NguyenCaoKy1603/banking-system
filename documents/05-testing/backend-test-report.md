@@ -1,6 +1,6 @@
 # Backend hardening test report
 
-> Cập nhật hiện hành 2026-08-24: Stage 0 implementation tip `edbc9bb` có 88 test definition, 82 pass và 6 PostgreSQL skip khi không có live database; critical API 8/8, static source contract 28 bảng đạt. Các gate này đã được xác minh lại trong clone sạch; bằng chứng PostgreSQL 70/70 và relational 1/1 ngày 2026-08-17 vẫn là lịch sử, chưa được rerun cho worktree hiện tại.
+> Cập nhật hiện hành 2026-08-24: Stage 1 worktree có 90 test definition, 84 pass và 6 PostgreSQL/relational skip khi Docker chưa chạy; critical API 8/8, static source contract 28 bảng đạt. Bằng chứng PostgreSQL 70/70 và relational 1/1 ngày 2026-08-17 vẫn là lịch sử.
 
 Ngày kiểm tra: 2026-08-24
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
@@ -13,7 +13,7 @@ Commit backend gần nhất: `dd515ad` (`Make sandbox handoff reproducible`)
 | --- | --- |
 | Typecheck/build | Đạt |
 | Database boundary validator | Đạt static source contract: 28 bảng, cột UUID/transfer/notification/runtime và constraint chính; live DB bị bỏ qua vì không có `DATABASE_URL` |
-| Unit + HTTP tests | Worktree không DB: 88 definition, 82 pass, 6 PostgreSQL skip; gồm body validation trước transaction và fail-closed khi DB unavailable |
+| Unit + HTTP tests | Worktree không DB: 90 definition, 84 pass, 6 PostgreSQL skip; gồm body validation trước transaction, liveness độc lập DB và fail-closed khi DB unavailable |
 | Relational persistence | `npm run test:relational`: 0 pass/1 skip trong lượt hiện tại vì Docker daemon không kết nối; historical 1/1 disposable database vẫn được giữ để truy vết |
 | Critical HTTP tests | 8 đạt |
 | Backend dependency audit | `npm audit --omit=dev --audit-level=high`: 0 vulnerability |
@@ -68,7 +68,7 @@ Persistent mode dùng `PostgresRelationalRepository` với advisory transaction 
 | `npm ci` | Đạt; lockfile không đổi |
 | Typecheck | Đạt |
 | Build | Đạt |
-| Full test không DB | 88 definition; 82 pass, 6 PostgreSQL skip, 0 fail |
+| Full test không DB | 90 definition; 84 pass, 6 PostgreSQL skip, 0 fail |
 | Persistent HTTP security boundary | 4/4 pass, không skip |
 | Critical HTTP | 8/8 pass |
 | OpenAPI contract/route | Đạt, 46 required paths và 51 exact method/segment guards |
@@ -99,7 +99,7 @@ Regression mới/chỉnh sửa kiểm tra:
 
 Lượt CI tiếp theo còn hai assertion cũ trong `persistence.test.ts`: HTTP test chờ `409` và Credit test chờ một promise bị reject. Contract hiện hành quy định idempotency key mới sau khi quote đã consume phải alias operation canonical, nên cả hai request trả receipt/payment cùng ID. Đã cập nhật test để kiểm tra `200/200`, cùng `transferId` và hai kết quả fulfilled cùng `paymentId`; production behavior không đổi.
 
-Kết quả local sau triage: typecheck, build, OpenAPI, static database contract, backend dependency audit (0 vulnerability), `npm test` không DB (82 pass, 6 PostgreSQL skip) và critical API (8/8) đạt. Mobile audit đã về 0 vulnerability sau `npm audit fix` không dùng `--force`, `@expo/metro@56.0.2` và Metro `0.84.5` override; web export/test gates vẫn đạt. Live PostgreSQL chưa thể chạy lại vì Docker daemon không kết nối được; cần push commit và chờ remote CI xác nhận sáu check.
+Kết quả local sau triage: typecheck, build, OpenAPI, static database contract, backend dependency audit (0 vulnerability), `npm test` không DB (84 pass, 6 PostgreSQL skip) và critical API (8/8) đạt. Mobile audit đã về 0 vulnerability sau `npm audit fix` không dùng `--force`, `@expo/metro@56.0.2` và Metro `0.84.5` override; web export/test gates vẫn đạt. Live PostgreSQL chưa thể chạy lại vì Docker daemon không kết nối được; Stage 1 có workflow container smoke để remote CI xác nhận.
 
 ### Data flow đã kiểm chứng ở mức reference
 

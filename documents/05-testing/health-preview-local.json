@@ -1,0 +1,23 @@
+{
+  "evidenceScope": "local-in-memory-only; not PostgreSQL or cloud preview",
+  "capturedAt": "2026-08-24T05:41:36.440Z",
+  "livez": {
+    "service": "banking-reference-backend",
+    "environment": "preview",
+    "storage": "in-memory",
+    "commitSha": "stage1-local",
+    "status": "ok",
+    "checkedAt": "2026-08-24T05:41:36.402Z"
+  },
+  "healthz": {
+    "service": "banking-reference-backend",
+    "environment": "preview",
+    "storage": "in-memory",
+    "commitSha": "stage1-local",
+    "status": "ok",
+    "checkedAt": "2026-08-24T05:41:36.440Z",
+    "reconciliation": "ok",
+    "outbox": "ok",
+    "pendingOutboxEvents": 0
+  }
+}

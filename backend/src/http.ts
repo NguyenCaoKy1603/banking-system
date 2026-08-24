@@ -15,6 +15,9 @@ const MAX_BODY_BYTES = 1_000_000;
 
 export type HttpOptions = {
   allowedOrigins?: string[];
+  environment?: string;
+  storage?: string;
+  commitSha?: string;
 };
 
 type RequestStateDisposition =
@@ -105,6 +108,21 @@ function writeError(
     fieldErrors: error.fieldErrors,
     traceId,
   });
+}
+
+function runtimeMetadata(options: HttpOptions = {}): {
+  service: string;
+  environment: string;
+  storage: string;
+  commitSha: string;
+} {
+  return {
+    service: "banking-reference-backend",
+    environment:
+      options.environment?.trim() || process.env.BANKING_ENV?.trim() || "development",
+    storage: options.storage?.trim() || process.env.BANKING_STORAGE?.trim() || "in-memory",
+    commitSha: options.commitSha?.trim() || process.env.BUILD_COMMIT_SHA?.trim() || "local",
+  };
 }
 
 class BufferedResponse {
@@ -389,6 +407,19 @@ export async function handleRequest(
   const traceId = getRequestId(request);
   const configuredOrigins = options.allowedOrigins ?? ["*"];
   const origin = header(request, "origin");
+  if (
+    origin &&
+    !configuredOrigins.includes("*") &&
+    !configuredOrigins.includes(origin)
+  ) {
+    writeError(
+      response,
+      403,
+      traceId,
+      new DomainError(403, "CORS_ORIGIN_DENIED", "Origin is not allowed."),
+    );
+    return;
+  }
   if (configuredOrigins.includes("*")) {
     response.setHeader("Access-Control-Allow-Origin", "*");
   } else if (origin && configuredOrigins.includes(origin)) {
@@ -405,9 +436,23 @@ export async function handleRequest(
 
   try {
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
-    if (request.method === "GET" && requestUrl.pathname === "/healthz") {
+    if (request.method === "GET" && requestUrl.pathname === "/livez") {
+      writeResponse(response, 200, traceId, {
+        ...runtimeMetadata(options),
+        status: "ok",
+        checkedAt: new Date().toISOString(),
+      });
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      (requestUrl.pathname === "/healthz" || requestUrl.pathname === "/readyz")
+    ) {
       const health = system.getHealth();
-      writeResponse(response, health.status === "ok" ? 200 : 503, traceId, health);
+      writeResponse(response, health.status === "ok" ? 200 : 503, traceId, {
+        ...runtimeMetadata(options),
+        ...health,
+      });
       return;
     }
 
@@ -1142,6 +1187,11 @@ export function createPersistentBankingServer(
   options: HttpOptions = {},
 ): Server {
   return createServer((request, response) => {
+    const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (request.method === "GET" && pathname === "/livez") {
+      void handleRequest(request, response, system, options);
+      return;
+    }
     const traceId = getRequestId(request);
     const bufferedResponse = new BufferedResponse(response);
     void readJson(request)

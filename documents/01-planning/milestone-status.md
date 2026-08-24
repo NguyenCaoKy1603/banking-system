@@ -7,7 +7,7 @@ Implementation evidence checkpoint hiện hành: `edbc9bb`; safety checkpoint: `
 Các thay đổi hardening ngày 2026-08-24 đã được tách thành commit logic trên working tree sạch; implementation branch đã push và có upstream, nhưng chưa có `main`/PR/branch protection. Bằng chứng checkpoint 2026-08-17 bên dưới vẫn là lịch sử tái hiện gần nhất; không được dùng số liệu cũ để tuyên bố các thay đổi mới đã qua device/staging gate.
 
 - Worktree Mobile lint, type-check, 46 suite/260 test, coverage 85,53% statement/86,57% branch, OpenAPI, Maestro syntax và web export đạt.
-- Worktree Backend type-check/build, 88 definition (82 pass, 6 PostgreSQL skip), 8 critical HTTP flow và static database contract 28 bảng đạt. Mốc PostgreSQL 70/70 + relational 1/1 bên dưới là bằng chứng lịch sử 2026-08-17, chưa được rerun cho hardening mới.
+- Worktree Backend type-check/build, 90 definition (84 pass, 6 PostgreSQL skip), 8 critical HTTP flow và static database contract 28 bảng đạt. Mốc PostgreSQL 70/70 + relational 1/1 bên dưới là bằng chứng lịch sử 2026-08-17.
 
 ## Cập nhật mới nhất — relational reference adapter
 
@@ -95,7 +95,7 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 
 ### Bằng chứng local hiện có cho worktree
 
-- Backend `npm run typecheck`, `npm run build`, static database contract, OpenAPI và `npm test` đã đạt: 88 test definition, 82 pass, 6 PostgreSQL test skip; `test:critical` 8/8 pass.
+- Backend `npm run typecheck`, `npm run build`, static database contract, OpenAPI và `npm test` đã đạt: 90 test definition, 84 pass, 6 PostgreSQL test skip; `test:critical` 8/8 pass.
 - Mobile full gate đã đạt: lint, typecheck, 46 suite/260 unit test, coverage 85,53% statement/86,57% branch, OpenAPI 43 path, 10 Maestro flow syntax và web export 33 route với build-time HTTPS URL.
 
 ### Chưa đóng
@@ -104,3 +104,10 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 - PostgreSQL live validator không đạt trong môi trường hiện tại; static schema contract đạt khi bỏ `DATABASE_URL`. Fraud restart/idempotency và credit concurrency live vẫn chưa có bằng chứng mới; sáu test database bị skip.
 - Chưa có device E2E cho timeout sau server commit, force-stop sau quote TTL, logout rồi re-login cùng user để resume, cross-user isolation, logout-all remote revoke hoặc fraud retry/status.
 - Mọi API/behavior mới vẫn là DRAFT; chưa có core/fraud/identity/credit product/legal approval, staging, physical-device evidence, monitoring hoặc signing. Không thay đổi kết luận: **chưa pilot/production-ready**.
+
+## Giai đoạn 1 — Docker và Preview Persistent — 2026-08-24
+
+- Đã thêm Dockerfile multi-stage cho Backend: build TypeScript ở builder, runtime JavaScript `dist/server.js`, production dependencies, user non-root, healthcheck và commit SHA metadata.
+- Đã thêm migration runner Node-native, `compose.yaml` với PostgreSQL 16 volume → migrate one-shot → Backend, `.env.compose.example` và CI container smoke workflow.
+- Đã thêm `/livez` độc lập database, `/healthz`/`/readyz` readiness, CORS deny ngoài allow-list và `container-smoke.cjs`; test local đạt nhưng Docker Desktop Linux engine chưa chạy.
+- Chưa có provider/registry/GHCR, PostgreSQL managed, domain HTTPS, EAS environment, APK staging, image digest, backup/restore hoặc rollback rehearsal. Stage 1 chỉ đóng sau khi các evidence cloud/device này được maintainer bổ sung.
