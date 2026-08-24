@@ -158,6 +158,7 @@ function authHeaders(session, deviceId) {
 async function main() {
   const healthSamples = [];
   const readSamples = [];
+  const quoteSamples = [];
   const owner = await register(ownerEmail, ownerDevice, ownerPhoneSuffix, ownerRateKey);
   const recipient = await register(recipientEmail, recipientDevice, recipientPhoneSuffix, recipientRateKey);
   const ownerSession = await login(owner.user.email, ownerDevice);
@@ -212,15 +213,21 @@ async function main() {
     readSamples.push({ durationMs: notifications.durationMs, ok: notifications.response.status === 200 });
   }
 
-  const quote = await expectStatus("/transfers/quote", {
-    method: "POST",
-    headers: ownerHeaders,
-    body: JSON.stringify({
-      sourceAccountId: ownerAccountId,
-      beneficiaryId,
-      amount: { currency: "VND", amountMinor: "100000" },
-    }),
-  }, 200);
+  let quote;
+  for (let index = 0; index < readIterations; index += 1) {
+    const quoteResult = await request("/transfers/quote", {
+      method: "POST",
+      headers: ownerHeaders,
+      body: JSON.stringify({
+        sourceAccountId: ownerAccountId,
+        beneficiaryId,
+        amount: { currency: "VND", amountMinor: "100000" },
+      }),
+    });
+    quoteSamples.push({ durationMs: quoteResult.durationMs, ok: quoteResult.response.status === 200 });
+    assert.equal(quoteResult.response.status, 200, "quote creation must return 200");
+    quote ??= quoteResult.body;
+  }
   const challenge = await expectStatus("/auth/otp/challenges", {
     method: "POST",
     headers: ownerHeaders,
@@ -260,6 +267,7 @@ async function main() {
     thresholds: {
       healthP95Ms: 100,
       readP95Ms: 300,
+      quoteP95Ms: 300,
       transferP95Ms: 700,
       errorRate: 0,
       doubleDebit: 0,
@@ -267,6 +275,7 @@ async function main() {
     metrics: {
       health: summarize(healthSamples),
       read: summarize(readSamples),
+      quote: summarize(quoteSamples),
       transfer: summarize(transferSamples.map((sample) => ({
         durationMs: sample.durationMs,
         ok: sample.response.status === 200,
@@ -281,6 +290,7 @@ async function main() {
   const thresholdFailures = [];
   if (result.metrics.health.p95Ms >= result.thresholds.healthP95Ms) thresholdFailures.push("health p95");
   if (result.metrics.read.p95Ms >= result.thresholds.readP95Ms) thresholdFailures.push("read p95");
+  if (result.metrics.quote.p95Ms >= result.thresholds.quoteP95Ms) thresholdFailures.push("quote p95");
   if (result.metrics.transfer.p95Ms >= result.thresholds.transferP95Ms) thresholdFailures.push("transfer p95");
   if (result.metrics.health.failures + result.metrics.read.failures + result.metrics.transfer.failures > 0) {
     thresholdFailures.push("unexpected HTTP failure");

@@ -1,4 +1,5 @@
 const { readdir, readFile } = require("node:fs/promises");
+const { createHash } = require("node:crypto");
 const path = require("node:path");
 const { Pool } = require("pg");
 
@@ -43,6 +44,17 @@ const requiredTablesByMigration = {
     "credit_payments",
   ],
   "005_relational_reference_runtime": ["reference_runtime_records"],
+  "006_relational_v2_foundation": ["command_idempotency"],
+  "007_identity_runtime_normalization": [
+    "refresh_session_families",
+    "refresh_session_records",
+    "auth_challenges",
+    "pending_registrations",
+    "rate_limit_buckets",
+  ],
+  "009_savings_relational_v2": ["savings_idempotency", "savings_maturity_operations"],
+  "010_credit_relational_v2": ["credit_idempotency"],
+  "011_registration_recovery": ["registration_completions"],
 };
 
 async function main() {
@@ -55,25 +67,42 @@ async function main() {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS reference_schema_migrations (
         migration_key text PRIMARY KEY,
-        applied_at timestamptz NOT NULL
+        applied_at timestamptz NOT NULL,
+        checksum text
       )
     `);
+    await pool.query(
+      "ALTER TABLE reference_schema_migrations ADD COLUMN IF NOT EXISTS checksum text",
+    );
 
     for (const migrationFile of migrationFiles) {
       const migrationKey = migrationFile.replace(/\.sql$/i, "");
       const migration = await readFile(path.join(databaseDirectory, migrationFile), "utf8");
+      const checksum = createHash("sha256").update(migration).digest("hex");
       const requiredTables = requiredTablesByMigration[migrationKey] ?? [];
 
       await pool.query("BEGIN");
       try {
         await pool.query("SELECT pg_advisory_xact_lock(hashtext($1))", [migrationKey]);
         const applied = await pool.query(
-          "SELECT 1 FROM reference_schema_migrations WHERE migration_key = $1",
+          "SELECT checksum FROM reference_schema_migrations WHERE migration_key = $1",
           [migrationKey],
         );
         if (applied.rowCount) {
+          const recordedChecksum = applied.rows[0]?.checksum;
+          if (recordedChecksum && recordedChecksum !== checksum) {
+            throw new Error(
+              `Migration checksum mismatch for ${migrationKey}; refusing to run a modified applied migration.`,
+            );
+          }
+          if (!recordedChecksum) {
+            await pool.query(
+              "UPDATE reference_schema_migrations SET checksum = $2 WHERE migration_key = $1",
+              [migrationKey, checksum],
+            );
+          }
           await pool.query("COMMIT");
-          console.log(`PostgreSQL migration already applied: ${migrationKey}.`);
+          console.log(`PostgreSQL migration already applied: ${migrationKey} (${checksum.slice(0, 12)}).`);
           continue;
         }
 
@@ -96,11 +125,11 @@ async function main() {
 
         await pool.query(migration);
         await pool.query(
-          "INSERT INTO reference_schema_migrations (migration_key, applied_at) VALUES ($1, NOW())",
-          [migrationKey],
+          "INSERT INTO reference_schema_migrations (migration_key, applied_at, checksum) VALUES ($1, NOW(), $2)",
+          [migrationKey, checksum],
         );
         await pool.query("COMMIT");
-        console.log(`PostgreSQL migration applied successfully: ${migrationKey}.`);
+        console.log(`PostgreSQL migration applied successfully: ${migrationKey} (${checksum.slice(0, 12)}).`);
       } catch (error) {
         await pool.query("ROLLBACK").catch(() => undefined);
         throw error;

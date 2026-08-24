@@ -624,8 +624,8 @@ export class PostgresRelationalRepository {
             (id, customer_id, source_account_id, beneficiary_id,
              amount_minor, fee_minor, currency, expires_at, consumed_at,
              created_at, beneficiary_snapshot, destination_account_id,
-             destination_owner_id, consumed_transfer_id)
-          VALUES ($1, $2, $3, $4, $5, $6, 'VND', $7, $8, $9, $10::jsonb, $11, $12, $13)
+             destination_owner_id, consumed_transfer_id, request_fingerprint)
+          VALUES ($1, $2, $3, $4, $5, $6, 'VND', $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
         `,
         [
           quote.quoteId,
@@ -641,6 +641,7 @@ export class PostgresRelationalRepository {
           isUuid(record.destinationAccountId) ? record.destinationAccountId : null,
           isUuid(record.destinationOwnerId) ? record.destinationOwnerId : null,
           isUuid(consumedTransferId) ? consumedTransferId : null,
+          String(record.requestFingerprint ?? `legacy-transfer-quote:${quote.quoteId}`),
         ],
       );
     }
@@ -921,7 +922,24 @@ export class PostgresRelationalRepository {
     // DELETE is used instead of TRUNCATE because the draft ledger schema has
     // deferred constraint triggers; PostgreSQL rejects a second TRUNCATE in a
     // transaction that already queued those trigger events.
+    // The v2 quote/transfer relation is bidirectional, so clear the optional
+    // consumed-transfer edge before deleting either side of the cycle.
+    await client.query(
+      "UPDATE transfer_quotes SET consumed_transfer_id = NULL WHERE consumed_transfer_id IS NOT NULL",
+    );
     for (const table of [
+      // Transitional compatibility only.  The legacy state adapter is not
+      // allowed to leave v2 rows pointing at customers it is about to replay.
+      "savings_maturity_operations",
+      "savings_idempotency",
+      "credit_idempotency",
+      "refresh_session_records",
+      "refresh_session_families",
+      "auth_challenges",
+      "pending_registrations",
+      "rate_limit_buckets",
+      "command_idempotency",
+      "registration_completions",
       "reference_runtime_records",
       "outbox_events",
       "audit_events",

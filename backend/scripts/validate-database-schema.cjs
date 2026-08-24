@@ -9,6 +9,28 @@ const creditSchemaPath = path.resolve(__dirname, "../database/003_credit_sandbox
 const creditSchema = fs.readFileSync(creditSchemaPath, "utf8");
 const runtimeSchemaPath = path.resolve(__dirname, "../database/005_relational_reference_runtime.sql");
 const runtimeSchema = fs.readFileSync(runtimeSchemaPath, "utf8");
+const v2SchemaPath = path.resolve(__dirname, "../database/006_relational_v2_foundation.sql");
+const v2Schema = fs.readFileSync(v2SchemaPath, "utf8");
+const identityV2Schema = fs.readFileSync(
+  path.resolve(__dirname, "../database/007_identity_runtime_normalization.sql"),
+  "utf8",
+);
+const transferV2Schema = fs.readFileSync(
+  path.resolve(__dirname, "../database/008_transfer_relational_v2.sql"),
+  "utf8",
+);
+const savingsV2Schema = fs.readFileSync(
+  path.resolve(__dirname, "../database/009_savings_relational_v2.sql"),
+  "utf8",
+);
+const creditV2Schema = fs.readFileSync(
+  path.resolve(__dirname, "../database/010_credit_relational_v2.sql"),
+  "utf8",
+);
+const registrationSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/011_registration_recovery.sql"),
+  "utf8",
+);
 
 const requiredTables = [
   "customers",
@@ -44,6 +66,17 @@ const creditTables = [
   "credit_payments",
 ];
 const runtimeTables = ["reference_runtime_records"];
+const v2Tables = ["command_idempotency"];
+const identityV2Tables = [
+  "refresh_session_families",
+  "refresh_session_records",
+  "auth_challenges",
+  "pending_registrations",
+  "rate_limit_buckets",
+];
+const savingsV2Tables = ["savings_idempotency", "savings_maturity_operations"];
+const creditV2Tables = ["credit_idempotency"];
+const registrationTables = ["registration_completions"];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -72,6 +105,21 @@ const creditTableBlocks = new Map(
 );
 const runtimeTableBlocks = new Map(
   runtimeTables.map((tableName) => [tableName, tableBlock(runtimeSchema, tableName)]),
+);
+const v2TableBlocks = new Map(
+  v2Tables.map((tableName) => [tableName, tableBlock(v2Schema, tableName)]),
+);
+const identityV2TableBlocks = new Map(
+  identityV2Tables.map((tableName) => [tableName, tableBlock(identityV2Schema, tableName)]),
+);
+const savingsV2TableBlocks = new Map(
+  savingsV2Tables.map((tableName) => [tableName, tableBlock(savingsV2Schema, tableName)]),
+);
+const creditV2TableBlocks = new Map(
+  creditV2Tables.map((tableName) => [tableName, tableBlock(creditV2Schema, tableName)]),
+);
+const registrationTableBlocks = new Map(
+  registrationTables.map((tableName) => [tableName, tableBlock(registrationSchema, tableName)]),
 );
 
 function requireColumn(tableName, columnName, definitionPattern) {
@@ -134,6 +182,19 @@ for (const [label, pattern] of [
   }
 }
 
+const registrationBlock = registrationTableBlocks.get("registration_completions");
+for (const [columnName, pattern] of [
+  ["pending_registration_id", /text\s+PRIMARY\s+KEY/i],
+  ["customer_id", /uuid\s+NOT\s+NULL\s+UNIQUE\s+REFERENCES\s+customers/i],
+  ["account_id", /uuid\s+NOT\s+NULL\s+UNIQUE\s+REFERENCES\s+payment_accounts/i],
+]) {
+  const columnPattern = new RegExp(`^\\s*${escapeRegExp(columnName)}\\s+([^,\\n]+)`, "mi");
+  const match = registrationBlock.match(columnPattern);
+  if (!match || !pattern.test(match[1])) {
+    throw new Error(`Column registration_completions.${columnName} is not durable/recoverable.`);
+  }
+}
+
 for (const tableName of creditTables) {
   const block = creditTableBlocks.get(tableName);
   if (!/\bid\s+uuid\s+PRIMARY\s+KEY\b/i.test(block) && tableName !== "credit_statement_items") {
@@ -189,6 +250,63 @@ for (const tableName of runtimeTables) {
   }
 }
 
+if (!/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+command_idempotency/i.test(v2Schema)) {
+  throw new Error("Missing relational-v2 command_idempotency table definition.");
+}
+
+for (const [label, pattern] of [
+  ["command idempotency uniqueness", /UNIQUE\s*\(\s*customer_id\s*,\s*operation_type\s*,\s*idempotency_key\s*\)/i],
+  ["account number sequence", /CREATE\s+SEQUENCE\s+IF\s+NOT\s+EXISTS\s+payment_account_number_seq/i],
+  ["quote request fingerprint", /ALTER\s+TABLE\s+transfer_quotes[\s\S]*?request_fingerprint\s+text/i],
+  ["outbox deduplication index", /outbox_events_deduplication_idx/i],
+]) {
+  if (!pattern.test(v2Schema)) {
+    throw new Error(`Missing relational-v2 invariant: ${label}`);
+  }
+}
+
+const commandIdempotencyBlock = v2TableBlocks.get("command_idempotency");
+for (const [columnName, pattern] of [
+  ["customer_id", /uuid\s+NOT\s+NULL\s+REFERENCES\s+customers/i],
+  ["operation_type", /text\s+NOT\s+NULL/i],
+  ["idempotency_key", /text\s+NOT\s+NULL/i],
+  ["request_fingerprint", /text\s+NOT\s+NULL/i],
+  ["response_payload", /jsonb\s+NOT\s+NULL/i],
+]) {
+  const columnPattern = new RegExp(`^\\s*${escapeRegExp(columnName)}\\s+([^,\\n]+)`, "mi");
+  const match = commandIdempotencyBlock.match(columnPattern);
+  if (!match || !pattern.test(match[1])) {
+    throw new Error(`Column command_idempotency.${columnName} does not match the required definition.`);
+  }
+}
+
+for (const [tableName, columnName, pattern] of [
+  ["refresh_session_records", "customer_id", /uuid\s+NOT\s+NULL\s+REFERENCES\s+customers/i],
+  ["refresh_session_records", "family_id", /uuid\s+NOT\s+NULL\s+REFERENCES\s+refresh_session_families/i],
+  ["auth_challenges", "methods", /text\[\]\s+NOT\s+NULL/i],
+  ["pending_registrations", "password_digest", /text\s+NOT\s+NULL/i],
+  ["rate_limit_buckets", "attempts", /integer\s+NOT\s+NULL/i],
+]) {
+  const block = identityV2TableBlocks.get(tableName);
+  const columnPattern = new RegExp(`^\\s*${escapeRegExp(columnName)}\\s+([^,\\n]+)`, "mi");
+  const match = block.match(columnPattern);
+  if (!match || !pattern.test(match[1])) {
+    throw new Error(`Column ${tableName}.${columnName} does not match the required identity-v2 definition.`);
+  }
+}
+
+for (const [label, pattern] of [
+  ["deferred transfer quote relation", /transfer_quotes_consumed_transfer_fk[\s\S]*DEFERRABLE\s+INITIALLY\s+DEFERRED/i],
+  ["transfer destination foreign key", /transfers_destination_account_fk[\s\S]*REFERENCES\s+payment_accounts/i],
+  ["savings maturity uniqueness", /UNIQUE\s*\(deposit_id,\s*operation_key\)/i],
+  ["credit payment idempotency uniqueness", /UNIQUE\s*\(customer_id,\s*operation_type,\s*idempotency_key\)/i],
+]) {
+  const source = `${identityV2Schema}\n${transferV2Schema}\n${savingsV2Schema}\n${creditV2Schema}`;
+  if (!pattern.test(source)) {
+    throw new Error(`Missing relational-v2 hardening invariant: ${label}`);
+  }
+}
+
 for (const [tableName, columnName, pattern] of [
   ["savings_quotes", "customer_id", /\buuid\b.*\bREFERENCES\s+customers\b/i],
   ["savings_quotes", "principal_minor", /\bbigint\b.*\bCHECK\s*\(principal_minor\s*>\s*0\)/i],
@@ -221,7 +339,7 @@ for (const [label, pattern] of [
   }
 }
 
-if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(`${schema}\n${savingsSchema}`)) {
+if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(`${schema}\n${savingsSchema}\n${creditSchema}\n${runtimeSchema}\n${v2Schema}\n${identityV2Schema}\n${transferV2Schema}\n${savingsV2Schema}\n${creditV2Schema}\n${registrationSchema}`)) {
   throw new Error("The draft migration must not contain destructive DROP statements.");
 }
 
@@ -229,7 +347,7 @@ async function validateLiveDatabase() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     console.log(
-        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
+        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
     );
     return;
   }
@@ -246,7 +364,17 @@ async function validateLiveDatabase() {
       `,
     );
     const liveTables = new Set(tableResult.rows.map((row) => row.table_name));
-    for (const tableName of [...requiredTables, ...savingsTables, ...creditTables, ...runtimeTables]) {
+    for (const tableName of [
+      ...requiredTables,
+      ...savingsTables,
+      ...creditTables,
+      ...runtimeTables,
+      ...v2Tables,
+      ...identityV2Tables,
+      ...savingsV2Tables,
+      ...creditV2Tables,
+      ...registrationTables,
+    ]) {
       if (!liveTables.has(tableName)) {
         throw new Error(`Live PostgreSQL database is missing table: ${tableName}`);
       }
@@ -305,6 +433,22 @@ async function validateLiveDatabase() {
       ["payment_accounts", "account_number", "text"],
       ["payment_accounts", "held_minor", "int8"],
       ["reference_runtime_records", "payload", "jsonb"],
+      ["command_idempotency", "customer_id", "uuid"],
+      ["command_idempotency", "operation_type", "text"],
+      ["command_idempotency", "idempotency_key", "text"],
+      ["command_idempotency", "request_fingerprint", "text"],
+      ["command_idempotency", "response_payload", "jsonb"],
+      ["refresh_session_records", "customer_id", "uuid"],
+      ["refresh_session_records", "family_id", "uuid"],
+      ["refresh_session_records", "device_id", "text"],
+      ["auth_challenges", "methods", "_text"],
+      ["pending_registrations", "password_digest", "text"],
+      ["rate_limit_buckets", "attempts", "int4"],
+      ["savings_idempotency", "opening_id", "uuid"],
+      ["savings_maturity_operations", "deposit_id", "uuid"],
+      ["credit_idempotency", "payment_id", "uuid"],
+      ["registration_completions", "customer_id", "uuid"],
+      ["registration_completions", "account_id", "uuid"],
     ]) {
       if (liveColumns.get(`${tableName}.${columnName}`) !== expectedType) {
         throw new Error(
@@ -336,6 +480,12 @@ async function validateLiveDatabase() {
       /credit_cards FOREIGN KEY \(credit_account_id\) REFERENCES credit_accounts/i,
       /credit_payment_quotes FOREIGN KEY \(statement_id\) REFERENCES credit_statements/i,
       /credit_payments UNIQUE \(customer_id, idempotency_key\)/i,
+      /command_idempotency UNIQUE \(customer_id, operation_type, idempotency_key\)/i,
+      /refresh_session_records FOREIGN KEY \(family_id\) REFERENCES refresh_session_families/i,
+      /savings_idempotency UNIQUE \(customer_id, operation_type, idempotency_key\)/i,
+      /savings_maturity_operations UNIQUE \(deposit_id, operation_key\)/i,
+      /credit_idempotency UNIQUE \(customer_id, operation_type, idempotency_key\)/i,
+      /registration_completions FOREIGN KEY \(customer_id\) REFERENCES customers/i,
     ]) {
       if (!definitions.some((definition) => pattern.test(definition))) {
         throw new Error(`Live PostgreSQL constraint missing: ${pattern}`);
@@ -343,7 +493,7 @@ async function validateLiveDatabase() {
     }
 
     console.log(
-      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
+      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
     );
   } finally {
     await pool.end();

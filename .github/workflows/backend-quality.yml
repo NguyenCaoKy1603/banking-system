@@ -18,6 +18,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
       RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
+      P0_RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_p0_test
       BANKING_ENV: development
       BANKING_MFA_REQUIRED: "0"
       BANKING_SANDBOX_MFA_OTP: "654321"
@@ -56,14 +57,25 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Create disposable P0 relational database
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_p0_test"
+
       - name: Apply PostgreSQL migration from empty database
         run: npm run db:migrate
 
       - name: Re-run PostgreSQL migration idempotently
         run: npm run db:migrate
 
+      - name: Apply P0 migrations to disposable database
+        env:
+          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_p0_test
+        run: npm run db:migrate
+
       - name: Validate database boundary
         run: npm run validate:database
+
+      - name: Validate relational-v2 invariants
+        run: npm run validate:relational-v2
 
       - name: Validate OpenAPI draft and implementation markers
         run: npm run validate:openapi
@@ -87,3 +99,6 @@ jobs:
         env:
           RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
         run: npm run test:relational
+
+      - name: Relational-v2 foundation regression
+        run: npm run test:database

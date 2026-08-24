@@ -4,11 +4,11 @@
 
 Đây là backend reference cho môi trường local của mobile app. Runtime mặc định dùng PostgreSQL persistent relational reference adapter; in-memory chỉ dành cho unit/reference test nhanh. PBKDF2 và core-banking adapter giả lập được dùng để kiểm chứng contract, state machine, refresh rotation, idempotency, audit/outbox và reconciliation.
 
-Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql), phần mở rộng reference runtime ở [`database/005_relational_reference_runtime.sql`](database/005_relational_reference_runtime.sql). Persistent sandbox hiện chiếu dữ liệu nghiệp vụ M0–M4/M8 vào bảng relational; state auth tạm thời và Savings/Credit bonus được lưu theo từng record trong `reference_runtime_records` để giữ khả năng tương thích của reference service.
+Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql), phần mở rộng reference runtime ở [`database/005_relational_reference_runtime.sql`](database/005_relational_reference_runtime.sql). Các migration P0 `006`–`011` bổ sung command idempotency, sequence account number, constraint/index transfer, normalized identity runtime, operation tables cho Savings/Credit và registration response recovery. HTTP preview hiện vẫn dùng adapter legacy để giữ tương thích trong lúc cutover; `reference_runtime_records` chưa được xóa và chưa được tuyên bố là relational-v2 source of truth.
 
 ## Persistent sandbox PostgreSQL
 
-Reference runtime có thêm chế độ `BANKING_STORAGE=postgres`. Chế độ này dùng `PostgresRelationalRepository`, advisory transaction lock và transaction boundary bao quanh mỗi request để kiểm thử restart/concurrency. `reference_state_snapshots` chỉ còn được đọc một lần để nâng dữ liệu sandbox cũ sang relational; dữ liệu mới không ghi lại thành một JSON snapshot tổng. Đây vẫn là sandbox-only; không dùng cho tiền thật.
+Reference runtime có thêm chế độ `BANKING_STORAGE=postgres`. Preview hiện dùng `PostgresRelationalRepository` legacy để bảo toàn API trong giai đoạn rehearsal; relational-v2 foundation nằm ở `src/database/` và được kiểm thử độc lập trên disposable database. `reference_state_snapshots` chỉ còn được đọc một lần để nâng dữ liệu sandbox cũ sang relational; dữ liệu mới không ghi lại thành một JSON snapshot tổng. Đây vẫn là sandbox-only; không dùng cho tiền thật.
 
 ```powershell
 $env:DATABASE_URL = "postgresql://banking:banking@localhost:5432/banking_test"
@@ -17,7 +17,7 @@ npm run db:migrate
 npm start
 ```
 
-`npm test` tự chạy đầy đủ test persistence khi có cả `DATABASE_URL` và `RELATIONAL_DATABASE_URL`; nếu không có PostgreSQL local thì các test này được skip và phải chạy trong workflow có PostgreSQL service. Workflow CI tương ứng nằm tại [`../.github/workflows/backend-quality.yml`](../.github/workflows/backend-quality.yml).
+`npm test` tự chạy đầy đủ test persistence khi có cả `DATABASE_URL` và `RELATIONAL_DATABASE_URL`; foundation test P0 dùng `P0_RELATIONAL_DATABASE_URL` disposable riêng. Nếu không có PostgreSQL local thì các test database được skip ở local và phải chạy trong workflow có PostgreSQL service. Workflow CI tương ứng nằm tại [`../.github/workflows/backend-quality.yml`](../.github/workflows/backend-quality.yml).
 Mẫu cấu hình không chứa credential thật nằm tại [`.env.example`](.env.example).
 
 Kiểm thử riêng repository relational phải dùng một database disposable đã migrate, không dùng database demo đang chạy:
@@ -58,7 +58,7 @@ Local server mặc định cho phép CORS `*`; production phải cấu hình `BA
 
 - `npm start` mặc định dùng `BANKING_STORAGE=postgres` và tự đọc `.env` nếu file tồn tại. Database phải được migrate trước; lệnh chuẩn là `npm run start:persistent`.
 - `BANKING_STORAGE=in-memory` chỉ dành cho unit/reference test nhanh, không còn là chế độ runtime mặc định.
-- PostgreSQL persistent hiện dùng `PostgresRelationalRepository`; test riêng `npm run test:relational` kiểm tra restart, pending transfer, reconciliation và concurrency trên database disposable có `RELATIONAL_DATABASE_URL`.
+- PostgreSQL persistent hiện dùng `PostgresRelationalRepository` legacy trong khi cutover P0 đang được rehearsal; test `npm run test:relational` kiểm tra restart/pending/reconciliation, còn `npm run test:database` kiểm tra UnitOfWork, direct transfer repository/use case và fault injection trên database disposable có `P0_RELATIONAL_DATABASE_URL`.
 - Chương trình mô phỏng nghiệp vụ ngân hàng bằng tiền ảo. Không có kết nối core banking, payment rail, tài khoản thật, KYC/AML thật hoặc xử lý tiền thật.
 
 ## Invariant được kiểm chứng

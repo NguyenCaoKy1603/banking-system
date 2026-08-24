@@ -10,6 +10,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "validate:database": "node --env-file-if-exists=.env scripts/validate-database-schema.cjs",
+    "validate:relational-v2": "node --env-file-if-exists=.env scripts/validate-relational-v2.cjs",
+    "p0:inventory": "node --env-file-if-exists=.env scripts/p0-inventory.cjs",
     "validate:openapi": "node scripts/validate-openapi.cjs",
     "db:migrate": "node --env-file-if-exists=.env scripts/apply-migration.cjs",
     "start:runtime": "node dist/server.js",
@@ -19,6 +21,7 @@
     "test": "tsx --test src/tests/*.test.ts",
     "test:critical": "tsx --test src/tests/http.test.ts",
     "test:relational": "tsx --test src/tests/relationalPersistence.test.ts",
+    "test:database": "tsx --test src/tests/databaseFoundation.test.ts",
     "seed:e2e": "node --env-file-if-exists=.env --import=tsx scripts/seed-e2e.ts"
   },
   "devDependencies": {

@@ -1182,6 +1182,7 @@ export function createBankingServer(
 export function createPersistentBankingServer(
   repository: {
     withState<T>(initialState: unknown, operation: RelationalStateOperation<T>): Promise<T>;
+    healthCheck?: () => Promise<void>;
   },
   system = new BankingSystem(),
   options: HttpOptions = {},
@@ -1190,6 +1191,25 @@ export function createPersistentBankingServer(
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
     if (request.method === "GET" && pathname === "/livez") {
       void handleRequest(request, response, system, options);
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      (pathname === "/healthz" || pathname === "/readyz") &&
+      repository.healthCheck
+    ) {
+      void repository
+        .healthCheck()
+        .then(() => handleRequest(request, response, system, options))
+        .catch(() => {
+          const traceId = getRequestId(request);
+          writeError(
+            response,
+            503,
+            traceId,
+            new DomainError(503, "PERSISTENCE_UNAVAILABLE", "Persistent sandbox is temporarily unavailable."),
+          );
+        });
       return;
     }
     const traceId = getRequestId(request);
