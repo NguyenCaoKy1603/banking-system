@@ -93,11 +93,13 @@ Regression mới/chỉnh sửa kiểm tra:
 
 ## Triage lỗi CI — 2026-08-24
 
-Ảnh PR cho thấy 5 check fail: Backend `quality` (pull request), Mobile `backend-quality` (pull request/push) và Mobile `quality` (pull request/push). Log Backend có 5 lỗi PostgreSQL persistence/concurrency, nhưng cùng một nguyên nhân: hardening commit `0a9454c` đặt `allowUnsafeDirectSandboxStepUp` mặc định là `false`; các fixture persistence vẫn submit OTP trực tiếp thay vì bật compatibility switch test-only. Vì vậy step-up bị từ chối, giao dịch bị rollback và các assertion fulfilled/HTTP status thất bại.
+Ảnh PR đầu cho thấy 5 check fail: Backend `quality` (pull request), Mobile `backend-quality` (pull request/push) và Mobile `quality` (pull request/push). Log Backend có 5 lỗi PostgreSQL persistence/concurrency, nhưng cùng một nguyên nhân: hardening commit `0a9454c` đặt `allowUnsafeDirectSandboxStepUp` mặc định là `false`; các fixture persistence vẫn submit OTP trực tiếp thay vì bật compatibility switch test-only. Vì vậy step-up bị từ chối, giao dịch bị rollback và các assertion fulfilled/HTTP status thất bại.
 
 Đã sửa cục bộ trong `backend/src/tests/persistence.test.ts` và `backend/src/tests/relationalPersistence.test.ts`: chỉ các fixture sandbox gọi submit trực tiếp bật `allowUnsafeDirectSandboxStepUp: true`; HTTP server production và mặc định runtime vẫn fail-closed, không thay đổi workflow CI.
 
-Kết quả sau sửa: typecheck, build, OpenAPI, static database contract, backend dependency audit (0 vulnerability), `npm test` không DB (82 pass, 6 PostgreSQL skip) và critical API (8/8) đạt. Live PostgreSQL chưa thể chạy lại vì Docker daemon không kết nối được; cần push commit cục bộ và chờ remote CI để xác nhận 5 check. Mobile audit vẫn là R-05 (11 High, chưa có bản vá tương thích; không dùng `--force`).
+Lượt CI tiếp theo còn hai assertion cũ trong `persistence.test.ts`: HTTP test chờ `409` và Credit test chờ một promise bị reject. Contract hiện hành quy định idempotency key mới sau khi quote đã consume phải alias operation canonical, nên cả hai request trả receipt/payment cùng ID. Đã cập nhật test để kiểm tra `200/200`, cùng `transferId` và hai kết quả fulfilled cùng `paymentId`; production behavior không đổi.
+
+Kết quả local sau triage: typecheck, build, OpenAPI, static database contract, backend dependency audit (0 vulnerability), `npm test` không DB (82 pass, 6 PostgreSQL skip) và critical API (8/8) đạt. Mobile audit đã về 0 vulnerability sau `npm audit fix` không dùng `--force`, `@expo/metro@56.0.2` và Metro `0.84.5` override; web export/test gates vẫn đạt. Live PostgreSQL chưa thể chạy lại vì Docker daemon không kết nối được; cần push commit và chờ remote CI xác nhận sáu check.
 
 ### Data flow đã kiểm chứng ở mức reference
 

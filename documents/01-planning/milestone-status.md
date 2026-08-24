@@ -30,7 +30,7 @@ Các thay đổi hardening ngày 2026-08-24 đã được tách thành commit lo
 - M2: eKYC thật/API KYC và test data staging chưa có; phần hiện tại là mock có chủ đích.
 - M4: transfer, beneficiary CRUD, QR manual fallback và pending/restart/resume đã có bằng chứng Maestro trên emulator; QR camera/permission và lifecycle native trên thiết bị thật vẫn chưa có.
 - M6 và M7: đã có reference sandbox; M6 quote/review/step-up/mở khoản → danh sách, M7 payment pending → stop/launch → resume, card lock → stop/launch → OTP unlock và overdue notification → card detail đã có flow pass trên emulator. M5 vẫn là mock/fixture, chưa phải API/production card integration; M9 chưa triển khai.
-- M10: usability, accessibility, performance và native device regression chưa hoàn tất; audit Mobile còn 11 High; remote CI execution chưa có log trong workspace và Docker daemon hiện không khả dụng cho live PostgreSQL.
+- M10: usability, accessibility, performance và native device regression chưa hoàn tất; audit Mobile local hiện 0 vulnerability sau khi khóa Metro `0.84.5`, nhưng remote CI chưa có log trong workspace và Docker daemon hiện không khả dụng cho live PostgreSQL.
 - M11: đã build APK release local và lưu checksum/evidence; chưa có signing, cài đặt ngoài máy phát triển, staging, monitoring và hồ sơ bảo vệ đầy đủ.
 
 ## Quyết định persistence reference

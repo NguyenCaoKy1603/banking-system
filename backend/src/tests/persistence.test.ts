@@ -483,8 +483,14 @@ test("PostgreSQL persistent HTTP server restores state across restart", {
   ]);
   assert.deepEqual(
     [submitA.status, submitB.status].sort((a, b) => a - b),
-    [200, 409],
+    [200, 200],
   );
+  const [receiptA, receiptB] = await Promise.all([
+    submitA.json() as Promise<{ transferId: string }>,
+    submitB.json() as Promise<{ transferId: string }>,
+  ]);
+  assert.ok(receiptA.transferId);
+  assert.equal(receiptA.transferId, receiptB.transferId);
   await closeServer(second.server);
 
   const third = await startServer(
@@ -702,8 +708,9 @@ test("PostgreSQL snapshot persists M7 credit state and serializes concurrent pay
       outcome.status === "fulfilled",
   );
   const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
-  assert.equal(fulfilled.length, 1);
-  assert.equal(rejected.length, 1);
+  assert.equal(fulfilled.length, 2);
+  assert.equal(rejected.length, 0);
+  assert.equal(fulfilled[0]?.value.paymentId, fulfilled[1]?.value.paymentId);
 
   const finalState = await repository.withState(
     new BankingSystem({ sandboxOtp: "123456" }).exportState(),

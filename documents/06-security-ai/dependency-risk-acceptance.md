@@ -1,26 +1,26 @@
 # Dependency risk acceptance — Mobile preview
 
-Ngày kiểm tra: 2026-08-15
-Trạng thái: **BLOCKED — chờ phê duyệt rủi ro**
+Ngày kiểm tra: 2026-08-24
+Trạng thái: **Đã xử lý cục bộ — chờ remote CI và review bảo mật**
 
 ## Finding
 
-`npm audit --omit=dev --audit-level=high` trong `mobile-app/` vẫn trả về 14 cảnh báo High liên quan đến `image-size`, đi qua Metro/Expo. Advisory mô tả khả năng denial of service trong parser ICNS/JXL/HEIF. Đây là dependency gián tiếp của toolchain build, không phải module nghiệp vụ được gọi trực tiếp trong runtime Mobile.
+Lượt CI trước báo các cảnh báo High liên quan đến `image-size`, đi qua Metro/Expo. Advisory mô tả khả năng denial of service trong parser ICNS/JXL/HEIF. Đây là dependency gián tiếp của toolchain build, không phải module nghiệp vụ được gọi trực tiếp trong runtime Mobile.
 
-Lệnh `npm audit fix --force` đề xuất thay đổi breaking sang React Native/Expo khác major nên không được chạy trong task này. Override `image-size` 2.x trước đó làm hỏng web export và không được giữ lại.
+Đã chạy `npm audit fix` không dùng `--force`, cập nhật `@expo/metro` lên `56.0.2` và khóa toàn bộ Metro ở `0.84.5` trong `mobile-app/package.json`/`package-lock.json`. Kết quả `npm audit --omit=dev --audit-level=high` local là 0 vulnerability; không đổi major Expo/React Native. Override `image-size` 2.x trước đó làm hỏng web export và không được giữ lại.
 
 ## Quyết định tạm thời
 
-- Không coi CI audit là xanh và không tuyên bố preview/pilot production-ready.
+- Chỉ coi audit là xanh ở worktree sau khi remote CI xác nhận; không tuyên bố preview/pilot production-ready chỉ dựa trên audit local.
 - Giữ `npm audit --omit=dev --audit-level=high` là release gate trong CI.
 - Chỉ cho phép build nội bộ/reference để kiểm thử, với URL/API và dữ liệu sandbox.
-- Cần một approver của Engineering + Security ghi nhận risk owner, phạm vi chấp nhận, ngày hết hạn và phương án upstream upgrade trước khi phát hành APK cho người dùng.
+- Cần Engineering + Security review bản override và kết quả remote CI; trước khi phát hành APK vẫn cần device matrix, staging, monitoring, risk owner/expiry và phê duyệt upstream compatibility.
 
 ## Mitigation và điều kiện đóng
 
-1. Theo dõi bản vá chính thức trong Expo/Metro và thử trên nhánh riêng.
-2. Chạy lại lint, typecheck, test, coverage, OpenAPI, E2E syntax và web export sau khi nâng cấp.
+1. Theo dõi bản vá chính thức trong Expo/Metro và thử lại khi Expo/RN nâng phiên bản.
+2. Đã chạy lại lint, typecheck, test, coverage, OpenAPI, E2E syntax, release config và web export sau khi cập nhật lockfile.
 3. Kiểm tra lại native build, camera, biometric, background/resume và transfer retry trên thiết bị.
-4. Cập nhật lockfile, advisory reference, owner, expiry và kết quả regression trong tài liệu này.
+4. Cập nhật lockfile, advisory reference, owner, expiry và kết quả remote regression trong tài liệu này.
 
-Owner/approver/expiry: **chưa được chỉ định**. Vì vậy finding này vẫn là blocker của M10/M11.
+Owner/approver/expiry: **chưa được chỉ định**. Audit local không còn blocker trực tiếp, nhưng M10/M11 vẫn mở cho remote CI, device, staging và phê duyệt release.

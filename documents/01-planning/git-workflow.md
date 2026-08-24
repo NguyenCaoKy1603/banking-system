@@ -41,4 +41,4 @@ Ngày cập nhật: 2026-08-24
 ## Kết quả clone sạch Stage 0
 
 - Đã clone tại `C:\Users\admin\AppData\Local\Temp\banking-system-stage0-clone-20260824-105231`, đúng implementation branch, upstream và worktree sạch.
-- Backend/Mobile gate trong clone khớp kết quả local; PostgreSQL live/relational vẫn bị giới hạn bởi Docker daemon không chạy, Mobile audit còn 11 High.
+- Backend/Mobile gate trong clone khớp kết quả local; PostgreSQL live/relational vẫn bị giới hạn bởi Docker daemon không chạy, Mobile audit local đã về 0 vulnerability sau bản vá Metro `0.84.5`; remote CI vẫn cần xác nhận.

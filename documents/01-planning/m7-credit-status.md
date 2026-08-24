@@ -29,7 +29,7 @@ Không có phê duyệt tín dụng thật, CIC, scoring, processor/acquirer, PA
 - Mobile: typecheck, lint, 37 suite/170 test, OpenAPI 36 path, Maestro syntax 10 flow, web export 33 route và release config đều đạt.
 - So tai khoan: danh sach chi tra so che; Home va Account Detail goi `GET /accounts/{accountId}/number` khi bam `Hien day du` hoac `Sao chep`, sau do hien/clipboard dung toan bo chuoi so.
 - Maestro 2.8.0 va ADB da duoc dung tren `Pixel_7_API_35`: flow M0–M4/M8 tren APK hien tai, M6 savings, credit payment, credit pending → stop/launch → resume, Credit card lock → stop/launch → OTP unlock va Credit overdue notification → card detail deu pass. Thiet bi that, camera/biometric native va staging van mo.
-- Backend dependency audit: 0 vulnerability. Mobile con 14 High transitive tu `image-size` trong Expo/Metro; khong ap dung `npm audit fix --force` vi no de xuat breaking downgrade Expo.
+- Backend dependency audit: 0 vulnerability. Mobile audit hiện 0 vulnerability sau khi cập nhật `@expo/metro@56.0.2` và khóa Metro `0.84.5`; không áp dụng `npm audit fix --force`.
 - Core M0–M4/M8 dùng relational reference adapter với state version/migration fallback; auth runtime và M6/M7 vẫn record-level reference. Repository production toàn domain, device lifecycle và staging/partner approval vẫn là gate mở.
 
 ## Hardening nghĩa vụ và recovery — 2026-08-24

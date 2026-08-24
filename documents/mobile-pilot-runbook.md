@@ -47,9 +47,9 @@ Không phát hành nếu còn lỗi High/Critical, nếu API URL production chư
 - Backend critical API test vẫn là nơi xác nhận idempotency khi submit lặp; flow thiết bị xác nhận lifecycle và khả năng đọc lại trạng thái sau restart.
 - Khi demo thủ công, chỉ dùng dữ liệu giả lập; không đưa password, OTP, access token, refresh token hoặc số tài khoản đầy đủ vào video/ảnh/báo cáo.
 
-Hiện `uuid` đã được pin ở `11.1.1` cho nhánh transitive qua xcode. `npm audit --omit=dev` vẫn còn 14 cảnh báo High từ `image-size` nằm dưới Metro của Expo 57. Override `image-size` lên 2.x đã được thử nhưng làm web export của Expo/Metro lỗi nên không giữ; `npm audit fix --force` đề xuất đổi React Native/Expo theo breaking change. Không phát hành pilot khi cảnh báo High/Critical này chưa có upstream patch hoặc phương án nâng cấp được kiểm thử và phê duyệt.
+Hiện `uuid` đã được pin ở `11.1.1` cho nhánh transitive qua xcode. Lượt audit trước từng còn cảnh báo High từ `image-size` nằm dưới Metro của Expo 57; đã xử lý bằng `npm audit fix` không dùng `--force`, cập nhật `@expo/metro` lên `56.0.2` và khóa toàn bộ Metro ở `0.84.5`. `npm audit --omit=dev --audit-level=high` local hiện trả 0 vulnerability; override `image-size` lên 2.x không được giữ vì từng làm web export lỗi. Vẫn không phát hành pilot chỉ dựa trên audit local: cần remote CI, thiết bị thật, staging và phê duyệt tương thích.
 
-CI có release gate `npm audit --omit=dev --audit-level=high`; vì vậy pipeline mobile hiện phải fail ở gate bảo mật cho tới khi finding này được xử lý hợp lệ.
+CI có release gate `npm audit --omit=dev --audit-level=high`; pipeline phải xác nhận lockfile/Metro `0.84.5` và giữ gate này xanh trên remote.
 
 ## Pilot có kiểm soát
 
@@ -73,5 +73,5 @@ Sau khi thay code, dung backend/mobile dang chay, khoi dong lai backend va Expo 
 ## Xác nhận gate cuối ngày 2026-08-15
 
 - Mobile: typecheck/lint, 37 suite/170 test, OpenAPI, 10 flow syntax, web export và release config đã đạt.
-- Backend: 70/70 test đạt khi có PostgreSQL 16 tạm thời; database migration/live validator đã đạt. Mobile audit còn 14 High transitive từ Expo/Metro và phải được xử lý hoặc risk-accept trước pilot.
+- Backend: 70/70 test đạt khi có PostgreSQL 16 tạm thời; database migration/live validator đã đạt. Mobile audit local hiện 0 vulnerability sau bản vá Metro không breaking; remote CI, thiết bị thật và risk review vẫn cần trước pilot.
 - Emulator: M0–M4/M8, M6 savings, credit payment, credit pending → stop app → launch app → resume, Credit card lock → stop/launch → OTP unlock và Credit overdue notification → card detail đều đã pass; bằng chứng mới nằm trong `C:\Users\admin\.maestro\tests\2026-08-16_014619`, `C:\Users\admin\.maestro\tests\2026-08-16_013045`, `C:\Users\admin\.maestro\tests\2026-08-16_000436`, `C:\Users\admin\.maestro\tests\2026-08-16_000714`, `C:\Users\admin\.maestro\tests\2026-08-16_003018` và `C:\Users\admin\.maestro\tests\2026-08-16_004626`.

@@ -65,7 +65,8 @@
     "export:web": "expo export --platform web"
   },
   "overrides": {
-    "uuid": "^11.1.1"
+    "uuid": "^11.1.1",
+    "metro": "0.84.5"
   },
   "private": true
 }

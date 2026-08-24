@@ -17,7 +17,7 @@ Backend verification checkpoint hiện hành: implementation tip `edbc9bb`; safe
 | Mobile typecheck | Đạt |
 | Mobile unit tests | 46 suite, 260 test đạt |
 | Mobile coverage | 85,53% statements, 86,57% branches, 93,39% functions, 85,97% lines |
-| `npm ci` | Backend và Mobile đạt; lockfile không đổi |
+| `npm ci` | Backend và Mobile đạt với lockfile Mobile đã cập nhật Metro `0.84.5` |
 | Offline/timeout presentation | Đạt mapping và retry unit test cho `NETWORK_ERROR`, `TIMEOUT`, `REQUEST_ABORTED`; Home/Account Detail/History/Login giữ nguyên lỗi API để hiển thị đúng loại lỗi, có retry notice; offline login retry đã pass trên emulator |
 | OpenAPI required paths | Đạt, 43 path bắt buộc phía Mobile; Backend kiểm tra 46 path và 51 exact route guard |
 | Native E2E | Android emulator `Pixel_7_API_35`: M0–M4, M6, M8 và Credit sandbox flow đạt; gồm hiện/sao chép đầy đủ số tài khoản, eKYC mô phỏng, beneficiary, QR manual fallback, savings quote/review/OTP và notification deep link |
@@ -25,15 +25,16 @@ Backend verification checkpoint hiện hành: implementation tip `edbc9bb`; safe
 | Backend reference | Worktree không DB: 88 definition, 82 pass, 6 PostgreSQL skip; critical API 8/8; static schema 28 bảng đạt. PostgreSQL live và seed E2E là bằng chứng lịch sử 2026-08-17 |
 | Backend dependency audit | Đạt, 0 vulnerability |
 | Expo web export | Đạt, 33 static route; dùng URL HTTPS placeholder cho static export vì `.env` local là HTTP sandbox và bị production guard từ chối |
-| Mobile dependency audit | **Chưa đạt**: 11 High theo chuỗi Expo/Metro → `image-size@1.2.1`; advisories `GHSA-w3rx-r6r6-pgpr` và `GHSA-5p2g-fcmc-qvqq`; npm chỉ đề xuất nâng breaking React Native. Không force fix; cần upstream patch/risk acceptance |
+| Mobile dependency audit | Đạt cục bộ: sau `npm audit fix` không dùng `--force`, `@expo/metro` lên `56.0.2` và toàn bộ Metro khóa ở `0.84.5`; `npm audit --omit=dev --audit-level=high` trả 0 vulnerability. Chờ remote CI xác nhận |
 
 ## Triage CI và phạm vi sửa cục bộ — 2026-08-24
 
-- 5 check trên PR fail cùng lúc vì nhóm Backend PostgreSQL persistence dùng OTP trực tiếp sau khi policy step-up chuyển sang fail-closed. Fixture test chưa bật `allowUnsafeDirectSandboxStepUp`, nên mọi submit bị `STEP_UP_VERIFICATION_FAILED` và kéo theo các assertion concurrency/restart fail.
+- Lượt CI đầu có 5 check fail cùng lúc vì nhóm Backend PostgreSQL persistence dùng OTP trực tiếp sau khi policy step-up chuyển sang fail-closed. Fixture test chưa bật `allowUnsafeDirectSandboxStepUp`, nên mọi submit bị `STEP_UP_VERIFICATION_FAILED` và kéo theo các assertion concurrency/restart fail.
 - Đã bật switch này chỉ trong các fixture test liên quan ở Backend; không sửa production API, HTTP server mặc định hoặc workflow GitHub.
+- Lượt CI tiếp theo còn hai assertion persistence đã lỗi thời: test HTTP vẫn chờ `409` và test Credit vẫn chờ một promise bị reject, trong khi contract quy định key mới sau khi quote đã consume phải replay receipt/payment canonical với cùng operation ID. Đã cập nhật `backend/src/tests/persistence.test.ts` để kiểm tra `200/200`, cùng `transferId` và hai kết quả payment cùng `paymentId`.
 - Các gate Mobile ngoài audit đã chạy lại và đạt: lint, typecheck, OpenAPI, 10 Maestro flow syntax, release config, Expo public config, 46 suite/260 test, coverage 85,53% statements/86,57% branches và web export 33 route.
-- Mobile audit vẫn fail 11 High từ `image-size` trong Metro; `npm audit fix --dry-run` không cung cấp bản vá không-breaking và `--force` đề xuất React Native 0.87.0. Giữ nguyên lockfile, không che giấu lỗi.
-- Không có live PostgreSQL trong workspace (Docker daemon chưa chạy), nên kết quả remote của 5 check vẫn cần được xác nhận sau khi chủ repo tự push commit này lên GitHub.
+- Mobile audit đã xử lý cục bộ bằng `npm audit fix` không dùng `--force`, nâng `@expo/metro` lên `56.0.2` và override Metro `0.84.5`; audit high hiện trả 0 vulnerability. Expo/RN không bị nâng major và web export vẫn đạt.
+- Không có live PostgreSQL trong workspace (Docker daemon chưa chạy), nên kết quả remote của sáu check vẫn cần được xác nhận sau khi push commit này lên GitHub.
 
 ## Smoke seed
 
@@ -55,7 +56,7 @@ Backend verification checkpoint hiện hành: implementation tip `edbc9bb`; safe
 - Secret scan không phát hiện JWT/Bearer/private key/credential vận hành; các hit còn lại là fixture test hoặc PostgreSQL localhost example.
 - `git status` sạch; `.env`, `node_modules`, build output, coverage và log không nằm trong commit.
 - PostgreSQL relational hiện `1 test skip` vì Docker daemon không kết nối được; không dùng kết quả skip để tuyên bố live migration pass.
-- Clone sạch Stage 0: `C:\Users\admin\AppData\Local\Temp\banking-system-stage0-clone-20260824-105231`; `npm ci`, backend/mobile gates và `git diff --check` đạt, chỉ giữ cùng các giới hạn PostgreSQL live và Mobile audit 11 High.
+- Clone sạch Stage 0: `C:\Users\admin\AppData\Local\Temp\banking-system-stage0-clone-20260824-105231`; `npm ci`, backend/mobile gates và `git diff --check` đạt, chỉ giữ các giới hạn PostgreSQL live, remote CI và device/staging.
 
 ## Kết luận
 
@@ -67,7 +68,7 @@ Các kiểm tra local cùng E2E emulator chứng minh reference implementation c
 - M0–M4/M8 pass trên APK release hiện tại: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
 - Transfer pending-resume pass sau force-stop/mở lại: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
 - Offline login retry pass trên emulator với API URL cố ý không reachable; raw Maestro artifact đã xóa để không lưu password test vào command metadata.
-- Mobile audit vẫn có 14 High transitive từ Expo/Metro; đây là risk mở, không tuyên bố production-ready.
+- Mobile audit lịch sử 14 High transitive từ Expo/Metro đã được xử lý cục bộ bằng Metro `0.84.5`; remote CI, thiết bị thật và staging vẫn là gate mở, không tuyên bố production-ready.
 
 ## Cap nhat xac nhan cuoi M6/M7 va account reveal - 2026-08-15
 
@@ -76,7 +77,7 @@ Các kiểm tra local cùng E2E emulator chứng minh reference implementation c
 - Credit sandbox da co seed card, sao ke, quote, MFA, idempotency, PENDING resume, ledger/reconciliation va lock/unlock step-up.
 - `seed:e2e` da chay thanh cong tren server sandbox tam: transfer va savings `SUCCEEDED`, Credit card/statement duoc tao; stdout khong chua password/OTP.
 - Account number: list API chi tra masked; `GET /accounts/{accountId}/number` tra full number; Home va Account Detail co nut Hien day du va Sao chep, clipboard nhan dung toan bo chuoi so.
-- Backend dependency audit 0 vulnerability; Mobile con 14 High transitive tu `image-size` trong Expo/Metro. Khong ap dung `npm audit fix --force` vi no de xuat breaking downgrade Expo.
+- Backend dependency audit 0 vulnerability; Mobile audit hiện 0 vulnerability sau khi khóa Metro `0.84.5` bằng bản vá không breaking. Không áp dụng `npm audit fix --force`.
 - Maestro/ADB da chay M7 tren `Pixel_7_API_35`: credit payment, pending → stop/launch → resume, card lock → stop/launch → OTP unlock va overdue notification → card detail deu pass; staging, partner integration va physical-device evidence van mo.
 - Maestro/ADB da chay M6 savings tren APK release moi: quote/review → step-up OTP → mo khoan → danh sach tien gui pass; artifact `C:\Users\admin\.maestro\tests\2026-08-16_013045`.
 
