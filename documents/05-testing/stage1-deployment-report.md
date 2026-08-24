@@ -3,6 +3,7 @@
 Ngày kiểm tra: 2026-08-24
 Baseline Giai đoạn 0: `6a512e9`
 Branch triển khai: `codex/stage1-docker-preview`
+Implementation commit: `ea151b9`
 Trạng thái: **Implementation local/CI đang tiến hành; chưa phải cloud preview**
 
 ## Thay đổi đã thực hiện
