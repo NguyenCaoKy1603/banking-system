@@ -1,0 +1,32 @@
+{
+  "evidenceScope": "local-compose-postgresql",
+  "checkedAt": "2026-08-24T06:04:00.412Z",
+  "commitSha": "6438083",
+  "livez": {
+    "service": "banking-reference-backend",
+    "environment": "preview",
+    "storage": "postgres",
+    "status": "ok"
+  },
+  "healthz": {
+    "service": "banking-reference-backend",
+    "environment": "preview",
+    "storage": "postgres",
+    "status": "ok",
+    "reconciliation": "ok",
+    "outbox": "ok",
+    "pendingOutboxEvents": 0
+  },
+  "runtime": {
+    "backendContainerUser": "node",
+    "backendUid": 1000,
+    "productionTsxPresent": false,
+    "backendImageId": "sha256:253350f53623f8482f8f84f8fcb77324533ecf4fdc3a0b79f1aa470b54fd4b20",
+    "migrationImageId": "sha256:64c633c8738fac2c1edbce4e84fe6ed23111208e8905f991a98f1f802bc6ee03"
+  },
+  "smoke": {
+    "initialRegistrationLogin": "passed",
+    "backendRestartLogin": "passed",
+    "composeRestartWithNamedVolumeLogin": "passed"
+  }
+}

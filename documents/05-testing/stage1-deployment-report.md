@@ -3,8 +3,8 @@
 Ngày kiểm tra: 2026-08-24
 Baseline Giai đoạn 0: `6a512e9`
 Branch triển khai: `codex/stage1-docker-preview`
-Implementation commit: `ea151b9`
-Trạng thái: **Implementation local/CI đang tiến hành; chưa phải cloud preview**
+Implementation commit: `6438083`
+Trạng thái: **Local Docker/CI implementation đã kiểm chứng; chưa phải cloud preview**
 
 ## Thay đổi đã thực hiện
 
@@ -23,29 +23,35 @@ Trạng thái: **Implementation local/CI đang tiến hành; chưa phải cloud 
 
 - Backend typecheck: đạt.
 - Backend build: đạt.
-- Backend test: 90 definition, 84 pass, 6 PostgreSQL/relational skip vì Docker daemon chưa chạy.
-- Backend container smoke: đạt trên Backend in-memory với `BANKING_ENV=preview`; đây không thay thế Docker/PostgreSQL evidence.
-- Health JSON đã làm sạch được ghi tại [`health-preview-local.json`](health-preview-local.json), chỉ phản ánh in-memory preview và không chứa credential/token/account number.
+- Backend test với PostgreSQL/relational disposable: 91 definition, 91 pass, 0 skip.
+- Backend critical HTTP: 10/10 pass; database contract: 28 bảng; OpenAPI draft: 46 path/51 method guards.
+- Backend container smoke: đăng ký/đăng nhập lần đầu đạt; restart Backend giữ session data đạt; restart toàn Compose giữ named volume và đăng nhập lại đạt.
+- Health JSON PostgreSQL local đã làm sạch được ghi tại [`stage1-docker-health.json`](stage1-docker-health.json); health in-memory lịch sử vẫn nằm tại [`health-preview-local.json`](health-preview-local.json).
+- Migration log database rỗng/lặp: [`stage1-docker-migration.md`](stage1-docker-migration.md).
+- Backup/restore rehearsal local: [`stage1-backup-restore-report.md`](stage1-backup-restore-report.md).
 - `node --check` cho migration runner và container smoke: đạt.
 - `docker compose config --quiet`: đạt với bộ biến CI test-only.
-- `docker info`: Docker client có nhưng Docker Desktop Linux engine không kết nối được; chưa thể build image, chạy Compose, migrate PostgreSQL, restart persistent hoặc lấy image digest.
+- `docker compose build --pull=false backend migrate`: đạt; builder typecheck/build và production dependency audit đều 0 vulnerability.
+- Runtime inspect: backend/migrate chạy bằng user `node` (UID 1000), production image không có `node_modules/tsx`; image ID local được ghi trong `stage1-docker-health.json`.
+- Docker Desktop Linux engine đã chạy; migration, health, persistence, backup/restore và restart rehearsal đều đã có bằng chứng local.
+- Chạy lại đúng chuỗi biến môi trường của workflow CI (port 55432/55000, volume rỗng, migration lặp, smoke lần đầu, restart Backend và restart toàn stack) cũng đạt; remote GitHub Actions vẫn cần maintainer mở PR để ghi nhận check.
 
 ## Acceptance matrix
 
 | Tiêu chí | Kết quả hiện tại |
 | --- | --- |
-| Docker build từ clone sạch | Chờ Docker daemon/CI |
-| Runtime JS non-root | Đã thiết kế trong Dockerfile; chờ image inspection |
-| Migration rỗng/lặp | Runner đã có; chờ PostgreSQL/CI |
-| Health healthy/DB lỗi | Có test liveness tách DB và persistent failure; chờ Compose |
-| Persistence/restart/concurrency | Existing PostgreSQL tests + CI workflow; local chưa chạy |
+| Docker build từ clone sạch | Local Compose build đạt; clone sạch/remote CI còn chờ |
+| Runtime JS non-root | Đạt: `node`, UID 1000; production image không có `tsx` |
+| Migration rỗng/lặp | Đạt trên PostgreSQL 16 named volume; log applied/already-applied |
+| Health healthy/DB lỗi | Đạt: `/livez`/`/healthz` Compose healthy; liveness khi DB lỗi có regression |
+| Persistence/restart/concurrency | Đạt local: smoke qua backend/Compose restart; PostgreSQL + relational 91/91 |
 | HTTPS API bên ngoài | Chưa có provider/domain |
 | APK không Metro/ADB reverse | Chưa có EAS environment/API URL |
-| Secret scan/image/log | `.dockerignore`, env boundary và startup log đã cập nhật; image scan chờ registry/CI |
-| Backup/restore/rollback | Runbook đã định nghĩa; chưa rehearsal cloud |
+| Secret scan/image/log | Local npm audit production 0; env boundary, non-root và startup log đã inspect; registry image scan còn chờ |
+| Backup/restore/rollback | Backup/restore local đạt; rollback cloud/provider còn chờ image digest trước đó |
 
 ## Evidence còn thiếu
 
-Chưa tạo được migration log, Docker image digest, cloud health URL/JSON, APK SHA-256 staging, backup/restore report hoặc rollback rehearsal vì chưa có Docker engine, registry/provider, HTTPS domain, managed PostgreSQL và EAS account trong workspace. Health JSON local ở trên không được dùng thay cho cloud evidence. Không ghi các mục còn thiếu là “đạt” bằng dữ liệu giả.
+Đã tạo migration log, local image ID/health JSON và backup/restore report. Chưa có cloud health URL/JSON, registry digest, APK SHA-256 staging hoặc provider rollback rehearsal vì workspace chưa có registry/provider, HTTPS domain, managed PostgreSQL và EAS account. Local evidence ở trên không được dùng thay cho cloud evidence. Không ghi các mục còn thiếu là “đạt” bằng dữ liệu giả.
 
-Giai đoạn 1 chỉ được đóng sau khi CI container smoke xanh và maintainer bổ sung toàn bộ evidence cloud/device nêu trên.
+Phần Docker/Preview Persistent local của Giai đoạn 1 đã hoàn thành. Việc đóng toàn bộ milestone vẫn cần remote CI xanh và evidence cloud/device (HTTPS, managed PostgreSQL, registry digest, EAS APK và thiết bị thật).
