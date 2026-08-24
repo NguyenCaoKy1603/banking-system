@@ -214,6 +214,9 @@ export function newCreditId(): string {
 }
 
 export function money(amountMinor: bigint): Money {
+  if (amountMinor < 0n) {
+    throw new RangeError("Credit money cannot be negative.");
+  }
   return { currency: "VND", amountMinor: amountMinor.toString() };
 }
 
@@ -297,6 +300,7 @@ export function calculateAvailableCredit(
 
 export function getStatementStatus(
   remainingAmountDueMinor: bigint,
+  minimumPaymentRemainingMinor: bigint,
   paidAmountMinor: bigint,
   dueAt: string,
   now: number,
@@ -304,7 +308,7 @@ export function getStatementStatus(
   if (remainingAmountDueMinor <= 0n) {
     return "PAID";
   }
-  if (Date.parse(dueAt) <= now) {
+  if (Date.parse(dueAt) <= now && minimumPaymentRemainingMinor > 0n) {
     return "OVERDUE";
   }
   if (paidAmountMinor > 0n) {

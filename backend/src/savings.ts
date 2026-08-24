@@ -145,6 +145,7 @@ export const DEFAULT_SAVINGS_PRODUCTS: readonly SavingsProduct[] = [
 ];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const VIETNAM_TIME_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 function daysInMonth(year: number, monthIndex: number): number {
   return new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
@@ -156,13 +157,18 @@ export function addMonthsClamped(isoDate: string, months: number): string {
     throw new TypeError("Invalid date or month term.");
   }
 
-  const year = source.getUTCFullYear();
-  const monthIndex = source.getUTCMonth();
+  // Savings terms are defined by the Vietnam banking date, not by the UTC
+  // calendar date. Asia/Ho_Chi_Minh is UTC+07:00 and has no daylight-saving
+  // transition, so shifting before doing calendar arithmetic preserves both
+  // the local day and local time at maturity.
+  const localSource = new Date(source.getTime() + VIETNAM_TIME_OFFSET_MS);
+  const year = localSource.getUTCFullYear();
+  const monthIndex = localSource.getUTCMonth();
   const targetMonthIndex = monthIndex + months;
   const targetYear = year + Math.floor(targetMonthIndex / 12);
   const normalizedMonthIndex = targetMonthIndex % 12;
   const targetDay = Math.min(
-    source.getUTCDate(),
+    localSource.getUTCDate(),
     daysInMonth(targetYear, normalizedMonthIndex),
   );
 
@@ -171,11 +177,11 @@ export function addMonthsClamped(isoDate: string, months: number): string {
       targetYear,
       normalizedMonthIndex,
       targetDay,
-      source.getUTCHours(),
-      source.getUTCMinutes(),
-      source.getUTCSeconds(),
-      source.getUTCMilliseconds(),
-    ),
+      localSource.getUTCHours(),
+      localSource.getUTCMinutes(),
+      localSource.getUTCSeconds(),
+      localSource.getUTCMilliseconds(),
+    ) - VIETNAM_TIME_OFFSET_MS,
   ).toISOString();
 }
 

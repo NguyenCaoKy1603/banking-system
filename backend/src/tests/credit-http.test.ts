@@ -35,7 +35,10 @@ async function completeRegistration(
 }
 
 test("HTTP credit sandbox exposes card, statement and idempotent payment flow", async (t) => {
-  const system = new BankingSystem({ sandboxOtp: "123456" });
+  const system = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
   const server = createBankingServer(system);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
@@ -50,6 +53,27 @@ test("HTTP credit sandbox exposes card, statement and idempotent payment flow", 
   const body = (value: unknown) => JSON.stringify(value);
 
   const registered = await completeRegistration(request, deviceId);
+  const unauthorizedProcessor = await request("/sandbox/process-scheduled", {
+    method: "POST",
+    body: body({ userId: registered.user.id }),
+  });
+  assert.equal(unauthorizedProcessor.status, 401);
+  const invalidProcessor = await request("/sandbox/process-scheduled", {
+    method: "POST",
+    headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY },
+    body: body({ userId: 42 }),
+  });
+  assert.equal(invalidProcessor.status, 422);
+  const processor = await request("/sandbox/process-scheduled", {
+    method: "POST",
+    headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY },
+    body: body({ userId: registered.user.id }),
+  });
+  assert.equal(processor.status, 200);
+  assert.equal(
+    (await processor.json() as { usersProcessed: number }).usersProcessed,
+    1,
+  );
   system.seedCreditSandbox(SANDBOX_OPERATOR_KEY, registered.user.id);
   const login = await request("/auth/login", {
     method: "POST",
@@ -71,6 +95,16 @@ test("HTTP credit sandbox exposes card, statement and idempotent payment flow", 
   });
   assert.equal(lockResponse.status, 200);
   assert.equal((await lockResponse.json() as { card: { status: string } }).card.status, "LOCKED");
+
+  const rejectedUnlock = await authRequest(`/cards/${card.cardId}/unlock`, {
+    method: "POST",
+    body: body({ method: "OTP", proof: "000000" }),
+  });
+  assert.equal(rejectedUnlock.status, 409);
+  assert.equal(
+    ((await rejectedUnlock.json()) as { code: string }).code,
+    "STEP_UP_VERIFICATION_FAILED",
+  );
 
   const unlockResponse = await authRequest(`/cards/${card.cardId}/unlock`, {
     method: "POST",
@@ -98,6 +132,24 @@ test("HTTP credit sandbox exposes card, statement and idempotent payment flow", 
   assert.equal(quoteResponse.status, 200);
   const quote = (await quoteResponse.json()) as { quoteId: string; amount: { amountMinor: string } };
   assert.equal(quote.amount.amountMinor, "200000");
+
+  const shortKeyResponse = await authRequest("/credit/payments", {
+    method: "POST",
+    headers: { "Idempotency-Key": "short" },
+    body: body({ quoteId: quote.quoteId, stepUp: { method: "OTP", proof: "123456" } }),
+  });
+  assert.equal(shortKeyResponse.status, 422);
+
+  const rejectedPaymentStepUp = await authRequest("/credit/payments", {
+    method: "POST",
+    headers: { "Idempotency-Key": "credit-http-invalid-stepup" },
+    body: body({ quoteId: quote.quoteId, stepUp: { method: "OTP", proof: "000000" } }),
+  });
+  assert.equal(rejectedPaymentStepUp.status, 409);
+  assert.equal(
+    ((await rejectedPaymentStepUp.json()) as { code: string }).code,
+    "STEP_UP_VERIFICATION_FAILED",
+  );
 
   const submit = await authRequest("/credit/payments", {
     method: "POST",

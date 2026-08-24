@@ -1,4 +1,5 @@
 import {
+  DomainError,
   conflict,
   conflictWithCode,
   invalidRequest,
@@ -176,6 +177,19 @@ type SavingsIdempotencyRecord = {
   openingId: string;
 };
 
+type FraudReportRecord = FraudReportResponse & {
+  userId: string;
+  accountId: string;
+  transactionId: string;
+  reason: string;
+};
+
+type FraudReportIdempotencyRecord = {
+  userId: string;
+  fingerprint: string;
+  reportId: string;
+};
+
 type CreditStepUpAttemptWindow = { startedAt: number; attempts: number };
 
 type CreditPurchaseSeed = {
@@ -348,6 +362,7 @@ export const OUTBOX_EVENT_RETENTION_MS = 24 * 60 * 60 * 1000;
 const AUTH_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const AUTH_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const REGISTRATION_RATE_LIMIT_MAX_ATTEMPTS = 5;
+const OTP_CHALLENGE_ISSUANCE_RATE_LIMIT_MAX_ATTEMPTS = 10;
 const TRANSFER_STEP_UP_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const DEFAULT_OUTBOX_PENDING_THRESHOLD = 100;
 const DEFAULT_TRANSFER_LIMIT_MINOR = 5_000_000n;
@@ -369,6 +384,25 @@ function requireString(value: unknown, fieldName: string): string {
     });
   }
   return value.trim();
+}
+
+function requireIdempotencyKey(value: unknown, minLength: number): string {
+  const normalized = requireString(value, "Idempotency-Key");
+  if (normalized.length < minLength) {
+    const message = `Idempotency-Key must contain at least ${minLength} characters.`;
+    throw invalidRequest(message, { "Idempotency-Key": message });
+  }
+  return normalized;
+}
+
+function rethrowFinancialStepUpFailure(error: unknown): never {
+  if (error instanceof DomainError && error.status === 401) {
+    throw conflictWithCode(
+      "STEP_UP_VERIFICATION_FAILED",
+      "Step-up challenge is invalid, expired, or does not match this request.",
+    );
+  }
+  throw error;
 }
 
 function requireBoundedString(
@@ -546,6 +580,9 @@ type PreparedRegistration = {
   fullName: string;
   email: string;
   phoneNumber: string;
+};
+
+type PreparedRegistrationWithPassword = PreparedRegistration & {
   password: string;
 };
 
@@ -563,7 +600,7 @@ type LoginContext = {
   user: UserRecord | undefined;
 };
 
-export const BANKING_SYSTEM_STATE_VERSION = 5;
+export const BANKING_SYSTEM_STATE_VERSION = 7;
 
 export type BankingSystemState = {
   /** Optional for backwards compatibility with M0-M6 snapshots created before M7. */
@@ -602,6 +639,8 @@ export type BankingSystemState = {
   creditApplications?: Array<[string, CreditApplicationRecord]>;
   creditApplicationIdempotency?: Array<[string, CreditApplicationIdempotencyRecord]>;
   creditActivationIdempotency?: Array<[string, CreditActivationIdempotencyRecord]>;
+  fraudReports?: Array<[string, FraudReportRecord]>;
+  fraudReportIdempotency?: Array<[string, FraudReportIdempotencyRecord]>;
   auditEventStore: AuditEvent[];
   outboxEventStore: OutboxEvent[];
 };
@@ -617,6 +656,13 @@ function migrateBankingSystemState(input: BankingSystemState): BankingSystemStat
       `Banking snapshot state version ${stateVersion} is newer than supported version ${BANKING_SYSTEM_STATE_VERSION}.`,
     );
   }
+  const scopeLegacyCreditIdempotency = <T extends { userId: string }>(
+    entries: Array<[string, T]> | undefined,
+  ): Array<[string, T]> =>
+    (entries ?? []).map(([key, record]) => [
+      stateVersion < 7 ? `${record.userId}:${key}` : key,
+      record,
+    ]);
 
   const requiredArrays = [
     "users",
@@ -653,13 +699,28 @@ function migrateBankingSystemState(input: BankingSystemState): BankingSystemStat
     ),
   ] as [string, Notification[]]);
 
+  const pendingRegistrations = (candidate.pendingRegistrations ?? []).map(
+    ([registrationId, record]) => [
+      registrationId,
+      {
+        prepared: {
+          fullName: record.prepared.fullName,
+          email: record.prepared.email,
+          phoneNumber: record.prepared.phoneNumber,
+        },
+        passwordMaterial: { ...record.passwordMaterial },
+        expiresAt: record.expiresAt,
+      },
+    ] as [string, PendingRegistrationRecord],
+  );
+
   return {
     stateVersion: BANKING_SYSTEM_STATE_VERSION,
     core: candidate.core,
     users: candidate.users!,
     accessSessions: candidate.accessSessions!,
     authChallenges: candidate.authChallenges!,
-    pendingRegistrations: candidate.pendingRegistrations ?? [],
+    pendingRegistrations,
     authAttemptWindows: candidate.authAttemptWindows!,
     registrationAttemptWindows: candidate.registrationAttemptWindows!,
     transferStepUpAttemptWindows: candidate.transferStepUpAttemptWindows!,
@@ -687,8 +748,14 @@ function migrateBankingSystemState(input: BankingSystemState): BankingSystemStat
     creditIdempotency: candidate.creditIdempotency ?? [],
     creditSeedPurchases: candidate.creditSeedPurchases ?? [],
     creditApplications: candidate.creditApplications ?? [],
-    creditApplicationIdempotency: candidate.creditApplicationIdempotency ?? [],
-    creditActivationIdempotency: candidate.creditActivationIdempotency ?? [],
+    creditApplicationIdempotency: scopeLegacyCreditIdempotency(
+      candidate.creditApplicationIdempotency,
+    ),
+    creditActivationIdempotency: scopeLegacyCreditIdempotency(
+      candidate.creditActivationIdempotency,
+    ),
+    fraudReports: candidate.fraudReports ?? [],
+    fraudReportIdempotency: candidate.fraudReportIdempotency ?? [],
     auditEventStore: candidate.auditEventStore!,
     outboxEventStore: candidate.outboxEventStore!,
   };
@@ -712,34 +779,100 @@ function assertPassword(password: string): string {
   return normalized;
 }
 
-function encodeCursor(offset: number): string {
-  return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url");
+type CursorKind =
+  | "ACCOUNT_TRANSACTIONS"
+  | "CREDIT_TRANSACTIONS"
+  | "CREDIT_STATEMENTS";
+
+type CursorPosition = {
+  sortValue: string;
+  id: string;
+};
+
+function encodeCursor(
+  kind: CursorKind,
+  scope: string,
+  position: CursorPosition,
+): string {
+  return Buffer.from(
+    JSON.stringify({ version: 1, kind, scope, ...position }),
+    "utf8",
+  ).toString("base64url");
 }
 
-function decodeCursor(cursor: string | undefined): number {
+function decodeCursor(
+  cursor: string | undefined,
+  expectedKind: CursorKind,
+  expectedScope: string,
+): CursorPosition | null {
   if (!cursor) {
-    return 0;
+    return null;
   }
 
   try {
     const parsed: unknown = JSON.parse(
       Buffer.from(cursor, "base64url").toString("utf8"),
     );
-    const offset =
-      typeof parsed === "object" && parsed !== null
-        ? (parsed as { offset?: unknown }).offset
-        : undefined;
+    const candidate = typeof parsed === "object" && parsed !== null
+      ? parsed as Record<string, unknown>
+      : {};
     if (
-      typeof offset !== "number" ||
-      !Number.isInteger(offset) ||
-      offset < 0
+      candidate.version !== 1 ||
+      candidate.kind !== expectedKind ||
+      candidate.scope !== expectedScope ||
+      typeof candidate.sortValue !== "string" ||
+      !candidate.sortValue ||
+      typeof candidate.id !== "string" ||
+      !candidate.id
     ) {
       throw new Error("invalid cursor");
     }
-    return offset;
+    return { sortValue: candidate.sortValue, id: candidate.id };
   } catch {
     throw invalidRequest("cursor is invalid.", { cursor: "cursor is invalid." });
   }
+}
+
+function paginateByKeyset<T>(
+  source: readonly T[],
+  cursor: string | undefined,
+  limit: number,
+  kind: CursorKind,
+  scope: string,
+  toPosition: (item: T) => CursorPosition,
+): { items: T[]; nextCursor: string | null } {
+  const position = decodeCursor(cursor, kind, scope);
+  const sorted = [...source].sort((left, right) => {
+    const leftPosition = toPosition(left);
+    const rightPosition = toPosition(right);
+    return (
+      rightPosition.sortValue.localeCompare(leftPosition.sortValue) ||
+      rightPosition.id.localeCompare(leftPosition.id)
+    );
+  });
+  const remaining = position
+    ? sorted.filter((item) => {
+      const itemPosition = toPosition(item);
+      return (
+        itemPosition.sortValue < position.sortValue ||
+        (itemPosition.sortValue === position.sortValue && itemPosition.id < position.id)
+      );
+    })
+    : sorted;
+  const items = remaining.slice(0, limit);
+  const last = items.at(-1);
+  return {
+    items,
+    nextCursor:
+      remaining.length > items.length && last
+        ? encodeCursor(kind, scope, toPosition(last))
+        : null,
+  };
+}
+
+function deterministicUuid(value: string): string {
+  const hex = fingerprint(value).slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 export class BankingSystem {
@@ -752,6 +885,7 @@ export class BankingSystem {
   private readonly sandboxOperatorKey: string;
   private readonly sandboxOtp: string | undefined;
   private readonly sandboxMfaOtp: string | undefined;
+  private readonly allowUnsafeDirectSandboxStepUp: boolean;
   private readonly mfaRequired: boolean;
   private readonly authChallengeMethods: StepUpMethod[];
   private readonly allowlistPredicate: (userId: string) => boolean;
@@ -809,6 +943,8 @@ export class BankingSystem {
   private readonly creditApplications = new Map<string, CreditApplicationRecord>();
   private readonly creditApplicationIdempotency = new Map<string, CreditApplicationIdempotencyRecord>();
   private readonly creditActivationIdempotency = new Map<string, CreditActivationIdempotencyRecord>();
+  private readonly fraudReports = new Map<string, FraudReportRecord>();
+  private readonly fraudReportIdempotency = new Map<string, FraudReportIdempotencyRecord>();
   private readonly policy: ControlPolicy;
 
   constructor(
@@ -818,6 +954,8 @@ export class BankingSystem {
       sandboxOperatorKey?: string;
       sandboxOtp?: string;
       sandboxMfaOtp?: string;
+      /** Test-only compatibility switch. Never enabled by the HTTP server. */
+      allowUnsafeDirectSandboxStepUp?: boolean;
       mfaRequired?: boolean;
       authChallengeMethods?: StepUpMethod[];
       globalKillSwitch?: boolean;
@@ -855,6 +993,17 @@ export class BankingSystem {
     this.sandboxOtp = options.sandboxOtp ?? process.env.BANKING_SANDBOX_OTP;
     this.sandboxMfaOtp =
       options.sandboxMfaOtp ?? process.env.BANKING_SANDBOX_MFA_OTP;
+    this.allowUnsafeDirectSandboxStepUp =
+      options.allowUnsafeDirectSandboxStepUp ?? false;
+    if (
+      this.allowUnsafeDirectSandboxStepUp &&
+      (this.bankingEnvironment === "preview" ||
+        this.bankingEnvironment === "production")
+    ) {
+      throw new Error(
+        "Unsafe direct sandbox step-up proofs cannot be enabled outside local development.",
+      );
+    }
     this.mfaRequired =
       options.mfaRequired ??
       (process.env.BANKING_MFA_REQUIRED === "1" ||
@@ -863,6 +1012,14 @@ export class BankingSystem {
       options.authChallengeMethods,
       ["OTP"],
     );
+    if (
+      !this.allowUnsafeDirectSandboxStepUp &&
+      this.authChallengeMethods.includes("BIOMETRIC")
+    ) {
+      throw new Error(
+        "Static sandbox biometric challenges require the explicit local-development unsafe switch.",
+      );
+    }
     this.allowlistPredicate = options.allowlist ?? (() => true);
     this.settleTransfersImmediately = options.settleTransfersImmediately ?? true;
     this.settleSavingsImmediately = options.settleSavingsImmediately ?? true;
@@ -872,11 +1029,31 @@ export class BankingSystem {
     this.creditOverdueSeed =
       options.creditOverdueSeed ?? process.env.BANKING_SANDBOX_CREDIT_OVERDUE === "1";
     this.savingsProducts = (options.savingsProducts ?? DEFAULT_SAVINGS_PRODUCTS).map(
-      (product) => ({
-        ...product,
-        minAmountMinor: product.minAmountMinor,
-        maxAmountMinor: product.maxAmountMinor,
-      }),
+      (product) => {
+        let minAmountMinor: bigint;
+        let maxAmountMinor: bigint;
+        try {
+          minAmountMinor = BigInt(product.minAmountMinor);
+          maxAmountMinor = BigInt(product.maxAmountMinor);
+        } catch {
+          throw new Error(`Savings product ${product.productId} has invalid amount limits.`);
+        }
+        if (
+          minAmountMinor <= 0n ||
+          maxAmountMinor < minAmountMinor ||
+          !Number.isSafeInteger(product.termMonths) ||
+          product.termMonths <= 0 ||
+          !Number.isSafeInteger(product.annualRateBasisPoints) ||
+          product.annualRateBasisPoints < 0
+        ) {
+          throw new Error(`Savings product ${product.productId} has invalid terms.`);
+        }
+        return {
+          ...product,
+          minAmountMinor: minAmountMinor.toString(),
+          maxAmountMinor: maxAmountMinor.toString(),
+        };
+      },
     );
     this.outboxPendingThreshold =
       options.outboxPendingThreshold ??
@@ -897,10 +1074,7 @@ export class BankingSystem {
           process.env.BANKING_MAX_TRANSFER_AMOUNT_MINOR,
         DEFAULT_TRANSFER_LIMIT_MINOR,
       ),
-      stepUpMethods: normalizeStepUpMethods(options.stepUpMethods, [
-        "OTP",
-        "BIOMETRIC",
-      ]),
+      stepUpMethods: normalizeStepUpMethods(options.stepUpMethods, ["OTP"]),
       savingsEnabled:
         options.savingsEnabled ?? process.env.BANKING_SAVINGS_ENABLED !== "0",
       savingsAllowlisted:
@@ -909,10 +1083,7 @@ export class BankingSystem {
         options.maxSavingsAmountMinor ?? process.env.BANKING_MAX_SAVINGS_AMOUNT_MINOR,
         500_000_000n,
       ),
-      savingsStepUpMethods: normalizeStepUpMethods(options.savingsStepUpMethods, [
-        "OTP",
-        "BIOMETRIC",
-      ]),
+      savingsStepUpMethods: normalizeStepUpMethods(options.savingsStepUpMethods, ["OTP"]),
       creditEnabled:
         options.creditEnabled ?? process.env.BANKING_CREDIT_ENABLED !== "0",
       creditAllowlisted:
@@ -927,14 +1098,27 @@ export class BankingSystem {
       ),
       creditPaymentStepUpMethods: normalizeStepUpMethods(
         options.creditPaymentStepUpMethods,
-        ["OTP", "BIOMETRIC"],
+        ["OTP"],
       ),
       cardUnlockStepUpMethods: normalizeStepUpMethods(
         options.cardUnlockStepUpMethods,
-        ["OTP", "BIOMETRIC"],
+        ["OTP"],
       ),
       updatedAt: nowIso(this.clock),
     };
+    if (
+      !this.allowUnsafeDirectSandboxStepUp &&
+      [
+        this.policy.stepUpMethods,
+        this.policy.savingsStepUpMethods,
+        this.policy.creditPaymentStepUpMethods,
+        this.policy.cardUnlockStepUpMethods,
+      ].some((methods) => methods.includes("BIOMETRIC"))
+    ) {
+      throw new Error(
+        "Static sandbox biometric step-up requires the explicit local-development unsafe switch.",
+      );
+    }
   }
 
   private prepareRegistration(
@@ -945,7 +1129,7 @@ export class BankingSystem {
       password: string;
     },
     rateLimitKey?: string,
-  ): PreparedRegistration {
+  ): PreparedRegistrationWithPassword {
     this.cleanupExpiredState();
     const prepared = {
       fullName: requireString(input.fullName, "fullName"),
@@ -965,6 +1149,16 @@ export class BankingSystem {
     }
 
     return prepared;
+  }
+
+  private registrationIdentity(
+    prepared: PreparedRegistrationWithPassword,
+  ): PreparedRegistration {
+    return {
+      fullName: prepared.fullName,
+      email: prepared.email,
+      phoneNumber: prepared.phoneNumber,
+    };
   }
 
   private completeRegistration(
@@ -1049,7 +1243,11 @@ export class BankingSystem {
     password: string;
   }, rateLimitKey?: string): { user: AuthUser } {
     const prepared = this.prepareRegistration(input, rateLimitKey);
-    return this.completeRegistration(prepared, hashPassword(prepared.password));
+    const passwordMaterial = hashPassword(prepared.password);
+    return this.completeRegistration(
+      this.registrationIdentity(prepared),
+      passwordMaterial,
+    );
   }
 
   async registerAsync(input: {
@@ -1060,7 +1258,10 @@ export class BankingSystem {
   }, rateLimitKey?: string): Promise<{ user: AuthUser }> {
     const prepared = this.prepareRegistration(input, rateLimitKey);
     const passwordMaterial = await hashPasswordAsync(prepared.password);
-    return this.completeRegistration(prepared, passwordMaterial);
+    return this.completeRegistration(
+      this.registrationIdentity(prepared),
+      passwordMaterial,
+    );
   }
 
   async beginRegistrationAsync(
@@ -1077,7 +1278,7 @@ export class BankingSystem {
     const passwordMaterial = await hashPasswordAsync(prepared.password);
     const registrationId = createId("registration");
     this.pendingRegistrations.set(registrationId, {
-      prepared,
+      prepared: this.registrationIdentity(prepared),
       passwordMaterial,
       expiresAt: this.clock() + AUTH_CHALLENGE_TTL_MS,
     });
@@ -1196,8 +1397,6 @@ export class BankingSystem {
     requestFingerprint: string | null = null,
   ): AuthChallengeResponse {
     const supportedPurposes: readonly OtpPurpose[] = [
-      "REGISTRATION_VERIFY",
-      "LOGIN",
       "TRANSFER",
       "SAVINGS_OPENING",
       "CREDIT_APPLICATION",
@@ -1208,6 +1407,13 @@ export class BankingSystem {
     if (!supportedPurposes.includes(purpose)) {
       throw invalidRequest("OTP purpose is invalid.");
     }
+    const normalizedDeviceId = this.normalizeDeviceId(deviceId);
+    const normalizedResourceId = resourceId === null
+      ? null
+      : requireString(resourceId, "resourceId");
+    this.consumeOtpChallengeIssuance(
+      `otp-issuance:${userId}:${normalizedDeviceId}`,
+    );
     const methods =
       purpose === "TRANSFER"
         ? this.policy.stepUpMethods
@@ -1219,12 +1425,23 @@ export class BankingSystem {
               ? this.policy.cardUnlockStepUpMethods
               : ["OTP"] as StepUpMethod[];
     const effectiveFingerprint =
-      this.resolveOtpRequestFingerprint(purpose, resourceId) ?? requestFingerprint;
+      this.resolveOtpRequestFingerprint(purpose, normalizedResourceId) ?? requestFingerprint;
+    for (const [challengeHash, challenge] of this.authChallenges) {
+      if (
+        challenge.userId === userId &&
+        challenge.deviceId === normalizedDeviceId &&
+        challenge.purpose === purpose &&
+        challenge.resourceId === normalizedResourceId
+      ) {
+        this.authChallenges.delete(challengeHash);
+        this.sandboxOtpInbox.delete(challengeHash);
+      }
+    }
     return this.issueOtpChallenge(
       userId,
-      this.normalizeDeviceId(deviceId),
+      normalizedDeviceId,
       purpose,
-      resourceId,
+      normalizedResourceId,
       effectiveFingerprint,
       methods,
       this.sandboxOtp ?? undefined,
@@ -1349,7 +1566,7 @@ export class BankingSystem {
     if (operatorKey !== this.sandboxOperatorKey) {
       throw unauthorized("Sandbox operator authorization failed.");
     }
-    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
+    const normalizedKey = requireIdempotencyKey(idempotencyKey, 8);
     const amountMinor = parseMoney(input.amount, "amount");
     if (
       amountMinor <= 0n ||
@@ -1435,14 +1652,19 @@ export class BankingSystem {
       });
     }
 
-    const offset = decodeCursor(cursor);
     const all = this.core.listTransactions(userId, accountId);
-    const items = all.slice(offset, offset + limit).map((transaction) => this.toTransaction(transaction));
-    const nextOffset = offset + items.length;
+    const page = paginateByKeyset(
+      all,
+      cursor,
+      limit,
+      "ACCOUNT_TRANSACTIONS",
+      accountId,
+      (transaction) => ({ sortValue: transaction.occurredAt, id: transaction.id }),
+    );
 
     return {
-      items,
-      nextCursor: nextOffset < all.length ? encodeCursor(nextOffset) : null,
+      items: page.items.map((transaction) => this.toTransaction(transaction)),
+      nextCursor: page.nextCursor,
     };
   }
 
@@ -1452,7 +1674,6 @@ export class BankingSystem {
 
   listCards(userId: string): CreditCard[] {
     this.assertCreditVisible(userId);
-    this.processCreditStatements(userId);
     return [...this.creditCards.values()]
       .filter((card) => card.userId === userId)
       .sort((left, right) => left.displayName.localeCompare(right.displayName))
@@ -1464,7 +1685,6 @@ export class BankingSystem {
 
   listCreditAccounts(userId: string): CreditAccount[] {
     this.assertCreditVisible(userId);
-    this.processCreditStatements(userId);
     return [...this.creditAccounts.values()]
       .filter((account) => account.userId === userId)
       .map(toPublicCreditAccount);
@@ -1494,7 +1714,7 @@ export class BankingSystem {
     deviceId?: string,
   ): CreditApplication {
     this.assertCreditVisible(userId);
-    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
+    const normalizedKey = requireIdempotencyKey(idempotencyKey, 8);
     const requestedLimitMinor = input.requestedLimit
       ? parseMoney(input.requestedLimit, "requestedLimit")
       : BigInt(DEFAULT_CREDIT_LIMIT_MINOR);
@@ -1502,13 +1722,17 @@ export class BankingSystem {
       throw conflict("Requested credit limit is outside the sandbox range.");
     }
     const requestFingerprint = fingerprint({ requestedLimitMinor: requestedLimitMinor.toString() });
-    const existingIdempotency = this.creditApplicationIdempotency.get(normalizedKey);
+    const scopedIdempotencyKey = `${userId}:${normalizedKey}`;
+    const existingIdempotency = this.creditApplicationIdempotency.get(scopedIdempotencyKey);
     if (existingIdempotency) {
       if (
         existingIdempotency.userId !== userId ||
         existingIdempotency.fingerprint !== requestFingerprint
       ) {
-        throw conflict("Credit application idempotency key was reused with a different request.");
+        throw conflictWithCode(
+          "IDEMPOTENCY_CONFLICT",
+          "Credit application idempotency key was reused with a different request.",
+        );
       }
       return this.getCreditApplication(userId, existingIdempotency.applicationId);
     }
@@ -1518,6 +1742,14 @@ export class BankingSystem {
         (application.status === "PENDING_ACTIVATION" || application.status === "ACTIVE"),
     );
     if (current) {
+      if (current.requestFingerprint === requestFingerprint) {
+        this.creditApplicationIdempotency.set(scopedIdempotencyKey, {
+          userId,
+          fingerprint: requestFingerprint,
+          applicationId: current.applicationId,
+        });
+        return toPublicCreditApplication(current);
+      }
       throw conflict("A credit application already exists for this user.");
     }
     this.verifyCreditStepUp(
@@ -1543,7 +1775,7 @@ export class BankingSystem {
       requestFingerprint,
     };
     this.creditApplications.set(application.applicationId, application);
-    this.creditApplicationIdempotency.set(normalizedKey, {
+    this.creditApplicationIdempotency.set(scopedIdempotencyKey, {
       userId,
       fingerprint: requestFingerprint,
       applicationId: application.applicationId,
@@ -1561,28 +1793,37 @@ export class BankingSystem {
     deviceId?: string,
   ): CreditApplication {
     this.assertCreditVisible(userId);
+    const normalizedKey = requireIdempotencyKey(idempotencyKey, 8);
     const application = this.creditApplications.get(requireString(applicationId, "applicationId"));
     if (!application || application.userId !== userId) {
       throw notFound("Credit application not found.");
     }
-    if (application.status === "ACTIVE") {
-      return toPublicCreditApplication(application);
-    }
-    if (application.status !== "PENDING_ACTIVATION") {
-      throw conflict("Credit application cannot be activated.");
-    }
-    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
     const requestFingerprint = fingerprint({ applicationId });
-    const existingIdempotency = this.creditActivationIdempotency.get(normalizedKey);
+    const scopedIdempotencyKey = `${userId}:${normalizedKey}`;
+    const existingIdempotency = this.creditActivationIdempotency.get(scopedIdempotencyKey);
     if (existingIdempotency) {
       if (
         existingIdempotency.userId !== userId ||
         existingIdempotency.fingerprint !== requestFingerprint ||
         existingIdempotency.applicationId !== applicationId
       ) {
-        throw conflict("Credit activation idempotency key was reused with a different request.");
+        throw conflictWithCode(
+          "IDEMPOTENCY_CONFLICT",
+          "Credit activation idempotency key was reused with a different request.",
+        );
       }
       return this.getCreditApplication(userId, applicationId);
+    }
+    if (application.status === "ACTIVE") {
+      this.creditActivationIdempotency.set(scopedIdempotencyKey, {
+        userId,
+        fingerprint: requestFingerprint,
+        applicationId,
+      });
+      return toPublicCreditApplication(application);
+    }
+    if (application.status !== "PENDING_ACTIVATION") {
+      throw conflict("Credit application cannot be activated.");
     }
     this.verifyCreditStepUp(
       userId,
@@ -1604,7 +1845,7 @@ export class BankingSystem {
     application.status = "ACTIVE";
     application.creditAccountId = creditAccountId;
     application.updatedAt = now;
-    this.creditActivationIdempotency.set(normalizedKey, {
+    this.creditActivationIdempotency.set(scopedIdempotencyKey, {
       userId,
       fingerprint: requestFingerprint,
       applicationId,
@@ -1620,7 +1861,6 @@ export class BankingSystem {
     latestStatement: CreditStatement | null;
   } {
     this.assertCreditVisible(userId);
-    this.processCreditStatements(userId);
     const card = this.requireCard(userId, cardId);
     const account = this.requireCreditAccount(userId, card.creditAccountId);
     const latestStatement = this.findLatestCreditStatement(card.creditAccountId);
@@ -1633,7 +1873,6 @@ export class BankingSystem {
 
   getCreditAccount(userId: string, creditAccountId: string): CreditAccount {
     this.assertCreditVisible(userId);
-    this.processCreditStatements(userId);
     return toPublicCreditAccount(this.requireCreditAccount(userId, creditAccountId));
   }
 
@@ -1644,23 +1883,30 @@ export class BankingSystem {
     limit = 20,
   ): CreditTransactionsResult {
     this.assertCreditVisible(userId);
-    this.processCreditStatements(userId);
     this.requireCreditAccount(userId, creditAccountId);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       throw invalidRequest("limit must be an integer between 1 and 100.", {
         limit: "limit must be between 1 and 100.",
       });
     }
-    const offset = decodeCursor(cursor);
     const all = [...this.creditTransactions.values()]
-      .filter((transaction) => transaction.userId === userId && transaction.creditAccountId === creditAccountId)
-      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
-    const items = all.slice(offset, offset + limit).map((transaction) => {
+      .filter((transaction) => transaction.userId === userId && transaction.creditAccountId === creditAccountId);
+    const page = paginateByKeyset(
+      all,
+      cursor,
+      limit,
+      "CREDIT_TRANSACTIONS",
+      creditAccountId,
+      (transaction) => ({
+        sortValue: transaction.occurredAt,
+        id: transaction.transactionId,
+      }),
+    );
+    const items = page.items.map((transaction) => {
       const { userId: _userId, ...publicTransaction } = transaction;
       return cloneCreditTransaction(publicTransaction);
     });
-    const nextOffset = offset + items.length;
-    return { items, nextCursor: nextOffset < all.length ? encodeCursor(nextOffset) : null };
+    return { items, nextCursor: page.nextCursor };
   }
 
   listCreditStatements(
@@ -1670,25 +1916,30 @@ export class BankingSystem {
     limit = 20,
   ): CreditStatementsResult {
     this.assertCreditVisible(userId);
-    this.processCreditStatements(userId);
     this.requireCreditAccount(userId, creditAccountId);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       throw invalidRequest("limit must be an integer between 1 and 100.", {
         limit: "limit must be between 1 and 100.",
       });
     }
-    const offset = decodeCursor(cursor);
     const all = [...this.creditStatements.values()]
-      .filter((statement) => statement.userId === userId && statement.creditAccountId === creditAccountId)
-      .sort((left, right) => right.issuedAt.localeCompare(left.issuedAt));
-    const items = all.slice(offset, offset + limit).map(toPublicCreditStatement);
-    const nextOffset = offset + items.length;
-    return { items, nextCursor: nextOffset < all.length ? encodeCursor(nextOffset) : null };
+      .filter((statement) => statement.userId === userId && statement.creditAccountId === creditAccountId);
+    const page = paginateByKeyset(
+      all,
+      cursor,
+      limit,
+      "CREDIT_STATEMENTS",
+      creditAccountId,
+      (statement) => ({ sortValue: statement.issuedAt, id: statement.statementId }),
+    );
+    return {
+      items: page.items.map(toPublicCreditStatement),
+      nextCursor: page.nextCursor,
+    };
   }
 
   getCreditStatement(userId: string, creditAccountId: string, statementId: string): CreditStatement {
     this.assertCreditVisible(userId);
-    this.processCreditStatements(userId);
     const account = this.requireCreditAccount(userId, creditAccountId);
     const statement = this.creditStatements.get(statementId);
     if (!statement || statement.userId !== userId || statement.creditAccountId !== account.creditAccountId) {
@@ -1743,7 +1994,6 @@ export class BankingSystem {
   ): CreditPaymentQuote {
     this.cleanupExpiredState();
     this.assertCreditPaymentAvailable(userId);
-    this.processCreditStatements(userId);
     const sourceAccountId = requireString(input.sourceAccountId, "sourceAccountId");
     const creditAccountId = requireString(input.creditAccountId, "creditAccountId");
     const statementId = requireString(input.statementId, "statementId");
@@ -1756,6 +2006,26 @@ export class BankingSystem {
     const statement = this.creditStatements.get(statementId);
     if (!statement || statement.userId !== userId || statement.creditAccountId !== creditAccountId) {
       throw conflictWithCode("STATEMENT_NOT_FOUND", "Không tìm thấy sao kê tín dụng.");
+    }
+    const latestStatement = this.findLatestCreditStatement(creditAccountId);
+    if (!latestStatement || latestStatement.statementId !== statement.statementId) {
+      throw conflictWithCode(
+        "STATEMENT_SUPERSEDED",
+        "Sao kê này đã được chuyển sang kỳ mới; hãy thanh toán trên sao kê hiện tại.",
+      );
+    }
+    if (
+      [...this.creditPayments.values()].some(
+        (payment) =>
+          payment.userId === userId &&
+          payment.creditAccountId === creditAccountId &&
+          payment.status === "PENDING",
+      )
+    ) {
+      throw conflictWithCode(
+        "PAYMENT_PENDING",
+        "Một khoản thanh toán tín dụng đang được xử lý; hãy chờ kết quả trước khi tạo lệnh mới.",
+      );
     }
     if (statement.remainingAmountDue.amountMinor === "0") {
       throw conflictWithCode("STATEMENT_PAID", "Sao kê này đã được thanh toán đủ.");
@@ -1777,6 +2047,10 @@ export class BankingSystem {
     }
     if (amountMinor > remainingMinor) {
       throw conflictWithCode("OVERPAYMENT", "Không thể thanh toán vượt dư nợ sao kê.");
+    }
+    const outstandingMinor = BigInt(account.postedOutstanding.amountMinor);
+    if (amountMinor > outstandingMinor) {
+      throw conflictWithCode("OVERPAYMENT", "Không thể thanh toán vượt dư nợ tài khoản tín dụng.");
     }
     if (amountMinor > BigInt(this.policy.maxCreditPaymentAmountMinor)) {
       throw conflictWithCode("PAYMENT_AMOUNT_INVALID", "Số tiền vượt giới hạn sandbox.");
@@ -1800,7 +2074,7 @@ export class BankingSystem {
       amount: creditMoney(amountMinor),
       fee: creditMoney(0n),
       outstandingBefore: cloneMoney(account.postedOutstanding),
-      outstandingAfter: creditMoney(BigInt(account.postedOutstanding.amountMinor) - amountMinor),
+      outstandingAfter: creditMoney(outstandingMinor - amountMinor),
       minimumPaymentRemainingBefore: cloneMoney(statement.minimumPaymentRemaining),
       minimumPaymentRemainingAfter: creditMoney(
         BigInt(statement.minimumPaymentRemaining.amountMinor) - amountMinor > 0n
@@ -1829,32 +2103,79 @@ export class BankingSystem {
   ): CreditPayment {
     const quoteId = requireString(request.quoteId, "quoteId");
     this.cleanupExpiredState(new Set([quoteId]));
-    this.assertCreditPaymentAvailable(userId);
-    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
-    const quote = this.creditQuotes.get(quoteId);
-    if (!quote || quote.userId !== userId) {
-      throw notFound("Credit payment quote not found.");
-    }
+    const normalizedKey = requireIdempotencyKey(idempotencyKey, 16);
+    const requestFingerprint = fingerprint({ quoteId });
     const existing = this.creditIdempotency.get(`${userId}:${normalizedKey}`);
     if (existing) {
-      if (existing.fingerprint !== quote.requestFingerprint) {
+      if (existing.fingerprint !== requestFingerprint) {
         throw conflictWithCode("IDEMPOTENCY_CONFLICT", "Idempotency-Key đã được dùng cho yêu cầu khác.");
       }
       const payment = this.creditPayments.get(existing.paymentId);
       if (!payment) {
-        throw notFound("Credit payment not found.");
+        throw conflictWithCode(
+          "IDEMPOTENCY_STATE_MISSING",
+          "Đã tìm thấy khóa yêu cầu nhưng thiếu bản ghi thanh toán; cần đối soát thủ công.",
+        );
       }
+      return this.getCreditPayment(userId, payment.paymentId);
+    }
+    this.assertCreditPaymentAvailable(userId);
+    const quote = this.creditQuotes.get(quoteId);
+    if (!quote || quote.userId !== userId) {
+      throw notFound("Credit payment quote not found.");
+    }
+    if (quote.consumedPaymentId) {
+      const payment = this.creditPayments.get(quote.consumedPaymentId);
+      if (!payment || payment.userId !== userId) {
+        throw conflictWithCode(
+          "IDEMPOTENCY_STATE_MISSING",
+          "Báo giá đã được dùng nhưng thiếu bản ghi thanh toán; cần đối soát thủ công.",
+        );
+      }
+      this.creditIdempotency.set(`${userId}:${normalizedKey}`, {
+        userId,
+        fingerprint: requestFingerprint,
+        paymentId: payment.paymentId,
+      });
       return this.getCreditPayment(userId, payment.paymentId);
     }
     if (Date.parse(quote.expiresAt) <= this.clock()) {
       throw conflictWithCode("QUOTE_EXPIRED", "Báo giá thanh toán đã hết hạn.");
     }
-    if (quote.consumedPaymentId) {
-      throw conflictWithCode("QUOTE_ALREADY_USED", "Báo giá thanh toán đã được sử dụng.");
-    }
     const statement = this.creditStatements.get(quote.statementId);
     if (!statement || statement.version !== quote.statementVersion) {
       throw conflictWithCode("STATEMENT_CHANGED", "Sao kê đã thay đổi; hãy tạo báo giá mới.");
+    }
+    const latestStatement = this.findLatestCreditStatement(quote.creditAccountId);
+    if (!latestStatement || latestStatement.statementId !== statement.statementId) {
+      throw conflictWithCode(
+        "STATEMENT_SUPERSEDED",
+        "Sao kê này đã được chuyển sang kỳ mới; hãy tạo báo giá trên sao kê hiện tại.",
+      );
+    }
+    if (
+      [...this.creditPayments.values()].some(
+        (payment) =>
+          payment.userId === userId &&
+          payment.creditAccountId === quote.creditAccountId &&
+          payment.status === "PENDING",
+      )
+    ) {
+      throw conflictWithCode(
+        "PAYMENT_PENDING",
+        "Một khoản thanh toán tín dụng đang được xử lý; chưa thể gửi lệnh mới.",
+      );
+    }
+    const creditAccount = this.requireCreditAccount(userId, quote.creditAccountId);
+    const paymentAmountMinor = BigInt(quote.amount.amountMinor);
+    if (
+      paymentAmountMinor > BigInt(creditAccount.postedOutstanding.amountMinor) ||
+      paymentAmountMinor > BigInt(statement.remainingAmountDue.amountMinor)
+    ) {
+      throw conflictWithCode(
+        "OVERPAYMENT",
+        "Khoản thanh toán vượt nghĩa vụ tín dụng hiện tại; hãy tạo báo giá mới.",
+      );
     }
     this.verifyCreditStepUp(
       userId,
@@ -1959,10 +2280,11 @@ export class BankingSystem {
     if (!payment || payment.userId !== userId) {
       throw notFound("Credit payment not found.");
     }
-    if (payment.status === "PENDING") {
-      this.transitionCreditPayment(userId, paymentId, "SUCCEEDED");
-    }
-    return toPublicCreditPayment(this.creditPayments.get(paymentId)!);
+    return toPublicCreditPayment(payment);
+  }
+
+  settleCreditPayment(userId: string, paymentId: string): CreditPayment {
+    return this.transitionCreditPayment(userId, paymentId, "SUCCEEDED");
   }
 
   failCreditPayment(userId: string, paymentId: string): CreditPayment {
@@ -1993,11 +2315,12 @@ export class BankingSystem {
       throw notFound("Savings product not found.");
     }
 
-    const maxAmountMinor = BigInt(
-      product.maxAmountMinor < this.policy.maxSavingsAmountMinor
-        ? product.maxAmountMinor
-        : this.policy.maxSavingsAmountMinor,
-    );
+    const productMaxAmountMinor = BigInt(product.maxAmountMinor);
+    const policyMaxAmountMinor = BigInt(this.policy.maxSavingsAmountMinor);
+    const maxAmountMinor =
+      productMaxAmountMinor < policyMaxAmountMinor
+        ? productMaxAmountMinor
+        : policyMaxAmountMinor;
     const minAmountMinor = BigInt(product.minAmountMinor);
     if (principalMinor < minAmountMinor || principalMinor > maxAmountMinor) {
       throw conflict("Savings principal is outside the sandbox limit.");
@@ -2037,31 +2360,48 @@ export class BankingSystem {
   ): SavingsOpening {
     const quoteId = requireString(request.quoteId, "quoteId");
     this.cleanupExpiredState(new Set([quoteId]));
-    this.assertSavingsAvailable(userId);
-    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
-    const quoteRecord = this.savingsQuotes.get(quoteId);
-    if (!quoteRecord || quoteRecord.userId !== userId) {
-      throw notFound("Savings quote not found.");
-    }
-    const requestFingerprint = fingerprint({ quoteId: quoteRecord.quoteId });
+    const normalizedKey = requireIdempotencyKey(idempotencyKey, 16);
+    const requestFingerprint = fingerprint({ quoteId });
     const idempotencyMapKey = `${userId}:${normalizedKey}`;
     const existing = this.savingsIdempotency.get(idempotencyMapKey);
     if (existing) {
       if (existing.fingerprint !== requestFingerprint) {
-        throw conflict("Idempotency key was reused with a different request.");
+        throw conflictWithCode(
+          "IDEMPOTENCY_CONFLICT",
+          "Idempotency key was reused with a different request.",
+        );
       }
       const existingOpening = this.savingsOpenings.get(existing.openingId);
       if (!existingOpening) {
-        throw notFound("Savings opening not found.");
+        throw conflictWithCode(
+          "IDEMPOTENCY_STATE_MISSING",
+          "Đã tìm thấy khóa yêu cầu nhưng thiếu bản ghi mở khoản; cần đối soát thủ công.",
+        );
       }
       return toPublicSavingsOpening(existingOpening);
     }
-
-    if (Date.parse(quoteRecord.expiresAt) <= this.clock()) {
-      throw conflict("Savings quote has expired.");
+    this.assertSavingsAvailable(userId);
+    const quoteRecord = this.savingsQuotes.get(quoteId);
+    if (!quoteRecord || quoteRecord.userId !== userId) {
+      throw notFound("Savings quote not found.");
     }
     if (quoteRecord.consumedOpeningId) {
-      throw conflict("Savings quote has already been submitted.");
+      const opening = this.savingsOpenings.get(quoteRecord.consumedOpeningId);
+      if (!opening || opening.userId !== userId) {
+        throw conflictWithCode(
+          "IDEMPOTENCY_STATE_MISSING",
+          "The quote was consumed but its savings opening is missing; manual reconciliation is required.",
+        );
+      }
+      this.savingsIdempotency.set(idempotencyMapKey, {
+        userId,
+        fingerprint: requestFingerprint,
+        openingId: opening.openingId,
+      });
+      return toPublicSavingsOpening(opening);
+    }
+    if (Date.parse(quoteRecord.expiresAt) <= this.clock()) {
+      throw conflictWithCode("QUOTE_EXPIRED", "Savings quote has expired.");
     }
 
     const stepUpRateKey = `savings-step-up:${userId}`;
@@ -2092,6 +2432,7 @@ export class BankingSystem {
           requestFingerprint,
         );
       } else if (
+        !this.allowUnsafeDirectSandboxStepUp ||
         !(
           (stepUp.method === "OTP" && this.sandboxOtp && stepUp.proof === this.sandboxOtp) ||
           (stepUp.method === "BIOMETRIC" && stepUp.proof === "sandbox-biometric")
@@ -2102,7 +2443,7 @@ export class BankingSystem {
     } catch (error) {
       this.recordSavingsStepUpFailure(stepUpRateKey);
       this.recordAudit("STEP_UP_VERIFICATION_FAILED", userId, quoteRecord.quoteId);
-      throw error;
+      rethrowFinancialStepUpFailure(error);
     }
     this.savingsStepUpAttemptWindows.delete(stepUpRateKey);
     this.recordAudit("SAVINGS_STEP_UP_VERIFIED", userId, quoteRecord.quoteId);
@@ -2181,31 +2522,19 @@ export class BankingSystem {
     if (!opening || opening.userId !== userId) {
       throw notFound("Savings opening not found.");
     }
-    if (opening.status === "PENDING") {
-      const receipt = this.core.settleSavingsOpening(
-        userId,
-        opening.openingId,
-        nowIso(this.clock),
-      );
-      opening.status = receipt.status;
-      opening.reference = receipt.reference;
-      opening.updatedAt = receipt.updatedAt;
-      if (receipt.status === "SUCCEEDED") {
-        const quote = this.savingsQuotes.get(opening.quoteId);
-        if (!quote) {
-          throw notFound("Savings quote not found.");
-        }
-        this.createSavingsDepositFromOpening(quote, opening);
-        this.recordAudit("SAVINGS_OPENING_SUCCEEDED", userId, opening.openingId);
-        this.enqueueOutbox("SAVINGS_OPENING_SUCCEEDED", opening.openingId, receipt.updatedAt);
-      }
-    }
     return toPublicSavingsOpening(opening);
+  }
+
+  settleSavingsOpening(userId: string, openingId: string): SavingsOpening {
+    return this.transitionSavingsOpening(userId, openingId, "SUCCEEDED");
+  }
+
+  failSavingsOpening(userId: string, openingId: string): SavingsOpening {
+    return this.transitionSavingsOpening(userId, openingId, "FAILED");
   }
 
   listSavingsDeposits(userId: string): SavingsListResult {
     this.assertSavingsAvailable(userId);
-    this.processSavingsMaturities(userId);
     const items = [...this.savingsDeposits.values()]
       .filter((deposit) => deposit.userId === userId)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
@@ -2218,7 +2547,6 @@ export class BankingSystem {
 
   getSavingsDeposit(userId: string, depositId: string): SavingsDeposit {
     this.assertSavingsAvailable(userId);
-    this.processSavingsMaturities(userId);
     const deposit = this.savingsDeposits.get(depositId);
     if (!deposit || deposit.userId !== userId) {
       throw notFound("Savings deposit not found.");
@@ -2446,14 +2774,17 @@ export class BankingSystem {
   ): TransferReceipt {
     const quoteId = requireString(request.quoteId, "quoteId");
     this.cleanupExpiredState(new Set([quoteId]));
-    const normalizedKey = requireString(idempotencyKey, "Idempotency-Key");
+    const normalizedKey = requireIdempotencyKey(idempotencyKey, 16);
     const requestFingerprint = fingerprint({ quoteId });
     const existing = this.idempotency.get(`${userId}:${normalizedKey}`);
     if (existing) {
       if (existing.fingerprint !== requestFingerprint) {
-        throw conflict("Idempotency key was reused with a different request.");
+        throw conflictWithCode(
+          "IDEMPOTENCY_CONFLICT",
+          "Idempotency key was reused with a different request.",
+        );
       }
-      return existing.receipt;
+      return this.requireCanonicalTransferForReplay(userId, existing.receipt.transferId);
     }
 
     if (
@@ -2468,11 +2799,20 @@ export class BankingSystem {
     if (!quoteRecord || quoteRecord.userId !== userId) {
       throw notFound("Transfer quote not found.");
     }
-    if (Date.parse(quoteRecord.quote.expiresAt) <= this.clock()) {
-      throw conflict("Transfer quote has expired.");
-    }
     if (quoteRecord.consumedTransferId) {
-      throw conflict("Transfer quote has already been submitted.");
+      const receipt = this.requireCanonicalTransferForReplay(
+        userId,
+        quoteRecord.consumedTransferId,
+      );
+      this.idempotency.set(`${userId}:${normalizedKey}`, {
+        userId,
+        fingerprint: requestFingerprint,
+        receipt: cloneReceipt(receipt),
+      });
+      return receipt;
+    }
+    if (Date.parse(quoteRecord.quote.expiresAt) <= this.clock()) {
+      throw conflictWithCode("QUOTE_EXPIRED", "Transfer quote has expired.");
     }
 
     const stepUpRateKey = `transfer-step-up:${userId}`;
@@ -2507,6 +2847,7 @@ export class BankingSystem {
           transferContextFingerprint,
         );
       } else if (
+        !this.allowUnsafeDirectSandboxStepUp ||
         !(
           (stepUp.method === "OTP" && this.sandboxOtp && stepUp.proof === this.sandboxOtp) ||
           (stepUp.method === "BIOMETRIC" && stepUp.proof === "sandbox-biometric")
@@ -2517,7 +2858,7 @@ export class BankingSystem {
     } catch (error) {
       this.recordTransferStepUpFailure(stepUpRateKey);
       this.recordAudit("STEP_UP_VERIFICATION_FAILED", userId, quoteRecord.quote.quoteId);
-      throw error;
+      rethrowFinancialStepUpFailure(error);
     }
 
     this.transferStepUpAttemptWindows.delete(stepUpRateKey);
@@ -2591,6 +2932,31 @@ export class BankingSystem {
       throw notFound("Transfer not found.");
     }
     return transfer.receipt;
+  }
+
+  private requireCanonicalTransferForReplay(
+    userId: string,
+    transferId: string,
+  ): TransferReceipt {
+    const canonical = this.transfers.get(transferId);
+    if (!canonical || canonical.userId !== userId) {
+      throw conflictWithCode(
+        "IDEMPOTENCY_STATE_MISSING",
+        "The transfer recovery record is missing; manual reconciliation is required.",
+      );
+    }
+    try {
+      this.core.getTransferTarget(userId, transferId);
+    } catch (error) {
+      if (error instanceof DomainError && error.status === 404) {
+        throw conflictWithCode(
+          "IDEMPOTENCY_STATE_MISSING",
+          "The core transfer recovery record is missing; manual reconciliation is required.",
+        );
+      }
+      throw error;
+    }
+    return cloneReceipt(canonical.receipt);
   }
 
   settleTransfer(userId: string, transferId: string): TransferReceipt {
@@ -2699,6 +3065,66 @@ export class BankingSystem {
     };
   }
 
+  processScheduledWork(
+    operatorKey: string,
+    userId?: string,
+  ): {
+    usersProcessed: number;
+    transfersSettled: number;
+    savingsOpeningsSettled: number;
+    creditPaymentsSettled: number;
+    savingsMaturities: number;
+    creditStatements: number;
+  } {
+    if (
+      this.bankingEnvironment === "production" ||
+      operatorKey !== this.sandboxOperatorKey
+    ) {
+      throw unauthorized("Sandbox operator authorization failed.");
+    }
+    const targetUserIds = userId
+      ? [requireString(userId, "userId")]
+      : [...this.users.keys()];
+    if (userId && !this.users.has(userId)) {
+      throw notFound("Sandbox user not found.");
+    }
+    let transfersSettled = 0;
+    let savingsOpeningsSettled = 0;
+    let creditPaymentsSettled = 0;
+    let savingsMaturities = 0;
+    let creditStatements = 0;
+    for (const targetUserId of targetUserIds) {
+      for (const [transferId, transfer] of this.transfers) {
+        if (transfer.userId === targetUserId && transfer.receipt.status === "PENDING") {
+          this.settleTransfer(targetUserId, transferId);
+          transfersSettled += 1;
+        }
+      }
+      for (const [openingId, opening] of this.savingsOpenings) {
+        if (opening.userId === targetUserId && opening.status === "PENDING") {
+          this.settleSavingsOpening(targetUserId, openingId);
+          savingsOpeningsSettled += 1;
+        }
+      }
+      for (const [paymentId, payment] of this.creditPayments) {
+        if (payment.userId === targetUserId && payment.status === "PENDING") {
+          this.settleCreditPayment(targetUserId, paymentId);
+          creditPaymentsSettled += 1;
+        }
+      }
+      savingsMaturities += this.processSavingsMaturities(targetUserId);
+      creditStatements += this.processCreditStatements(targetUserId);
+    }
+    return {
+      usersProcessed: targetUserIds.length,
+      transfersSettled,
+      savingsOpeningsSettled,
+      creditPaymentsSettled,
+      savingsMaturities,
+      creditStatements,
+    };
+  }
+
   getHealth(): ServiceHealth {
     this.cleanupExpiredState();
     const pendingOutboxEvents = this.outboxEventStore.filter(
@@ -2712,13 +3138,22 @@ export class BankingSystem {
         (row) => row.differenceMinor !== "0",
       );
       const hasCreditMismatch = this.reconcileCredit().some(
-        (row) => row.differenceMinor !== "0",
+        (row) => row.differenceMinor !== "0" || !row.invariantValid,
+      );
+      const hasSavingsMismatch = this.reconcileSavings().some(
+        (row) => row.differenceMinor !== "0" || !row.invariantValid,
       );
       const reconciliationStatus = hasMismatch ? "mismatch" : "ok";
       return {
-        status: hasMismatch || hasCreditMismatch || outboxStatus === "degraded" ? "degraded" : "ok",
+        status:
+          hasMismatch || hasCreditMismatch || hasSavingsMismatch || outboxStatus === "degraded"
+            ? "degraded"
+            : "ok",
         checkedAt: nowIso(this.clock),
-        reconciliation: hasMismatch || hasCreditMismatch ? "mismatch" : reconciliationStatus,
+        reconciliation:
+          hasMismatch || hasCreditMismatch || hasSavingsMismatch
+            ? "mismatch"
+            : reconciliationStatus,
         outbox: outboxStatus,
         pendingOutboxEvents,
       };
@@ -2761,6 +3196,63 @@ export class BankingSystem {
     return ready.map((event) => ({ ...event }));
   }
 
+  private transitionSavingsOpening(
+    userId: string,
+    openingId: string,
+    status: "SUCCEEDED" | "FAILED",
+  ): SavingsOpening {
+    const opening = this.savingsOpenings.get(requireString(openingId, "openingId"));
+    if (!opening || opening.userId !== userId) {
+      throw notFound("Savings opening not found.");
+    }
+    if (opening.status === status) {
+      return toPublicSavingsOpening(opening);
+    }
+    if (opening.status !== "PENDING") {
+      throw conflict("A terminal savings opening cannot change state.");
+    }
+    const receipt = this.core.transitionSavingsOpening(
+      userId,
+      opening.openingId,
+      status,
+      nowIso(this.clock),
+    );
+    opening.status = receipt.status;
+    opening.reference = receipt.reference;
+    opening.failureReason = receipt.status === "FAILED"
+      ? "SANDBOX_SETTLEMENT_FAILED"
+      : null;
+    opening.updatedAt = receipt.updatedAt;
+    if (receipt.status === "SUCCEEDED") {
+      const quote = this.savingsQuotes.get(opening.quoteId);
+      if (!quote) {
+        throw notFound("Savings quote not found.");
+      }
+      this.createSavingsDepositFromOpening(quote, opening);
+    }
+    this.recordAudit(`SAVINGS_OPENING_${receipt.status}`, userId, opening.openingId);
+    this.enqueueOutbox(
+      `SAVINGS_OPENING_${receipt.status}`,
+      opening.openingId,
+      receipt.updatedAt,
+    );
+    this.notifications.get(userId)?.unshift({
+      id: createId("notification"),
+      type: "SAVINGS",
+      title: receipt.status === "SUCCEEDED"
+        ? "Mở tiết kiệm thành công"
+        : "Mở tiết kiệm không thành công",
+      body: receipt.status === "SUCCEEDED"
+        ? `Yêu cầu ${receipt.reference} đã được ghi nhận.`
+        : `Yêu cầu ${receipt.reference} đã thất bại và số tiền giữ chỗ được hoàn lại.`,
+      resourceId: receipt.status === "SUCCEEDED" ? opening.depositId : opening.openingId,
+      resourceAccountId: null,
+      read: false,
+      createdAt: receipt.updatedAt,
+    });
+    return toPublicSavingsOpening(opening);
+  }
+
   private createSavingsDepositFromOpening(
     quote: SavingsQuoteRecord,
     opening: SavingsOpeningRecord,
@@ -2798,19 +3290,27 @@ export class BankingSystem {
     return deposit;
   }
 
-  private processSavingsMaturities(userId: string): void {
+  private processSavingsMaturities(userId: string): number {
     const now = this.clock();
-    const dueDeposits = [...this.savingsDeposits.values()].filter(
-      (deposit) =>
-        deposit.userId === userId &&
-        deposit.status === "ACTIVE" &&
-        Date.parse(deposit.maturityAt) <= now,
-    );
-    for (const deposit of dueDeposits) {
+    let processed = 0;
+    for (let iteration = 0; iteration < 240; iteration += 1) {
+      const deposit = [...this.savingsDeposits.values()]
+        .filter(
+          (candidate) =>
+            candidate.userId === userId &&
+            candidate.status === "ACTIVE" &&
+            Date.parse(candidate.maturityAt) <= now,
+        )
+        .sort((left, right) => left.maturityAt.localeCompare(right.maturityAt))[0];
+      if (!deposit) break;
+
       const principalMinor = BigInt(deposit.principal.amountMinor);
       const interestMinor = BigInt(deposit.expectedInterest.amountMinor);
       const renews = deposit.maturityInstruction !== "RETURN_PRINCIPAL_AND_INTEREST";
-      const newDepositId = renews ? createId("savings-deposit") : undefined;
+      const maturityKey = `${deposit.depositId}:${deposit.maturityAt}`;
+      const requestedNewDepositId = renews
+        ? deterministicUuid(`savings-renewal:${maturityKey}`)
+        : undefined;
       const newPrincipalMinor = renews
         ? deposit.maturityInstruction === "RENEW_PRINCIPAL"
           ? principalMinor
@@ -2823,8 +3323,9 @@ export class BankingSystem {
             ? interestMinor
             : 0n;
       const maturityInput: CoreSavingsMaturityInput = {
+        idempotencyKey: maturityKey,
         depositId: deposit.depositId,
-        newDepositId,
+        newDepositId: requestedNewDepositId,
         accountId: deposit.sourceAccountId,
         principalMinor,
         interestMinor,
@@ -2834,23 +3335,36 @@ export class BankingSystem {
         description: "Tất toán tiền gửi tiết kiệm sandbox",
       };
       const receipt = this.core.postSavingsMaturity(userId, maturityInput);
+      const newDepositId = receipt.newDepositId ?? undefined;
 
       deposit.status = renews ? "CLOSED" : "MATURED";
       deposit.renewedDepositId = newDepositId ?? null;
       deposit.updatedAt = receipt.occurredAt;
       if (newDepositId) {
+        const product = this.savingsProducts.find(
+          (candidate) =>
+            candidate.productId === deposit.productId &&
+            candidate.status === "ACTIVE",
+        );
         const openedAt = deposit.maturityAt;
-        const maturityAt = addMonthsClamped(openedAt, deposit.termMonths);
+        const termMonths = product?.termMonths ?? deposit.termMonths;
+        const maturityAt = addMonthsClamped(openedAt, termMonths);
         const interestDays = calculateActualDays(openedAt, maturityAt);
+        const annualRateBasisPoints =
+          product?.annualRateBasisPoints ?? deposit.annualRateBasisPoints;
         const renewedInterestMinor = calculateSavingsInterest(
           newPrincipalMinor,
-          deposit.annualRateBasisPoints,
+          annualRateBasisPoints,
           interestDays,
         );
         this.savingsDeposits.set(newDepositId, {
           ...deposit,
           depositId: newDepositId,
+          productName: product?.name ?? deposit.productName,
+          termsVersion: product?.termsVersion ?? deposit.termsVersion,
+          termMonths,
           principal: toMoney(newPrincipalMinor),
+          annualRateBasisPoints,
           expectedInterest: toMoney(renewedInterestMinor),
           totalAtMaturity: toMoney(newPrincipalMinor + renewedInterestMinor),
           openedAt,
@@ -2863,6 +3377,7 @@ export class BankingSystem {
         });
       }
 
+      processed += 1;
       this.recordAudit("SAVINGS_MATURED", userId, deposit.depositId);
       this.enqueueOutbox("SAVINGS_MATURED", deposit.depositId, receipt.occurredAt);
       this.notifications.get(userId)?.unshift({
@@ -2878,6 +3393,17 @@ export class BankingSystem {
         createdAt: receipt.occurredAt,
       });
     }
+    if (
+      [...this.savingsDeposits.values()].some(
+        (deposit) =>
+          deposit.userId === userId &&
+          deposit.status === "ACTIVE" &&
+          Date.parse(deposit.maturityAt) <= now,
+      )
+    ) {
+      this.recordAudit("SAVINGS_MATURITY_BACKLOG", userId, null);
+    }
+    return processed;
   }
 
   private assertCreditVisible(userId: string): void {
@@ -3037,6 +3563,7 @@ export class BankingSystem {
   private refreshCreditStatementStatus(statement: CreditStatementRecord): void {
     const nextStatus = getStatementStatus(
       BigInt(statement.remainingAmountDue.amountMinor),
+      BigInt(statement.minimumPaymentRemaining.amountMinor),
       BigInt(statement.paidAmount.amountMinor),
       statement.dueAt,
       this.clock(),
@@ -3068,8 +3595,9 @@ export class BankingSystem {
     }
   }
 
-  private processCreditStatements(userId: string): void {
+  private processCreditStatements(userId: string): number {
     const now = this.clock();
+    let processed = 0;
     for (const account of [...this.creditAccounts.values()].filter((item) => item.userId === userId)) {
       for (let iteration = 0; iteration < 24 && Date.parse(account.nextStatementAt) <= now; iteration += 1) {
         const cycleEndAt = account.nextStatementAt;
@@ -3129,6 +3657,7 @@ export class BankingSystem {
           userId,
         };
         this.creditStatements.set(statement.statementId, statement);
+        processed += 1;
         account.nextStatementAt = nextCreditStatementCloseAt(cycleEndAt);
         account.version += 1;
         account.updatedAt = cycleEndAt;
@@ -3154,6 +3683,7 @@ export class BankingSystem {
     for (const statement of [...this.creditStatements.values()].filter((item) => item.userId === userId)) {
       this.refreshCreditStatementStatus(statement);
     }
+    return processed;
   }
 
   private applyCreditPaymentSuccess(
@@ -3166,6 +3696,15 @@ export class BankingSystem {
     const account = this.requireCreditAccount(payment.userId, statement.creditAccountId);
     const amountMinor = BigInt(payment.amount.amountMinor);
     const currentOutstanding = BigInt(account.postedOutstanding.amountMinor);
+    if (
+      amountMinor > currentOutstanding ||
+      amountMinor > BigInt(statement.remainingAmountDue.amountMinor)
+    ) {
+      throw conflictWithCode(
+        "CREDIT_INVARIANT_VIOLATION",
+        "Thanh toán sẽ làm dư nợ tín dụng âm; cần đối soát thủ công.",
+      );
+    }
     account.postedOutstanding = creditMoney(currentOutstanding - amountMinor);
     account.availableCredit = creditMoney(
       calculateAvailableCredit(
@@ -3176,18 +3715,9 @@ export class BankingSystem {
     );
     account.version += 1;
     account.updatedAt = payment.updatedAt;
-    const remaining = BigInt(statement.remainingAmountDue.amountMinor) - amountMinor;
-    const minimumRemaining = BigInt(statement.minimumPaymentRemaining.amountMinor) - amountMinor;
-    statement.remainingAmountDue = creditMoney(remaining > 0n ? remaining : 0n);
-    statement.minimumPaymentRemaining = creditMoney(minimumRemaining > 0n ? minimumRemaining : 0n);
-    statement.paidAmount = creditMoney(BigInt(statement.paidAmount.amountMinor) + amountMinor);
+    payment.creditApplied = true;
+    this.recomputeCreditStatementPaymentTotals(statement);
     statement.version += 1;
-    statement.status = getStatementStatus(
-      BigInt(statement.remainingAmountDue.amountMinor),
-      BigInt(statement.paidAmount.amountMinor),
-      statement.dueAt,
-      this.clock(),
-    );
     const paymentIndex = statement.payments.findIndex((item) => item.paymentId === payment.paymentId);
     const publicPayment = toPublicCreditPayment(payment);
     if (paymentIndex >= 0) statement.payments[paymentIndex] = publicPayment;
@@ -3199,7 +3729,6 @@ export class BankingSystem {
       paymentTransaction.status = "POSTED";
       paymentTransaction.postedAt = payment.updatedAt;
     }
-    payment.creditApplied = true;
   }
 
   private applyCreditPaymentReversal(payment: CreditPaymentRecord): void {
@@ -3221,25 +3750,46 @@ export class BankingSystem {
     account.updatedAt = payment.updatedAt;
     const statement = this.creditStatements.get(payment.statementId);
     if (statement) {
-      statement.remainingAmountDue = creditMoney(BigInt(statement.remainingAmountDue.amountMinor) + amountMinor);
-      const paidAfterReversal = BigInt(statement.paidAmount.amountMinor) - amountMinor;
-      statement.paidAmount = creditMoney(paidAfterReversal > 0n ? paidAfterReversal : 0n);
-      const minimumRemaining = BigInt(statement.minimumPaymentRemaining.amountMinor) + amountMinor;
-      statement.minimumPaymentRemaining = creditMoney(
-        minimumRemaining < BigInt(statement.minimumPaymentDue.amountMinor)
-          ? minimumRemaining
-          : BigInt(statement.minimumPaymentDue.amountMinor),
-      );
+      payment.creditApplied = false;
+      this.recomputeCreditStatementPaymentTotals(statement);
       statement.version += 1;
-      statement.status = getStatementStatus(
-        BigInt(statement.remainingAmountDue.amountMinor),
-        BigInt(statement.paidAmount.amountMinor),
-        statement.dueAt,
-        this.clock(),
+      const paymentIndex = statement.payments.findIndex(
+        (item) => item.paymentId === payment.paymentId,
       );
-      statement.payments = statement.payments.filter((item) => item.paymentId !== payment.paymentId);
+      const reversedPayment = toPublicCreditPayment(payment);
+      if (paymentIndex >= 0) statement.payments[paymentIndex] = reversedPayment;
+      else statement.payments.push(reversedPayment);
     }
     payment.creditApplied = false;
+  }
+
+  private recomputeCreditStatementPaymentTotals(
+    statement: CreditStatementRecord,
+  ): void {
+    const validPaid = [...this.creditPayments.values()]
+      .filter(
+        (payment) =>
+          payment.statementId === statement.statementId &&
+          payment.status === "SUCCEEDED" &&
+          payment.creditApplied,
+      )
+      .reduce((total, payment) => total + BigInt(payment.amount.amountMinor), 0n);
+    const closingBalance = BigInt(statement.closingBalance.amountMinor);
+    const minimumDue = BigInt(statement.minimumPaymentDue.amountMinor);
+    statement.paidAmount = creditMoney(validPaid);
+    statement.remainingAmountDue = creditMoney(
+      closingBalance > validPaid ? closingBalance - validPaid : 0n,
+    );
+    statement.minimumPaymentRemaining = creditMoney(
+      minimumDue > validPaid ? minimumDue - validPaid : 0n,
+    );
+    statement.status = getStatementStatus(
+      BigInt(statement.remainingAmountDue.amountMinor),
+      BigInt(statement.minimumPaymentRemaining.amountMinor),
+      validPaid,
+      statement.dueAt,
+      this.clock(),
+    );
   }
 
   private transitionCreditPayment(
@@ -3255,6 +3805,18 @@ export class BankingSystem {
     if (payment.status !== "PENDING" && !isReversal) {
       if (payment.status === status) return toPublicCreditPayment(payment);
       throw conflictWithCode("PAYMENT_STATE_INVALID", "Thanh toán tín dụng đã ở trạng thái kết thúc.");
+    }
+    const latestStatement = this.findLatestCreditStatement(payment.creditAccountId);
+    if (
+      status !== "FAILED" &&
+      (!latestStatement || latestStatement.statementId !== payment.statementId)
+    ) {
+      throw conflictWithCode(
+        isReversal ? "REVERSAL_REQUIRES_REVIEW" : "PAYMENT_STATEMENT_SUPERSEDED",
+        isReversal
+          ? "Không thể hoàn tác tự động sau khi nghĩa vụ đã chuyển kỳ; cần đối soát thủ công."
+          : "Không thể quyết toán vào sao kê đã chuyển kỳ; cần thất bại/hoàn tiền lệnh chờ và đối soát.",
+      );
     }
     const receipt = isReversal
       ? this.core.transitionCreditPayment(userId, paymentId, "REVERSED", nowIso(this.clock))
@@ -3287,6 +3849,22 @@ export class BankingSystem {
     }
     this.recordAudit(`CREDIT_PAYMENT_${receipt.status}`, userId, paymentId);
     this.enqueueOutbox(`CREDIT_PAYMENT_${receipt.status}`, paymentId, receipt.updatedAt);
+    const card = this.creditCards.get(payment.cardId);
+    this.notifications.get(userId)?.unshift({
+      id: createId("notification"),
+      type: "CREDIT",
+      title:
+        receipt.status === "SUCCEEDED"
+          ? "Thanh toán thẻ thành công"
+          : receipt.status === "REVERSED"
+            ? "Thanh toán thẻ đã hoàn tác"
+            : "Thanh toán thẻ không thành công",
+      body: `Thanh toán ${payment.reference} có trạng thái ${receipt.status}.`,
+      resourceId: card?.cardId ?? payment.cardId,
+      resourceAccountId: payment.sourceAccountId,
+      read: false,
+      createdAt: receipt.updatedAt,
+    });
     return toPublicCreditPayment(payment);
   }
 
@@ -3332,6 +3910,7 @@ export class BankingSystem {
           requestFingerprint,
         );
       } else if (
+        !this.allowUnsafeDirectSandboxStepUp ||
         !(
           (stepUp.method === "OTP" && this.sandboxOtp && stepUp.proof === this.sandboxOtp) ||
           (stepUp.method === "BIOMETRIC" && stepUp.proof === "sandbox-biometric")
@@ -3342,7 +3921,7 @@ export class BankingSystem {
     } catch (error) {
       this.recordCreditStepUpFailure(key);
       this.recordAudit("CREDIT_STEP_UP_VERIFICATION_FAILED", userId, resourceId);
-      throw error;
+      rethrowFinancialStepUpFailure(error);
     }
     this.creditStepUpAttemptWindows.delete(key);
     this.recordAudit("CREDIT_STEP_UP_VERIFIED", userId, resourceId);
@@ -3397,7 +3976,15 @@ export class BankingSystem {
       authChallenges: [...this.authChallenges.entries()].map(([hash, challenge]) => [hash, { ...challenge, methods: [...challenge.methods] }]),
       pendingRegistrations: [...this.pendingRegistrations.entries()].map(([registrationId, record]) => [
         registrationId,
-        { ...record, prepared: { ...record.prepared }, passwordMaterial: { ...record.passwordMaterial } },
+        {
+          prepared: {
+            fullName: record.prepared.fullName,
+            email: record.prepared.email,
+            phoneNumber: record.prepared.phoneNumber,
+          },
+          passwordMaterial: { ...record.passwordMaterial },
+          expiresAt: record.expiresAt,
+        },
       ]),
       authAttemptWindows: [...this.authAttemptWindows.entries()].map(([key, window]) => [key, { ...window }]),
       registrationAttemptWindows: [...this.registrationAttemptWindows.entries()].map(([key, window]) => [key, { ...window }]),
@@ -3483,6 +4070,13 @@ export class BankingSystem {
       ]),
       creditApplicationIdempotency: [...this.creditApplicationIdempotency.entries()].map(([key, record]) => [key, { ...record }]),
       creditActivationIdempotency: [...this.creditActivationIdempotency.entries()].map(([key, record]) => [key, { ...record }]),
+      fraudReports: [...this.fraudReports.entries()].map(([reportId, record]) => [
+        reportId,
+        { ...record },
+      ]),
+      fraudReportIdempotency: [...this.fraudReportIdempotency.entries()].map(
+        ([key, record]) => [key, { ...record }],
+      ),
       auditEventStore: this.auditEventStore.map((event) => ({ ...event })),
       outboxEventStore: this.outboxEventStore.map((event) => ({ ...event })),
     };
@@ -3527,9 +4121,13 @@ export class BankingSystem {
     this.pendingRegistrations.clear();
     for (const [registrationId, record] of state.pendingRegistrations ?? []) {
       this.pendingRegistrations.set(registrationId, {
-        ...record,
-        prepared: { ...record.prepared },
+        prepared: {
+          fullName: record.prepared.fullName,
+          email: record.prepared.email,
+          phoneNumber: record.prepared.phoneNumber,
+        },
         passwordMaterial: { ...record.passwordMaterial },
+        expiresAt: record.expiresAt,
       });
     }
     this.authAttemptWindows.clear();
@@ -3675,6 +4273,14 @@ export class BankingSystem {
     for (const [key, record] of state.creditActivationIdempotency ?? []) {
       this.creditActivationIdempotency.set(key, { ...record });
     }
+    this.fraudReports.clear();
+    for (const [reportId, record] of state.fraudReports ?? []) {
+      this.fraudReports.set(reportId, { ...record });
+    }
+    this.fraudReportIdempotency.clear();
+    for (const [key, record] of state.fraudReportIdempotency ?? []) {
+      this.fraudReportIdempotency.set(key, { ...record });
+    }
     this.auditEventStore.length = 0;
     this.auditEventStore.push(...state.auditEventStore.map((event) => ({ ...event })));
     this.outboxEventStore.length = 0;
@@ -3709,23 +4315,101 @@ export class BankingSystem {
     accountId: string,
     transactionId: string,
     reason: string,
+    idempotencyKey: string,
   ): FraudReportResponse {
+    const normalizedAccountId = requireString(accountId, "accountId");
+    const normalizedTransactionId = requireString(transactionId, "transactionId");
     const normalizedReason = requireString(reason, "reason");
     if (normalizedReason.length < 5) {
       throw invalidRequest("reason must contain at least 5 characters.", {
         reason: "reason must contain at least 5 characters.",
       });
     }
+    if (normalizedReason.length > 1_000) {
+      throw invalidRequest("reason must not exceed 1000 characters.", {
+        reason: "reason must not exceed 1000 characters.",
+      });
+    }
 
-    const transaction = this.core.getTransaction(userId, accountId, transactionId);
-    const report: FraudReportResponse = {
+    const normalizedKey = requireIdempotencyKey(idempotencyKey, 8);
+    const requestFingerprint = fingerprint({
+      accountId: normalizedAccountId,
+      transactionId: normalizedTransactionId,
+      reason: normalizedReason,
+    });
+    const scopedKey = `${userId}:${normalizedKey}`;
+    const existing = this.fraudReportIdempotency.get(scopedKey);
+    if (existing) {
+      if (existing.fingerprint !== requestFingerprint) {
+        throw conflictWithCode(
+          "IDEMPOTENCY_CONFLICT",
+          "Idempotency-Key đã được dùng cho một báo cáo khác.",
+        );
+      }
+      return this.getFraudReport(userId, existing.reportId);
+    }
+    const transaction = this.core.getTransaction(
+      userId,
+      normalizedAccountId,
+      normalizedTransactionId,
+    );
+    const existingOpenReport = [...this.fraudReports.values()].find(
+      (report) =>
+        report.userId === userId &&
+        report.transactionId === transaction.id &&
+        report.status === "RECEIVED",
+    );
+    if (existingOpenReport) {
+      if (
+        existingOpenReport.accountId !== normalizedAccountId ||
+        existingOpenReport.reason !== normalizedReason
+      ) {
+        throw conflictWithCode(
+          "FRAUD_REPORT_ALREADY_EXISTS",
+          "Giao dịch này đã có một báo cáo gian lận đang mở.",
+        );
+      }
+      this.fraudReportIdempotency.set(scopedKey, {
+        userId,
+        fingerprint: requestFingerprint,
+        reportId: existingOpenReport.reportId,
+      });
+      return this.getFraudReport(userId, existingOpenReport.reportId);
+    }
+    const report: FraudReportRecord = {
       reportId: createId("fraud-report"),
       status: "RECEIVED",
       createdAt: nowIso(this.clock),
+      userId,
+      accountId: normalizedAccountId,
+      transactionId: transaction.id,
+      reason: normalizedReason,
     };
+    this.fraudReports.set(report.reportId, report);
+    this.fraudReportIdempotency.set(scopedKey, {
+      userId,
+      fingerprint: requestFingerprint,
+      reportId: report.reportId,
+    });
     this.recordAudit("FRAUD_REPORT_CREATED", userId, transaction.id);
     this.enqueueOutbox("FRAUD_REPORT_CREATED", report.reportId, report.createdAt);
-    return report;
+    return {
+      reportId: report.reportId,
+      status: report.status,
+      createdAt: report.createdAt,
+    };
+  }
+
+  getFraudReport(userId: string, reportId: string): FraudReportResponse {
+    const report = this.fraudReports.get(requireString(reportId, "reportId"));
+    if (!report || report.userId !== userId) {
+      throw notFound("Fraud report not found.");
+    }
+    return {
+      reportId: report.reportId,
+      status: report.status,
+      createdAt: report.createdAt,
+    };
   }
 
   reconcile() {
@@ -3743,12 +4427,25 @@ export class BankingSystem {
     storedOutstandingMinor: string;
     expectedOutstandingMinor: string;
     differenceMinor: string;
+    invariantValid: boolean;
   }> {
     return [...this.creditAccounts.values()].map((account) => {
       const stored = BigInt(account.postedOutstanding.amountMinor);
       const expected = -this.core.getLedgerNetBalance(`credit-receivable:${account.creditAccountId}`);
       const difference = stored - expected;
-      if (difference !== 0n) {
+      const creditLimit = BigInt(account.creditLimit.amountMinor);
+      const pendingAuthorizations = BigInt(account.pendingAuthorizations.amountMinor);
+      const availableCredit = BigInt(account.availableCredit.amountMinor);
+      const invariantValid =
+        stored >= 0n &&
+        stored <= creditLimit &&
+        pendingAuthorizations >= 0n &&
+        availableCredit >= 0n &&
+        availableCredit <= creditLimit &&
+        availableCredit === creditLimit - stored - pendingAuthorizations &&
+        this.findLatestCreditStatement(account.creditAccountId)?.remainingAmountDue.amountMinor ===
+          stored.toString();
+      if (difference !== 0n || !invariantValid) {
         this.recordAudit("CREDIT_RECONCILIATION_MISMATCH", null, account.creditAccountId);
       }
       return {
@@ -3756,6 +4453,112 @@ export class BankingSystem {
         storedOutstandingMinor: stored.toString(),
         expectedOutstandingMinor: expected.toString(),
         differenceMinor: difference.toString(),
+        invariantValid,
+      };
+    });
+  }
+
+  reconcileSavings(): Array<{
+    depositId: string;
+    status: SavingsDeposit["status"] | "MISSING";
+    expectedLiabilityMinor: string;
+    postedLiabilityMinor: string;
+    differenceMinor: string;
+    invariantValid: boolean;
+  }> {
+    const liabilityPrefix = "savings-liability:";
+    const postedLiabilities = new Map(
+      this.core
+        .listLedgerAccountBalances(liabilityPrefix)
+        .map((row) => [
+          row.accountId.slice(liabilityPrefix.length),
+          BigInt(row.netBalanceMinor),
+        ]),
+    );
+    const renewalParentCounts = new Map<string, number>();
+    for (const deposit of this.savingsDeposits.values()) {
+      if (deposit.renewedDepositId) {
+        renewalParentCounts.set(
+          deposit.renewedDepositId,
+          (renewalParentCounts.get(deposit.renewedDepositId) ?? 0) + 1,
+        );
+      }
+    }
+    const depositIds = new Set([
+      ...this.savingsDeposits.keys(),
+      ...postedLiabilities.keys(),
+    ]);
+
+    return [...depositIds].sort((left, right) => left.localeCompare(right)).map((depositId) => {
+      const deposit = this.savingsDeposits.get(depositId);
+      const posted = postedLiabilities.get(depositId) ?? 0n;
+      if (!deposit) {
+        this.recordAudit("SAVINGS_RECONCILIATION_MISMATCH", null, depositId);
+        return {
+          depositId,
+          status: "MISSING" as const,
+          expectedLiabilityMinor: "0",
+          postedLiabilityMinor: posted.toString(),
+          differenceMinor: (-posted).toString(),
+          invariantValid: false,
+        };
+      }
+
+      const principal = BigInt(deposit.principal.amountMinor);
+      const expected = deposit.status === "ACTIVE" ? principal : 0n;
+      const difference = expected - posted;
+      const renewedDeposit = deposit.renewedDepositId
+        ? this.savingsDeposits.get(deposit.renewedDepositId)
+        : undefined;
+      const expectedRenewedPrincipal =
+        deposit.maturityInstruction === "RENEW_PRINCIPAL"
+          ? deposit.principal.amountMinor
+          : deposit.maturityInstruction === "RENEW_PRINCIPAL_AND_INTEREST"
+            ? deposit.totalAtMaturity.amountMinor
+            : null;
+      const opening = this.savingsOpenings.get(deposit.openingId);
+      const incomingRenewalCount = renewalParentCounts.get(deposit.depositId) ?? 0;
+      const renewalOriginValid = Boolean(
+        opening &&
+          opening.userId === deposit.userId &&
+          opening.status === "SUCCEEDED" &&
+          opening.depositId &&
+          (opening.depositId === deposit.depositId
+            ? incomingRenewalCount === 0
+            : incomingRenewalCount === 1),
+      );
+      const renewalChainValid =
+        deposit.status === "CLOSED"
+          ? Boolean(
+              deposit.renewedDepositId &&
+                renewedDeposit &&
+                renewalParentCounts.get(deposit.renewedDepositId) === 1 &&
+                renewedDeposit.depositId !== deposit.depositId &&
+                renewedDeposit.userId === deposit.userId &&
+                renewedDeposit.sourceAccountId === deposit.sourceAccountId &&
+                renewedDeposit.openingId === deposit.openingId &&
+                renewedDeposit.openedAt === deposit.maturityAt &&
+                renewedDeposit.principal.amountMinor === expectedRenewedPrincipal,
+            )
+          : deposit.renewedDepositId === null;
+      const invariantValid =
+        postedLiabilities.has(deposit.depositId) &&
+        principal > 0n &&
+        BigInt(deposit.expectedInterest.amountMinor) >= 0n &&
+        BigInt(deposit.totalAtMaturity.amountMinor) ===
+          principal + BigInt(deposit.expectedInterest.amountMinor) &&
+        renewalOriginValid &&
+        renewalChainValid;
+      if (difference !== 0n || !invariantValid) {
+        this.recordAudit("SAVINGS_RECONCILIATION_MISMATCH", null, deposit.depositId);
+      }
+      return {
+        depositId: deposit.depositId,
+        status: deposit.status,
+        expectedLiabilityMinor: expected.toString(),
+        postedLiabilityMinor: posted.toString(),
+        differenceMinor: difference.toString(),
+        invariantValid,
       };
     });
   }
@@ -3903,7 +4706,7 @@ export class BankingSystem {
     const valid =
       method === "OTP"
         ? challenge.otpHash !== null && hashOpaqueToken(proof) === challenge.otpHash
-        : proof === "sandbox-biometric";
+        : this.allowUnsafeDirectSandboxStepUp && proof === "sandbox-biometric";
     if (!valid) {
       this.recordChallengeFailure(challengeHash, challenge);
       throw unauthorized("OTP challenge verification failed.");
@@ -4048,6 +4851,18 @@ export class BankingSystem {
     if (window.attempts >= AUTH_RATE_LIMIT_MAX_ATTEMPTS) {
       throw rateLimited("Too many authentication attempts.");
     }
+  }
+
+  private consumeOtpChallengeIssuance(key: string): void {
+    const current = this.authAttemptWindows.get(key);
+    if (!current || this.clock() - current.startedAt >= AUTH_RATE_LIMIT_WINDOW_MS) {
+      this.authAttemptWindows.set(key, { startedAt: this.clock(), attempts: 1 });
+      return;
+    }
+    if (current.attempts >= OTP_CHALLENGE_ISSUANCE_RATE_LIMIT_MAX_ATTEMPTS) {
+      throw rateLimited("Too many OTP challenge requests.");
+    }
+    current.attempts += 1;
   }
 
   private assertRegistrationAttemptAllowed(key: string): void {

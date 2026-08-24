@@ -34,7 +34,10 @@ async function completeRegistration(
 }
 
 test("HTTP savings flow exposes quote, MFA/idempotency opening and deposit detail", async (t) => {
-  const system = new BankingSystem({ sandboxOtp: "123456" });
+  const system = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
   const server = createBankingServer(system);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
@@ -84,12 +87,23 @@ test("HTTP savings flow exposes quote, MFA/idempotency opening and deposit detai
   assert.equal(quoteResponse.status, 200);
   const quote = (await quoteResponse.json()) as { quoteId: string };
 
+  const shortKeyResponse = await request("/savings/deposits", {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "short" },
+    body: json({ quoteId: quote.quoteId, stepUp: { method: "OTP", proof: "123456" } }),
+  });
+  assert.equal(shortKeyResponse.status, 422);
+
   const wrongOtpResponse = await request("/savings/deposits", {
     method: "POST",
     headers: { ...authHeaders, "Idempotency-Key": "savings-http-key-a" },
     body: json({ quoteId: quote.quoteId, stepUp: { method: "OTP", proof: "000000" } }),
   });
-  assert.equal(wrongOtpResponse.status, 401);
+  assert.equal(wrongOtpResponse.status, 409);
+  assert.equal(
+    ((await wrongOtpResponse.json()) as { code: string }).code,
+    "STEP_UP_VERIFICATION_FAILED",
+  );
 
   const openingResponse = await request("/savings/deposits", {
     method: "POST",
@@ -107,6 +121,32 @@ test("HTTP savings flow exposes quote, MFA/idempotency opening and deposit detai
   });
   const retry = (await openingRetry.json()) as { openingId: string };
   assert.equal(retry.openingId, opening.openingId);
+
+  const secondQuoteResponse = await request("/savings/quotes", {
+    method: "POST",
+    headers: authHeaders,
+    body: json({
+      sourceAccountId: accountId,
+      productId: products.items[0]?.productId,
+      principal: { currency: "VND", amountMinor: "2000000" },
+      maturityInstruction: "RETURN_PRINCIPAL_AND_INTEREST",
+    }),
+  });
+  assert.equal(secondQuoteResponse.status, 200);
+  const secondQuote = (await secondQuoteResponse.json()) as { quoteId: string };
+  const mismatchedReplay = await request("/savings/deposits", {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "savings-http-key-a" },
+    body: json({
+      quoteId: secondQuote.quoteId,
+      stepUp: { method: "OTP", proof: "123456" },
+    }),
+  });
+  assert.equal(mismatchedReplay.status, 409);
+  assert.equal(
+    ((await mismatchedReplay.json()) as { code: string }).code,
+    "IDEMPOTENCY_CONFLICT",
+  );
 
   const detailResponse = await request(`/savings/deposits/${opening.depositId}`, { headers: authHeaders });
   assert.equal(detailResponse.status, 200);

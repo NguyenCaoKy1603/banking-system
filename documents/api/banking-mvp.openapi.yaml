@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Banking MVP Accounts and Transfers API
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   description: |
     DRAFT only. This contract requires backend, core-banking partner and
     legal/compliance approval before any real-money pilot. Authenticated
@@ -22,12 +22,15 @@ tags:
   - name: Credit
 security:
   - bearerAuth: []
+    deviceBinding: []
 paths:
   /auth/register:
     post:
       tags: [Auth]
       operationId: register
       security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
       requestBody:
         required: true
         content:
@@ -45,6 +48,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /auth/register/verify:
     post:
       tags: [Auth]
@@ -71,12 +76,12 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /auth/otp/challenges:
     post:
       tags: [Auth]
       operationId: createOtpChallenge
-      parameters:
-        - $ref: '#/components/parameters/DeviceId'
       requestBody:
         required: true
         content:
@@ -94,6 +99,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /sandbox/fundings:
     post:
       tags: [Sandbox]
@@ -119,6 +126,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /sandbox/otp/{challengeId}:
     get:
       tags: [Sandbox]
@@ -138,6 +147,32 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /sandbox/process-scheduled:
+    post:
+      tags: [Sandbox]
+      operationId: processSandboxScheduledWork
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/SandboxOperatorKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SandboxScheduledWorkRequest'
+      responses:
+        '200':
+          description: Pending sandbox transfers, savings openings and credit payments are settled before due savings maturities and credit statements are processed explicitly.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxScheduledWorkResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /auth/login:
     post:
       tags: [Auth]
@@ -240,8 +275,6 @@ paths:
     post:
       tags: [Auth]
       operationId: revokeAllSessions
-      parameters:
-        - $ref: '#/components/parameters/DeviceId'
       responses:
         '204':
           description: All sessions owned by the authenticated user were revoked.
@@ -294,6 +327,8 @@ paths:
     post:
       tags: [Fraud]
       operationId: submitFraudReport
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -302,7 +337,31 @@ paths:
               $ref: '#/components/schemas/FraudReportRequest'
       responses:
         '201':
-          description: Fraud report accepted for risk review.
+          description: Fraud report accepted for risk review, or the matching open report reused idempotently.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudReportResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /fraud-reports/{reportId}:
+    get:
+      tags: [Fraud]
+      operationId: getFraudReport
+      parameters:
+        - name: reportId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current server-authoritative fraud report status.
           content:
             application/json:
               schema:
@@ -311,8 +370,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/ValidationError'
   /accounts:
     get:
       tags: [Accounts]
@@ -330,8 +387,6 @@ paths:
     post:
       tags: [Recipients]
       operationId: lookupInternalRecipient
-      parameters:
-        - $ref: '#/components/parameters/DeviceId'
       requestBody:
         required: true
         content:
@@ -521,6 +576,10 @@ paths:
                 $ref: '#/components/schemas/TransferQuote'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
   /transfers:
@@ -555,14 +614,14 @@ paths:
                 $ref: '#/components/schemas/TransferReceipt'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
-          description: Idempotency key conflict or duplicate request fingerprint.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiErrorPayload'
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /transfers/{transferId}:
     get:
       tags: [Transfers]
@@ -619,6 +678,8 @@ paths:
                 $ref: '#/components/schemas/SavingsQuote'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
@@ -667,10 +728,14 @@ paths:
                 $ref: '#/components/schemas/SavingsOpening'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /savings/openings/{openingId}:
     get:
       tags: [Savings]
@@ -752,6 +817,8 @@ paths:
                 $ref: '#/components/schemas/CreditCardResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
   /cards/{cardId}/unlock:
@@ -775,8 +842,14 @@ paths:
                 $ref: '#/components/schemas/CreditCardResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /credit/accounts:
     get:
       tags: [Credit]
@@ -808,7 +881,6 @@ paths:
       operationId: submitCreditApplication
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/DeviceId'
       requestBody:
         required: true
         content:
@@ -826,6 +898,10 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /credit/applications/{applicationId}:
     get:
       tags: [Credit]
@@ -850,7 +926,6 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ApplicationId'
         - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/DeviceId'
       requestBody:
         required: true
         content:
@@ -866,8 +941,14 @@ paths:
                 $ref: '#/components/schemas/CreditApplication'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /credit/accounts/{creditAccountId}:
     get:
       tags: [Credit]
@@ -956,6 +1037,8 @@ paths:
                 $ref: '#/components/schemas/CreditPaymentQuote'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
@@ -992,10 +1075,14 @@ paths:
                 $ref: '#/components/schemas/CreditPayment'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '429':
           $ref: '#/components/responses/RateLimited'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /credit/payments/{paymentId}:
     get:
       tags: [Credit]
@@ -1019,6 +1106,10 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
+    deviceBinding:
+      type: apiKey
+      in: header
+      name: X-Device-ID
   parameters:
     AccountId:
       name: accountId
@@ -1154,7 +1245,7 @@ components:
           schema:
             $ref: '#/components/schemas/ApiErrorPayload'
     Conflict:
-      description: Resource or credential conflict.
+      description: Resource, idempotency, credential or financial step-up business conflict. `STEP_UP_VERIFICATION_FAILED` never means the bearer token is invalid and must not trigger token refresh/replay.
       content:
         application/json:
           schema:
@@ -1254,11 +1345,11 @@ components:
         - $ref: '#/components/schemas/LoginResponse'
     AuthChallengeResponse:
       type: object
-      required: [challengeId, expiresAt, methods]
+      required: [challengeId, expiresAt, methods, purpose]
       properties:
         challengeId: { type: string, minLength: 1 }
         expiresAt: { type: string, format: date-time }
-        purpose: { type: string, enum: [REGISTRATION_VERIFY, LOGIN, TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK] }
+        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK] }
         methods:
           type: array
           minItems: 1
@@ -1271,7 +1362,7 @@ components:
         resourceId: quote-example
         requestFingerprint: fingerprint-example
       properties:
-        purpose: { type: string, enum: [REGISTRATION_VERIFY, LOGIN, TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK] }
+        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK] }
         resourceId:
           oneOf:
             - { type: string }
@@ -1303,6 +1394,22 @@ components:
       required: [otp]
       properties:
         otp: { type: string, pattern: '^\d{6}$', writeOnly: true }
+    SandboxScheduledWorkRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        userId: { type: string, minLength: 1 }
+    SandboxScheduledWorkResponse:
+      type: object
+      additionalProperties: false
+      required: [usersProcessed, transfersSettled, savingsOpeningsSettled, creditPaymentsSettled, savingsMaturities, creditStatements]
+      properties:
+        usersProcessed: { type: integer, minimum: 0 }
+        transfersSettled: { type: integer, minimum: 0 }
+        savingsOpeningsSettled: { type: integer, minimum: 0 }
+        creditPaymentsSettled: { type: integer, minimum: 0 }
+        savingsMaturities: { type: integer, minimum: 0 }
+        creditStatements: { type: integer, minimum: 0 }
     InternalRecipientLookupRequest:
       type: object
       required: [accountNumber]
@@ -1400,11 +1507,12 @@ components:
           items: { $ref: '#/components/schemas/Notification' }
     FraudReportRequest:
       type: object
+      additionalProperties: false
       required: [accountId, transactionId, reason]
       properties:
         accountId: { type: string, minLength: 1 }
         transactionId: { type: string, minLength: 1 }
-        reason: { type: string, minLength: 5 }
+        reason: { type: string, minLength: 5, maxLength: 1000 }
     FraudReportResponse:
       type: object
       required: [reportId, status, createdAt]
@@ -1560,11 +1668,12 @@ components:
         stepUp:
           method: OTP
           proof: <provided-by-test-factor>
+          challengeId: challenge-example
       properties:
         quoteId: { type: string }
         stepUp:
           type: object
-          required: [method, proof]
+          required: [method, proof, challengeId]
           properties:
             method: { type: string, enum: [OTP, BIOMETRIC] }
             proof: { type: string, minLength: 1, writeOnly: true }
@@ -1640,14 +1749,16 @@ components:
         stepUp:
           method: OTP
           proof: <provided-by-test-factor>
+          challengeId: challenge-example
       properties:
         quoteId: { type: string, minLength: 1 }
         stepUp:
           type: object
-          required: [method, proof]
+          required: [method, proof, challengeId]
           properties:
             method: { type: string, enum: [OTP, BIOMETRIC] }
             proof: { type: string, minLength: 1, writeOnly: true }
+            challengeId: { type: string, minLength: 1, writeOnly: true }
     SavingsOpening:
       type: object
       required: [openingId, quoteId, depositId, status, reference, failureReason, createdAt, updatedAt]
@@ -1705,10 +1816,11 @@ components:
         totalPrincipal: { $ref: '#/components/schemas/Money' }
     CreditStepUpRequest:
       type: object
-      required: [method, proof]
+      required: [method, proof, challengeId]
       example:
         method: OTP
         proof: <provided-by-test-factor>
+        challengeId: challenge-example
       properties:
         method: { type: string, enum: [OTP, BIOMETRIC] }
         proof: { type: string, minLength: 1, writeOnly: true }
@@ -1819,6 +1931,7 @@ components:
         stepUp:
           method: OTP
           proof: <provided-by-test-factor>
+          challengeId: challenge-example
       properties:
         requestedLimit: { $ref: '#/components/schemas/Money' }
         stepUp: { $ref: '#/components/schemas/CreditStepUpRequest' }
@@ -1962,6 +2075,7 @@ components:
         stepUp:
           method: OTP
           proof: <provided-by-test-factor>
+          challengeId: challenge-example
       properties:
         quoteId: { type: string, format: uuid }
         stepUp: { $ref: '#/components/schemas/CreditStepUpRequest' }

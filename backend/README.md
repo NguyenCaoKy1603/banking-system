@@ -48,7 +48,7 @@ npm start
 
 Server mặc định lắng nghe `http://localhost:5000/api/v1`; health/readiness tối giản ở `http://localhost:5000/healthz`. OTP transfer sandbox mặc định là `123456`; nếu bật `BANKING_MFA_REQUIRED=1` hoặc `BANKING_ENV=preview`, OTP login sandbox mặc định là `654321`. Có thể cấu hình challenge login server-driven bằng `BANKING_MFA_METHODS=OTP,BIOMETRIC`. Chỉ dùng các giá trị này trong local test.
 
-Để kiểm thử crash/restart với transfer `PENDING`, chạy server với `BANKING_SETTLE_IMMEDIATELY=0`; worker/core-banking adapter thật phải chịu trách nhiệm settle/reconcile ở môi trường production.
+Để kiểm thử crash/restart, có thể tắt immediate settlement bằng `BANKING_SETTLE_IMMEDIATELY=0`, `BANKING_SETTLE_SAVINGS_IMMEDIATELY=0` hoặc `BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY=0`. Operator sandbox gọi `POST /api/v1/sandbox/process-scheduled` với `X-Sandbox-Operator-Key` để đưa transfer, savings opening và credit payment đang `PENDING` sang terminal trước khi xử lý đáo hạn/sao kê. Endpoint này chỉ là processor reference tuần tự; worker/core-banking adapter thật vẫn phải chịu trách nhiệm lease, retry, callback, concurrency và reconciliation ở môi trường production.
 
 Local server mặc định cho phép CORS `*`; production phải cấu hình `BANKING_ALLOWED_ORIGINS` bằng allowlist origin đã phê duyệt. Có thể giới hạn pilot bằng `BANKING_ALLOWLIST_ENABLED=1` và `BANKING_MAX_TRANSFER_AMOUNT_MINOR` (đơn vị minor-unit VND); các giới hạn này được áp ở server.
 

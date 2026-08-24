@@ -32,7 +32,11 @@ function prepareTransfer(system: BankingSystem, userId: string, recipientAccount
 }
 
 test("new customers start clean and Sandbox Funding is idempotent", () => {
-  const system = new BankingSystem({ sandboxOperatorKey: "operator-test", sandboxOtp: "123456" });
+  const system = new BankingSystem({
+    sandboxOperatorKey: "operator-test",
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
   const alice = register(system, "alice", "0900000001");
   const bob = register(system, "bob", "0900000002");
   const aliceAccount = system.listAccounts(alice.id)[0];
@@ -61,7 +65,11 @@ test("new customers start clean and Sandbox Funding is idempotent", () => {
 });
 
 test("internal transfer credits the real recipient and records both sides", () => {
-  const system = new BankingSystem({ sandboxOperatorKey: "operator-test", sandboxOtp: "123456" });
+  const system = new BankingSystem({
+    sandboxOperatorKey: "operator-test",
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
   const alice = register(system, "alice-transfer", "0900000011");
   const bob = register(system, "bob-transfer", "0900000012");
   const aliceAccount = system.listAccounts(alice.id)[0]!;
@@ -73,7 +81,7 @@ test("internal transfer credits the real recipient and records both sides", () =
   });
 
   const { quote } = prepareTransfer(system, alice.id, accountNumber(system, bob.id));
-  const receipt = system.submitTransfer(alice.id, "transfer-1", {
+  const receipt = system.submitTransfer(alice.id, "transfer-intent-01", {
     quoteId: quote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
@@ -102,6 +110,7 @@ test("pending transfer holds funds, failure releases hold, and success can be re
   const pendingSystem = new BankingSystem({
     sandboxOperatorKey: "operator-test",
     sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
     settleTransfersImmediately: false,
   });
   const alice = register(pendingSystem, "alice-pending", "0900000021");
@@ -116,7 +125,7 @@ test("pending transfer holds funds, failure releases hold, and success can be re
     alice.id,
     accountNumber(pendingSystem, bob.id),
   );
-  const pending = pendingSystem.submitTransfer(alice.id, "pending-1", {
+  const pending = pendingSystem.submitTransfer(alice.id, "pending-intent-01", {
     quoteId: quote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
@@ -129,7 +138,11 @@ test("pending transfer holds funds, failure releases hold, and success can be re
   assert.equal(pendingSystem.listAccounts(alice.id)[0]?.availableBalance.amountMinor, "10000000");
   assert.equal(pendingSystem.listAccounts(alice.id)[0]?.heldAmount.amountMinor, "0");
 
-  const immediateSystem = new BankingSystem({ sandboxOperatorKey: "operator-test", sandboxOtp: "123456" });
+  const immediateSystem = new BankingSystem({
+    sandboxOperatorKey: "operator-test",
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
   const sender = register(immediateSystem, "alice-reverse", "0900000031");
   const receiver = register(immediateSystem, "bob-reverse", "0900000032");
   immediateSystem.fundSandbox("operator-test", "fund-reverse", {
@@ -138,7 +151,7 @@ test("pending transfer holds funds, failure releases hold, and success can be re
     reason: "Cấp tiền kiểm thử",
   });
   const prepared = prepareTransfer(immediateSystem, sender.id, accountNumber(immediateSystem, receiver.id));
-  const succeeded = immediateSystem.submitTransfer(sender.id, "reverse-1", {
+  const succeeded = immediateSystem.submitTransfer(sender.id, "reverse-intent-01", {
     quoteId: prepared.quote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
@@ -176,7 +189,7 @@ test("sandbox OTP is dynamic, scoped and single-use", () => {
   const otp = system.getSandboxOtp("operator-test", challenge.challengeId);
   const receipt = system.submitTransfer(
     alice.id,
-    "otp-transfer-1",
+    "otp-transfer-key-01",
     { quoteId: quote.quoteId, stepUp: { method: "OTP", proof: otp, challengeId: challenge.challengeId } },
     "otp-device",
   );
@@ -218,6 +231,7 @@ test("savings pending state holds funds without changing current balance", () =>
   const system = new BankingSystem({
     sandboxOperatorKey: "operator-savings",
     sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
     settleSavingsImmediately: false,
   });
   const user = register(system, "alice-savings-hold", "0900000061");
@@ -234,7 +248,7 @@ test("savings pending state holds funds without changing current balance", () =>
     principal: { currency: "VND", amountMinor: "1000000" },
     maturityInstruction: "RETURN_PRINCIPAL_AND_INTEREST",
   });
-  const pending = system.submitSavingsOpening(user.id, "savings-hold-1", {
+  const pending = system.submitSavingsOpening(user.id, "savings-hold-key-01", {
     quoteId: quote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
@@ -243,14 +257,21 @@ test("savings pending state holds funds without changing current balance", () =>
   assert.equal(system.listAccounts(user.id)[0]?.availableBalance.amountMinor, "9000000");
   assert.equal(system.listAccounts(user.id)[0]?.heldAmount.amountMinor, "1000000");
   assert.equal(system.reconcile().every((row) => row.differenceMinor === "0"), true);
-  const resumed = system.getSavingsOpening(user.id, pending.openingId);
+  const stateBeforeRead = system.exportState();
+  const readOnly = system.getSavingsOpening(user.id, pending.openingId);
+  assert.equal(readOnly.status, "PENDING");
+  assert.deepEqual(system.exportState(), stateBeforeRead);
+  const resumed = system.settleSavingsOpening(user.id, pending.openingId);
   assert.equal(resumed.status, "SUCCEEDED");
   assert.equal(system.listAccounts(user.id)[0]?.currentBalance.amountMinor, "9000000");
   assert.equal(system.listAccounts(user.id)[0]?.heldAmount.amountMinor, "0");
 });
 
 test("credit requires explicit application and activation", () => {
-  const system = new BankingSystem({ sandboxOtp: "123456" });
+  const system = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
   const user = register(system, "alice-credit-application", "0900000071");
   assert.deepEqual(system.listCards(user.id), []);
   const application = system.submitCreditApplication(user.id, "credit-application-1", {
@@ -268,4 +289,88 @@ test("credit requires explicit application and activation", () => {
   assert.equal(activated.status, "ACTIVE");
   assert.equal(system.listCards(user.id).length, 1);
   assert.equal(system.listCreditAccounts(user.id)[0]?.postedOutstanding.amountMinor, "0");
+});
+
+test("credit application recovery and idempotency keys are scoped per customer", () => {
+  const system = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
+  const alice = register(system, "alice-credit-recovery", "0900000072");
+  const bob = register(system, "bob-credit-recovery", "0900000073");
+  const request = {
+    requestedLimit: { currency: "VND" as const, amountMinor: "20000000" },
+    stepUp: { method: "OTP" as const, proof: "123456" },
+  };
+
+  assert.throws(
+    () => system.submitCreditApplication(alice.id, "short", request),
+    (error: unknown) => (error as { status?: number }).status === 422,
+  );
+
+  const aliceApplication = system.submitCreditApplication(
+    alice.id,
+    "shared-application-key",
+    request,
+  );
+  const auditCount = system.auditEvents.length;
+  const outboxCount = system.outboxEvents.length;
+  const recovered = system.submitCreditApplication(
+    alice.id,
+    "application-recovery-key",
+    request,
+  );
+  assert.equal(recovered.applicationId, aliceApplication.applicationId);
+  assert.equal(system.auditEvents.length, auditCount);
+  assert.equal(system.outboxEvents.length, outboxCount);
+  assert.throws(
+    () =>
+      system.submitCreditApplication(alice.id, "shared-application-key", {
+        ...request,
+        requestedLimit: { currency: "VND", amountMinor: "10000000" },
+      }),
+    (error: unknown) =>
+      (error as { status?: number; code?: string }).status === 409 &&
+      (error as { code?: string }).code === "IDEMPOTENCY_CONFLICT",
+  );
+  assert.throws(
+    () =>
+      system.submitCreditApplication(alice.id, "different-limit-key", {
+        ...request,
+        requestedLimit: { currency: "VND", amountMinor: "10000000" },
+      }),
+    /already exists/,
+  );
+
+  const bobApplication = system.submitCreditApplication(
+    bob.id,
+    "shared-application-key",
+    request,
+  );
+  assert.notEqual(bobApplication.applicationId, aliceApplication.applicationId);
+  assert.throws(
+    () =>
+      system.activateCreditApplication(
+        alice.id,
+        aliceApplication.applicationId,
+        "short",
+        { stepUp: { method: "OTP", proof: "123456" } },
+      ),
+    (error: unknown) => (error as { status?: number }).status === 422,
+  );
+  const aliceActivated = system.activateCreditApplication(
+    alice.id,
+    aliceApplication.applicationId,
+    "shared-activation-key",
+    { stepUp: { method: "OTP", proof: "123456" } },
+  );
+  const bobActivated = system.activateCreditApplication(
+    bob.id,
+    bobApplication.applicationId,
+    "shared-activation-key",
+    { stepUp: { method: "OTP", proof: "123456" } },
+  );
+  assert.equal(aliceActivated.status, "ACTIVE");
+  assert.equal(bobActivated.status, "ACTIVE");
+  assert.notEqual(aliceActivated.creditAccountId, bobActivated.creditAccountId);
 });

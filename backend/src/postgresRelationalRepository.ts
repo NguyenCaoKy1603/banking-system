@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 
-import type { BankingSystemState } from "./bankingSystem.js";
+import {
+  BANKING_SYSTEM_STATE_VERSION,
+  type BankingSystemState,
+} from "./bankingSystem.js";
 
 export type RelationalStateOperation<T> = (state: unknown) => Promise<{
   result: T;
@@ -208,6 +211,7 @@ export class PostgresRelationalRepository {
     const quotes = await client.query("SELECT * FROM transfer_quotes ORDER BY created_at, id");
     const transfers = coreTransfers;
     const notifications = await client.query("SELECT * FROM notifications ORDER BY created_at DESC, id");
+    const fraudReports = await client.query("SELECT * FROM fraud_reports ORDER BY created_at, id");
     const auditEvents = await client.query("SELECT * FROM audit_events ORDER BY occurred_at, id");
     const outboxEvents = await client.query("SELECT * FROM outbox_events ORDER BY occurred_at, id");
     const runtimeRecords = await client.query(
@@ -442,12 +446,13 @@ export class PostgresRelationalRepository {
     }
 
     const state: BankingSystemState = {
-      stateVersion: 5,
+      stateVersion: BANKING_SYSTEM_STATE_VERSION,
       core: {
         accounts: accountEntries,
         transactions: [...transactionByAccount.entries()],
         transfers: coreTransferEntries,
         savingsOpenings: runtimeEntries("core.savingsOpenings") as any,
+        savingsMaturities: runtimeEntries("core.savingsMaturities") as any,
         creditPayments: runtimeEntries("core.creditPayments") as any,
         ledger: { journals: ledgerJournals },
       },
@@ -484,6 +489,19 @@ export class PostgresRelationalRepository {
       creditApplications: runtimeEntries("creditApplications") as any,
       creditApplicationIdempotency: runtimeEntries("creditApplicationIdempotency") as any,
       creditActivationIdempotency: runtimeEntries("creditActivationIdempotency") as any,
+      fraudReports: (fraudReports.rows as Row[]).map((row) => [
+        String(row.id),
+        {
+          reportId: String(row.id),
+          userId: String(row.customer_id),
+          accountId: String(row.account_id),
+          transactionId: String(row.transaction_id),
+          reason: String(row.reason),
+          status: String(row.status),
+          createdAt: asIso(row.created_at),
+        },
+      ]) as any,
+      fraudReportIdempotency: runtimeEntries("fraudReportIdempotency") as any,
       auditEventStore: (auditEvents.rows as Row[]).map((row) => ({
         id: String(row.id),
         eventType: String(row.event_type),
@@ -791,6 +809,25 @@ export class PostgresRelationalRepository {
       }
     }
 
+    for (const [, report] of state.fraudReports ?? []) {
+      await client.query(
+        `
+          INSERT INTO fraud_reports
+            (id, customer_id, account_id, transaction_id, reason, status, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `,
+        [
+          report.reportId,
+          report.userId,
+          report.accountId,
+          report.transactionId,
+          report.reason,
+          report.status,
+          report.createdAt,
+        ],
+      );
+    }
+
     for (const event of state.auditEventStore) {
       await client.query(
         `
@@ -859,7 +896,9 @@ export class PostgresRelationalRepository {
       ["creditApplications", state.creditApplications ?? []],
       ["creditApplicationIdempotency", state.creditApplicationIdempotency ?? []],
       ["creditActivationIdempotency", state.creditActivationIdempotency ?? []],
+      ["fraudReportIdempotency", state.fraudReportIdempotency ?? []],
       ["core.savingsOpenings", state.core.savingsOpenings ?? []],
+      ["core.savingsMaturities", state.core.savingsMaturities ?? []],
       ["core.creditPayments", state.core.creditPayments ?? []],
     ];
     for (const [collection, value] of runtimeCollections) {

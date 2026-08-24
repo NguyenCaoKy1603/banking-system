@@ -18,6 +18,7 @@ function createSystem() {
   const system = new BankingSystem({
     clock: () => now,
     sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
   });
 
   return {
@@ -226,6 +227,7 @@ test("MFA challenge methods are server-configurable", () => {
   const mfaSystem = new BankingSystem({
     authChallengeMethods: ["BIOMETRIC"],
     mfaRequired: true,
+    allowUnsafeDirectSandboxStepUp: true,
   });
   const registered = mfaSystem.register({
     fullName: "Biometric User",
@@ -254,6 +256,18 @@ test("MFA challenge methods are server-configurable", () => {
     mfaSystem.authenticate(pair.accessToken, "device-biometric").id,
     registered.user.id,
   );
+});
+
+test("static biometric proof is disabled unless local sandbox opts in explicitly", () => {
+  assert.throws(
+    () =>
+      new BankingSystem({
+        authChallengeMethods: ["BIOMETRIC"],
+        mfaRequired: true,
+      }),
+    /explicit local-development unsafe switch/,
+  );
+  assert.deepEqual(new BankingSystem().getControlPolicy().stepUpMethods, ["OTP"]);
 });
 
 test("auth login applies a bounded rate limit to repeated failures", () => {
@@ -445,8 +459,139 @@ test("transfer quote and submit are server-authoritative and idempotent", () => 
     account.id,
     transaction.id,
     "I do not recognize this transfer",
+    "fraud-report-direct-1",
   );
   assert.equal(fraudReport.status, "RECEIVED");
+  assert.deepEqual(
+    system.reportFraud(
+      registered.user.id,
+      account.id,
+      transaction.id,
+      "I do not recognize this transfer",
+      "fraud-report-direct-1",
+    ),
+    fraudReport,
+  );
+  assert.throws(
+    () =>
+      system.reportFraud(
+        registered.user.id,
+        account.id,
+        "transaction-does-not-exist",
+        "I do not recognize this transfer",
+        "fraud-report-direct-1",
+      ),
+    (error: unknown) =>
+      (error as { code?: string }).code === "IDEMPOTENCY_CONFLICT",
+  );
+  assert.deepEqual(
+    system.reportFraud(
+      registered.user.id,
+      account.id,
+      transaction.id,
+      "I do not recognize this transfer",
+      "fraud-report-direct-2",
+    ),
+    fraudReport,
+  );
+  assert.equal(system.exportState().fraudReports?.length, 1);
+  assert.equal(
+    system.outboxEvents.filter(
+      (event) => event.eventType === "FRAUD_REPORT_CREATED",
+    ).length,
+    1,
+  );
+  assert.throws(
+    () =>
+      system.reportFraud(
+        registered.user.id,
+        account.id,
+        transaction.id,
+        "This is a different allegation",
+        "fraud-report-direct-3",
+      ),
+    (error: unknown) =>
+      (error as { code?: string }).code === "FRAUD_REPORT_ALREADY_EXISTS",
+  );
+  assert.throws(
+    () =>
+      system.reportFraud(
+        registered.user.id,
+        account.id,
+        transaction.id,
+        "I do not recognize this transfer",
+        "short",
+      ),
+    (error: unknown) =>
+      (error as { code?: string }).code === "VALIDATION_ERROR",
+  );
+  const restored = new BankingSystem({ sandboxOtp: "123456" });
+  restored.importState(system.exportState());
+  assert.deepEqual(
+    restored.getFraudReport(registered.user.id, fraudReport.reportId),
+    fraudReport,
+  );
+  assert.deepEqual(
+    restored.reportFraud(
+      registered.user.id,
+      account.id,
+      transaction.id,
+      "I do not recognize this transfer",
+      "fraud-report-direct-4",
+    ),
+    fraudReport,
+  );
+  assert.equal(restored.exportState().fraudReports?.length, 1);
+  assert.equal(
+    restored.outboxEvents.filter(
+      (event) => event.eventType === "FRAUD_REPORT_CREATED",
+    ).length,
+    1,
+  );
+});
+
+test("direct sandbox OTP cannot bypass a one-time transaction challenge", () => {
+  const system = new BankingSystem({ sandboxOtp: "123456" });
+  const user = system.register({
+    fullName: "Challenge Bound User",
+    email: "challenge-bound@example.com",
+    phoneNumber: "0912345799",
+    password: "Password1",
+  }).user;
+  const { account, beneficiary } = prepareTransferFixture(system, user.id);
+  const quote = system.createQuote(user.id, {
+    sourceAccountId: account.id,
+    beneficiaryId: beneficiary.id,
+    amount: { currency: "VND", amountMinor: "100000" },
+  });
+  assert.throws(
+    () =>
+      system.submitTransfer(user.id, "challenge-bypass", {
+        quoteId: quote.quoteId,
+        stepUp: { method: "OTP", proof: "123456" },
+      }),
+    /Step-up challenge is invalid/,
+  );
+  const challenge = system.createOtpChallenge(
+    user.id,
+    "challenge-device",
+    "TRANSFER",
+    quote.quoteId,
+  );
+  const receipt = system.submitTransfer(
+    user.id,
+    "challenge-bound-submit",
+    {
+      quoteId: quote.quoteId,
+      stepUp: {
+        method: "OTP",
+        proof: "123456",
+        challengeId: challenge.challengeId,
+      },
+    },
+    "challenge-device",
+  );
+  assert.equal(receipt.status, "SUCCEEDED");
 });
 
 test("quote snapshots beneficiary name and can be consumed only once", () => {
@@ -467,7 +612,7 @@ test("quote snapshots beneficiary name and can be consumed only once", () => {
   system.renameBeneficiary(registered.user.id, beneficiary.id, "Tên mới sau review");
 
   assert.equal(quote.beneficiary.displayName, "Người nhận sandbox");
-  const receipt = system.submitTransfer(registered.user.id, "quote-once-1", {
+  const receipt = system.submitTransfer(registered.user.id, "quote-once-key-01", {
     quoteId: quote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
@@ -476,21 +621,46 @@ test("quote snapshots beneficiary name and can be consumed only once", () => {
     .items.find((item) => item.kind === "TRANSFER");
   assert.equal(transferTransaction?.counterpartyName, "Người nhận sandbox");
   assert.deepEqual(
-    system.submitTransfer(registered.user.id, "quote-once-1", {
+    system.submitTransfer(registered.user.id, "quote-once-key-01", {
       quoteId: quote.quoteId,
       stepUp: { method: "OTP", proof: "wrong-but-idempotent" },
     }),
     receipt,
   );
+  const auditCount = system.auditEvents.length;
+  const outboxCount = system.outboxEvents.length;
+  const recoveredWithNewKey = system.submitTransfer(
+    registered.user.id,
+    "quote-once-key-02",
+    {
+      quoteId: quote.quoteId,
+      stepUp: { method: "OTP", proof: "not-rechecked" },
+    },
+  );
+  assert.equal(recoveredWithNewKey.transferId, receipt.transferId);
+  assert.equal(system.auditEvents.length, auditCount);
+  assert.equal(system.outboxEvents.length, outboxCount);
+  assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 2);
+
+  const corrupted = system.exportState();
+  corrupted.transfers = corrupted.transfers.filter(
+    ([transferId]) => transferId !== receipt.transferId,
+  );
+  const restored = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
+  restored.importState(corrupted);
   assert.throws(
     () =>
-      system.submitTransfer(registered.user.id, "quote-once-2", {
+      restored.submitTransfer(registered.user.id, "quote-once-key-01", {
         quoteId: quote.quoteId,
-        stepUp: { method: "OTP", proof: "123456" },
+        stepUp: { method: "OTP", proof: "not-rechecked" },
       }),
-    /already been submitted/,
+    (error: unknown) =>
+      (error as { status?: number; code?: string }).status === 409 &&
+      (error as { code?: string }).code === "IDEMPOTENCY_STATE_MISSING",
   );
-  assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 2);
 });
 
 test("transfer step-up applies a bounded rate limit and resets after the window", () => {
@@ -511,11 +681,11 @@ test("transfer step-up applies a bounded rate limit and resets after the window"
   for (let attempt = 0; attempt < 5; attempt += 1) {
     assert.throws(
       () =>
-        system.submitTransfer(registered.user.id, `step-up-rate-${attempt}`, {
+        system.submitTransfer(registered.user.id, `step-up-rate-key-${attempt}`, {
           quoteId: quote.quoteId,
           stepUp: { method: "OTP", proof: "wrong-proof" },
         }),
-      attempt === 4 ? /Too many transfer step-up attempts/ : /Step-up verification failed/,
+      attempt === 4 ? /Too many transfer step-up attempts/ : /Step-up challenge is invalid/,
     );
   }
 
@@ -531,6 +701,7 @@ test("outbox retry metadata and pending threshold are observable", () => {
   const { system } = createSystem();
   const thresholdSystem = new BankingSystem({
     sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
     outboxPendingThreshold: 0,
   });
   const registered = thresholdSystem.register({
@@ -545,7 +716,7 @@ test("outbox retry metadata and pending threshold are observable", () => {
     beneficiaryId: beneficiary.id,
     amount: { currency: "VND", amountMinor: "100000" },
   });
-  thresholdSystem.submitTransfer(registered.user.id, "outbox-intent", {
+  thresholdSystem.submitTransfer(registered.user.id, "outbox-intent-key", {
     quoteId: quote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
@@ -581,6 +752,50 @@ test("runtime customer and account IDs are UUID-compatible", () => {
   assert.match(registered.user.id, uuidPattern);
   assert.match(account.id, uuidPattern);
   assert.equal(account.bankName, "Ngân hàng reference");
+});
+
+test("transaction cursor remains stable when a newer transaction is inserted", () => {
+  const { system, advance } = createSystem();
+  const user = system.register({
+    fullName: "Cursor User",
+    email: "cursor@example.com",
+    phoneNumber: "0912345703",
+    password: "Password1",
+  }).user;
+  const account = system.listAccounts(user.id)[0]!;
+  const accountNumber = system.getAccountNumber(user.id, account.id);
+  for (let index = 1; index <= 3; index += 1) {
+    system.fundSandbox(SANDBOX_OPERATOR_KEY, `cursor-funding-${index}`, {
+      recipientAccountNumber: accountNumber,
+      amount: { currency: "VND", amountMinor: String(index * 1000) },
+      reason: `cursor fixture ${index}`,
+    });
+    advance(1_000);
+  }
+
+  const first = system.listTransactions(user.id, account.id, undefined, 2);
+  assert.equal(first.items.length, 2);
+  assert.ok(first.nextCursor);
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, "cursor-funding-newer", {
+    recipientAccountNumber: accountNumber,
+    amount: { currency: "VND", amountMinor: "4000" },
+    reason: "newer cursor fixture",
+  });
+  const second = system.listTransactions(user.id, account.id, first.nextCursor, 2);
+  assert.equal(second.items.length, 1);
+  assert.equal(second.nextCursor, null);
+  assert.equal(
+    new Set([...first.items, ...second.items].map((item) => item.id)).size,
+    3,
+  );
+  assert.equal(
+    [...first.items, ...second.items].some((item) => item.amount.amountMinor === "4000"),
+    false,
+  );
+  assert.throws(
+    () => system.listTransactions(user.id, account.id, "not-a-cursor", 2),
+    (error: unknown) => (error as { code?: string }).code === "VALIDATION_ERROR",
+  );
 });
 
 test("reconciliation reports core minus ledger difference", () => {
@@ -627,9 +842,79 @@ test("reconciliation reports core minus ledger difference", () => {
   assert.equal(row.differenceMinor, "-1");
 });
 
+test("savings maturity is durable, idempotent and backed by a posted liability", () => {
+  const core = new InMemoryCoreBanking();
+  const ownerId = "savings-core-owner";
+  const occurredAt = "2026-08-14T00:00:00.000Z";
+  const account = core.createPaymentAccount(ownerId, occurredAt);
+  const accountNumber = core.getPaymentAccountNumber(ownerId, account.id);
+  core.fundPaymentAccount(
+    "savings-core-funding",
+    accountNumber,
+    2_000_000n,
+    "Savings maturity fixture",
+    occurredAt,
+  );
+  core.postSavingsOpening(ownerId, {
+    openingId: "savings-core-opening",
+    depositId: "savings-core-deposit",
+    accountId: account.id,
+    amountMinor: 1_000_000n,
+    description: "Open savings fixture",
+    now: occurredAt,
+  });
+
+  const maturityInput = {
+    idempotencyKey: "savings-core-deposit:2026-09-14",
+    depositId: "savings-core-deposit",
+    accountId: account.id,
+    principalMinor: 1_000_000n,
+    interestMinor: 100n,
+    creditToPaymentMinor: 1_000_100n,
+    newSavingsPrincipalMinor: 0n,
+    now: "2026-09-14T00:00:00.000Z",
+    description: "Mature savings fixture",
+  };
+  const first = core.postSavingsMaturity(ownerId, maturityInput);
+  const stateAfterFirst = core.exportState();
+  const transactionsAfterFirst = core.listTransactions(ownerId, account.id);
+  const replay = core.postSavingsMaturity(ownerId, maturityInput);
+  assert.deepEqual(replay, first);
+  assert.deepEqual(core.exportState(), stateAfterFirst);
+  assert.equal(
+    core.listTransactions(ownerId, account.id).length,
+    transactionsAfterFirst.length,
+  );
+
+  const restored = new InMemoryCoreBanking();
+  restored.importState(stateAfterFirst);
+  assert.deepEqual(restored.postSavingsMaturity(ownerId, maturityInput), first);
+  assert.deepEqual(restored.exportState(), stateAfterFirst);
+  assert.throws(
+    () =>
+      restored.postSavingsMaturity(ownerId, {
+        ...maturityInput,
+        idempotencyKey: "phantom-savings-maturity",
+        depositId: "missing-savings-deposit",
+      }),
+    /posted liability/,
+  );
+  assert.throws(
+    () =>
+      restored.postSavingsMaturity(ownerId, {
+        ...maturityInput,
+        idempotencyKey: "unbalanced-savings-maturity",
+        depositId: "another-savings-deposit",
+        creditToPaymentMinor: 1_000_099n,
+      }),
+    /maturity amounts/i,
+  );
+});
+
 test("pending transfer can be recovered and settled without a second debit", () => {
   const system = new BankingSystem({
     sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
     settleTransfersImmediately: false,
   });
   const registered = system.register({
@@ -645,7 +930,7 @@ test("pending transfer can be recovered and settled without a second debit", () 
     beneficiaryId: beneficiary.id,
     amount: { currency: "VND", amountMinor: "100000" },
   });
-  const pending = system.submitTransfer(registered.user.id, "pending-intent", {
+  const pending = system.submitTransfer(registered.user.id, "pending-intent-key", {
     quoteId: quote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
@@ -658,10 +943,15 @@ test("pending transfer can be recovered and settled without a second debit", () 
   );
   assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 2);
 
-  const settled = system.settleTransfer(registered.user.id, pending.transferId);
+  const processing = system.processScheduledWork(
+    "sandbox-operator-local",
+    registered.user.id,
+  );
+  assert.equal(processing.transfersSettled, 1);
+  const settled = system.getTransfer(registered.user.id, pending.transferId);
   assert.equal(settled.status, "SUCCEEDED");
   assert.equal(
-    system.submitTransfer(registered.user.id, "pending-intent", {
+    system.submitTransfer(registered.user.id, "pending-intent-key", {
       quoteId: quote.quoteId,
       stepUp: { method: "OTP", proof: "123456" },
     }).status,
@@ -674,6 +964,7 @@ test("pending transfer can be recovered and settled without a second debit", () 
 test("pending transfer failure and reversal release the reserved balance", () => {
   const system = new BankingSystem({
     sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
     settleTransfersImmediately: false,
   });
   const registered = system.register({
@@ -689,7 +980,7 @@ test("pending transfer failure and reversal release the reserved balance", () =>
     beneficiaryId: beneficiary.id,
     amount: { currency: "VND", amountMinor: "100000" },
   });
-  const pending = system.submitTransfer(registered.user.id, "failed-intent", {
+  const pending = system.submitTransfer(registered.user.id, "failed-intent-key", {
     quoteId: quote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
@@ -703,7 +994,7 @@ test("pending transfer failure and reversal release the reserved balance", () =>
     beneficiaryId: beneficiary.id,
     amount: { currency: "VND", amountMinor: "200000" },
   });
-  const secondPending = system.submitTransfer(registered.user.id, "reversed-intent", {
+  const secondPending = system.submitTransfer(registered.user.id, "reversed-intent-key", {
     quoteId: secondQuote.quoteId,
     stepUp: { method: "OTP", proof: "123456" },
   });
@@ -712,6 +1003,75 @@ test("pending transfer failure and reversal release the reserved balance", () =>
   assert.equal(reversed.status, "REVERSED");
   assert.equal(system.listAccounts(registered.user.id)[0]?.availableBalance.amountMinor, "10000000");
   assert.equal(system.reconcile()[0]?.differenceMinor, "0");
+});
+
+test("transfer reversal fails atomically when recipient funds are reserved", () => {
+  const system = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+    settleTransfersImmediately: false,
+  });
+  const sender = system.register({
+    fullName: "Reversal Sender",
+    email: "reversal-sender@example.com",
+    phoneNumber: "0912345690",
+    password: "Password1",
+  }).user;
+  const recipient = system.register({
+    fullName: "Reversal Recipient",
+    email: "reversal-recipient@example.com",
+    phoneNumber: "0912345691",
+    password: "Password1",
+  }).user;
+  const senderAccount = system.listAccounts(sender.id)[0]!;
+  const recipientAccount = system.listAccounts(recipient.id)[0]!;
+  system.fundSandbox(SANDBOX_OPERATOR_KEY, "reversal-source-funding", {
+    recipientAccountNumber: getAccountNumber(system, sender.id),
+    amount: { currency: "VND", amountMinor: "2000000" },
+    reason: "reversal atomicity fixture",
+  });
+  const recipientBeneficiary = system.createBeneficiary(sender.id, {
+    displayName: "Reversal Recipient",
+    accountNumber: getAccountNumber(system, recipient.id),
+    bankName: "Reference Bank",
+  });
+  const inboundQuote = system.createQuote(sender.id, {
+    sourceAccountId: senderAccount.id,
+    beneficiaryId: recipientBeneficiary.id,
+    amount: { currency: "VND", amountMinor: "1000000" },
+  });
+  const inbound = system.submitTransfer(sender.id, "reversal-inbound", {
+    quoteId: inboundQuote.quoteId,
+    stepUp: { method: "OTP", proof: "123456" },
+  });
+  system.settleTransfer(sender.id, inbound.transferId);
+
+  const senderBeneficiary = system.createBeneficiary(recipient.id, {
+    displayName: "Reversal Sender",
+    accountNumber: getAccountNumber(system, sender.id),
+    bankName: "Reference Bank",
+  });
+  const outboundQuote = system.createQuote(recipient.id, {
+    sourceAccountId: recipientAccount.id,
+    beneficiaryId: senderBeneficiary.id,
+    amount: { currency: "VND", amountMinor: "999000" },
+  });
+  system.submitTransfer(recipient.id, "reversal-outbound-hold", {
+    quoteId: outboundQuote.quoteId,
+    stepUp: { method: "OTP", proof: "123456" },
+  });
+
+  const before = system.listAccounts(recipient.id)[0]!;
+  assert.equal(before.currentBalance.amountMinor, "1000000");
+  assert.equal(before.availableBalance.amountMinor, "0");
+  assert.throws(
+    () => system.reverseTransfer(sender.id, inbound.transferId),
+    /số dư khả dụng/,
+  );
+  const after = system.listAccounts(recipient.id)[0]!;
+  assert.deepEqual(after.currentBalance, before.currentBalance);
+  assert.deepEqual(after.availableBalance, before.availableBalance);
+  assert.equal(system.getTransfer(sender.id, inbound.transferId).status, "SUCCEEDED");
 });
 
 test("same idempotency key with a different quote is rejected", () => {
@@ -745,7 +1105,9 @@ test("same idempotency key with a different quote is rejected", () => {
         quoteId: quoteB.quoteId,
         stepUp: { method: "OTP", proof: "123456" },
       }),
-    /Idempotency key was reused/,
+    (error: unknown) =>
+      (error as { status?: number; code?: string }).status === 409 &&
+      (error as { code?: string }).code === "IDEMPOTENCY_CONFLICT",
   );
 });
 
@@ -772,7 +1134,8 @@ test("expired quote cannot be submitted", () => {
         quoteId: quote.quoteId,
         stepUp: { method: "OTP", proof: "123456" },
       }),
-    /expired/,
+    (error: unknown) =>
+      (error as { code?: string }).code === "QUOTE_EXPIRED",
   );
 });
 

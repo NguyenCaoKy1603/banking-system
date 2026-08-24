@@ -112,7 +112,10 @@ test("HTTP error payload keeps trace ID and does not echo password material", as
 });
 
 test("HTTP API supports auth, account, quote and idempotent transfer flow", async (t) => {
-  const system = new BankingSystem({ sandboxOtp: "123456" });
+  const system = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
   const server = createBankingServer(system);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
@@ -218,6 +221,33 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
   assert.equal(quoteResponse.status, 200);
   const quote = (await quoteResponse.json()) as { quoteId: string };
 
+  const shortKeyResponse = await request("/transfers", {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "short" },
+    body: json({
+      quoteId: quote.quoteId,
+      stepUp: { method: "OTP", proof: "123456" },
+    }),
+  });
+  assert.equal(shortKeyResponse.status, 422);
+
+  const rejectedStepUp = await request("/transfers", {
+    method: "POST",
+    headers: {
+      ...authHeaders,
+      "Idempotency-Key": "http-transfer-invalid-stepup",
+    },
+    body: json({
+      quoteId: quote.quoteId,
+      stepUp: { method: "OTP", proof: "000000" },
+    }),
+  });
+  assert.equal(rejectedStepUp.status, 409);
+  assert.equal(
+    ((await rejectedStepUp.json()) as { code: string }).code,
+    "STEP_UP_VERIFICATION_FAILED",
+  );
+
   const submitResponse = await request("/transfers", {
     method: "POST",
     headers: {
@@ -231,6 +261,34 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
   });
   assert.equal(submitResponse.status, 200);
   const receipt = (await submitResponse.json()) as { transferId: string };
+
+  const secondQuoteResponse = await request("/transfers/quote", {
+    method: "POST",
+    headers: authHeaders,
+    body: json({
+      sourceAccountId: accounts.accounts[0].id,
+      beneficiaryId,
+      amount: { currency: "VND", amountMinor: "200000" },
+    }),
+  });
+  assert.equal(secondQuoteResponse.status, 200);
+  const secondQuote = (await secondQuoteResponse.json()) as { quoteId: string };
+  const mismatchedReplay = await request("/transfers", {
+    method: "POST",
+    headers: {
+      ...authHeaders,
+      "Idempotency-Key": "http-transfer-intent-1",
+    },
+    body: json({
+      quoteId: secondQuote.quoteId,
+      stepUp: { method: "OTP", proof: "123456" },
+    }),
+  });
+  assert.equal(mismatchedReplay.status, 409);
+  assert.equal(
+    ((await mismatchedReplay.json()) as { code: string }).code,
+    "IDEMPOTENCY_CONFLICT",
+  );
 
   const historyResponse = await request(
     `/accounts/${accounts.accounts[0].id}/transactions`,
@@ -266,7 +324,7 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
 
   const fraudReportResponse = await request("/fraud-reports", {
     method: "POST",
-    headers: authHeaders,
+    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-1" },
     body: json({
       accountId: accounts.accounts[0].id,
       transactionId: history.items[0].id,
@@ -274,6 +332,88 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
     }),
   });
   assert.equal(fraudReportResponse.status, 201);
+  const fraudReport = (await fraudReportResponse.json()) as { reportId: string };
+  const fraudRetryResponse = await request("/fraud-reports", {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-1" },
+    body: json({
+      accountId: accounts.accounts[0].id,
+      transactionId: history.items[0].id,
+      reason: "I do not recognize this transfer",
+    }),
+  });
+  assert.equal(fraudRetryResponse.status, 201);
+  assert.equal(
+    ((await fraudRetryResponse.json()) as { reportId: string }).reportId,
+    fraudReport.reportId,
+  );
+  const fraudIdempotencyConflictResponse = await request("/fraud-reports", {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-1" },
+    body: json({
+      accountId: accounts.accounts[0].id,
+      transactionId: history.items[0].id,
+      reason: "This request reuses the key with another reason",
+    }),
+  });
+  assert.equal(fraudIdempotencyConflictResponse.status, 409);
+  assert.equal(
+    ((await fraudIdempotencyConflictResponse.json()) as { code: string }).code,
+    "IDEMPOTENCY_CONFLICT",
+  );
+  const fraudDuplicateKeyResponse = await request("/fraud-reports", {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-2" },
+    body: json({
+      accountId: accounts.accounts[0].id,
+      transactionId: history.items[0].id,
+      reason: "I do not recognize this transfer",
+    }),
+  });
+  assert.equal(fraudDuplicateKeyResponse.status, 201);
+  assert.equal(
+    ((await fraudDuplicateKeyResponse.json()) as { reportId: string }).reportId,
+    fraudReport.reportId,
+  );
+  const shortFraudKeyResponse = await request("/fraud-reports", {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "short" },
+    body: json({
+      accountId: accounts.accounts[0].id,
+      transactionId: history.items[0].id,
+      reason: "I do not recognize this transfer",
+    }),
+  });
+  assert.equal(shortFraudKeyResponse.status, 422);
+  const extraFraudFieldResponse = await request("/fraud-reports", {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-extra" },
+    body: json({
+      accountId: accounts.accounts[0].id,
+      transactionId: history.items[0].id,
+      reason: "I do not recognize this transfer",
+      clientStatus: "BLOCKED",
+    }),
+  });
+  assert.equal(extraFraudFieldResponse.status, 422);
+  const duplicateFraudCaseResponse = await request("/fraud-reports", {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-conflict" },
+    body: json({
+      accountId: accounts.accounts[0].id,
+      transactionId: history.items[0].id,
+      reason: "This is a different allegation",
+    }),
+  });
+  assert.equal(duplicateFraudCaseResponse.status, 409);
+  assert.equal(
+    ((await duplicateFraudCaseResponse.json()) as { code: string }).code,
+    "FRAUD_REPORT_ALREADY_EXISTS",
+  );
+  const fraudStatusResponse = await request(`/fraud-reports/${fraudReport.reportId}`, {
+    headers: authHeaders,
+  });
+  assert.equal(fraudStatusResponse.status, 200);
 
   const transferResponse = await request(`/transfers/${receipt.transferId}`, {
     headers: authHeaders,
@@ -327,6 +467,7 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
 test("HTTP transfer reports pending status for asynchronous settlement", async (t) => {
   const system = new BankingSystem({
     sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
     settleTransfersImmediately: false,
   });
   const server = createBankingServer(system);
@@ -581,6 +722,7 @@ test("HTTP auth exposes a server-configured biometric challenge", async (t) => {
   const system = new BankingSystem({
     authChallengeMethods: ["BIOMETRIC"],
     mfaRequired: true,
+    allowUnsafeDirectSandboxStepUp: true,
   });
   const server = createBankingServer(system);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

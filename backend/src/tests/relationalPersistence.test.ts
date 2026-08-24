@@ -97,8 +97,12 @@ test("relational adapter persists restart state, serializes one quote submission
     submit("relational-submit-a"),
     submit("relational-submit-b"),
   ]);
-  assert.equal(outcomes.filter((item) => item.status === "fulfilled").length, 1);
-  assert.equal(outcomes.filter((item) => item.status === "rejected").length, 1);
+  const fulfilled = outcomes.filter(
+    (item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof submit>>> =>
+      item.status === "fulfilled",
+  );
+  assert.equal(fulfilled.length, 2);
+  assert.equal(fulfilled[0]?.value.transferId, fulfilled[1]?.value.transferId);
 
   const restored = new BankingSystem({
     sandboxOtp: "123456",

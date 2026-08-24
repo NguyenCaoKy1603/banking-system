@@ -20,6 +20,8 @@ if (!String(document.info?.version).endsWith("-draft") || !String(document.info?
 
 const requiredPaths = [
   "/auth/register",
+  "/auth/register/verify",
+  "/auth/otp/challenges",
   "/auth/login",
   "/auth/verify",
   "/auth/refresh",
@@ -29,12 +31,14 @@ const requiredPaths = [
   "/notifications",
   "/notifications/{notificationId}/read",
   "/fraud-reports",
+  "/fraud-reports/{reportId}",
   "/accounts",
   "/accounts/{accountId}/number",
   "/accounts/{accountId}/transactions",
   "/accounts/{accountId}/transactions/{transactionId}",
   "/beneficiaries",
   "/beneficiaries/{beneficiaryId}",
+  "/internal-recipients/lookup",
   "/transfers/quote",
   "/transfers",
   "/transfers/{transferId}",
@@ -48,6 +52,9 @@ const requiredPaths = [
   "/cards/{cardId}/lock",
   "/cards/{cardId}/unlock",
   "/credit/accounts",
+  "/credit/applications",
+  "/credit/applications/{applicationId}",
+  "/credit/applications/{applicationId}/activate",
   "/credit/accounts/{creditAccountId}",
   "/credit/accounts/{creditAccountId}/transactions",
   "/credit/accounts/{creditAccountId}/statements",
@@ -100,10 +107,12 @@ const implementationMarkers = [
   'segments[0] === "fraud-reports"',
   'segments[0] === "accounts"',
   'segments[0] === "beneficiaries"',
+  'segments[0] === "internal-recipients"',
   'segments[0] === "transfers"',
   'segments[0] === "savings"',
   'segments[0] === "cards"',
   'segments[0] === "credit"',
+  'segments[1] === "applications"',
 ];
 for (const marker of implementationMarkers) {
   if (!backendHttp.includes(marker)) {
@@ -145,6 +154,32 @@ if (!submitCreditPayment?.responses?.["200"] || !submitCreditPayment?.responses?
   throw new Error("POST /credit/payments must document synchronous and pending responses.");
 }
 
+const submitFraudReport = document.paths["/fraud-reports"].post;
+const fraudIdempotencyParameter = submitFraudReport?.parameters?.find(
+  (parameter) =>
+    parameter.name === "Idempotency-Key" ||
+    parameter.$ref === "#/components/parameters/IdempotencyKey",
+);
+if (
+  fraudIdempotencyParameter?.required !== true &&
+  !(
+    fraudIdempotencyParameter?.$ref === "#/components/parameters/IdempotencyKey" &&
+    document.components?.parameters?.IdempotencyKey?.required === true
+  )
+) {
+  throw new Error("POST /fraud-reports must require Idempotency-Key.");
+}
+
+const registerResponses = document.paths["/auth/register"].post?.responses;
+if (!registerResponses?.["202"] || registerResponses?.["201"] || registerResponses?.["200"]) {
+  throw new Error("POST /auth/register must expose only the two-step challenge success response.");
+}
+
+const authChallengeSchema = document.components?.schemas?.AuthChallengeResponse;
+if (!authChallengeSchema?.required?.includes("purpose")) {
+  throw new Error("AuthChallengeResponse must require a bound purpose.");
+}
+
 const securitySchemes = document.components?.securitySchemes;
 if (securitySchemes?.bearerAuth?.type !== "http") {
   throw new Error("The contract must define bearerAuth.");
@@ -154,6 +189,166 @@ if (document.components?.parameters?.DeviceId?.name !== "X-Device-ID") {
   throw new Error("The contract must define X-Device-ID device binding.");
 }
 
+
+const deviceBindingScheme =
+  document.components?.securitySchemes?.deviceBinding;
+if (
+  deviceBindingScheme?.type !== "apiKey" ||
+  deviceBindingScheme?.in !== "header" ||
+  deviceBindingScheme?.name !== "X-Device-ID"
+) {
+  throw new Error(
+    "The contract must define deviceBinding as the X-Device-ID header API key.",
+  );
+}
+
+const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete"]);
+const PUBLIC_OR_OPERATOR_OPERATIONS = new Set([
+  "POST /auth/register",
+  "POST /auth/register/verify",
+  "POST /auth/login",
+  "POST /auth/refresh",
+  "POST /auth/verify",
+  "POST /auth/logout",
+  "POST /sandbox/fundings",
+  "GET /sandbox/otp/{challengeId}",
+  "POST /sandbox/process-scheduled",
+]);
+for (const [routePath, pathItem] of Object.entries(document.paths ?? {})) {
+  for (const [method, operation] of Object.entries(pathItem ?? {})) {
+    if (!HTTP_METHODS.has(method) || !operation || typeof operation !== "object") {
+      continue;
+    }
+    const effectiveSecurity = operation.security ?? document.security ?? [];
+    const operationKey = `${method.toUpperCase()} ${routePath}`;
+    if (PUBLIC_OR_OPERATOR_OPERATIONS.has(operationKey)) {
+      if (effectiveSecurity.length !== 0) {
+        throw new Error(`${operationKey} must use its documented public/operator boundary.`);
+      }
+      continue;
+    }
+
+    const requirement = effectiveSecurity[0];
+    if (
+      effectiveSecurity.length !== 1 ||
+      !requirement ||
+      !Object.prototype.hasOwnProperty.call(requirement, "bearerAuth") ||
+      !Object.prototype.hasOwnProperty.call(requirement, "deviceBinding") ||
+      Object.keys(requirement).length !== 2
+    ) {
+      throw new Error(
+        `${operationKey} must require bearerAuth and deviceBinding together with no weaker alternative.`,
+      );
+    }
+  }
+}
+
+function resolveParameter(parameter) {
+  if (parameter?.$ref === "#/components/parameters/DeviceId") {
+    return document.components?.parameters?.DeviceId;
+  }
+  return parameter;
+}
+
+for (const [method, routePath] of [
+  ["post", "/auth/register"],
+  ["post", "/auth/register/verify"],
+  ["post", "/auth/login"],
+  ["post", "/auth/verify"],
+  ["post", "/auth/refresh"],
+  ["post", "/auth/logout"],
+]) {
+  const pathItem = document.paths?.[routePath];
+  const operation = pathItem?.[method];
+  const parameters = [
+    ...(pathItem?.parameters ?? []),
+    ...(operation?.parameters ?? []),
+  ].map(resolveParameter);
+  if (
+    !parameters.some(
+      (parameter) =>
+        parameter?.name === "X-Device-ID" &&
+        parameter?.in === "header" &&
+        parameter?.required === true,
+    )
+  ) {
+    throw new Error(
+      `${method.toUpperCase()} ${routePath} must require X-Device-ID without bearer auth.`,
+    );
+  }
+}
+
+function resolveSchema(schema) {
+  const prefix = "#/components/schemas/";
+  if (schema?.$ref?.startsWith(prefix)) {
+    return document.components?.schemas?.[schema.$ref.slice(prefix.length)];
+  }
+  return schema;
+}
+
+function requireChallengeBoundStepUp(schema, label) {
+  const resolved = resolveSchema(schema);
+  if (
+    !resolved?.required?.includes("challengeId") ||
+    !resolved?.properties?.challengeId
+  ) {
+    throw new Error(`${label} must require a challenge-bound challengeId.`);
+  }
+}
+
+requireChallengeBoundStepUp(
+  document.components?.schemas?.SubmitTransferRequest?.properties?.stepUp,
+  "SubmitTransferRequest.stepUp",
+);
+requireChallengeBoundStepUp(
+  document.components?.schemas?.SubmitSavingsOpeningRequest?.properties?.stepUp,
+  "SubmitSavingsOpeningRequest.stepUp",
+);
+requireChallengeBoundStepUp(
+  document.components?.schemas?.CreditStepUpRequest,
+  "CreditStepUpRequest",
+);
+
+for (const [schemaName, schema] of Object.entries(
+  document.components?.schemas ?? {},
+)) {
+  const stepUpSchema = resolveSchema(schema?.properties?.stepUp);
+  if (
+    stepUpSchema?.required?.includes("challengeId") &&
+    !schema?.example?.stepUp?.challengeId
+  ) {
+    throw new Error(
+      `${schemaName}.example.stepUp must include its required challengeId.`,
+    );
+  }
+}
+
+if (!document.components?.schemas?.CreditStepUpRequest?.example?.challengeId) {
+  throw new Error("CreditStepUpRequest.example must include challengeId.");
+}
+
+const publicChallengePurposes =
+  document.components?.schemas?.CreateOtpChallengeRequest?.properties?.purpose?.enum ?? [];
+for (const purpose of ["REGISTRATION_VERIFY", "LOGIN"]) {
+  if (publicChallengePurposes.includes(purpose)) {
+    throw new Error(
+      `POST /auth/otp/challenges must not issue internal ${purpose} challenges.`,
+    );
+  }
+}
+for (const purpose of [
+  "TRANSFER",
+  "SAVINGS_OPENING",
+  "CREDIT_APPLICATION",
+  "CARD_ACTIVATION",
+  "CREDIT_PAYMENT",
+  "CARD_UNLOCK",
+]) {
+  if (!publicChallengePurposes.includes(purpose)) {
+    throw new Error(`POST /auth/otp/challenges must support ${purpose}.`);
+  }
+}
+
 console.log(
-  `OpenAPI draft valid: ${requiredPaths.length} required paths, examples and reference route markers included.`,
+  `OpenAPI draft valid: ${requiredPaths.length} required paths, device binding, challenge-bound step-up, examples and reference route markers included.`,
 );

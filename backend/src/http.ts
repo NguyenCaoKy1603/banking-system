@@ -6,7 +6,7 @@ import {
 } from "node:http";
 import { randomUUID } from "node:crypto";
 
-import { BankingSystem } from "./bankingSystem.js";
+import { BankingSystem, type BankingSystemState } from "./bankingSystem.js";
 import { DomainError, invalidRequest, notFound, unauthorized } from "./errors.js";
 import type { RelationalStateOperation } from "./postgresRelationalRepository.js";
 
@@ -16,6 +16,57 @@ const MAX_BODY_BYTES = 1_000_000;
 export type HttpOptions = {
   allowedOrigins?: string[];
 };
+
+type RequestStateDisposition =
+  | "COMMIT_ALL"
+  | "COMMIT_SECURITY_ONLY"
+  | "ROLLBACK_ALL";
+
+type RequestStateBoundary = {
+  rejectDomainRequest(): void;
+  rejectUnexpectedFailure(): void;
+};
+
+const PERSISTED_SECURITY_FAILURE_AUDIT_EVENTS = new Set([
+  "STEP_UP_VERIFICATION_FAILED",
+  "CREDIT_STEP_UP_VERIFICATION_FAILED",
+]);
+
+/**
+ * Domain rejections can intentionally mutate abuse-prevention state before
+ * returning a 4xx response (for example, refresh-token family revocation or a
+ * failed OTP counter). Preserve only those security controls and roll every
+ * business aggregate back to its transaction-start snapshot.
+ */
+function mergeRejectedSecurityState(
+  transactionStartState: BankingSystemState,
+  rejectedState: BankingSystemState,
+): BankingSystemState {
+  const existingAuditIds = new Set(
+    transactionStartState.auditEventStore.map((event) => event.id),
+  );
+  const securityFailureAuditEvents = rejectedState.auditEventStore.filter(
+    (event) =>
+      !existingAuditIds.has(event.id) &&
+      PERSISTED_SECURITY_FAILURE_AUDIT_EVENTS.has(event.eventType),
+  );
+  return {
+    ...transactionStartState,
+    accessSessions: rejectedState.accessSessions,
+    authChallenges: rejectedState.authChallenges,
+    authAttemptWindows: rejectedState.authAttemptWindows,
+    registrationAttemptWindows: rejectedState.registrationAttemptWindows,
+    transferStepUpAttemptWindows: rejectedState.transferStepUpAttemptWindows,
+    savingsStepUpAttemptWindows: rejectedState.savingsStepUpAttemptWindows,
+    creditStepUpAttemptWindows: rejectedState.creditStepUpAttemptWindows,
+    refreshSessions: rejectedState.refreshSessions,
+    refreshFamilies: rejectedState.refreshFamilies,
+    auditEventStore: [
+      ...transactionStartState.auditEventStore,
+      ...securityFailureAuditEvents,
+    ],
+  };
+}
 
 function header(request: IncomingMessage, name: string): string | undefined {
   const value = request.headers[name.toLowerCase()];
@@ -189,6 +240,9 @@ function isAuthenticatedRoute(
   if (method === "POST" && segments.length === 1 && segments[0] === "fraud-reports") {
     return true;
   }
+  if (method === "GET" && segments.length === 2 && segments[0] === "fraud-reports") {
+    return true;
+  }
   if (
     method === "POST" &&
     segments.length === 2 &&
@@ -330,6 +384,7 @@ export async function handleRequest(
   options: HttpOptions = {},
   parsedBody?: unknown,
   bodyAlreadyRead = false,
+  stateBoundary?: RequestStateBoundary,
 ): Promise<void> {
   const traceId = getRequestId(request);
   const configuredOrigins = options.allowedOrigins ?? ["*"];
@@ -394,6 +449,35 @@ export async function handleRequest(
         200,
         traceId,
         { otp: system.getSandboxOtp(header(request, "x-sandbox-operator-key") ?? "", segments[2]) },
+      );
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      segments.length === 2 &&
+      segments[0] === "sandbox" &&
+      segments[1] === "process-scheduled"
+    ) {
+      const data = body === undefined ? {} : requireObject(body);
+      const unsupportedField = Object.keys(data).find((key) => key !== "userId");
+      if (unsupportedField) {
+        throw invalidRequest(`Unsupported scheduled-work field: ${unsupportedField}.`);
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(data, "userId") &&
+        (typeof data.userId !== "string" || !data.userId.trim())
+      ) {
+        throw invalidRequest("userId must be a non-empty string when provided.");
+      }
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.processScheduledWork(
+          header(request, "x-sandbox-operator-key") ?? "",
+          typeof data.userId === "string" ? data.userId.trim() : undefined,
+        ),
       );
       return;
     }
@@ -582,6 +666,14 @@ export async function handleRequest(
 
     if (request.method === "POST" && segments.length === 1 && segments[0] === "fraud-reports") {
       const data = requireObject(body);
+      const unsupportedField = Object.keys(data).find(
+        (key) => key !== "accountId" && key !== "transactionId" && key !== "reason",
+      );
+      if (unsupportedField) {
+        throw invalidRequest(`Unsupported fraud report field: ${unsupportedField}.`, {
+          [unsupportedField]: "This field is not supported.",
+        });
+      }
       writeResponse(
         response,
         201,
@@ -591,7 +683,22 @@ export async function handleRequest(
           data.accountId as string,
           data.transactionId as string,
           data.reason as string,
+          header(request, "idempotency-key") ?? "",
         ),
+      );
+      return;
+    }
+
+    if (
+      request.method === "GET" &&
+      segments.length === 2 &&
+      segments[0] === "fraud-reports"
+    ) {
+      writeResponse(
+        response,
+        200,
+        traceId,
+        system.getFraudReport(userId, segments[1]),
       );
       return;
     }
@@ -1003,10 +1110,12 @@ export async function handleRequest(
     throw notFound("API route not found.");
   } catch (error: unknown) {
     if (error instanceof DomainError) {
+      stateBoundary?.rejectDomainRequest();
       writeError(response, error.status, traceId, error);
       return;
     }
 
+    stateBoundary?.rejectUnexpectedFailure();
     writeError(
       response,
       500,
@@ -1039,6 +1148,10 @@ export function createPersistentBankingServer(
       .then((parsedBody) =>
         repository.withState(system.exportState(), async (state) => {
           system.importState(state as never);
+          const transactionStartState = system.exportState();
+          const requestState = {
+            disposition: "COMMIT_ALL" as RequestStateDisposition,
+          };
           await handleRequest(
             request,
             bufferedResponse as unknown as ServerResponse,
@@ -1046,13 +1159,25 @@ export function createPersistentBankingServer(
             options,
             parsedBody,
             true,
+            {
+              rejectDomainRequest: () => {
+                requestState.disposition = "COMMIT_SECURITY_ONLY";
+              },
+              rejectUnexpectedFailure: () => {
+                requestState.disposition = "ROLLBACK_ALL";
+              },
+            },
           );
-          // handleRequest writes DomainError/500 responses instead of throwing.
-          // Preserve the imported state for every 4xx/5xx response so a
-          // partially-mutated in-memory core can never be committed.
+          const requestEndState = system.exportState();
+          const nextState =
+            requestState.disposition === "COMMIT_ALL"
+              ? requestEndState
+              : requestState.disposition === "COMMIT_SECURITY_ONLY"
+                ? mergeRejectedSecurityState(transactionStartState, requestEndState)
+                : transactionStartState;
           return {
             result: undefined,
-            nextState: bufferedResponse.statusCode >= 400 ? state : system.exportState(),
+            nextState,
           };
         }),
       )

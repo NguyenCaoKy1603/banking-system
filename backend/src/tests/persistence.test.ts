@@ -50,6 +50,47 @@ test("M6 snapshot without credit fields migrates to the current state version", 
   assert.deepEqual(restored.listCards(user.id), []);
 });
 
+test("pending registration snapshots never persist plaintext passwords", async () => {
+  const system = new BankingSystem({ sandboxOtp: "123456" });
+  const challenge = await system.beginRegistrationAsync(
+    {
+      fullName: "Pending Secret User",
+      email: "pending-secret@example.com",
+      phoneNumber: "0912444555",
+      password: "Password1",
+    },
+    "pending-secret-test",
+    "pending-secret-device",
+  );
+
+  const state = system.exportState();
+  const serialized = JSON.stringify(state);
+  assert.equal(serialized.includes("Password1"), false);
+  assert.equal(serialized.includes('"password"'), false);
+
+  const legacy = structuredClone(state);
+  legacy.stateVersion = 5;
+  const legacyPending = legacy.pendingRegistrations?.[0];
+  if (legacyPending) {
+    const legacyPrepared = legacyPending[1].prepared as typeof legacyPending[1]["prepared"] & {
+      password?: string;
+    };
+    legacyPrepared.password = "legacy-plaintext";
+  }
+
+  const restored = new BankingSystem({ sandboxOtp: "123456" });
+  restored.importState(legacy);
+  const restoredSerialized = JSON.stringify(restored.exportState());
+  assert.equal(restoredSerialized.includes("legacy-plaintext"), false);
+  assert.equal(restoredSerialized.includes('"password"'), false);
+  const verified = restored.verifyRegistrationChallenge(
+    challenge.challengeId,
+    "123456",
+    "pending-secret-device",
+  );
+  assert.equal(verified.user.email, "pending-secret@example.com");
+});
+
 test("legacy funding notifications migrate to a user-facing security notification", () => {
   const system = new BankingSystem();
   const state = system.exportState();
@@ -247,9 +288,9 @@ test("PostgreSQL snapshot persists users and serializes concurrent transfer subm
       outcome.status === "fulfilled",
   );
   const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
-  assert.equal(fulfilled.length, 1);
-  assert.equal(rejected.length, 1);
-  assert.match(String(rejected[0]?.reason?.message), /already been submitted/);
+  assert.equal(fulfilled.length, 2);
+  assert.equal(rejected.length, 0);
+  assert.equal(fulfilled[0]?.value.transferId, fulfilled[1]?.value.transferId);
 
   const finalSystem = new BankingSystem({ sandboxOtp: "123456" });
   const transactionCount = await repository.withState(
