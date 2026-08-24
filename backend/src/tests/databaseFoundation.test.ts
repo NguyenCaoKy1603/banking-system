@@ -202,7 +202,11 @@ test("direct transfer use case is idempotent, lock-ordered and atomically persis
        (SELECT COUNT(*) FROM account_transactions) AS transactions,
        (SELECT COUNT(*) FROM ledger_journals) AS journals,
        (SELECT COUNT(*) FROM audit_events) AS audits,
-       (SELECT COUNT(*) FROM notifications WHERE resource_id = $2) AS notifications,
+       (SELECT COUNT(*) FROM notifications WHERE resource_id IN (
+         SELECT source_transaction_id::text FROM transfers WHERE id = $2
+         UNION ALL
+         SELECT destination_transaction_id::text FROM transfers WHERE id = $2
+       )) AS notifications,
        (SELECT COUNT(*) FROM outbox_events WHERE deduplication_key = $1) AS outbox,
        (SELECT priority::text FROM outbox_events WHERE deduplication_key = $1) AS outbox_priority,
        (SELECT trace_id FROM outbox_events WHERE deduplication_key = $1) AS outbox_trace,

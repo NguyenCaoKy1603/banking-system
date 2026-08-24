@@ -15,6 +15,25 @@
 - Worker claim query loại `aggregate_type=legacy`/payload `{}`; 16 event này
   vẫn PENDING cho tới khi chạy lệnh reconcile có operator + lý do.
 
+## Cập nhật đối soát preview — 2026-08-25
+
+- Đã dùng backup nêu trên làm điểm khôi phục và inventory lại bằng PostgreSQL
+  `NOW()`: 16/16 event đều còn freshness (8 funding dưới 24 giờ, 8 transfer
+  dưới 7 ngày) và ánh xạ được aggregate/recipient/transaction duy nhất.
+- `MAPPABLE_AND_FRESH` đã tạo 16 event canonical (8
+  `transfer.succeeded.v1`, 8 `sandbox.funding_succeeded.v1`) trong transaction
+  đối soát, đồng thời tạo 16 notification TRANSFER và 8 notification SECURITY.
+  16 event legacy cũ chuyển `SKIPPED` với `LEGACY_MATERIALIZED`; 16 audit
+  `OUTBOX_LEGACY_RECONCILED` được ghi, không có DEAD-letter.
+- Hai worker chạy song song đã claim 16/16, dispatch 16/16; kết quả database là
+  canonical `DISPATCHED=16`, `PENDING=0`, `PROCESSING=0`, `DEAD=0`. Không có
+  `notification_deliveries` vì preview không cấu hình endpoint Push/Email; in-app
+  notification đã có trong transaction/reconcile.
+- Sau khi dừng worker graceful, heartbeat chuyển `STOPPED=8`; backend khởi động
+  lại trả `/livez`, `/healthz`, `/readyz` HTTP 200 và inventory không còn legacy
+  PENDING. Customer=18, account=18, transfer=8, account transaction=24 vẫn giữ
+  nguyên; không có thao tác debit/ledger nào do worker thực hiện.
+
 ## Bằng chứng code/test
 
 Worker integration trên database disposable `banking_worker_test` kiểm tra:

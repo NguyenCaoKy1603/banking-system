@@ -58,9 +58,21 @@ Worker ghi heartbeat, có `/livez`, `/readyz`, `/metrics`; metrics không dùng
 customerId/eventId làm label. `outbox:inspect` không in payload; inventory chỉ
 in metadata. `outbox:requeue` bắt buộc operator + lý do và ghi dead-letter/audit.
 
+## Đối soát legacy
+
+Script `backend/scripts/outbox-reconcile.cjs` hỗ trợ năm phân loại bắt buộc.
+`MAPPABLE_AND_FRESH` không sửa payload `{}` cũ: nó khóa event legacy, kiểm tra
+freshness bằng `NOW()`, ánh xạ transfer/funding sang aggregate và notification
+đã tồn tại, tạo event canonical có envelope/deduplication key riêng, rồi đánh
+dấu event cũ `SKIPPED` và ghi audit. Missing/ambiguous vào DEAD-letter; stale và
+already-delivered vào SKIPPED. Preview ngày 2026-08-25 đã đối soát 16/16 event:
+8 transfer và 8 sandbox funding cũ `SKIPPED`, 16 event canonical đã được hai
+worker dispatch, 16 audit, 0 dead-letter và 24 notification in-app. Số lượng
+customer/account/transfer/account transaction không thay đổi.
+
 ## Ngoài phạm vi
 
 Chưa thêm Kafka/RabbitMQ, chưa sửa Mobile/push registration, chưa bật cloud
-deploy, chưa tự động phân loại 16 legacy event đang PENDING. Worker loại các
-event `aggregate_type=legacy` hoặc payload `{}` khỏi claim; các event này phải
-được backup và operator đối soát trước khi SKIPPED/DEAD.
+deploy. Worker vẫn loại các event `aggregate_type=legacy` hoặc payload `{}`
+khỏi claim; event mới phải ghi canonical envelope trực tiếp trong transaction
+nghiệp vụ, còn event cũ phải đi qua lệnh operator ở runbook.

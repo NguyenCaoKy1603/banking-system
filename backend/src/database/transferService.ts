@@ -257,17 +257,18 @@ export class RelationalTransferService {
            VALUES
              ($1, $2, 'TRANSFER', 'Chuyển tiền thành công',
               'Giao dịch chuyển tiền nội bộ đã hoàn tất.', $3, $4, false, $5),
-             ($6, $7, 'TRANSFER', 'Bạn nhận được tiền chuyển khoản',
-              'Tài khoản của bạn đã nhận một giao dịch chuyển tiền nội bộ.', $3, $8, false, $5)`,
+           ($6, $7, 'TRANSFER', 'Bạn nhận được tiền chuyển khoản',
+              'Tài khoản của bạn đã nhận một giao dịch chuyển tiền nội bộ.', $9, $8, false, $5)`,
           [
             senderNotificationId,
             input.customerId,
-            transfer.id,
+            transfer.sourceTransactionId,
             source.id,
             now,
             recipientNotificationId,
             destination.customerId,
             destination.id,
+            transfer.destinationTransactionId,
           ],
         );
 

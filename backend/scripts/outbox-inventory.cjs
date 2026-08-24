@@ -15,7 +15,7 @@ async function main() {
     `);
     const legacy = await pool.query(`
       SELECT id, event_type, event_version, aggregate_type, aggregate_id,
-             occurred_at, status, published_at, attempts,
+             occurred_at, status, published_at, attempts, last_error_code,
              (payload = '{}'::jsonb) AS payload_empty
       FROM outbox_events
       WHERE aggregate_type = 'legacy' OR payload = '{}'::jsonb
@@ -32,10 +32,14 @@ async function main() {
       publishedAt: row.published_at,
       attempts: row.attempts,
       payloadEmpty: row.payload_empty,
-      // A legacy published_at flag is not provider evidence.  The operator
-      // must prove delivery from an external/audit source before selecting
-      // ALREADY_DELIVERED in the reconciliation command.
-      classification: "REVIEW_REQUIRED",
+      // A legacy published_at flag is not provider evidence. Pending rows
+      // still require an operator decision; completed reconciliation is shown
+      // explicitly so inventory output does not look unresolved after audit.
+      classification: row.status === "SKIPPED" && row.last_error_code === "LEGACY_MATERIALIZED"
+        ? "MATERIALIZED"
+        : row.status === "SKIPPED" || row.status === "DEAD"
+          ? "RECONCILED"
+          : "REVIEW_REQUIRED",
     }));
     console.log(JSON.stringify({
       generatedAt: new Date().toISOString(),
