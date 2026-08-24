@@ -239,6 +239,40 @@ test("persistent HTTP keeps challenge attempts and lockout across a restart", as
   assert.equal(replayResponse.status, 401);
 });
 
+test("persistent HTTP exposes a configured sandbox OTP after a state boundary", async (t) => {
+  const repository = new MemoryStateRepository();
+  const deviceId = `registration-device-${randomUUID()}`;
+  const suffix = randomUUID().replaceAll("-", "").slice(0, 8);
+  const system = new BankingSystem({
+    sandboxOperatorKey: SANDBOX_OPERATOR_KEY,
+    sandboxOtp: "123456",
+    mfaRequired: false,
+  });
+  const running = await startServer(repository, system);
+  t.after(() => closeServer(running.server));
+
+  const registrationResponse = await request(running.baseUrl, "/auth/register", {
+    method: "POST",
+    headers: { "X-Device-ID": deviceId },
+    body: JSON.stringify({
+      fullName: "Persistent OTP User",
+      email: `persistent-otp-${suffix}@example.com`,
+      phoneNumber: `09${suffix}`,
+      password: "Password1",
+    }),
+  });
+  assert.equal(registrationResponse.status, 202);
+  const registration = (await registrationResponse.json()) as { challengeId: string };
+
+  const otpResponse = await request(
+    running.baseUrl,
+    `/sandbox/otp/${registration.challengeId}`,
+    { headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY } },
+  );
+  assert.equal(otpResponse.status, 200);
+  assert.deepEqual(await otpResponse.json(), { otp: "123456" });
+});
+
 test("persistent HTTP keeps whitelisted step-up failure audits", async (t) => {
   const repository = new MemoryStateRepository();
   const deviceId = `audit-device-${randomUUID()}`;

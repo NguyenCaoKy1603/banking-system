@@ -1454,7 +1454,16 @@ export class BankingSystem {
     }
     const challengeHash = hashOpaqueToken(requireString(challengeId, "challengeId"));
     const challenge = this.authChallenges.get(challengeHash);
-    const otp = this.sandboxOtpInbox.get(challengeHash);
+    const configuredOtp = challenge
+      ? challenge.purpose === "LOGIN"
+        ? this.sandboxMfaOtp ?? this.sandboxOtp
+        : this.sandboxOtp
+      : undefined;
+    const otp =
+      this.sandboxOtpInbox.get(challengeHash) ??
+      (configuredOtp && challenge?.otpHash === hashOpaqueToken(configuredOtp)
+        ? configuredOtp
+        : undefined);
     if (!challenge || challenge.expiresAt <= this.clock() || !otp) {
       throw notFound("Sandbox OTP challenge not found or expired.");
     }
