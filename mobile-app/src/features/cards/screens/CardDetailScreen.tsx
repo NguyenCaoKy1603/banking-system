@@ -147,8 +147,8 @@ export function CardDetailScreen() {
               <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Mở khóa thẻ</Text>
                 <View style={styles.methodRow}>
-                  <Pressable onPress={() => setStepUpMethod("OTP")} style={[styles.methodButton, stepUpMethod === "OTP" ? styles.methodSelected : null]} testID="credit-unlock-otp"><Text style={styles.methodLabel}>OTP</Text></Pressable>
-                  <Pressable onPress={() => setStepUpMethod("BIOMETRIC")} style={[styles.methodButton, stepUpMethod === "BIOMETRIC" ? styles.methodSelected : null]} testID="credit-unlock-biometric"><Text style={styles.methodLabel}>Sinh trắc học</Text></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityState={{ selected: stepUpMethod === "OTP" }} onPress={() => setStepUpMethod("OTP")} style={[styles.methodButton, stepUpMethod === "OTP" ? styles.methodSelected : null]} testID="credit-unlock-otp"><Text style={styles.methodLabel}>OTP</Text></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityState={{ selected: stepUpMethod === "BIOMETRIC" }} onPress={() => setStepUpMethod("BIOMETRIC")} style={[styles.methodButton, stepUpMethod === "BIOMETRIC" ? styles.methodSelected : null]} testID="credit-unlock-biometric"><Text style={styles.methodLabel}>Sinh trắc học</Text></Pressable>
                 </View>
                 {stepUpMethod === "OTP" ? <TextField accessibilityLabel="Mã xác thực mở khóa thẻ" keyboardType="number-pad" label="Mã OTP sandbox" onChangeText={setStepUpProof} secureTextEntry testID="credit-unlock-code" value={stepUpProof} /> : null}
               </View>
