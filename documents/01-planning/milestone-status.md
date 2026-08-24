@@ -41,7 +41,7 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 
 - Safety branch local `codex/stage0-safety-20260824` giữ snapshot nguyên khối `e1b7b8c`, không push.
 - Nhánh implementation có chuỗi commit: `556db67` baseline → `0a9454c` Backend atomic → `59bc63d` Mobile auth → `b186be5` intent primitives → `84e6239` mobile flows → `82d4457` mobile security → `edbc9bb` E2E/tài liệu.
-- `git status` sạch; secret scan, `npm ci`, Backend/Mobile local gates đã chạy. Upstream implementation branch và clone sạch đã đạt; remote `main`, branch protection, PR, remote CI và PostgreSQL live vẫn là gate mở.
+- `git status` sạch; secret scan, `npm ci`, Backend/Mobile local gates đã chạy. Upstream implementation branch, `origin/main` và clone sạch đã đạt; branch protection, PR, remote CI và PostgreSQL live vẫn là gate mở.
 ## Cập nhật sau đồng bộ M6 và triển khai M7 — 2026-08-15
 
 - M6 Savings đã có quote/MFA/idempotency/PENDING-resume/maturity, Mobile list/open/detail và notification deep link; flow native emulator đã pass, nhưng chưa đóng vì thiếu repository relational production, thiết bị thật và staging.

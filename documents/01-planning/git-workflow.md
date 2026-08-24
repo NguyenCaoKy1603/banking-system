@@ -7,7 +7,7 @@ Ngày cập nhật: 2026-08-24
 - Implementation branch: `codex/mini-core-banking-sandbox`.
 - Local implementation logic tip sau Stage 0: `edbc9bb`; branch đã có các documentation handoff commit sau đó và đã được xác nhận sạch trước bàn giao.
 - Safety branch: `codex/stage0-safety-20260824` tại `e1b7b8c`, không push và chỉ xóa sau khi clone sạch/CI/review được xác minh.
-- `origin` hiện có `feature/mobile-authentication` tại `b2eef7d` và đã nhận `codex/mini-core-banking-sandbox`; chưa có remote `main` tại thời điểm kiểm tra.
+- `origin` hiện có `feature/mobile-authentication` tại `b2eef7d`, `main` cũng đã được tạo từ đúng SHA `b2eef7d`, và đã nhận `codex/mini-core-banking-sandbox`.
 - Workspace không có GitHub CLI; branch đã push và có upstream, nhưng chưa tạo được PR hoặc branch protection tự động.
 
 ## Quy tắc làm việc
@@ -33,9 +33,9 @@ Ngày cập nhật: 2026-08-24
 
 ## Việc maintainer cần thực hiện trên GitHub
 
-- Tạo remote `main` từ baseline được review, không dùng local `main` cũ `364018b` nếu chưa đối chiếu.
+- Tạo remote `main` từ baseline được review, không dùng local `main` cũ `364018b` nếu chưa đối chiếu — **đã đạt**, `origin/main` hiện ở `b2eef7d`.
 - Push implementation branch và đặt upstream — **đã đạt**; remote branch hiện tại là `origin/codex/mini-core-banking-sandbox`.
-- Tạo PR vào `main` (link tạo PR được GitHub trả về: `https://github.com/NguyenCaoKy1603/banking-system/pull/new/codex/mini-core-banking-sandbox`), bật required Backend/Mobile checks, review tối thiểu một người và cấm direct push.
+- Tạo PR vào `main` (link tạo PR: `https://github.com/NguyenCaoKy1603/banking-system/compare/main...codex/mini-core-banking-sandbox`), bật required Backend/Mobile checks, review tối thiểu một người và cấm direct push. Chưa hoàn tất vì workspace không có GitHub CLI và phiên GitHub trên browser chưa đăng nhập.
 - Sau khi CI xanh, clone SHA PR vào thư mục sạch, chạy lại `npm ci`, migration PostgreSQL và toàn bộ gate.
 
 ## Kết quả clone sạch Stage 0

@@ -16,7 +16,7 @@ Ngày lập: 2026-08-24 (Asia/Bangkok)
 | Remote | `origin` → `https://github.com/NguyenCaoKy1603/banking-system.git` |
 | Remote branch quan sát được | `origin/feature/mobile-authentication` tại `b2eef7d2ad6cef9fac71a570548812021e66b48b` |
 | Chênh lệch lịch sử | HEAD đi trước remote branch 50 commit; remote branch không đi trước HEAD |
-| Remote `main` | Chưa tồn tại tại thời điểm kiểm tra |
+| Remote `main` | Chưa tồn tại tại thời điểm baseline; sau đó đã tạo `origin/main` từ `b2eef7d` theo kế hoạch |
 | Tracked files đang sửa | 76 |
 | Untracked files trước tài liệu Stage 0 | 18 (nằm trong 10 directory/module) |
 | Diff tracked | 6.833 dòng thêm, 981 dòng xóa |
@@ -178,7 +178,7 @@ Nếu `backend/src/bankingSystem.ts` không thể tách mà vẫn giữ từng c
 | Safety branch/WIP checkpoint | Đã tạo `codex/stage0-safety-20260824` tại `e1b7b8c`; không push |
 | Chuỗi commit logic | Đã tạo; backend giữ atomic vì `bankingSystem.ts` dùng chung nhiều invariant |
 | Local quality gates | Đã chạy lại sau tách commit; Backend pass static/logic, Mobile pass ngoại trừ dependency audit High và PostgreSQL live skip |
-| Remote branch/upstream | Đã push `codex/mini-core-banking-sandbox` và đặt upstream tại `origin`; remote vẫn chưa có `main` |
+| Remote branch/upstream | Đã push `codex/mini-core-banking-sandbox` và đặt upstream tại `origin`; `origin/main` đã tạo từ `b2eef7d` |
 | PR/branch protection | Chưa tạo; cần maintainer có quyền GitHub |
 | Clone sạch | Đã thực hiện tại `C:\Users\admin\AppData\Local\Temp\banking-system-stage0-clone-20260824-105231`; clone đúng branch/upstream và worktree sạch sau `npm ci` + gate |
 
