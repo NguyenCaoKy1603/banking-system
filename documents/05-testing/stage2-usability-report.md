@@ -2,6 +2,8 @@
 
 Trạng thái ngày 2026-08-24: **Chưa thực hiện — cần Product/UX owner và staging APK**.
 
+Evidence baseline: `df1f40b`; no usability evidence commit exists yet.
+
 ## Protocol tối thiểu
 
 - 5 người dùng ẩn danh, không nhập dữ liệu tài chính thật.

@@ -4,6 +4,8 @@ Ngày chạy: 2026-08-24
 Build ID: `stage2-20260824-df1f40b`  
 Phạm vi: Expo web/static và unit/validator local; chưa phải APK/device certification.
 
+Evidence commit: `93f6348` (accessibility patch), documented in final commit `c31b33e`.
+
 ## Gate local
 
 | Gate | Kết quả |

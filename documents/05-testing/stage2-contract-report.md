@@ -3,6 +3,8 @@
 Ngày chạy: 2026-08-24  
 Build ID: `stage2-20260824-df1f40b`
 
+Evidence commit: `c31b33e` (runtime contract checks use the baseline backend image; test/docs changes are traceable in `e293100` and `c31b33e`).
+
 ## Kết quả
 
 - Backend `npm run validate:openapi`: đạt `46` required paths và `51` exact method/segment guards.

@@ -4,6 +4,8 @@ Ngày chạy: 2026-08-24
 Build ID: `stage2-20260824-df1f40b`  
 Baseline: `df1f40bccbf8e1a3604101f6f23987f92480df54`
 
+Evidence commit: `e293100` plus final evidence/docs commit `c31b33e`.
+
 ## Môi trường
 
 - PostgreSQL `16.11` trong Docker Compose local.

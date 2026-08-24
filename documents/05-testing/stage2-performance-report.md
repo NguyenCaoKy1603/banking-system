@@ -4,6 +4,8 @@ Ngày chạy: 2026-08-24
 Build ID: `stage2-20260824-df1f40b`  
 Môi trường: Docker Compose local, PostgreSQL 16.11, database sandbox riêng cho run; không phải cloud staging.
 
+Runtime image commit: `df1f40b`; performance harness/evidence commit: `c31b33e`.
+
 ## Bài đo
 
 - Node-native equivalent tại [`performance/node/stage2-smoke.cjs`](../../performance/node/stage2-smoke.cjs), không thêm dependency k6 vào runtime.

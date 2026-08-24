@@ -2,6 +2,8 @@
 
 Trạng thái ngày 2026-08-24: **Chưa thực hiện — blocker ngoài local workspace**.
 
+Evidence baseline: `df1f40b`; no device evidence commit exists yet.
+
 ## Chưa có artifact
 
 - APK staging và checksum chưa được build/đính kèm.

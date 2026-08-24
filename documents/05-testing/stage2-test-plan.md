@@ -9,6 +9,7 @@ Build ID: `stage2-20260824-df1f40b`
 
 - Branch: `codex/stage2-quality-evidence`
 - Baseline commit: `df1f40bccbf8e1a3604101f6f23987f92480df54`
+- Evidence commits: `e293100` (PostgreSQL fraud regression), `93f6348` (mobile accessibility), `c31b33e` (CI/performance/docs)
 - Backend local image ID: `sha256:ad1f30ee6f81cc98322f541af5e6904cf1d90a9e9a8877471ea504a8aa6a39b3`
 - Backend runtime: Node `v22.23.2`, user `node`, UID 1000
 - Host toolchain: Node `v24.19.0`, npm `11.17.0`

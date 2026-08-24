@@ -3,6 +3,8 @@
 Ngày chạy: 2026-08-24  
 Build ID: `stage2-20260824-df1f40b`
 
+Evidence commit: `93f6348`.
+
 ## Static inventory
 
 Quét source `mobile-app/src/**/*.tsx` sau accessibility patch:

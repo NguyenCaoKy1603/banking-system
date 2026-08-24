@@ -1,6 +1,7 @@
 {
   "buildId": "stage2-20260824-df1f40b",
   "baselineCommit": "df1f40bccbf8e1a3604101f6f23987f92480df54",
+  "evidenceCommits": ["e293100", "93f6348", "c31b33e"],
   "branch": "codex/stage2-quality-evidence",
   "capturedAt": "2026-08-24T06:08:43.611Z",
   "apiUrlScope": "http://127.0.0.1:5000/api/v1",

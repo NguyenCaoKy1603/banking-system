@@ -4,6 +4,8 @@ Ngày chạy: 2026-08-24
 Build ID: `stage2-20260824-df1f40b`  
 Phạm vi: reference sandbox local, không phải production certification.
 
+Evidence commit: `c31b33e`; baseline runtime image commit: `df1f40b`.
+
 ## Đã kiểm tra
 
 | Nhóm | Bằng chứng | Kết quả |
