@@ -1,9 +1,11 @@
 import {
+  activateCreditApplication,
   getCreditPayment,
   listCreditStatements,
   listCreditTransactions,
   lockCreditCard,
   quoteCreditPayment,
+  submitCreditApplication,
   submitCreditPayment,
   unlockCreditCard,
 } from "@/features/credit/services/creditApi";
@@ -145,7 +147,7 @@ describe("credit API services", () => {
     );
     await submitCreditPayment(
       { quoteId: "quote-1", stepUp: { method: "OTP", proof: "opaque-proof" } },
-      { auth: { accessToken: "access-token" }, idempotencyKey: "credit-intent-1" },
+      { auth: { accessToken: "access-token" }, idempotencyKey: "credit-intent-01" },
     );
     await getCreditPayment("payment-1", { accessToken: "access-token" });
 
@@ -158,14 +160,14 @@ describe("credit API services", () => {
       }),
     );
     expect(fetchMock.mock.calls[1]?.[1]?.headers).toEqual(
-      expect.objectContaining({ "Idempotency-Key": "credit-intent-1" }),
+      expect.objectContaining({ "Idempotency-Key": "credit-intent-01" }),
     );
     expect(fetchMock.mock.calls[2]?.[0]).toBe(
       "http://10.0.2.2:5000/api/v1/credit/payments/payment-1",
     );
   });
 
-  it("rejects invalid custom amount and empty idempotency key before network", () => {
+  it("rejects invalid custom amount and short idempotency keys before network", () => {
     expect(() =>
       quoteCreditPayment(
         {
@@ -180,9 +182,22 @@ describe("credit API services", () => {
     expect(() =>
       submitCreditPayment(
         { quoteId: "quote-1", stepUp: { method: "OTP", proof: "opaque-proof" } },
-        { auth: {}, idempotencyKey: " " },
+        { auth: {}, idempotencyKey: "short-key" },
       ),
-    ).toThrow();
+    ).toThrow("idempotencyKey phải có ít nhất 16 ký tự.");
+    expect(() =>
+      submitCreditApplication(
+        { stepUp: { method: "OTP", proof: "opaque-proof" } },
+        { auth: {}, idempotencyKey: "short" },
+      ),
+    ).toThrow("idempotencyKey phải có ít nhất 8 ký tự.");
+    expect(() =>
+      activateCreditApplication(
+        "application-1",
+        { method: "OTP", proof: "opaque-proof" },
+        { auth: {}, idempotencyKey: "short" },
+      ),
+    ).toThrow("idempotencyKey phải có ít nhất 8 ký tự.");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

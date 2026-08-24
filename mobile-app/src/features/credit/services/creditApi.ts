@@ -1,6 +1,11 @@
 import type { RequestAuth } from "@/services/api/httpClient";
 import { requestJson } from "@/services/api/httpClient";
 import type { Money } from "@/features/banking/types/money";
+import {
+  COMMAND_IDEMPOTENCY_KEY_MIN_LENGTH,
+  GENERAL_IDEMPOTENCY_KEY_MIN_LENGTH,
+  requireIdempotencyKey,
+} from "@/features/banking/validation/idempotencyKey";
 import { isMoney } from "@/features/banking/validation/moneyValidators";
 import type {
   CreditAccount,
@@ -136,15 +141,16 @@ export function submitCreditApplication(
   options: { auth: RequestAuth; idempotencyKey: string },
 ): Promise<CreditApplication> {
   validateStepUp({ quoteId: "credit-application", stepUp: request.stepUp });
-  if (!options.idempotencyKey.trim()) {
-    throw new TypeError("idempotencyKey khÃ´ng Ä‘Æ°á»£c Ä‘á»ƒ trá»‘ng.");
-  }
+  const idempotencyKey = requireIdempotencyKey(
+    options.idempotencyKey,
+    GENERAL_IDEMPOTENCY_KEY_MIN_LENGTH,
+  );
   if (request.requestedLimit !== undefined) {
     validateMoney(request.requestedLimit, "requestedLimit");
   }
   return requestJson(
     "/credit/applications",
-    { method: "POST", body: request, auth: options.auth, idempotencyKey: options.idempotencyKey },
+    { method: "POST", body: request, auth: options.auth, idempotencyKey },
     isCreditApplication,
   );
 }
@@ -155,12 +161,13 @@ export function activateCreditApplication(
   options: { auth: RequestAuth; idempotencyKey: string },
 ): Promise<CreditApplication> {
   validateStepUp({ quoteId: applicationId, stepUp });
-  if (!options.idempotencyKey.trim()) {
-    throw new TypeError("idempotencyKey khÃ´ng Ä‘Æ°á»£c Ä‘á»ƒ trá»‘ng.");
-  }
+  const idempotencyKey = requireIdempotencyKey(
+    options.idempotencyKey,
+    GENERAL_IDEMPOTENCY_KEY_MIN_LENGTH,
+  );
   return requestJson(
     `/credit/applications/${requireResourceId(applicationId, "applicationId")}/activate`,
-    { method: "POST", body: { stepUp }, auth: options.auth, idempotencyKey: options.idempotencyKey },
+    { method: "POST", body: { stepUp }, auth: options.auth, idempotencyKey },
     isCreditApplication,
   );
 }
@@ -220,10 +227,13 @@ export function submitCreditPayment(
   options: { auth: RequestAuth; idempotencyKey: string },
 ): Promise<CreditPayment> {
   validateStepUp(request);
-  if (!options.idempotencyKey.trim()) throw new TypeError("idempotencyKey không được để trống.");
+  const idempotencyKey = requireIdempotencyKey(
+    options.idempotencyKey,
+    COMMAND_IDEMPOTENCY_KEY_MIN_LENGTH,
+  );
   return requestJson(
     "/credit/payments",
-    { method: "POST", body: request, auth: options.auth, idempotencyKey: options.idempotencyKey },
+    { method: "POST", body: request, auth: options.auth, idempotencyKey },
     isCreditPayment,
   );
 }

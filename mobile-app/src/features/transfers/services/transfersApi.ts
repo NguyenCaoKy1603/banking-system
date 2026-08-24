@@ -1,6 +1,10 @@
 import type { RequestAuth } from "@/services/api/httpClient";
 import { requestJson } from "@/services/api/httpClient";
 import type { Money } from "@/features/banking/types/money";
+import {
+  COMMAND_IDEMPOTENCY_KEY_MIN_LENGTH,
+  requireIdempotencyKey,
+} from "@/features/banking/validation/idempotencyKey";
 import type {
   BeneficiariesResponse,
   BeneficiaryResponse,
@@ -189,10 +193,10 @@ export function submitTransfer(
   { auth, idempotencyKey }: SubmitTransferOptions,
 ): Promise<TransferReceipt> {
   validateSubmitRequest(request);
-
-  if (!idempotencyKey.trim()) {
-    throw new TypeError("idempotencyKey không được để trống.");
-  }
+  const normalizedIdempotencyKey = requireIdempotencyKey(
+    idempotencyKey,
+    COMMAND_IDEMPOTENCY_KEY_MIN_LENGTH,
+  );
 
   return requestJson<TransferReceipt>(
     "/transfers",
@@ -200,7 +204,7 @@ export function submitTransfer(
       method: "POST",
       body: request,
       auth,
-      idempotencyKey,
+      idempotencyKey: normalizedIdempotencyKey,
     },
     isTransferReceipt,
   );

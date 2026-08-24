@@ -1,5 +1,5 @@
 import * as Crypto from "expo-crypto";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
@@ -8,6 +8,8 @@ import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { createOtpChallenge } from "@/features/auth/services/otpApi";
+import { shouldKeepSubmitUnknown } from "@/features/banking/domain/submitFailure";
+import { createIdempotencyKey } from "@/features/banking/validation/idempotencyKey";
 import {
   activateCreditApplication,
   listCreditApplications,
@@ -42,6 +44,7 @@ export function CreditApplicationScreen() {
   const [mode, setMode] = useState<"idle" | "verify-application" | "verify-activation">("idle");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const idempotencyKeyRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -73,6 +76,7 @@ export function CreditApplicationScreen() {
         },
         auth,
       );
+      idempotencyKeyRef.current = createIdempotencyKey("credit-application");
       setRequestedLimit(normalized);
       setChallengeId(challenge.challengeId);
       setMode("verify-application");
@@ -92,6 +96,7 @@ export function CreditApplicationScreen() {
         { purpose: "CARD_ACTIVATION", resourceId: application.applicationId },
         auth,
       );
+      idempotencyKeyRef.current = createIdempotencyKey("credit-activation");
       setChallengeId(challenge.challengeId);
       setOtp("");
       setMode("verify-activation");
@@ -107,6 +112,11 @@ export function CreditApplicationScreen() {
       setError("Mã OTP phải gồm 6 chữ số.");
       return;
     }
+    const idempotencyKey = idempotencyKeyRef.current;
+    if (!idempotencyKey) {
+      setError("Ý định gửi hồ sơ không còn hợp lệ. Vui lòng tạo lại OTP.");
+      return;
+    }
     setIsSubmitting(true);
     setError(undefined);
     try {
@@ -116,34 +126,68 @@ export function CreditApplicationScreen() {
             requestedLimit: { currency: "VND", amountMinor: requestedLimit },
             stepUp: { method: "OTP", proof: otp.trim(), challengeId },
           },
-          { auth, idempotencyKey: `credit-application-${Date.now()}` },
+          { auth, idempotencyKey },
         );
         setApplication(result);
         setMode("idle");
         setChallengeId(null);
+        idempotencyKeyRef.current = null;
         setOtp("");
       } else if (application) {
         const result = await activateCreditApplication(
           application.applicationId,
           { method: "OTP", proof: otp.trim(), challengeId },
-          { auth, idempotencyKey: `credit-activation-${Date.now()}` },
+          { auth, idempotencyKey },
         );
         setApplication(result);
         setMode("idle");
         setChallengeId(null);
+        idempotencyKeyRef.current = null;
         setOtp("");
       }
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
+      if (shouldKeepSubmitUnknown(requestError)) {
+        try {
+          const response = await listCreditApplications(auth);
+          const recovered =
+            mode === "verify-activation" && application
+              ? response.items.find(
+                  (item) => item.applicationId === application.applicationId,
+                ) ?? null
+              : response.items[0] ?? null;
+          const isRecovered =
+            (mode === "verify-application" &&
+              recovered !== null &&
+              (recovered.status === "PENDING_ACTIVATION" ||
+                recovered.status === "ACTIVE")) ||
+            (mode === "verify-activation" && recovered?.status === "ACTIVE");
+          if (isRecovered && recovered) {
+            setApplication(recovered);
+            setMode("idle");
+            setChallengeId(null);
+            idempotencyKeyRef.current = null;
+            setOtp("");
+            setError(undefined);
+          }
+        } catch {
+          // Keep the original unknown outcome and idempotency key for retry.
+        }
+      }
     } finally {
       setIsSubmitting(false);
     }
   }, [application, auth, challengeId, mode, otp, requestedLimit]);
 
+  const handleBack = useCallback(() => {
+    if (isSubmitting) return;
+    router.back();
+  }, [isSubmitting, router]);
+
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backButton}>
+        <Pressable accessibilityRole="button" accessibilityState={{ disabled: isSubmitting }} disabled={isSubmitting} onPress={handleBack} style={styles.backButton}>
           <Text style={styles.backLabel}>‹ Quay lại</Text>
         </Pressable>
         <View style={styles.header}>
@@ -160,7 +204,7 @@ export function CreditApplicationScreen() {
             <Text style={styles.description}>{application.decisionReason ?? "Chưa có quyết định"}</Text>
             {application.status === "PENDING_ACTIVATION" ? (
               <PrimaryButton
-                disabled={isSubmitting}
+                disabled={isSubmitting || mode !== "idle"}
                 label="Xác nhận và kích hoạt thẻ sandbox"
                 onPress={() => void requestActivationOtp()}
                 testID="credit-application-activate"
@@ -174,13 +218,14 @@ export function CreditApplicationScreen() {
             <Text style={styles.sectionTitle}>Hạn mức đề nghị</Text>
             <TextField
               keyboardType="number-pad"
+              editable={mode === "idle"}
               label="Hạn mức VND"
               onChangeText={(value) => setRequestedLimit(value.replace(/\D/g, ""))}
               testID="credit-application-limit"
               value={requestedLimit}
             />
             <PrimaryButton
-              disabled={isSubmitting}
+              disabled={isSubmitting || mode !== "idle"}
               label={isSubmitting ? "Đang tạo OTP..." : "Gửi hồ sơ sandbox"}
               onPress={() => void requestApplicationOtp()}
               testID="credit-application-submit"
