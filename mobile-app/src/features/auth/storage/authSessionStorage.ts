@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import * as Crypto from "expo-crypto";
 
 import type { AuthUser } from "@/features/auth/types/auth";
 import type { AuthSession } from "@/features/auth/types/session";
@@ -58,6 +59,7 @@ function isAuthSession(value: unknown): value is AuthSession {
     isRecord(value) &&
     isNonEmptyToken(value.accessToken) &&
     isNonEmptyToken(value.refreshToken) &&
+    isNonEmptyToken(value.sessionEpoch) &&
     isAuthSessionMetadata({
       user: value.user,
       accessTokenExpiresAt: value.accessTokenExpiresAt,
@@ -65,14 +67,37 @@ function isAuthSession(value: unknown): value is AuthSession {
   );
 }
 
-function parseAuthSession(value: string | null): AuthSession | null {
+type ParsedAuthSession = {
+  session: AuthSession;
+  needsMigration: boolean;
+};
+
+function parseAuthSession(value: string | null): ParsedAuthSession | null {
   if (!value) {
     return null;
   }
 
   try {
     const parsed: unknown = JSON.parse(value);
-    return isAuthSession(parsed) ? parsed : null;
+    if (!isRecord(parsed)) {
+      return null;
+    }
+
+    if (
+      parsed.sessionEpoch !== undefined &&
+      !isNonEmptyToken(parsed.sessionEpoch)
+    ) {
+      return null;
+    }
+
+    const sessionEpoch = isNonEmptyToken(parsed.sessionEpoch)
+      ? parsed.sessionEpoch
+      : Crypto.randomUUID();
+    const session = { ...parsed, sessionEpoch };
+
+    return isAuthSession(session)
+      ? { session, needsMigration: parsed.sessionEpoch === undefined }
+      : null;
   } catch {
     return null;
   }
@@ -128,6 +153,7 @@ async function loadLegacyAuthSession(): Promise<{
       accessToken,
       refreshToken,
       accessTokenExpiresAt: metadata.accessTokenExpiresAt,
+      sessionEpoch: Crypto.randomUUID(),
       user: metadata.user,
     },
   };
@@ -165,15 +191,23 @@ export function loadAuthSession(): Promise<AuthSession | null> {
       AUTH_SESSION_KEY,
       SECURE_STORE_OPTIONS,
     );
-    const session = parseAuthSession(storedValue);
+    const parsed = parseAuthSession(storedValue);
 
     if (storedValue !== null) {
-      if (!session) {
+      if (!parsed) {
         await clearAuthSessionInternal();
         return null;
       }
 
-      return session;
+      if (parsed.needsMigration) {
+        await SecureStore.setItemAsync(
+          AUTH_SESSION_KEY,
+          JSON.stringify(parsed.session),
+          SECURE_STORE_OPTIONS,
+        );
+      }
+
+      return parsed.session;
     }
 
     // Migrate sessions written by the previous three-key implementation.

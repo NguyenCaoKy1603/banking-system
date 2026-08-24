@@ -29,7 +29,10 @@ type ResponseValidator<ResponseBody> = (
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 let requestSequence = 0;
-let refreshPromise: Promise<string | null> | null = null;
+const refreshPromises = new WeakMap<
+  () => Promise<string | null>,
+  Promise<string | null>
+>();
 
 function buildUrl(baseUrl: string, path: string) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
@@ -143,14 +146,20 @@ function createAbortState(signal: AbortSignal | undefined, timeoutMs: number) {
 async function refreshAccessTokenSingleFlight(
   refreshAccessToken: () => Promise<string | null>,
 ): Promise<string | null> {
-  if (!refreshPromise) {
-    refreshPromise = Promise.resolve()
+  const existingPromise = refreshPromises.get(refreshAccessToken);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const refreshPromise = Promise.resolve()
       .then(refreshAccessToken)
       .then((token) => (typeof token === "string" && token.trim() ? token : null))
       .finally(() => {
-        refreshPromise = null;
+        if (refreshPromises.get(refreshAccessToken) === refreshPromise) {
+          refreshPromises.delete(refreshAccessToken);
+        }
       });
-  }
+  refreshPromises.set(refreshAccessToken, refreshPromise);
 
   return refreshPromise;
 }

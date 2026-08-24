@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import * as Crypto from "expo-crypto";
 
 import {
   clearAuthSession,
@@ -14,6 +15,7 @@ jest.mock("expo-secure-store", () => ({
   getItemAsync: jest.fn(),
   setItemAsync: jest.fn(),
 }));
+jest.mock("expo-crypto", () => ({ randomUUID: jest.fn() }));
 
 const AUTH_SESSION_KEY = "banking.auth.session.v2";
 const LEGACY_ACCESS_TOKEN_KEY = "banking.auth.access-token.v1";
@@ -27,6 +29,7 @@ const session: AuthSession = {
   accessToken: "access-token",
   refreshToken: "refresh-token",
   accessTokenExpiresAt: 1_700_000_900_000,
+  sessionEpoch: "session-epoch-1",
   user: {
     id: "user-id",
     fullName: "Người Dùng Thử",
@@ -39,6 +42,7 @@ const session: AuthSession = {
 const deleteItemAsyncMock = jest.mocked(SecureStore.deleteItemAsync);
 const getItemAsyncMock = jest.mocked(SecureStore.getItemAsync);
 const setItemAsyncMock = jest.mocked(SecureStore.setItemAsync);
+const randomUUIDMock = jest.mocked(Crypto.randomUUID);
 
 function createDeferred<T>() {
   let resolvePromise!: (value: T | PromiseLike<T>) => void;
@@ -73,6 +77,7 @@ beforeEach(() => {
   jest.resetAllMocks();
   deleteItemAsyncMock.mockResolvedValue(undefined);
   setItemAsyncMock.mockResolvedValue(undefined);
+  randomUUIDMock.mockReturnValue("00000000-0000-4000-8000-000000000002");
 });
 
 describe("authSessionStorage", () => {
@@ -170,6 +175,34 @@ describe("authSessionStorage", () => {
     expect(deleteItemAsyncMock).not.toHaveBeenCalled();
   });
 
+  it("bổ sung session epoch cho bản ghi v2 cũ", async () => {
+    const { sessionEpoch: _sessionEpoch, ...legacyV2Session } = session;
+    mockStoredValues({
+      [AUTH_SESSION_KEY]: JSON.stringify(legacyV2Session),
+    });
+
+    const loaded = await loadAuthSession();
+
+    expect(loaded).toEqual({
+      ...legacyV2Session,
+      sessionEpoch: "00000000-0000-4000-8000-000000000002",
+    });
+    expect(setItemAsyncMock).toHaveBeenCalledWith(
+      AUTH_SESSION_KEY,
+      JSON.stringify(loaded),
+      SECURE_STORE_OPTIONS,
+    );
+  });
+
+  it("xóa bản ghi có session epoch sai kiểu", async () => {
+    mockStoredValues({
+      [AUTH_SESSION_KEY]: JSON.stringify({ ...session, sessionEpoch: 42 }),
+    });
+
+    await expect(loadAuthSession()).resolves.toBeNull();
+    expect(deleteItemAsyncMock).toHaveBeenCalledTimes(4);
+  });
+
   it("migrate session legacy sang bản ghi nguyên tử v2", async () => {
     mockStoredValues({
       [AUTH_SESSION_KEY]: null,
@@ -181,10 +214,16 @@ describe("authSessionStorage", () => {
       }),
     });
 
-    await expect(loadAuthSession()).resolves.toEqual(session);
+    await expect(loadAuthSession()).resolves.toEqual({
+      ...session,
+      sessionEpoch: "00000000-0000-4000-8000-000000000002",
+    });
     expect(setItemAsyncMock).toHaveBeenCalledWith(
       AUTH_SESSION_KEY,
-      JSON.stringify(session),
+      JSON.stringify({
+        ...session,
+        sessionEpoch: "00000000-0000-4000-8000-000000000002",
+      }),
       SECURE_STORE_OPTIONS,
     );
     expect(deleteItemAsyncMock).toHaveBeenCalledTimes(3);

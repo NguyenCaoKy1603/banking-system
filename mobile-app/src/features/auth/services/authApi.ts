@@ -1,10 +1,10 @@
 import type {
+  AuthChallengeResponse,
   LoginRequest,
   LoginResponse,
   LoginResult,
   LogoutRequest,
   RegisterRequest,
-  RegisterResult,
   RegisterResponse,
   RefreshTokenRequest,
   RefreshTokenResponse,
@@ -14,7 +14,7 @@ import {
   isAuthChallengeResponse,
   isLoginResponse,
   isRegisterResponse,
-  isRegisterResult,
+  isRegistrationChallengeResponse,
   isRefreshTokenResponse,
 } from "@/features/auth/services/authResponseValidators";
 import { requestJson, type RequestAuth } from "@/services/api/httpClient";
@@ -30,19 +30,20 @@ function requireNonEmpty(value: string, fieldName: string): string {
 }
 
 export type AuthRequestOptions = {
-  deviceId?: string;
+  deviceId: string;
 };
 
 function createDeviceHeaders(
-  options: AuthRequestOptions,
-): Record<string, string> | undefined {
-  const deviceId = options.deviceId?.trim();
-  return deviceId ? { "X-Device-ID": deviceId } : undefined;
+  options: AuthRequestOptions | undefined,
+): Record<string, string> {
+  return {
+    "X-Device-ID": requireNonEmpty(options?.deviceId ?? "", "deviceId"),
+  };
 }
 
 export function login(
   request: LoginRequest,
-  options: AuthRequestOptions = {},
+  options: AuthRequestOptions,
 ): Promise<LoginResult> {
   const body: LoginRequest = {
     email: request.email,
@@ -54,12 +55,13 @@ export function login(
     body,
     headers: createDeviceHeaders(options),
   }, (payload): payload is LoginResult =>
-    isLoginResponse(payload) || isAuthChallengeResponse(payload));
+    isLoginResponse(payload) ||
+    (isAuthChallengeResponse(payload) && payload.purpose === "LOGIN"));
 }
 
 export function verifyLoginChallenge(
   request: VerifyAuthChallengeRequest,
-  options: AuthRequestOptions = {},
+  options: AuthRequestOptions,
 ): Promise<LoginResponse> {
   return requestJson<LoginResponse>(
     "/auth/verify",
@@ -74,8 +76,8 @@ export function verifyLoginChallenge(
 
 export function register(
   request: RegisterRequest,
-  options: AuthRequestOptions = {},
-): Promise<RegisterResult> {
+  options: AuthRequestOptions,
+): Promise<AuthChallengeResponse> {
   const body: RegisterRequest = {
     fullName: request.fullName,
     email: request.email,
@@ -83,16 +85,16 @@ export function register(
     password: request.password,
   };
 
-  return requestJson<RegisterResult>("/auth/register", {
+  return requestJson<AuthChallengeResponse>("/auth/register", {
     method: "POST",
     body,
     headers: createDeviceHeaders(options),
-  }, isRegisterResult);
+  }, isRegistrationChallengeResponse);
 }
 
 export function verifyRegistrationChallenge(
   request: VerifyAuthChallengeRequest,
-  options: AuthRequestOptions = {},
+  options: AuthRequestOptions,
 ): Promise<RegisterResponse> {
   return requestJson<RegisterResponse>(
     "/auth/register/verify",
@@ -107,7 +109,7 @@ export function verifyRegistrationChallenge(
 
 export async function refreshSession(
   refreshToken: string,
-  options: AuthRequestOptions = {},
+  options: AuthRequestOptions,
 ): Promise<RefreshTokenResponse> {
   const body: RefreshTokenRequest = {
     refreshToken: requireNonEmpty(refreshToken, "refreshToken"),
@@ -122,7 +124,7 @@ export async function refreshSession(
 
 export async function revokeSession(
   refreshToken: string,
-  options: AuthRequestOptions = {},
+  options: AuthRequestOptions,
 ): Promise<void> {
   const body: LogoutRequest = {
     refreshToken: requireNonEmpty(refreshToken, "refreshToken"),
@@ -135,10 +137,17 @@ export async function revokeSession(
   );
 }
 
-export async function revokeAllSessions(auth: RequestAuth): Promise<void> {
+export async function revokeAllSessions(
+  auth: RequestAuth & { accessToken: string; deviceId: string },
+): Promise<void> {
+  const boundAuth = {
+    ...auth,
+    accessToken: requireNonEmpty(auth.accessToken, "accessToken"),
+    deviceId: requireNonEmpty(auth.deviceId, "deviceId"),
+  };
   await requestJson<null>(
     "/auth/logout-all",
-    { method: "POST", auth },
+    { method: "POST", auth: boundAuth },
     (payload): payload is null => payload === null,
   );
 }

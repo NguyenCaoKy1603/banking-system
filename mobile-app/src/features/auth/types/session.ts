@@ -1,15 +1,19 @@
+import * as Crypto from "expo-crypto";
+
 import type { AuthUser, LoginResponse } from "@/features/auth/types/auth";
 
 export type AuthSession = {
   accessToken: string;
   refreshToken: string;
   accessTokenExpiresAt: number;
+  sessionEpoch: string;
   user: AuthUser;
 };
 
 export function createAuthSession(
   loginResponse: LoginResponse,
   now = Date.now(),
+  sessionEpoch = Crypto.randomUUID(),
 ): AuthSession {
   if (
     !Number.isFinite(loginResponse.expiresInSeconds) ||
@@ -28,10 +32,15 @@ export function createAuthSession(
     throw new RangeError("accessTokenExpiresAt vượt phạm vi hợp lệ.");
   }
 
+  if (!sessionEpoch.trim()) {
+    throw new TypeError("sessionEpoch phải là chuỗi không rỗng.");
+  }
+
   return {
     accessToken: loginResponse.accessToken,
     refreshToken: loginResponse.refreshToken,
     accessTokenExpiresAt,
+    sessionEpoch,
     user: loginResponse.user,
   };
 }

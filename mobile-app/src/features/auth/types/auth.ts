@@ -50,7 +50,7 @@ export type AuthChallengeResponse = {
   challengeId: string;
   expiresAt: string;
   methods: AuthChallengeMethod[];
-  purpose?:
+  purpose:
     | "REGISTRATION_VERIFY"
     | "LOGIN"
     | "TRANSFER"
@@ -82,5 +82,3 @@ export type LogoutRequest = {
 export type RegisterResponse = {
   user: AuthUser;
 };
-
-export type RegisterResult = RegisterResponse | AuthChallengeResponse;

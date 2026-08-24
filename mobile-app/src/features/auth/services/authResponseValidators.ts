@@ -29,6 +29,21 @@ function isAuthChallengeMethod(value: unknown): value is "OTP" | "BIOMETRIC" {
   return value === "OTP" || value === "BIOMETRIC";
 }
 
+function isAuthChallengePurpose(
+  value: unknown,
+): value is AuthChallengeResponse["purpose"] {
+  return [
+    "REGISTRATION_VERIFY",
+    "LOGIN",
+    "TRANSFER",
+    "SAVINGS_OPENING",
+    "CREDIT_APPLICATION",
+    "CARD_ACTIVATION",
+    "CREDIT_PAYMENT",
+    "CARD_UNLOCK",
+  ].includes(value as AuthChallengeResponse["purpose"]);
+}
+
 export function isAuthChallengeResponse(
   payload: unknown,
 ): payload is AuthChallengeResponse {
@@ -37,6 +52,7 @@ export function isAuthChallengeResponse(
     typeof payload.challengeId === "string" &&
     payload.challengeId.trim().length > 0 &&
     isNonEmptyDateTime(payload.expiresAt) &&
+    isAuthChallengePurpose(payload.purpose) &&
     Array.isArray(payload.methods) &&
     payload.methods.length > 0 &&
     payload.methods.every(isAuthChallengeMethod)
@@ -53,8 +69,12 @@ export function isRegisterResponse(payload: unknown): payload is RegisterRespons
   return isRecord(payload) && isAuthUser(payload.user);
 }
 
-export function isRegisterResult(
+export function isRegistrationChallengeResponse(
   payload: unknown,
-): payload is RegisterResponse | AuthChallengeResponse {
-  return isRegisterResponse(payload) || isAuthChallengeResponse(payload);
+): payload is AuthChallengeResponse {
+  return (
+    isAuthChallengeResponse(payload) &&
+    payload.purpose === "REGISTRATION_VERIFY" &&
+    payload.methods.includes("OTP")
+  );
 }
