@@ -6,12 +6,14 @@ on:
       - "backend/**"
       - "compose.yaml"
       - ".env.compose.example"
+      - "performance/**"
       - ".github/workflows/preview-container-smoke.yml"
   pull_request:
     paths:
       - "backend/**"
       - "compose.yaml"
       - ".env.compose.example"
+      - "performance/**"
       - ".github/workflows/preview-container-smoke.yml"
 
 jobs:
@@ -36,6 +38,12 @@ jobs:
       SMOKE_EMAIL: container-smoke@example.invalid
       SMOKE_PASSWORD: ContainerSmokePassword1
       SMOKE_DEVICE_ID: container-smoke-device
+      PERF_BASE_URL: http://127.0.0.1:55000/api/v1
+      PERF_OPERATOR_KEY: banking-ci-operator-only
+      PERF_OTP: banking-ci-transfer-only
+      PERF_MFA_OTP: banking-ci-mfa-only
+      PERF_READ_ITERATIONS: "20"
+      PERF_TRANSFER_CONCURRENCY: "20"
 
     steps:
       - name: Checkout
@@ -85,6 +93,18 @@ jobs:
           -e SMOKE_DEVICE_ID="$SMOKE_DEVICE_ID"
           backend node scripts/container-smoke.cjs
 
+      - name: Run performance and transfer-integrity smoke
+        run: |
+          set -o pipefail
+          node performance/node/stage2-smoke.cjs | tee stage2-performance-ci.json
+
+      - name: Scan preview logs for secret canaries
+        run: |
+          if docker compose logs --no-color | grep -E 'stage2-(password|otp|access|device|account)-canary'; then
+            echo "Secret canary found in preview logs"
+            exit 1
+          fi
+
       - name: Restart backend and verify persistent login
         run: |
           docker compose restart backend
@@ -121,6 +141,14 @@ jobs:
       - name: Show service diagnostics
         if: always()
         run: docker compose ps && docker compose logs --no-color
+
+      - name: Upload sanitized Stage 2 performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2-performance-${{ github.run_id }}
+          path: stage2-performance-ci.json
+          if-no-files-found: ignore
 
       - name: Tear down disposable preview
         if: always()

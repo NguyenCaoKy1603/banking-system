@@ -1,0 +1,34 @@
+{
+  "buildId": "stage2-20260824-df1f40b",
+  "baselineCommit": "df1f40bccbf8e1a3604101f6f23987f92480df54",
+  "branch": "codex/stage2-quality-evidence",
+  "capturedAt": "2026-08-24T06:08:43.611Z",
+  "apiUrlScope": "http://127.0.0.1:5000/api/v1",
+  "backend": {
+    "imageId": "sha256:ad1f30ee6f81cc98322f541af5e6904cf1d90a9e9a8877471ea504a8aa6a39b3",
+    "runtimeNode": "v22.23.2",
+    "containerUser": "node",
+    "containerUid": 1000
+  },
+  "host": {
+    "node": "v24.19.0",
+    "npm": "11.17.0"
+  },
+  "database": {
+    "engine": "PostgreSQL",
+    "version": "16.11",
+    "scope": "local-compose-disposable"
+  },
+  "mobile": {
+    "version": "1.0.0",
+    "expo": "~57.0.12",
+    "reactNative": "0.86.2",
+    "apk": null,
+    "apkSha256": null
+  },
+  "maestro": {
+    "cli": null,
+    "staticValidator": "available"
+  },
+  "physicalDevice": null
+}

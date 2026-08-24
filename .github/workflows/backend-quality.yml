@@ -59,6 +59,9 @@ jobs:
       - name: Apply PostgreSQL migration from empty database
         run: npm run db:migrate
 
+      - name: Re-run PostgreSQL migration idempotently
+        run: npm run db:migrate
+
       - name: Validate database boundary
         run: npm run validate:database
 

@@ -71,6 +71,14 @@ jobs:
           EXPO_PUBLIC_API_URL: https://ci.example.invalid/api/v1
         run: npm run export:web
 
+      - name: Upload mobile quality evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-quality-${{ github.run_id }}
+          path: mobile-app/coverage
+          if-no-files-found: ignore
+
   backend-quality:
     runs-on: ubuntu-latest
     env:
@@ -115,6 +123,9 @@ jobs:
         run: npm ci
 
       - name: Apply PostgreSQL migration
+        run: npm run db:migrate
+
+      - name: Re-run PostgreSQL migration idempotently
         run: npm run db:migrate
 
       - name: Validate database boundary schema
