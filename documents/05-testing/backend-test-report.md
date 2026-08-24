@@ -1,6 +1,6 @@
 # Backend hardening test report
 
-> Cập nhật hiện hành 2026-08-24: Stage 0 implementation tip `edbc9bb` có 88 test definition, 82 pass và 6 PostgreSQL skip khi không có live database; critical API 8/8, static source contract 28 bảng đạt. Bằng chứng PostgreSQL 70/70 và relational 1/1 ngày 2026-08-17 vẫn là lịch sử, chưa được rerun cho worktree hiện tại.
+> Cập nhật hiện hành 2026-08-24: Stage 0 implementation tip `edbc9bb` có 88 test definition, 82 pass và 6 PostgreSQL skip khi không có live database; critical API 8/8, static source contract 28 bảng đạt. Các gate này đã được xác minh lại trong clone sạch; bằng chứng PostgreSQL 70/70 và relational 1/1 ngày 2026-08-17 vẫn là lịch sử, chưa được rerun cho worktree hiện tại.
 
 Ngày kiểm tra: 2026-08-24
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
@@ -36,7 +36,7 @@ Persistent mode dùng `PostgresRelationalRepository` với advisory transaction 
 
 ## Còn thiếu
 
-- Chưa có log của một CI run remote; local PostgreSQL integration đã đạt với Docker PostgreSQL 16.
+- Chưa có log của một CI run remote; clone sạch đã tái hiện static/reference gates, còn local PostgreSQL integration live không chạy được trong lượt này vì Docker daemon không kết nối.
 - Logical backup/restore rehearsal đã đạt trên PostgreSQL database tạm; migration rollback thực tế vẫn chưa được triển khai vì schema reference chưa có chiến lược down migration.
 - Core M0–M4/M8 đã wire vào các bảng relational reference tương ứng; auth runtime và M6/M7 vẫn lưu record-level JSONB, chưa phải repository production toàn domain.
 

@@ -5,9 +5,9 @@ Ngày cập nhật: 2026-08-24
 ## Trạng thái remote
 
 - Implementation branch: `codex/mini-core-banking-sandbox`.
-- Local implementation tip sau Stage 0: `edbc9bb`; branch hiện đã có thêm documentation handoff commit `2a61b10`.
+- Local implementation logic tip sau Stage 0: `edbc9bb`; branch đã có các documentation handoff commit sau đó và đã được xác nhận sạch trước bàn giao.
 - Safety branch: `codex/stage0-safety-20260824` tại `e1b7b8c`, không push và chỉ xóa sau khi clone sạch/CI/review được xác minh.
-- `origin` hiện có `feature/mobile-authentication` tại `b2eef7d` và đã nhận `codex/mini-core-banking-sandbox` tại `2a61b10`; chưa có remote `main` tại thời điểm kiểm tra.
+- `origin` hiện có `feature/mobile-authentication` tại `b2eef7d` và đã nhận `codex/mini-core-banking-sandbox`; chưa có remote `main` tại thời điểm kiểm tra.
 - Workspace không có GitHub CLI; branch đã push và có upstream, nhưng chưa tạo được PR hoặc branch protection tự động.
 
 ## Quy tắc làm việc
@@ -37,3 +37,8 @@ Ngày cập nhật: 2026-08-24
 - Push implementation branch và đặt upstream — **đã đạt**; remote branch hiện tại là `origin/codex/mini-core-banking-sandbox`.
 - Tạo PR vào `main` (link tạo PR được GitHub trả về: `https://github.com/NguyenCaoKy1603/banking-system/pull/new/codex/mini-core-banking-sandbox`), bật required Backend/Mobile checks, review tối thiểu một người và cấm direct push.
 - Sau khi CI xanh, clone SHA PR vào thư mục sạch, chạy lại `npm ci`, migration PostgreSQL và toàn bộ gate.
+
+## Kết quả clone sạch Stage 0
+
+- Đã clone tại `C:\Users\admin\AppData\Local\Temp\banking-system-stage0-clone-20260824-105231`, đúng implementation branch, upstream và worktree sạch.
+- Backend/Mobile gate trong clone khớp kết quả local; PostgreSQL live/relational vẫn bị giới hạn bởi Docker daemon không chạy, Mobile audit còn 11 High.

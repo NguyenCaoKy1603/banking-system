@@ -180,7 +180,7 @@ Nếu `backend/src/bankingSystem.ts` không thể tách mà vẫn giữ từng c
 | Local quality gates | Đã chạy lại sau tách commit; Backend pass static/logic, Mobile pass ngoại trừ dependency audit High và PostgreSQL live skip |
 | Remote branch/upstream | Đã push `codex/mini-core-banking-sandbox` và đặt upstream tại `origin`; remote vẫn chưa có `main` |
 | PR/branch protection | Chưa tạo; cần maintainer có quyền GitHub |
-| Clone sạch | Chưa thực hiện |
+| Clone sạch | Đã thực hiện tại `C:\Users\admin\AppData\Local\Temp\banking-system-stage0-clone-20260824-105231`; clone đúng branch/upstream và worktree sạch sau `npm ci` + gate |
 
 ## Kết quả sau khi tách commit
 
@@ -195,3 +195,10 @@ Nếu `backend/src/bankingSystem.ts` không thể tách mà vẫn giữ từng c
 | `edbc9bb` | E2E flow và evidence/report synchronization |
 
 Quality gate snapshot: Backend `npm ci`, typecheck, build, OpenAPI, static database contract, full test 82/88, critical 8/8 và audit 0 vulnerability; Mobile `npm ci`, lint, typecheck, OpenAPI, Maestro syntax 10 flow, release validation, 46 suite/260 test, coverage 85,53%/86,57% và web export 33 route đạt. Mobile audit còn 11 High từ `image-size`; PostgreSQL/relational hiện skip vì Docker daemon không kết nối được.
+
+## Bằng chứng clone sạch
+
+- Clone từ `origin/codex/mini-core-banking-sandbox` tại remote tip được xác nhận đúng SHA và upstream; `git status` sạch, `git diff --check` đạt.
+- Backend clone: `npm ci`, static database contract, OpenAPI, typecheck, build, full test 82/88 (6 PostgreSQL skip), critical 8/8 và audit 0 vulnerability đạt; relational test 1 skip do Docker daemon không khả dụng.
+- Mobile clone: `npm ci`, lint, typecheck, OpenAPI, Maestro syntax 10 flow, release validation, full test 46 suite/260 test, coverage 85,53%/86,57%/93,39%/85,97% và web export 33 route đạt. Audit vẫn còn 11 High đã ghi ở risk register.
+- Clone chỉ tạo `coverage`, `dist` và cache bị ignore; không phát sinh tracked change hay credential.

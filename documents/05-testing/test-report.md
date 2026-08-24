@@ -1,6 +1,6 @@
 # Test report — Mobile banking reference preview
 
-> Cập nhật hiện hành 2026-08-24: Stage 0 đã tạo safety checkpoint và tách working tree thành chuỗi commit logic; Mobile lint/typecheck, 46 suite/260 test, coverage, OpenAPI, 10 Maestro flow syntax và web export 33 route đạt; Backend đạt 88 definition/82 pass/6 PostgreSQL skip cùng critical 8/8. Bằng chứng PostgreSQL/emulator ngày 2026-08-17 bên dưới là lịch sử và chưa được chạy lại cho worktree mới.
+> Cập nhật hiện hành 2026-08-24: Stage 0 đã tạo safety checkpoint, tách working tree thành chuỗi commit logic và xác minh clone sạch; Mobile lint/typecheck, 46 suite/260 test, coverage, OpenAPI, 10 Maestro flow syntax và web export 33 route đạt; Backend đạt 88 definition/82 pass/6 PostgreSQL skip cùng critical 8/8. Bằng chứng PostgreSQL/emulator ngày 2026-08-17 bên dưới là lịch sử và chưa được chạy lại cho worktree mới.
 
 > Handoff manifest không chứa credential/token/OTP: [`handoff-manifest-2026-08-17.json`](handoff-manifest-2026-08-17.json).
 
@@ -37,7 +37,7 @@ Backend verification checkpoint hiện hành: implementation tip `edbc9bb`; safe
 - Đã có APK release local, package/checksum và log Maestro trên emulator; chưa có video cold start/crash-resume, camera thật hoặc biometric prompt thật.
 - Transfer kill app trước/sau submit và session restore sau force-stop chưa có kết quả native lặp lại; riêng credit pending → restart → resume đã pass bằng flow dedicated.
 - Chưa có staging URL/partner integration đã phê duyệt.
-- Handoff Git: implementation tip `edbc9bb`, documentation tip `2a61b10`, safety branch `codex/stage0-safety-20260824` tại `e1b7b8c`; working tree sạch và branch đã push/đặt upstream. Chưa có PR vì remote chưa có `main` và workspace không có GitHub CLI.
+- Handoff Git: implementation logic tip `edbc9bb`, safety branch `codex/stage0-safety-20260824` tại `e1b7b8c`; working tree sạch, branch đã push/đặt upstream và clone sạch đã được xác minh. Chưa có PR vì remote chưa có `main` và workspace không có GitHub CLI.
 - Chưa có kết quả usability/accessibility với người dùng và chưa có approver cho 11 cảnh báo High.
 
 ## Stage 0 — Git/CI checkpoint
@@ -47,6 +47,7 @@ Backend verification checkpoint hiện hành: implementation tip `edbc9bb`; safe
 - Secret scan không phát hiện JWT/Bearer/private key/credential vận hành; các hit còn lại là fixture test hoặc PostgreSQL localhost example.
 - `git status` sạch; `.env`, `node_modules`, build output, coverage và log không nằm trong commit.
 - PostgreSQL relational hiện `1 test skip` vì Docker daemon không kết nối được; không dùng kết quả skip để tuyên bố live migration pass.
+- Clone sạch Stage 0: `C:\Users\admin\AppData\Local\Temp\banking-system-stage0-clone-20260824-105231`; `npm ci`, backend/mobile gates và `git diff --check` đạt, chỉ giữ cùng các giới hạn PostgreSQL live và Mobile audit 11 High.
 
 ## Kết luận
 
