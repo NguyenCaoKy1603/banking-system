@@ -54,7 +54,7 @@ Lệnh dùng credential ngẫu nhiên trong bộ nhớ, gọi `backend` seed, l�
 - `critical-auth-and-logout.yaml`: login MFA, session entry và logout tất cả thiết bị.
 - `critical-transfer-retry.yaml`: quote, step-up, double-tap, pending status và khôi phục sau stop/start app.
 - `critical-fraud-report.yaml`: mở chi tiết giao dịch và gửi fraud report.
-- `critical-m0-m4-m8.yaml`: login, trang chủ với thẻ số dư hiện/che, hiện và sao chép số tài khoản đầy đủ, eKYC mô phỏng, danh bạ người nhận, My QR/QR payload fallback, notification detail và deep link.
+- `critical-m0-m4-m8.yaml`: login, trang chủ với thẻ số dư hiện/che, hiện và sao chép số tài khoản đầy đủ, eKYC submit → `PENDING`/read-only, danh bạ người nhận, My QR/QR payload fallback chỉ hiển thị dữ liệu chưa xác minh và chặn chuyển tiền, notification detail và deep link.
 - `critical-savings.yaml`: Home → Tiền gửi → quote/review → step-up OTP → mở khoản → danh sách tiền gửi.
 - `critical-card.yaml`: mở danh sách/chi tiết Credit sandbox, khóa thẻ, stop/launch để kiểm tra trạng thái được giữ lại và mở khóa bằng OTP sandbox.
 - `critical-credit.yaml`: mở thẻ tín dụng sandbox, xem giao dịch/sao kê, tạo quote MINIMUM, MFA step-up và hoàn tất thanh toán.
@@ -63,6 +63,8 @@ Lệnh dùng credential ngẫu nhiên trong bộ nhớ, gọi `backend` seed, l�
 - `critical-offline-retry.yaml`: mô phỏng API không reachable, kiểm tra banner mất kết nối và retry ở màn hình đăng nhập.
 
 Maestro CLI 2.8.0 đã chạy thành công trên Android emulator `Pixel_7_API_35` cho các flow M0–M4/M8, M6, M7 và `critical-offline-retry.yaml`. Bộ thư mục hiện có 10 flow hợp lệ; M0–M4/M8 đã kiểm tra hiện và sao chép số tài khoản đầy đủ trên APK hiện tại, M6 đã kiểm tra quote/review/OTP/mở khoản, M7 đã kiểm tra payment, pending → stop/launch → resume, khóa → restart → mở khóa thẻ bằng OTP, thông báo sao kê quá hạn → mở đúng thẻ, còn offline retry đã kiểm tra banner mất kết nối và retry. Artifact raw của offline flow đã được xóa để không lưu dữ liệu test nhạy cảm. Camera permission, biometric prompt, transfer lifecycle native đầy đủ và thiết bị thật vẫn cần chạy bổ sung.
+
+Thay đổi trust boundary eKYC/QR ngày 2026-08-23 mới đạt unit test, lint, type-check và Maestro syntax validation; chưa chạy lại trên emulator. Bằng chứng emulator trước đó không được dùng để tuyên bố UI mới đã qua native E2E.
 
 ## Cap nhat M7
 

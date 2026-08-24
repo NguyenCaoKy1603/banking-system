@@ -1,11 +1,13 @@
-# Milestone status snapshot — 2026-08-17
+# Milestone status snapshot — 2026-08-24
 
 ## Đã kiểm chứng local
 
 Backend evidence checkpoint hiện hành: code checkpoint `dd515ad`; historical gate `595afc3` (`Harden database and OpenAPI quality gates`).
 
-- Mobile lint, type-check và 37 suite/170 test đạt; coverage gate đã được chạy lại sau khi bổ sung trạng thái offline/timeout.
-- Backend reference type-check, build, 70/70 test và 8 critical HTTP flow đạt; relational regression 1/1 đạt trên database disposable; database boundary validator đạt cấu trúc SQL + live PostgreSQL 28 bảng/invariant.
+Các thay đổi hardening ngày 2026-08-24 hiện còn ở working tree, chưa có commit SHA/handoff manifest mới. Bằng chứng checkpoint 2026-08-17 bên dưới vẫn là lịch sử tái hiện gần nhất; không được dùng số liệu cũ để tuyên bố các thay đổi mới đã qua device/staging gate.
+
+- Worktree Mobile lint, type-check, 46 suite/260 test, coverage 85,53% statement/86,57% branch, OpenAPI, Maestro syntax và web export đạt.
+- Worktree Backend type-check/build, 88 definition (82 pass, 6 PostgreSQL skip), 8 critical HTTP flow và static database contract 28 bảng đạt. Mốc PostgreSQL 70/70 + relational 1/1 bên dưới là bằng chứng lịch sử 2026-08-17, chưa được rerun cho hardening mới.
 
 ## Cập nhật mới nhất — relational reference adapter
 
@@ -13,10 +15,10 @@ Backend evidence checkpoint hiện hành: code checkpoint `dd515ad`; historical 
 - Gate mới `npm run test:relational` đạt 1/1 trên database disposable, gồm restart, pending settlement, reconciliation và concurrent quote submit. Auth runtime và M6/M7 bonus vẫn là record-level reference; chưa tuyên bố production readiness.
 - Backend correctness đã có quote snapshot/one-time, beneficiary fingerprint, UUID-compatible IDs, exact route, registration/step-up rate limit, reconciliation formula và outbox retry threshold.
 - Persistent PostgreSQL relational reference adapter, migration runner và CI service đã được thêm; integration test core chạy khi có `DATABASE_URL`, còn relational regression dùng `RELATIONAL_DATABASE_URL` disposable.
-- OpenAPI validation, Maestro syntax validation, Expo native config và web export đều đã chạy lại sau các route hiện tại; hiện có 36 path OpenAPI, 10 flow Maestro hợp lệ và 33 static route. Critical flow M0–M4/M8, M6 savings, credit payment, credit pending-resume, Credit card lock/restart/unlock, Credit overdue notification và offline login retry đã chạy thành công trên Android emulator.
+- OpenAPI validation, Maestro syntax validation, Expo native config và web export đều đã chạy lại sau các route hiện tại; Mobile validator hiện bao phủ 43 path OpenAPI, 10 flow Maestro hợp lệ và 33 static route. Critical flow M0–M4/M8, M6 savings, credit payment, credit pending-resume, Credit card lock/restart/unlock, Credit overdue notification và offline login retry đã chạy thành công trên Android emulator.
 - Auth/session/device binding/MFA, accounts/history/detail/filter, transfer quote/step-up/idempotency/pending recovery, notifications và fraud report có reference flow.
-- M2 có eKYC mô phỏng với form, ảnh mẫu và vòng đời DRAFT/PENDING/APPROVED/REJECTED.
-- M4 có transfer flow, danh bạ người nhận CRUD, QR payload validation, camera scanner và manual input fallback.
+- M2 có eKYC customer mock với form/ảnh mẫu và trạng thái DRAFT/PENDING; app không còn quyền tự APPROVED/REJECTED.
+- M4 có transfer flow, danh bạ người nhận CRUD và QR scanner/manual fallback. Dữ liệu QR hiện bị đánh dấu `UNVERIFIED` và không thể khởi tạo transfer khi chưa có server alias lookup.
 - M8 có notification list/read, notification detail và deep link tới transaction detail hoặc profile.
 - M5 có Card mock/reference: list/detail, lock/unlock, ẩn/hiện số mô phỏng và đổi PIN mô phỏng; không lưu PIN/CVV thật.
 - Có seed sandbox tự động cho E2E và report release/device nêu rõ các gate chưa thể chạy tại workspace.
@@ -66,3 +68,33 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 
 - Persistent server đã tách bước đọc/parse body khỏi transaction relational; body không hợp lệ được trả lỗi validation trước khi lấy advisory lock và lỗi 4xx/5xx không commit state dở dang.
 - Regression suite PostgreSQL đạt 70/70; critical API đạt 8/8. Cleanup quote/outbox và retry idempotency đã có regression; đây là hardening reference sandbox, chưa thay thế rate-limit phân tán hoặc gateway production.
+
+## Cập nhật hardening nghiệp vụ — working tree 2026-08-24
+
+### Đã có implementation/reference regression
+
+- Transfer, Savings opening và Credit payment dùng client intent chung `DRAFT_QUOTE`, `SUBMIT_UNKNOWN`, `ACCEPTED_PENDING`, `ACCEPTED_TERMINAL`. Intent đã submit không bị xóa vì quote hết hạn; accepted operation chỉ refresh qua status endpoint, receipt terminal giữ tới lúc user xác nhận/rời chủ đích. Transfer/Savings scope theo user, Credit theo user+card; legacy global migrate an toàn cho đúng owner.
+- Auth session có `sessionEpoch`; refresh/retry không dùng single-flight chung giữa hai phiên. `401` refresh là terminal, còn network/timeout/abort/429/5xx giữ session và recovery intent. Logout/logout-all trả kết quả local/remote riêng để UI không tuyên bố revoke mọi thiết bị khi server chưa xác nhận; chỉ xóa auth session, không purge intent tài chính/fraud đang cần resume.
+- Persistent HTTP transaction boundary không còn suy ra commit chỉ từ status code: DomainError chỉ giữ whitelist mutation bảo mật và audit thất bại step-up tương ứng; audit nghiệp vụ của aggregate rollback không được giữ. Regression bao phủ refresh-family reuse, login rate-limit, challenge lock qua restart, security-failure audit và forced business rollback.
+- Fraud report kiểm tra `Idempotency-Key` tối thiểu 8 ký tự, từ chối field thừa, có fingerprint, durable report record, PostgreSQL projection, audit/outbox và `GET /fraud-reports/{reportId}`. Invariant chỉ cho một case `RECEIVED` trên mỗi customer/transaction; retry cùng nội dung dù dùng key mới trả report cũ, còn nội dung xung đột trả `409`. Status reference hiện chỉ là `RECEIVED`.
+- Credit chặn payment trên statement cũ, chặn payment mới khi account còn payment `PENDING`, revalidate overpay ở quote/submit/settle và đưa invariant vào reconciliation/health. Đã trả đủ minimum không bị đánh `OVERDUE` chỉ vì còn statement balance.
+- Public Savings/Credit GET đã read-only ở domain reference; operator command sandbox settle transfer/savings opening/credit payment `PENDING` trước khi chạy maturity/statement. Đây chưa phải durable worker/core callback.
+- Pending registration snapshot không còn chứa plaintext password; state migration loại field plaintext legacy.
+- Maturity savings kiểm tra liability/gốc+lãi, idempotency qua restart và reconciliation hai chiều deposit ↔ liability, gồm orphan và renewal chain; mismatch làm health `degraded`. Cursor transaction/credit chuyển sang keyset bind theo account/resource.
+- Mobile chỉ chấp nhận registration OTP hai bước, bắt buộc device ID, khóa form sau challenge; session cold-start/background không mount dữ liệu bảo vệ trước khi refresh thành công. Biometric tĩnh mặc định bị tắt.
+- eKYC customer không còn tự duyệt và QR `UNVERIFIED` không còn shortcut sang chuyển tiền.
+- OpenAPI v0.2 bind mọi operation bearer với `X-Device-ID`, Auth public khai báo header trực tiếp và mọi step-up bắt buộc `challengeId`; validator Backend/Mobile chống tái lệch contract.
+- Step-up sai trong command tài chính trả `409 STEP_UP_VERIFICATION_FAILED` để không kích hoạt refresh/replay; canonical replay sau quote consume giữ nguyên operation, còn state thiếu chuyển manual review.
+- Transfer/Savings/Credit/Fraud recovery intent fail-closed khi SecureStore malformed/read error; fraud rejection đã biết dọn local intent sau cleanup thành công, còn outcome không rõ vẫn retry cùng key.
+
+### Bằng chứng local hiện có cho worktree
+
+- Backend `npm run typecheck`, `npm run build`, static database contract, OpenAPI và `npm test` đã đạt: 88 test definition, 82 pass, 6 PostgreSQL test skip; `test:critical` 8/8 pass.
+- Mobile full gate đã đạt: lint, typecheck, 46 suite/260 unit test, coverage 85,53% statement/86,57% branch, OpenAPI 43 path, 10 Maestro flow syntax và web export 33 route với build-time HTTPS URL.
+
+### Chưa đóng
+
+- Chưa có durable worker/scheduler chạy các command đã tách: job lease/idempotency, retry/backoff, crash recovery, core callback và monitoring vẫn là target DRAFT, chưa triển khai đầy đủ.
+- PostgreSQL live validator không đạt trong môi trường hiện tại; static schema contract đạt khi bỏ `DATABASE_URL`. Fraud restart/idempotency và credit concurrency live vẫn chưa có bằng chứng mới; sáu test database bị skip.
+- Chưa có device E2E cho timeout sau server commit, force-stop sau quote TTL, logout rồi re-login cùng user để resume, cross-user isolation, logout-all remote revoke hoặc fraud retry/status.
+- Mọi API/behavior mới vẫn là DRAFT; chưa có core/fraud/identity/credit product/legal approval, staging, physical-device evidence, monitoring hoặc signing. Không thay đổi kết luận: **chưa pilot/production-ready**.

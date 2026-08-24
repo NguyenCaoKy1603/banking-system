@@ -1,6 +1,6 @@
 # M7 — Credit card sandbox status
 
-Ngày cập nhật: 2026-08-17
+Ngày cập nhật: 2026-08-24
 
 ## Phạm vi đã triển khai
 
@@ -31,3 +31,14 @@ Không có phê duyệt tín dụng thật, CIC, scoring, processor/acquirer, PA
 - Maestro 2.8.0 va ADB da duoc dung tren `Pixel_7_API_35`: flow M0–M4/M8 tren APK hien tai, M6 savings, credit payment, credit pending → stop/launch → resume, Credit card lock → stop/launch → OTP unlock va Credit overdue notification → card detail deu pass. Thiet bi that, camera/biometric native va staging van mo.
 - Backend dependency audit: 0 vulnerability. Mobile con 14 High transitive tu `image-size` trong Expo/Metro; khong ap dung `npm audit fix --force` vi no de xuat breaking downgrade Expo.
 - Core M0–M4/M8 dùng relational reference adapter với state version/migration fallback; auth runtime và M6/M7 vẫn record-level reference. Repository production toàn domain, device lifecycle và staging/partner approval vẫn là gate mở.
+
+## Hardening nghĩa vụ và recovery — 2026-08-24
+
+- Payable obligation được neo vào latest statement của credit account. Statement cũ carry-forward chỉ để xem lịch sử; quote/submit trả `STATEMENT_SUPERSEDED` nếu user chọn kỳ cũ.
+- Khi credit account còn payment `PENDING`, quote/submit mới bị chặn bằng `PAYMENT_PENDING`. Quote, submit và settlement cùng kiểm tra amount không vượt statement remaining hoặc account posted outstanding.
+- Settlement fail closed nếu có thể tạo outstanding âm. Reconciliation kiểm tra `0 <= postedOutstanding <= creditLimit` và `availableCredit = creditLimit - postedOutstanding - pendingAuthorizations`; health degraded khi difference/invariant sai.
+- Statement chỉ `OVERDUE` sau due date khi minimum payment còn thiếu. Đã trả đủ minimum nhưng chưa trả hết được giữ `PARTIALLY_PAID`. Success/reversal tính lại totals từ payment đã apply thay vì cộng/trừ mù.
+- Mobile payment intent dùng `DRAFT_QUOTE`, `SUBMIT_UNKNOWN`, `ACCEPTED_PENDING`, `ACCEPTED_TERMINAL`; intent đã submit không bị xóa theo quote TTL, retry giữ cùng idempotency key và receipt terminal chỉ xóa khi user xác nhận/rời chủ đích.
+- Payment intent được scope theo `userId + cardId`, có index scoped theo user để logout chỉ xóa đúng owner; legacy global migrate theo thứ tự ghi mới trước/xóa cũ sau. Unit test bao phủ lifecycle, migration, card/user isolation và clear scoped. PostgreSQL live concurrency/reversal và device/network-fault E2E còn phải chạy lại.
+- SecureStore malformed/read failure của payment intent fail-closed và giữ nguyên record; UI không cho tạo payment mới khi chưa xác định an toàn kết quả lần trước.
+- Public Credit GET đã chỉ đọc state; operator command settle payment `PENDING` trước khi tạo statement/carry-forward, và late reversal sau rollover bị đưa sang manual review. Durable idempotent worker cho statement close, overdue evaluation và payment settlement vẫn là target DRAFT còn mở; chưa production/pilot-ready.

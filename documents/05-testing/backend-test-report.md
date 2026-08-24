@@ -1,8 +1,8 @@
 # Backend hardening test report
 
-> Cập nhật hiện hành 2026-08-17: trên branch `codex/mini-core-banking-sandbox`, suite hiện có 70/70 test đạt khi cấu hình cả `DATABASE_URL` và `RELATIONAL_DATABASE_URL`; relational regression 1/1 đạt trên database disposable; critical API 8/8, migration từ PostgreSQL rỗng và live validator 28 bảng đều đạt. Chỉ có `DATABASE_URL` thì 69/70 test đạt và relational regression bị skip; không có database thì 64 test đạt và 6 test persistence bị skip có chủ ý.
+> Cập nhật hiện hành 2026-08-24: worktree hardening có 88 test definition, 82 pass và 6 PostgreSQL skip khi không có live database; critical API 8/8, static source contract 28 bảng đạt. Bằng chứng PostgreSQL 70/70 và relational 1/1 ngày 2026-08-17 vẫn là lịch sử, chưa được rerun cho worktree hiện tại.
 
-Ngày kiểm tra: 2026-08-17
+Ngày kiểm tra: 2026-08-24
 Phạm vi: correctness P1/P2, reference hardening và persistent sandbox adapter
 Trạng thái: **In-memory và PostgreSQL persistent reference relational pass; production adapter toàn domain vẫn là DRAFT**
 Commit backend gần nhất: `dd515ad` (`Make sandbox handoff reproducible`)
@@ -13,7 +13,7 @@ Commit backend gần nhất: `dd515ad` (`Make sandbox handoff reproducible`)
 | --- | --- |
 | Typecheck/build | Đạt |
 | Database boundary validator | Đạt, kiểm tra cấu trúc SQL và live PostgreSQL: 28 bảng, cột UUID/transfer/notification/runtime và constraint chính |
-| Unit + HTTP tests | 70 test definition; PostgreSQL 16 local: 70/70 đạt, gồm body validation trước transaction và fail-closed khi DB unavailable |
+| Unit + HTTP tests | Worktree không DB: 88 definition, 82 pass, 6 PostgreSQL skip; gồm body validation trước transaction và fail-closed khi DB unavailable |
 | Relational persistence | `npm run test:relational`: 1/1 đạt trên database disposable, gồm restart, pending settlement, reconciliation, concurrent quote submit và logical backup/restore rehearsal |
 | Critical HTTP tests | 8 đạt |
 | Backend dependency audit | 0 vulnerability |
@@ -58,3 +58,57 @@ Persistent mode dùng `PostgresRelationalRepository` với advisory transaction 
 - Runtime mặc định hiện dùng `PostgresRelationalRepository`: core M0–M4/M8 được lưu trong bảng relational; auth runtime và M6/M7 bonus dùng `reference_runtime_records` theo từng record. Snapshot JSON chỉ còn đường nâng dữ liệu cũ một lần, không phải nguồn ghi mới.
 - `npm run seed:e2e` đã chạy lại trên adapter relational sau restart backend: registration/MFA → Sandbox Funding → transfer `SUCCEEDED` → savings `SUCCEEDED` → credit application/activation; stdout không chứa password/OTP.
 - Health JSON an toàn (không chứa credential/token/OTP) được lưu tại [`health-sandbox-2026-08-17.json`](health-sandbox-2026-08-17.json).
+
+## Regression hardening nghiệp vụ — working tree 2026-08-24
+
+### Đã chạy
+
+| Gate | Kết quả |
+| --- | --- |
+| Typecheck | Đạt |
+| Build | Đạt |
+| Full test không DB | 88 definition; 82 pass, 6 PostgreSQL skip, 0 fail |
+| Persistent HTTP security boundary | 4/4 pass, không skip |
+| Critical HTTP | 8/8 pass |
+| OpenAPI contract/route | Đạt, 46 required paths và 51 exact method/segment guards |
+| Static database source contract | Đạt, 28 table definitions/invariants; live DB chưa đạt trong môi trường hiện tại |
+
+Regression mới/chỉnh sửa kiểm tra:
+
+- Refresh-token reuse trả `401` vẫn persist revoke family; token đã rotate tiếp tục bị từ chối sau restart.
+- Năm login failure và OTP challenge attempt/lock vẫn tồn tại sau persistent-server restart.
+- Domain rejection sau một business mutation giả lập rollback balance/history, trong khi chỉ whitelist security state được giữ.
+- Pending registration export/migration không chứa plaintext password.
+- Fraud report dùng idempotency fingerprint, retry trả cùng report, GET kiểm tra ownership/status và state export/import giữ report.
+- Credit chỉ cho phép latest payable statement, chặn payment `PENDING` song song/overpay, giữ outstanding không âm và kiểm tra invariant trong reconciliation/health.
+- Minimum payment đã đủ không còn tự chuyển statement thành `OVERDUE`.
+- Savings opening và credit payment GET giữ nguyên exported state khi operation còn `PENDING`; scheduled-work command settle transfer/savings opening/credit payment trước maturity/statement và được kiểm tra chạy lặp lại không tạo thêm money movement/cycle đã xử lý.
+- Savings maturity từ chối phantom/unbalanced liability, replay idempotent qua export/import và đưa savings liability vào reconciliation/health.
+- Transaction/credit pagination dùng keyset; regression chèn record mới giữa hai lần đọc không tạo duplicate/skip.
+- Static biometric proof bị từ chối mặc định và chỉ hoạt động khi local test bật unsafe switch tường minh.
+- Financial step-up rejection dùng `409 STEP_UP_VERIFICATION_FAILED`, không kích hoạt refresh/replay từ `401`; canonical replay của quote đã consume không tạo ledger/audit/outbox mới và state thiếu trả `IDEMPOTENCY_STATE_MISSING`.
+
+### Data flow đã kiểm chứng ở mức reference
+
+```text
+HTTP request
+  -> import transaction-start state
+  -> success: commit all
+  -> DomainError: merge security whitelist, rollback business aggregates
+  -> unexpected error: rollback all
+```
+
+```text
+fraud POST + Idempotency-Key
+  -> ownership + fingerprint
+  -> durable fraud_reports + idempotency metadata + audit/outbox
+  -> 201 RECEIVED
+  -> GET /fraud-reports/{reportId} chỉ đọc status thuộc user
+```
+
+### Gate còn mở
+
+- Lần chạy live validator 2026-08-24 được chạy ở chế độ static với `DATABASE_URL` rỗng; static source contract đạt. Sáu PostgreSQL test bị skip; phải rerun migration, live validator, restart/concurrency và logical restore trước handoff mới.
+- Chưa có dedicated live PostgreSQL regression cho fraud reason/idempotency qua restart và concurrent retry.
+- Savings/Credit public GET đã read-only và có domain no-mutation regression; mutation được tách thành settlement/scheduled-work command reference. Dedicated HTTP/PostgreSQL no-mutation regression vẫn cần bổ sung. Durable worker/scheduler có lease/retry/backoff cho settlement, maturity, statement close/overdue chưa có; operator hook tuần tự không phải production settlement mechanism.
+- Transaction boundary hiện là reference snapshot/relational adapter; chưa thay thế distributed rate-limit, Identity provider, core callback, queue, RLS, encryption/retention policy hoặc production monitoring.

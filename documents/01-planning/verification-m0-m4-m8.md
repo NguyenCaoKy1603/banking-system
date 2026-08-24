@@ -39,3 +39,16 @@ Code checkpoint hiện hành: `cab97e0`; evidence checkpoint cũ chỉ giữ đ�
 - Artifact: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
 - Flow được thực thi bằng Maestro 2.8.0 trên `emulator-5554`; biến môi trường được truyền qua tham số Maestro, không ghi credential vào file flow.
 - Đây là bằng chứng bổ sung cho M4 lifecycle; chưa phải bằng chứng thiết bị vật lý hoặc tích hợp core/payment thật.
+
+## Cập nhật trust boundary eKYC/QR — working tree 2026-08-23
+
+- eKYC reference trên customer app chỉ còn submit và đọc trạng thái. Flow không còn nút hay service cho người dùng tự đặt `APPROVED`/`REJECTED`; khi chưa có entitlement/API kiểm duyệt server, hồ sơ giữ `PENDING`.
+- Dữ liệu QR quét được đánh dấu `UNVERIFIED`, giới hạn dữ liệu hiển thị và loại bỏ metadata `beneficiaryId` khỏi kết quả đã parse. UI không điều hướng từ QR sang Transfer; màn hình nêu rõ cần API server xác minh alias/tài khoản.
+- Local gate sau thay đổi: Mobile lint và type-check đạt; 44 suite/240 unit test đạt; 10 flow Maestro đạt syntax validation. Flow M0–M4/M8 đã đổi để kiểm tra KYC `PENDING`/read-only và hành động chuyển từ QR bị chặn.
+- Chưa chạy lại flow đã đổi trên emulator/thiết bị thật. Artifact ngày 2026-08-17 chỉ là bằng chứng lịch sử của UI cũ và không chứng minh trust boundary mới trên thiết bị.
+
+## Cập nhật regression hardening — 2026-08-24
+
+- Mobile worktree đạt lint, typecheck, 46 suite/260 test, coverage 85,53% statements/86,57% branches, OpenAPI 43 path, Maestro syntax 10 flow và web export 33 route.
+- Backend worktree đạt typecheck/build, OpenAPI, 88 definition (82 pass, 6 PostgreSQL skip), critical HTTP 8/8 và static database contract 28 bảng. PostgreSQL live/device E2E chưa rerun cho hardening này.
+- Transfer/Savings/Credit/Fraud durable intent fail-closed khi SecureStore read/malformed; lỗi server không rõ kết quả giữ idempotency key, còn rejection fraud đã biết không khóa form vô hạn. Đây là unit/regression evidence, chưa phải native device evidence.

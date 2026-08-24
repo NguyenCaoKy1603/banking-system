@@ -10,7 +10,7 @@
 | `mobile-app/e2e/maestro/` | Native E2E flow syntax và test IDs | Phối hợp | Có 10 flow; critical M0–M4/M8, M6 savings, credit payment, pending-resume, overdue notification và offline retry đã chạy trên Android emulator, chưa chạy trên thiết bị thật |
 | `backend/` | Reference HTTP/backend sandbox, PostgreSQL relational reference, core adapter, ledger, audit, outbox | Thành viên 1/reference | Core M0–M4/M8 persistent relational sandbox; chưa phải production toàn domain |
 | `backend/database/` | Boundary SQL draft, migration và validator | Thành viên 1/reference | Core M0–M4/M8 đã wire qua relational reference; toàn domain chưa phải production repository |
-| `documents/api/` | Auth, session, accounts/transfers contract và OpenAPI | Phối hợp | Auth v1 approved nội bộ; banking contract/OpenAPI còn Draft |
+| `documents/api/` | Auth, session, accounts/transfers contract và OpenAPI | Phối hợp | Auth DRAFT v2 và banking contract/OpenAPI đều chưa có phê duyệt production |
 | `documents/architecture/` | Scope, threat model, data classification và phase gates | Phối hợp | Có risk/scope baseline |
 | `documents/mobile-pilot-runbook.md` | Quality gate, pilot limitation, rollback/incident notes | Phối hợp | Đã cập nhật snapshot local |
 
