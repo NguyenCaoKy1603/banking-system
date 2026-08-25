@@ -1754,7 +1754,7 @@ export function createPersistentBankingServer(
     for (const [name, value] of Object.entries(requestContextHeaders(requestContext))) response.setHeader(name, value);
     instrumentResponse(request, response, resolvedOptions, requestContext);
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-    if (request.method === "GET" && ["/livez", "/startupz", "/versionz"].includes(pathname)) {
+    if (request.method === "GET" && ["/livez", "/startupz", "/versionz", "/metrics"].includes(pathname)) {
       void handleRequest(request, response, system, resolvedOptions, undefined, false, undefined, requestContext);
       return;
     }
