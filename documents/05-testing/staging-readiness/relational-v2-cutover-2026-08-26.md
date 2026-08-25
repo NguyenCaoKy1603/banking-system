@@ -7,9 +7,9 @@ implementation commit `516083e0be71db7ee813c11bf7bfe82e5568830e`; các commit
 evidence trước đó là `afc1305`, `c6eacea` và `b757b0a`. Lượt này bổ sung
 registration persistent, migration `032`, scheduled Savings/Credit lifecycle và
 release-quality rehearsal trên database disposable, đã được commit tại
-`33f0e256cb1a23178064005052ba13c82c2d4ff7`. Evidence document này cần được
-commit tiếp theo cùng SHA đó; không dùng SHA implementation cũ để đại diện cho
-bằng chứng mới.
+`33f0e256cb1a23178064005052ba13c82c2d4ff7`. Evidence document được ghi nhận
+trong commit `ab863940aeb0ecd630fd2701f38c2160c87f20e0`; hai SHA được giữ
+riêng để phân biệt implementation với bằng chứng.
 Trạng thái vẫn là:
 
 ```text
@@ -87,11 +87,13 @@ customer vẫn explicit out-of-scope.
 | `npm run test:worker` disposable rehearsal | 10 PASS |
 | `npm run test:release` aggregate disposable gate | 14/14 commands PASS |
 | `relationalHttpCutover.test.ts` | 5 PASS |
-| `npm run validate:database` | 49 tables/constraints PASS |
-| `npm run validate:relational-v2` | PASS; migration/checksum/invariant/orphan checks đều 0 |
-| `npm run validate:outbox` | PASS; secret-like errors/orphan/invalid records 0 |
+| `npm run release:gate` | FAIL có chủ đích: `code_review.md` vẫn deleted, 1 file dirty |
+| `npm run validate:database` (baseline evidence) | 49 tables/constraints PASS; không re-run vì DB `.env` hiện không chạy |
+| `npm run validate:relational-v2` (baseline evidence) | PASS; không re-run vì DB `.env` hiện không chạy |
+| `npm run validate:outbox` (baseline evidence) | PASS; không re-run vì DB `.env` hiện không chạy |
 
-Client/admin checks cũng xanh trong cùng phiên local:
+Các kiểm tra client/admin/Compose dưới đây là evidence baseline trước commit
+`33f0e25`; không bị thay đổi trong task này và không re-run khi DB `.env` đã tắt:
 
 - Mobile lint, typecheck, unit: 46 suite / 259 test PASS; OpenAPI 43 path,
   Maestro 10 flow syntax và public-env scan 193 file PASS.
@@ -99,7 +101,7 @@ Client/admin checks cũng xanh trong cùng phiên local:
 - `docker compose --env-file .env.compose config --quiet` PASS; chỉ backend,
   migrate, PostgreSQL, Admin API/Web đang chạy. Không có worker đang chạy.
 
-### Phân loại 27 SKIPPED trong aggregate `npm test`
+### Phân loại 31 SKIPPED trong aggregate `npm test`
 
 Các skip này là do aggregate test không tự cấp `DATABASE_TEST_ADMIN_URL` để
 tránh đụng database preview; các nhóm đã có lệnh disposable riêng và đều PASS:
