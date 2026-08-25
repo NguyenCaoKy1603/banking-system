@@ -33,7 +33,9 @@ jobs:
 
       - name: Scan repository and Git history for high-confidence secrets
         working-directory: backend
-        run: npm run validate:secrets -- --history
+        run: |
+          npm run validate:secrets -- --history
+          npm run validate:secret-registry
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -104,6 +106,11 @@ jobs:
           docker pull "${IMAGE_NAME}@${IMAGE_DIGEST}"
           test "$(docker image inspect "${IMAGE_NAME}@${IMAGE_DIGEST}" --format '{{.Config.User}}')" = "node"
           docker run --rm "${IMAGE_NAME}@${IMAGE_DIGEST}" node -e "const fs=require('fs'); if (fs.existsSync('/app/node_modules/tsx')) process.exit(1)"
+
+      - name: Scan pushed image layers for secret artifacts
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: node backend/scripts/validate-image-surface.cjs --image="${IMAGE_NAME}@${IMAGE_DIGEST}"
 
       - name: Create release manifest artifact
         working-directory: backend

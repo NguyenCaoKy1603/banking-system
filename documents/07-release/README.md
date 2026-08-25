@@ -6,6 +6,8 @@
 
 Runbook Docker/preview persistent của Giai đoạn 1 nằm tại [`preview-deployment-runbook.md`](preview-deployment-runbook.md), ma trận môi trường tại [`preview-environment-matrix.md`](preview-environment-matrix.md) và báo cáo kiểm chứng tại [`../05-testing/stage1-deployment-report.md`](../05-testing/stage1-deployment-report.md). Cloud provider, HTTPS domain, registry, managed PostgreSQL và EAS environment vẫn chưa được cấu hình.
 
+P0 secret management nằm tại [`secret-management-runbook.md`](secret-management-runbook.md), registry metadata-only tại [`secret-registry.yaml`](secret-registry.yaml), còn migration/checkpoint re-encryption và backup reference nằm ở [`migration-runbook.md`](migration-runbook.md) và [`backup-restore-runbook.md`](backup-restore-runbook.md).
+
 ## Kiểm tra cấu hình
 
 ```powershell

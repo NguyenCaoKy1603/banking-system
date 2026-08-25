@@ -78,6 +78,7 @@ export type PersistentMfaServiceOptions = {
   unitOfWork: UnitOfWork;
   encryption: KeyEncryptionPort;
   otpDigestKeyring: OtpDigestKeyring;
+  environmentScope?: string;
   delivery?: VerificationCodeDeliveryPort;
   codeGenerator?: OtpCodeGenerator;
   clock?: () => number;
@@ -99,6 +100,16 @@ function generateRecoveryCode(): { plaintext: string; salt: Buffer; digest: stri
   const plaintext = randomBytes(16).toString("base64url");
   const salt = randomBytes(16);
   return { plaintext, salt, digest: digestRecoveryCode(plaintext, salt) };
+}
+
+function envelopeMetadata(ciphertext: string): { version: string; aadVersion: string | null; algorithm: string; encryptedDataKey: string | null } {
+  const parts = ciphertext.split(".");
+  return {
+    version: parts[0] === "v2" ? "v2" : "v1",
+    aadVersion: parts[0] === "v2" ? parts[2] ?? null : null,
+    algorithm: parts[0] === "v2" ? "AES-256-GCM-ENVELOPE" : "AES-256-GCM",
+    encryptedDataKey: parts[0] === "v2" ? parts[6] ?? null : null,
+  };
 }
 
 function assertSixDigits(value: string): string {
@@ -125,6 +136,10 @@ export class PersistentMfaService {
     this.codeGenerator = options.codeGenerator ?? new SecureOtpCodeGenerator();
     this.clock = options.clock ?? (() => Date.now());
     this.metrics = options.metrics ?? new MfaMetrics();
+  }
+
+  private encryptionContext(recordType: string, recordId: string, customerId: string) {
+    return { environment: this.options.environmentScope ?? process.env.BANKING_ENV ?? "preview", recordType, recordId, subjectId: customerId, schemaVersion: "026" };
   }
 
   async listCredentials(customerId: string): Promise<MfaCredentialSummary[]> {
@@ -165,7 +180,8 @@ export class PersistentMfaService {
     const secret = generateTotpSecret();
     const credentialId = createId("mfa-credential");
     const createdAt = this.clock();
-    const encryptedSecret = this.options.encryption.encrypt(secret);
+    const encryptedSecret = this.options.encryption.encrypt(secret, this.encryptionContext("mfa-totp", credentialId, input.customerId));
+    const metadata = envelopeMetadata(encryptedSecret);
     await this.options.unitOfWork.transaction(async ({ client }) => {
       await new MfaRepository(client).createTotpCredential({
         id: credentialId,
@@ -173,6 +189,10 @@ export class PersistentMfaService {
         displayName: input.displayName?.trim() || "Authenticator",
         secretCiphertext: encryptedSecret,
         secretKeyId: this.options.encryption.keyId,
+        secretCipherVersion: metadata.version,
+        secretAadVersion: metadata.aadVersion,
+        secretEncryptionAlgorithm: metadata.algorithm,
+        secretEncryptedDataKey: metadata.encryptedDataKey,
       });
       await new MfaRepository(client).insertSecurityEvent({
         id: createId("auth-security-event"),
@@ -204,7 +224,8 @@ export class PersistentMfaService {
     const secret = generateTotpSecret();
     const credentialId = createId("mfa-credential");
     const createdAt = this.clock();
-    const encryptedSecret = this.options.encryption.encrypt(secret);
+    const encryptedSecret = this.options.encryption.encrypt(secret, this.encryptionContext("mfa-totp", credentialId, "recovery"));
+    const metadata = envelopeMetadata(encryptedSecret);
     let customerId = "";
     let email = "";
     await this.options.unitOfWork.transaction(async ({ client }) => {
@@ -228,6 +249,10 @@ export class PersistentMfaService {
         displayName: input.displayName?.trim() || "Recovery authenticator",
         secretCiphertext: encryptedSecret,
         secretKeyId: this.options.encryption.keyId,
+        secretCipherVersion: metadata.version,
+        secretAadVersion: metadata.aadVersion,
+        secretEncryptionAlgorithm: metadata.algorithm,
+        secretEncryptedDataKey: metadata.encryptedDataKey,
       });
       await repository.insertSecurityEvent({
         id: createId("auth-security-event"),
@@ -275,10 +300,10 @@ export class PersistentMfaService {
         await repository.revokeCredential(credential.id, "enrollment-expired");
         throw unauthorized("MFA enrollment is invalid or expired.");
       }
-      if (!credential.secretCiphertext || credential.secretKeyId !== this.options.encryption.keyId) {
+      if (!credential.secretCiphertext || !credential.secretKeyId) {
         throw unauthorized("MFA enrollment secret is unavailable.");
       }
-      const secret = this.options.encryption.decrypt(credential.secretCiphertext, credential.secretKeyId);
+      const secret = this.options.encryption.decrypt(credential.secretCiphertext, credential.secretKeyId, this.encryptionContext("mfa-totp", credential.id, input.recoveryToken ? "recovery" : customerId));
       const validation = validateTotp(secret, code, now, 1);
       if (!validation.valid || validation.timeStep === null || !(await repository.activateCredential(credential.id, validation.timeStep))) {
         await repository.insertSecurityEvent({
@@ -544,7 +569,7 @@ export class PersistentMfaService {
         await repository.recordChallengeFailure(challengeHash);
         return { ok: false as const, reason: "credential" as const, customerId: challenge.customerId, credentialId: null, timeStep: null };
       }
-      const secret = this.options.encryption.decrypt(credential.secretCiphertext, credential.secretKeyId);
+      const secret = this.options.encryption.decrypt(credential.secretCiphertext, credential.secretKeyId, this.encryptionContext("mfa-totp", credential.id, challenge.customerId ?? "unknown"));
       const validation = /^\d{6}$/.test(input.proof)
         ? validateTotp(secret, input.proof, now, 1)
         : { valid: false, timeStep: null };

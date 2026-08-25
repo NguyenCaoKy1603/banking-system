@@ -32,6 +32,10 @@ export type MfaCredentialRow = {
   status: MfaCredentialStatus;
   secretCiphertext: string | null;
   secretKeyId: string | null;
+  secretCipherVersion: string | null;
+  secretAadVersion: string | null;
+  secretEncryptionAlgorithm: string | null;
+  secretEncryptedDataKey: string | null;
   algorithm: string;
   digits: number;
   periodSeconds: number;
@@ -72,6 +76,10 @@ function mapCredential(row: Record<string, unknown>): MfaCredentialRow {
     status: String(row.status) as MfaCredentialStatus,
     secretCiphertext: row.secret_ciphertext === null ? null : String(row.secret_ciphertext),
     secretKeyId: row.secret_key_id === null ? null : String(row.secret_key_id),
+    secretCipherVersion: row.secret_cipher_version === null || row.secret_cipher_version === undefined ? null : String(row.secret_cipher_version),
+    secretAadVersion: row.secret_aad_version === null || row.secret_aad_version === undefined ? null : String(row.secret_aad_version),
+    secretEncryptionAlgorithm: row.secret_encryption_algorithm === null || row.secret_encryption_algorithm === undefined ? null : String(row.secret_encryption_algorithm),
+    secretEncryptedDataKey: row.secret_encrypted_data_key === null || row.secret_encrypted_data_key === undefined ? null : String(row.secret_encrypted_data_key),
     algorithm: String(row.algorithm),
     digits: Number(row.digits),
     periodSeconds: Number(row.period_seconds),
@@ -142,14 +150,20 @@ export class MfaRepository {
     displayName: string;
     secretCiphertext: string;
     secretKeyId: string;
+    secretCipherVersion?: string;
+    secretAadVersion?: string | null;
+    secretEncryptionAlgorithm?: string;
+    secretEncryptedDataKey?: string | null;
   }): Promise<MfaCredentialRow> {
     const result = await this.client.query(
       `INSERT INTO mfa_credentials
         (id, customer_id, credential_type, display_name, status,
-         secret_ciphertext, secret_key_id, algorithm, digits, period_seconds)
-       VALUES ($1, $2, 'TOTP', $3, 'PENDING', $4, $5, 'SHA1', 6, 30)
+         secret_ciphertext, secret_key_id, secret_cipher_version,
+         secret_aad_version, secret_encryption_algorithm, secret_encrypted_data_key,
+         algorithm, digits, period_seconds)
+       VALUES ($1, $2, 'TOTP', $3, 'PENDING', $4, $5, $6, $7, $8, $9, 'SHA1', 6, 30)
        RETURNING *`,
-      [requireUuid(input.id), requireUuid(input.customerId, "customerId"), input.displayName, input.secretCiphertext, input.secretKeyId],
+      [requireUuid(input.id), requireUuid(input.customerId, "customerId"), input.displayName, input.secretCiphertext, input.secretKeyId, input.secretCipherVersion ?? "v2", input.secretAadVersion ?? "aad-v1", input.secretEncryptionAlgorithm ?? "AES-256-GCM-ENVELOPE", input.secretEncryptedDataKey ?? null],
     );
     return mapCredential(result.rows[0] as Record<string, unknown>);
   }

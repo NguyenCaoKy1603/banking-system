@@ -15,6 +15,7 @@ const productionEnv = (): NodeJS.ProcessEnv => ({
   DATABASE_URL: "postgresql://banking:secret@db.example.test/banking",
   DATABASE_SSL_MODE: "verify-full",
   DATABASE_SERVER_NAME: "db.example.test",
+  BANKING_SECRET_PROVIDER: "managed",
   BANKING_MFA_REQUIRED: "1",
   BANKING_MFA_METHODS: "TOTP",
   BANKING_OTP_PEPPER: "base64:pepper",
@@ -56,6 +57,11 @@ test("production-like runtime contract is strict and virtual-money only", () => 
     () => readRuntimeConfig({ ...productionEnv(), BANKING_ENV: "production" }),
     /reserved/,
   );
+  const managedWithoutInlineSecrets = { ...productionEnv() };
+  delete managedWithoutInlineSecrets.DATABASE_URL;
+  delete managedWithoutInlineSecrets.BANKING_OTP_PEPPER;
+  delete managedWithoutInlineSecrets.BANKING_MFA_ENCRYPTION_KEY;
+  assert.equal(readRuntimeConfig(managedWithoutInlineSecrets).isProductionLike, true);
 });
 
 test("startup and version probes expose non-secret release metadata", async (t) => {

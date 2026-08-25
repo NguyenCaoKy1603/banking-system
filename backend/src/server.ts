@@ -1,11 +1,12 @@
 import { createBankingServer, createPersistentBankingServer } from "./http.js";
 import { BankingSystem } from "./bankingSystem.js";
 import { PostgresRelationalRepository } from "./postgresRelationalRepository.js";
-import { LocalDevelopmentKeyEncryptionAdapter, OtpDigestKeyring } from "./mfa/crypto.js";
+import { KeyEncryptionKeyringAdapter, OtpDigestKeyring } from "./mfa/crypto.js";
 import { NullEmailProvider } from "./mfa/delivery.js";
 import { PersistentMfaService } from "./mfa/persistentMfaService.js";
 import { readRuntimeConfig } from "./runtimeConfig.js";
 import { runtimeMetadata } from "./runtimeMetadata.js";
+import { createRuntimeSecretProvider, referenceFor } from "./secrets/runtimeSecrets.js";
 
 type StepUpMethod = "TOTP";
 
@@ -73,14 +74,39 @@ async function start(): Promise<void> {
   let server;
 
   if (storage === "postgres") {
-    repository = new PostgresRelationalRepository();
+    const secretProvider = createRuntimeSecretProvider(runtimeConfig);
+    const databaseSecret = await secretProvider.getSecret(referenceFor("databaseUrl", bankingEnvironment));
+    repository = new PostgresRelationalRepository({ connectionString: databaseSecret.value });
     await repository.initialize();
-    const encryption = LocalDevelopmentKeyEncryptionAdapter.fromEnvironment({ required: true });
-    const otpDigestKeyring = OtpDigestKeyring.fromEnvironment({ required: true });
+    const encryption = await KeyEncryptionKeyringAdapter.fromSecretProvider(
+      secretProvider,
+      {
+        current: referenceFor("mfaEncryptionKey", bankingEnvironment),
+        previous: referenceFor("mfaEncryptionKeyPrevious", bankingEnvironment),
+      },
+      {
+        currentKeyId: process.env.BANKING_MFA_ENCRYPTION_KEY_ID?.trim(),
+        previousKeyId: process.env.BANKING_MFA_ENCRYPTION_KEY_PREVIOUS_ID?.trim(),
+        required: runtimeConfig.isProductionLike,
+      },
+    );
+    const otpDigestKeyring = await OtpDigestKeyring.fromSecretProvider(
+      secretProvider,
+      {
+        current: referenceFor("otpPepper", bankingEnvironment),
+        previous: referenceFor("otpPepperPrevious", bankingEnvironment),
+      },
+      {
+        currentKeyId: process.env.BANKING_OTP_PEPPER_KEY_ID?.trim(),
+        previousKeyId: process.env.BANKING_OTP_PEPPER_PREVIOUS_KEY_ID?.trim(),
+        required: runtimeConfig.isProductionLike,
+      },
+    );
     const mfaService = new PersistentMfaService({
       unitOfWork: repository.unitOfWork,
       encryption,
       otpDigestKeyring,
+      environmentScope: bankingEnvironment,
       delivery: new NullEmailProvider(),
     });
     server = createPersistentBankingServer(repository, system, { ...httpOptions, mfaService });

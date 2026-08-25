@@ -15,6 +15,7 @@ import { WorkerRuntime, type WorkerConfig } from "../workers/workerRuntime.js";
 
 const databaseUrl =
   process.env.WORKER_DATABASE_URL?.trim();
+const workerEnvironment = process.env.BANKING_ENV?.trim() || "preview";
 
 async function clearDatabase(database: DatabasePool): Promise<void> {
   // This helper owns a disposable worker test database. TRUNCATE avoids
@@ -140,7 +141,7 @@ async function seedEvent(database: DatabasePool, options: { unknownType?: boolea
        (id, customer_id, device_id, channel, provider, platform,
         address_ciphertext, address_fingerprint, status)
        VALUES ($1, $2, 'worker-device', 'PUSH', 'FAKE', 'ANDROID', $3, $4, 'ACTIVE')`,
-      [endpointId, customerId, crypto.encrypt("ExponentPushToken[worker-test]"), "worker-test-fingerprint"],
+      [endpointId, customerId, crypto.encrypt("ExponentPushToken[worker-test]", { environment: workerEnvironment, endpointId, customerId, schemaVersion: "026" }), "worker-test-fingerprint"],
     );
   }
   await database.query(
@@ -171,7 +172,7 @@ async function seedLoadBatch(database: DatabasePool, count: number): Promise<str
       eventId,
       aggregateId,
       occurredAt,
-      addressCiphertext: crypto.encrypt(`ExponentPushToken[load-${index}]`),
+      addressCiphertext: crypto.encrypt(`ExponentPushToken[load-${index}]`, { environment: workerEnvironment, endpointId, customerId, schemaVersion: "026" }),
       addressFingerprint: `worker-load-${index}`,
       payload: {
         eventId,

@@ -62,7 +62,9 @@ jobs:
         run: npm ci
 
       - name: Validate repository secret surface
-        run: npm run validate:secrets
+        run: |
+          npm run validate:secrets
+          npm run validate:secret-registry
 
       - name: Create disposable P0 relational database
         run: |

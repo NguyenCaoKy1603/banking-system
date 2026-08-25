@@ -23,3 +23,17 @@ Database chỉ chứa dữ liệu synthetic/virtual-money. Backup phải tách n
 Ưu tiên rollback application nếu schema backward-compatible. Nếu cần PITR, tạo database mới từ mốc đã duyệt, validate đầy đủ rồi mới đổi connection secret/revision. Không xóa database cũ trước khi incident owner xác nhận.
 
 Provider managed PostgreSQL, backup/PITR và quyền restore chưa được cấu hình trong workspace; phần này vẫn là gate thủ công.
+
+## Local encrypted backup reference
+
+Local/CI có thể mã hóa stream dump bằng AES-256-GCM envelope để kiểm tra quy trình mà không ghi khóa vào file. `BACKUP_ENCRYPTION_KEY` chỉ được cấp từ môi trường gọi lệnh và không được in log:
+
+```powershell
+$env:BACKUP_ENCRYPTION_KEY = "base64:<32-byte-ci-or-local-key>"
+docker compose --env-file .env.compose exec -T postgres pg_dump -U $env:POSTGRES_USER $env:POSTGRES_DB |
+  node backend/scripts/encrypted-backup.cjs --encrypt --input=- --output=preview.sql.enc --metadata=preview.metadata.json
+node backend/scripts/encrypted-backup.cjs --decrypt --input=preview.sql.enc --output=- |
+  psql "$env:DATABASE_URL"
+```
+
+Không dùng `--allow-plaintext-output` trên máy hoặc runner dùng dữ liệu thật. Metadata chỉ ghi environment, schema, release digest, key ID và checksum; không ghi giá trị khóa hay database URL. KMS/object storage/restore approval thật vẫn phải được cấu hình ở provider.

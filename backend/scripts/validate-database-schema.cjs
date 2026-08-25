@@ -60,6 +60,15 @@ const mfaConstraintSchema = fs.readFileSync(
   path.resolve(__dirname, "../database/018_mfa_challenge_constraints.sql"),
   "utf8",
 );
+const secretMetadataSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/026_secret_envelope_metadata.sql"),
+  "utf8",
+);
+const secretRotationSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/027_secret_rotation_inventory.sql"),
+  "utf8",
+);
+const secretSchema = `${secretMetadataSchema}\n${secretRotationSchema}`;
 
 const requiredTables = [
   "customers",
@@ -114,6 +123,7 @@ const outboxWorkerTables = [
   "worker_instances",
 ];
 const mfaTables = ["mfa_credentials", "mfa_recovery_codes", "mfa_recovery_requests", "auth_security_events"];
+const secretMetadataTables = ["encryption_rekey_checkpoints"];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -165,6 +175,7 @@ const mfaCredentialBlock = tableBlock(mfaCredentialsSchema, "mfa_credentials");
 const mfaRecoveryCodeBlock = tableBlock(mfaRecoverySchema, "mfa_recovery_codes");
 const mfaRecoveryRequestBlock = tableBlock(mfaRecoverySchema, "mfa_recovery_requests");
 const authSecurityEventBlock = tableBlock(authSecurityEventsSchema, "auth_security_events");
+const rekeyCheckpointBlock = tableBlock(secretMetadataSchema, "encryption_rekey_checkpoints");
 
 function requireColumn(tableName, columnName, definitionPattern) {
   const block = tableBlocks.get(tableName);
@@ -212,6 +223,26 @@ for (const [tableName, columnName, pattern] of [
   ["notifications", "resource_account_id", /\buuid\b.*\bREFERENCES\s+payment_accounts\b/i],
 ]) {
   requireColumn(tableName, columnName, pattern);
+}
+for (const [label, pattern] of [
+  ["MFA envelope metadata", /ALTER\s+TABLE\s+mfa_credentials[\s\S]*secret_cipher_version[\s\S]*secret_encrypted_data_key/i],
+  ["notification envelope metadata", /ALTER\s+TABLE\s+notification_endpoints[\s\S]*address_cipher_version[\s\S]*address_encrypted_data_key/i],
+  ["staff envelope metadata", /ALTER\s+TABLE\s+staff_mfa_credentials[\s\S]*secret_cipher_version[\s\S]*secret_encrypted_data_key/i],
+  ["rekey checkpoint table", /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+encryption_rekey_checkpoints/i],
+  ["rekey checkpoint status constraint", /status\s+text\s+NOT\s+NULL[\s\S]*CHECK\s*\(status\s+IN\s*\('PREPARED'/i],
+]) {
+  if (!pattern.test(secretSchema)) {
+    throw new Error(`Missing secret envelope invariant: ${label}`);
+  }
+}
+for (const [columnName, pattern] of [
+  ["job_id", /text\s+PRIMARY\s+KEY/i],
+  ["last_record_id", /uuid/i],
+  ["failed_count", /bigint\s+NOT\s+NULL/i],
+]) {
+  const columnPattern = new RegExp(`^\\s*${escapeRegExp(columnName)}\\s+([^,\\n]+)`, "mi");
+  const match = rekeyCheckpointBlock.match(columnPattern);
+  if (!match || !pattern.test(match[1])) throw new Error(`Column encryption_rekey_checkpoints.${columnName} is invalid.`);
 }
 
 for (const [label, pattern] of [
@@ -490,7 +521,7 @@ for (const [label, pattern] of [
   }
 }
 
-if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(`${schema}\n${savingsSchema}\n${creditSchema}\n${runtimeSchema}\n${v2Schema}\n${identityV2Schema}\n${transferV2Schema}\n${savingsV2Schema}\n${creditV2Schema}\n${registrationSchema}\n${outboxWorkerSchema}\n${outboxWorkerOperationsSchema}`)) {
+if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(`${schema}\n${savingsSchema}\n${creditSchema}\n${runtimeSchema}\n${v2Schema}\n${identityV2Schema}\n${transferV2Schema}\n${savingsV2Schema}\n${creditV2Schema}\n${registrationSchema}\n${outboxWorkerSchema}\n${outboxWorkerOperationsSchema}\n${secretSchema}`)) {
   throw new Error("The draft migration must not contain destructive DROP statements.");
 }
 
@@ -498,7 +529,7 @@ async function validateLiveDatabase() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     console.log(
-        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
+        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length + secretMetadataTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
     );
     return;
   }
@@ -527,6 +558,7 @@ async function validateLiveDatabase() {
       ...registrationTables,
       ...outboxWorkerTables,
       ...mfaTables,
+      ...secretMetadataTables,
     ]) {
       if (!liveTables.has(tableName)) {
         throw new Error(`Live PostgreSQL database is missing table: ${tableName}`);
@@ -625,6 +657,25 @@ async function validateLiveDatabase() {
       ["mfa_recovery_requests", "public_token_hash", "text"],
       ["auth_security_events", "customer_id", "uuid"],
       ["auth_security_events", "metadata", "jsonb"],
+      ["mfa_credentials", "secret_cipher_version", "text"],
+      ["mfa_credentials", "secret_aad_version", "text"],
+      ["mfa_credentials", "secret_encryption_algorithm", "text"],
+      ["mfa_credentials", "secret_encrypted_data_key", "text"],
+      ["notification_endpoints", "address_cipher_version", "text"],
+      ["notification_endpoints", "address_aad_version", "text"],
+      ["notification_endpoints", "address_encryption_algorithm", "text"],
+      ["notification_endpoints", "address_encrypted_data_key", "text"],
+      ["notification_endpoints", "address_key_id", "text"],
+      ["notification_endpoints", "address_reencrypted_at", "timestamptz"],
+      ["staff_mfa_credentials", "secret_cipher_version", "text"],
+      ["staff_mfa_credentials", "secret_aad_version", "text"],
+      ["staff_mfa_credentials", "secret_encryption_algorithm", "text"],
+      ["staff_mfa_credentials", "secret_encrypted_data_key", "text"],
+      ["mfa_credentials", "secret_reencrypted_at", "timestamptz"],
+      ["staff_mfa_credentials", "secret_reencrypted_at", "timestamptz"],
+      ["encryption_rekey_checkpoints", "job_id", "text"],
+      ["encryption_rekey_checkpoints", "last_record_id", "uuid"],
+      ["encryption_rekey_checkpoints", "failed_count", "int8"],
     ]) {
       if (liveColumns.get(`${tableName}.${columnName}`) !== expectedType) {
         throw new Error(
@@ -677,7 +728,7 @@ async function validateLiveDatabase() {
     }
 
     console.log(
-      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
+      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length + secretMetadataTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
     );
   } finally {
     await pool.end();

@@ -137,6 +137,8 @@ const requiredTablesByMigration = {
   ],
   "024_admin_staff_invite_workflow": [],
   "025_admin_case_scope_alignment": [],
+  "026_secret_envelope_metadata": ["encryption_rekey_checkpoints"],
+  "027_secret_rotation_inventory": [],
 };
 
 async function main() {
@@ -271,7 +273,7 @@ async function main() {
 
         await pool.query(migration);
         await pool.query(
-          "INSERT INTO reference_schema_migrations (migration_key, applied_at, started_at, finished_at, checksum, execution_id, release_id, commit_sha, image_digest, duration_ms, status) VALUES ($1, NOW(), $2, NOW(), $3, $4, $5, $6, $7, $8, $9, 'APPLIED')",
+          "INSERT INTO reference_schema_migrations (migration_key, applied_at, started_at, finished_at, checksum, execution_id, release_id, commit_sha, image_digest, duration_ms, status) VALUES ($1, NOW(), $2, NOW(), $3, $4, $5, $6, $7, $8, 'APPLIED')",
           [migrationKey, new Date(startedAt).toISOString(), checksum, executionId, releaseId, commitSha, imageDigest, Date.now() - startedAt],
         );
         await pool.query("COMMIT");

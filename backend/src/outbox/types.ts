@@ -63,6 +63,7 @@ export type EndpointRow = {
   provider: string;
   platform: string | null;
   addressCiphertext: string;
+  addressKeyId: string | null;
   addressFingerprint: string;
   status: "ACTIVE" | "INVALID" | "REVOKED";
 };

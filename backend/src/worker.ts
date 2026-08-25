@@ -1,12 +1,22 @@
 import { WorkerHealthServer } from "./workers/workerHealth.js";
-import { WorkerRuntime, workerConfigFromEnv } from "./workers/workerRuntime.js";
+import { WorkerRuntime, createProviderSetFromSecretProvider, workerConfigFromEnv } from "./workers/workerRuntime.js";
+import { readRuntimeConfig } from "./runtimeConfig.js";
+import { createRuntimeSecretProvider, referenceFor } from "./secrets/runtimeSecrets.js";
 
 async function main(): Promise<void> {
   if (process.env.WORKER_ENABLED !== "1") {
     throw new Error("WORKER_ENABLED must be 1 to start the worker process.");
   }
-  const config = workerConfigFromEnv();
-  const runtime = new WorkerRuntime(config);
+  const runtimeConfig = readRuntimeConfig();
+  const secretProvider = createRuntimeSecretProvider(runtimeConfig);
+  const databaseSecret = await secretProvider.getSecret(referenceFor("databaseUrl", runtimeConfig.bankingEnvironment));
+  const config = workerConfigFromEnv(databaseSecret.value);
+  const providerSet = await createProviderSetFromSecretProvider(
+    secretProvider,
+    runtimeConfig.bankingEnvironment,
+    runtimeConfig.isProductionLike,
+  );
+  const runtime = new WorkerRuntime(config, undefined, providerSet);
   await runtime.initialize();
   const healthPort = Number(process.env.WORKER_HEALTH_PORT ?? 9091);
   if (!Number.isInteger(healthPort) || healthPort < 0 || healthPort > 65535) {

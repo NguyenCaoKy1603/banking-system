@@ -19,6 +19,8 @@ import {
   type PushProvider,
 } from "../notifications/providers/provider.js";
 import { emailTemplate, pushPayload } from "../notifications/templateRegistry.js";
+import { referenceFor } from "../secrets/runtimeSecrets.js";
+import type { SecretProvider } from "../secrets/SecretProvider.js";
 
 export type WorkerConfig = {
   workerId: string;
@@ -33,6 +35,7 @@ export type WorkerConfig = {
   databaseUrl: string;
   persistenceMode: string;
   allowLegacyWriter: boolean;
+  environment?: "development" | "test" | "preview" | "staging" | "production-like";
 };
 
 function positiveEnv(name: string, fallback: number): number {
@@ -43,8 +46,8 @@ function positiveEnv(name: string, fallback: number): number {
   return value;
 }
 
-export function workerConfigFromEnv(): WorkerConfig {
-  const databaseUrl = process.env.DATABASE_URL?.trim();
+export function workerConfigFromEnv(databaseUrlOverride?: string): WorkerConfig {
+  const databaseUrl = databaseUrlOverride?.trim() || process.env.DATABASE_URL?.trim();
   if (!databaseUrl) throw new Error("DATABASE_URL is required for worker.");
   const workerId = process.env.WORKER_ID?.trim() || `${os.hostname()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   return {
@@ -58,12 +61,13 @@ export function workerConfigFromEnv(): WorkerConfig {
     heartbeatIntervalMs: positiveEnv("WORKER_HEARTBEAT_INTERVAL_MS", 10_000),
     shutdownTimeoutMs: positiveEnv("WORKER_SHUTDOWN_TIMEOUT_MS", 25_000),
     databaseUrl,
+    environment: (process.env.BANKING_ENV?.trim().toLowerCase() || "development") as WorkerConfig["environment"],
     persistenceMode: process.env.BANKING_PERSISTENCE_MODE?.trim() || "legacy-state",
     allowLegacyWriter: process.env.WORKER_ALLOW_LEGACY_WRITER === "1",
   };
 }
 
-function providerSetFromEnv(): ProviderSet {
+export async function createProviderSetFromSecretProvider(provider: SecretProvider, environment: "development" | "test" | "preview" | "staging" | "production-like", required: boolean): Promise<ProviderSet> {
   const pushMode = (process.env.PUSH_PROVIDER?.trim() || "disabled").toLowerCase();
   const emailMode = (process.env.EMAIL_PROVIDER?.trim() || "disabled").toLowerCase();
   if (!new Set(["fake", "disabled"]).has(pushMode)) {
@@ -74,9 +78,33 @@ function providerSetFromEnv(): ProviderSet {
   }
   const push: PushProvider = pushMode === "fake" ? new FakePushProvider() : new DisabledPushProvider();
   const email: EmailProvider = emailMode === "fake" ? new FakeEmailProvider() : new DisabledEmailProvider();
+  const endpointCrypto = await EndpointCrypto.fromSecretProvider(
+    provider,
+    {
+      current: referenceFor("notificationEndpointKey", environment),
+      previous: referenceFor("notificationEndpointKeyPrevious", environment),
+    },
+    {
+      currentKeyId: process.env.NOTIFICATION_ENDPOINT_ENCRYPTION_KEY_ID?.trim(),
+      previousKeyId: process.env.NOTIFICATION_ENDPOINT_ENCRYPTION_KEY_PREVIOUS_ID?.trim(),
+      required,
+    },
+  );
   return {
     push,
     email,
+    endpointCrypto,
+  };
+}
+
+function providerSetFromEnv(): ProviderSet {
+  const pushMode = (process.env.PUSH_PROVIDER?.trim() || "disabled").toLowerCase();
+  const emailMode = (process.env.EMAIL_PROVIDER?.trim() || "disabled").toLowerCase();
+  if (!new Set(["fake", "disabled"]).has(pushMode)) throw new Error("PUSH_PROVIDER supports only fake or disabled until a real provider adapter is configured.");
+  if (!new Set(["fake", "disabled"]).has(emailMode)) throw new Error("EMAIL_PROVIDER supports only fake or disabled until a real provider adapter is configured.");
+  return {
+    push: pushMode === "fake" ? new FakePushProvider() : new DisabledPushProvider(),
+    email: emailMode === "fake" ? new FakeEmailProvider() : new DisabledEmailProvider(),
     endpointCrypto: new EndpointCrypto(),
   };
 }
@@ -350,7 +378,12 @@ export class WorkerRuntime {
     }
     let address: string;
     try {
-      address = this.providers.endpointCrypto.decrypt(context.endpoint.addressCiphertext);
+      address = this.providers.endpointCrypto.decrypt(context.endpoint.addressCiphertext, {
+        environment: this.config.environment ?? process.env.BANKING_ENV ?? "preview",
+        endpointId: context.endpoint.id,
+        customerId: context.endpoint.customerId,
+        schemaVersion: "026",
+      });
     } catch {
       await this.repository.invalidateEndpoint(delivery.endpointId);
       await this.repository.failDelivery({

@@ -83,9 +83,16 @@ function mapEndpoint(row: Record<string, unknown>): EndpointRow {
     provider: asString(row.provider),
     platform: row.platform === null || row.platform === undefined ? null : asString(row.platform),
     addressCiphertext: asString(row.address_ciphertext),
+    addressKeyId: row.address_key_id === null || row.address_key_id === undefined ? null : asString(row.address_key_id),
     addressFingerprint: asString(row.address_fingerprint),
     status: asString(row.status, "ACTIVE") as EndpointRow["status"],
   };
+}
+
+function ciphertextKeyId(ciphertext: string): string | null {
+  if (!ciphertext.startsWith("v2.")) return null;
+  const keyId = ciphertext.split(".")[1]?.trim();
+  return keyId || null;
 }
 
 export class PostgresOutboxRepository {
@@ -533,15 +540,16 @@ export class PostgresOutboxRepository {
     const result = await this.database.query(
       `INSERT INTO notification_endpoints
         (id, customer_id, device_id, channel, provider, platform,
-         address_ciphertext, address_fingerprint, status, last_seen_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE', NOW(), NOW())
+         address_ciphertext, address_key_id, address_fingerprint, status, last_seen_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', NOW(), NOW())
        ON CONFLICT (customer_id, device_id, channel, address_fingerprint)
        DO UPDATE SET provider = EXCLUDED.provider, platform = EXCLUDED.platform,
                      address_ciphertext = EXCLUDED.address_ciphertext,
+                     address_key_id = EXCLUDED.address_key_id,
                      status = 'ACTIVE', invalidated_at = NULL,
                      last_seen_at = NOW(), updated_at = NOW()
        RETURNING *`,
-      [input.id ?? randomUUID(), requireUuid(input.customerId, "customerId"), input.deviceId, input.channel, input.provider, input.platform ?? null, input.addressCiphertext, input.addressFingerprint],
+      [input.id ?? randomUUID(), requireUuid(input.customerId, "customerId"), input.deviceId, input.channel, input.provider, input.platform ?? null, input.addressCiphertext, ciphertextKeyId(input.addressCiphertext), input.addressFingerprint],
     );
     return mapEndpoint(result.rows[0] as Record<string, unknown>);
   }

@@ -97,12 +97,14 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     if (storage !== "postgres") {
       throw new Error("Staging and production-like runtimes require PostgreSQL storage.");
     }
-    required(env.DATABASE_URL, "DATABASE_URL");
     if (env.DATABASE_SSL_MODE?.trim().toLowerCase() !== "verify-full") {
       throw new Error("Staging and production-like runtimes require DATABASE_SSL_MODE=verify-full.");
     }
     if (!env.DATABASE_SERVER_NAME?.trim()) {
       throw new Error("Staging and production-like runtimes require DATABASE_SERVER_NAME.");
+    }
+    if (env.BANKING_SECRET_PROVIDER?.trim().toLowerCase() !== "managed") {
+      throw new Error("Staging and production-like runtimes require BANKING_SECRET_PROVIDER=managed.");
     }
     if (env.BANKING_MFA_REQUIRED !== "1") {
       throw new Error("BANKING_MFA_REQUIRED=1 is required in staging and production-like runtimes.");
@@ -114,8 +116,6 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     if (methods.length !== 1 || methods[0] !== "TOTP") {
       throw new Error("Only TOTP MFA is allowed in staging and production-like runtimes.");
     }
-    required(env.BANKING_OTP_PEPPER, "BANKING_OTP_PEPPER");
-    required(env.BANKING_MFA_ENCRYPTION_KEY, "BANKING_MFA_ENCRYPTION_KEY");
     originList(env.BANKING_ALLOWED_ORIGINS, "BANKING_ALLOWED_ORIGINS");
     rejectDeterministicSecrets(env);
 

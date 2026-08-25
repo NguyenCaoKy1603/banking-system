@@ -72,6 +72,12 @@ jobs:
       - name: Build runtime image
         run: docker compose build --pull=false backend admin-api admin-web migrate worker
 
+      - name: Scan runtime images for secret artifacts
+        run: |
+          for image in banking-reference-preview-backend banking-reference-preview-admin-api banking-reference-preview-migrate banking-reference-preview-worker; do
+            node backend/scripts/validate-image-surface.cjs --image="$image:latest"
+          done
+
       - name: Start PostgreSQL
         run: docker compose up -d postgres
 

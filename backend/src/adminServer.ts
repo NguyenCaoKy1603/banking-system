@@ -1,10 +1,11 @@
-import { LocalDevelopmentKeyEncryptionAdapter } from "./mfa/crypto.js";
+import { KeyEncryptionKeyringAdapter } from "./mfa/crypto.js";
 import { InMemoryAdminRepository, PostgresAdminRepository } from "./admin/repositories/adminRepository.js";
 import { StaffAuthService } from "./admin/auth/staffAuthService.js";
 import { AdminActionEngine } from "./admin/actions/actionEngine.js";
 import { createAdminServer } from "./admin/http/adminHttp.js";
 import { readRuntimeConfig } from "./runtimeConfig.js";
 import { runtimeMetadata } from "./runtimeMetadata.js";
+import { createRuntimeSecretProvider, referenceFor } from "./secrets/runtimeSecrets.js";
 
 const runtimeConfig = readRuntimeConfig();
 
@@ -25,10 +26,29 @@ if (runtimeConfig.isProductionLike) {
 }
 
 async function start(): Promise<void> {
-  const repository = storage === "in-memory" ? new InMemoryAdminRepository() : new PostgresAdminRepository();
+  const secretProvider = createRuntimeSecretProvider(runtimeConfig);
+  const databaseSecret = storage === "postgres"
+    ? await secretProvider.getSecret(referenceFor("databaseUrl", environment))
+    : undefined;
+  const repository = storage === "in-memory"
+    ? new InMemoryAdminRepository()
+    : new PostgresAdminRepository({ connectionString: databaseSecret?.value });
   await repository.initialize();
-  const encryption = LocalDevelopmentKeyEncryptionAdapter.fromEnvironment({ required: storage !== "in-memory" });
-  const auth = new StaffAuthService({ repository, encryption, environmentScope: runtimeConfig.isProductionLike ? "production" : "preview" });
+  const encryption = storage === "in-memory"
+    ? KeyEncryptionKeyringAdapter.fromEnvironment({ required: false })
+    : await KeyEncryptionKeyringAdapter.fromSecretProvider(
+      secretProvider,
+      {
+        current: referenceFor("mfaEncryptionKey", environment),
+        previous: referenceFor("mfaEncryptionKeyPrevious", environment),
+      },
+      {
+        currentKeyId: process.env.BANKING_MFA_ENCRYPTION_KEY_ID?.trim(),
+        previousKeyId: process.env.BANKING_MFA_ENCRYPTION_KEY_PREVIOUS_ID?.trim(),
+        required: runtimeConfig.isProductionLike,
+      },
+    );
+  const auth = new StaffAuthService({ repository, encryption, environmentScope: environment });
   const actions = new AdminActionEngine(repository, auth);
   const server = createAdminServer({
     repository,

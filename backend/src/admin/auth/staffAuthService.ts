@@ -30,6 +30,7 @@ function nowIso(clock: () => number): string { return new Date(clock()).toISOStr
 function normalizeEmail(email: string): string { return email.trim().toLowerCase(); }
 function assertPassword(password: unknown): string { if (typeof password !== "string" || password.length < 12 || password.length > 256) throw invalidRequest("Staff password must contain 12-256 characters.", { password: "Use at least 12 characters." }); return password; }
 function assertCode(code: unknown): string { if (typeof code !== "string" || !/^\d{6}$/.test(code)) throw invalidRequest("MFA code must contain six digits.", { code: "Enter a six-digit authenticator code." }); return code; }
+function envelopeMetadata(ciphertext: string): { version: string; aadVersion: string | null; algorithm: string; encryptedDataKey: string | null } { const parts = ciphertext.split("."); return { version: parts[0] === "v2" ? "v2" : "v1", aadVersion: parts[0] === "v2" ? parts[2] ?? null : null, algorithm: parts[0] === "v2" ? "AES-256-GCM-ENVELOPE" : "AES-256-GCM", encryptedDataKey: parts[0] === "v2" ? parts[6] ?? null : null }; }
 
 export class StaffAuthService {
   private readonly clock: () => number;
@@ -60,7 +61,10 @@ export class StaffAuthService {
     const hashed = await hashPasswordAsync(password);
     const staff = await this.options.repository.activateInvite({ inviteId: invite.id, passwordSalt: hashed.salt, passwordDigest: hashed.digest, staffId: invite.id });
     const secret = input.totpSecret?.trim() || generateTotpSecret();
-    await this.options.repository.createMfaCredential({ id: randomUUID(), staffId: staff.id, secretCiphertext: this.options.encryption.encrypt(secret), encryptionKeyId: this.options.encryption.keyId, lastAcceptedTimeStep: null });
+    const credentialId = randomUUID();
+    const secretCiphertext = this.options.encryption.encrypt(secret, this.encryptionContext(credentialId, staff.id));
+    const metadata = envelopeMetadata(secretCiphertext);
+    await this.options.repository.createMfaCredential({ id: credentialId, staffId: staff.id, secretCiphertext, encryptionKeyId: this.options.encryption.keyId, secretCipherVersion: metadata.version, secretAadVersion: metadata.aadVersion, secretEncryptionAlgorithm: metadata.algorithm, secretEncryptedDataKey: metadata.encryptedDataKey, lastAcceptedTimeStep: null });
     return input.totpSecret ? { staffId: staff.id } : { staffId: staff.id, mfaSetup: { secret, otpauthUri: buildTotpUri(secret, staff.emailNormalized) } };
   }
 
@@ -91,7 +95,7 @@ export class StaffAuthService {
     const staff = await this.options.repository.findStaffById(challenge.staffId);
     const credential = staff ? await this.options.repository.findMfaCredential(staff.id) : null;
     if (!staff || staff.status !== "ACTIVE" || !credential) throw unauthorized("Staff MFA challenge is invalid or expired.");
-    const secret = this.options.encryption.decrypt(credential.secretCiphertext, credential.encryptionKeyId);
+    const secret = this.options.encryption.decrypt(credential.secretCiphertext, credential.encryptionKeyId, this.encryptionContext(credential.id, staff.id));
     const validation = validateTotp(secret, code, this.clock(), 1);
     if (!validation.valid || validation.timeStep === null || !(await this.options.repository.acceptMfaTimeStep(credential.id, validation.timeStep))) {
       const attempts = await this.options.repository.recordChallengeFailure(challenge.id);
@@ -125,7 +129,7 @@ export class StaffAuthService {
     const code = assertCode(codeInput);
     const credential = await this.options.repository.findMfaCredential(staff.id);
     if (!credential) throw conflictWithCode("STAFF_MFA_REQUIRED", "Fresh step-up MFA is required.");
-    const validation = validateTotp(this.options.encryption.decrypt(credential.secretCiphertext, credential.encryptionKeyId), code, this.clock(), 1);
+    const validation = validateTotp(this.options.encryption.decrypt(credential.secretCiphertext, credential.encryptionKeyId, this.encryptionContext(credential.id, staff.id)), code, this.clock(), 1);
     if (!validation.valid || validation.timeStep === null || !(await this.options.repository.acceptMfaTimeStep(credential.id, validation.timeStep))) {
       await this.options.repository.appendAudit({ id: randomUUID(), actorStaffId: staff.id, action: "STAFF_STEP_UP_FAILED", targetType: "STAFF", targetId: staff.id, outcome: "DENIED", reasonCode: "INVALID_MFA", requestId: null, traceId: null, correlationId: null, beforeVersion: null, afterVersion: null, metadata: {} });
       throw unauthorized("Staff step-up MFA is invalid.");
@@ -154,6 +158,10 @@ export class StaffAuthService {
   listSessions(accessToken: string) { return this.authenticate(accessToken).then(({ staff }) => this.options.repository.listSessions(staff.id)); }
 
   subjectFor(staff: StaffRecord, session: StaffSessionRecord): AdminSubject { return { staffId: staff.id, status: staff.status, authorizationVersion: staff.authorizationVersion, roles: staff.roles, mfaVerifiedAt: session.stepUpVerifiedAt, stepUpVerifiedAt: session.stepUpVerifiedAt }; }
+
+  private encryptionContext(recordId: string, staffId: string) {
+    return { environment: this.environmentScope, recordType: "admin-mfa", recordId, subjectId: staffId, schemaVersion: "026" };
+  }
 
   private async createSession(staff: StaffRecord, deviceFingerprint?: string, ipHash?: string): Promise<{ staff: StaffRecord; tokens: AdminTokenSet }> {
     const accessToken = createOpaqueToken(); const refreshToken = createOpaqueToken(); const csrfToken = createOpaqueToken(); const now = this.clock();

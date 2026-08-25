@@ -14,8 +14,13 @@ const invitePolicySchemaPath = path.resolve(__dirname, "../database/024_admin_st
 const invitePolicySchema = fs.readFileSync(invitePolicySchemaPath, "utf8");
 const scopeSchemaPath = path.resolve(__dirname, "../database/025_admin_case_scope_alignment.sql");
 const scopeSchema = fs.readFileSync(scopeSchemaPath, "utf8");
+const secretMetadataSchemaPath = path.resolve(__dirname, "../database/026_secret_envelope_metadata.sql");
+const secretMetadataSchema = fs.readFileSync(secretMetadataSchemaPath, "utf8");
+const secretRotationSchemaPath = path.resolve(__dirname, "../database/027_secret_rotation_inventory.sql");
+const secretRotationSchema = fs.readFileSync(secretRotationSchemaPath, "utf8");
+const secretSchema = `${secretMetadataSchema}\n${secretRotationSchema}`;
 
-if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(schema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(caseSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(policySchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(hardeningSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(invitePolicySchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(scopeSchema)) {
+if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(schema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(caseSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(policySchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(hardeningSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(invitePolicySchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(scopeSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(secretSchema)) {
   throw new Error("Admin migration must be additive and must not drop data.");
 }
 
@@ -57,6 +62,15 @@ for (const marker of [
   if (!marker.test(schema)) {
     throw new Error(`Admin schema invariant missing: ${marker}`);
   }
+}
+
+for (const marker of [
+  /ALTER\s+TABLE\s+staff_mfa_credentials[\s\S]*secret_cipher_version/i,
+  /secret_aad_version/i,
+  /secret_encryption_algorithm/i,
+  /secret_encrypted_data_key/i,
+]) {
+  if (!marker.test(secretSchema)) throw new Error(`Admin MFA envelope metadata invariant missing: ${marker}`);
 }
 
 for (const marker of [
@@ -139,6 +153,8 @@ async function validateLiveDatabase() {
     if (invitePermission.rowCount !== 1) throw new Error("Live database is missing staff invite approval permission; run npm run db:migrate.");
     const invitePolicy = await pool.query("SELECT 1 FROM admin_action_policies WHERE action_type='STAFF_INVITE' AND required_permission='staff.invite.approve' AND enabled=true");
     if (invitePolicy.rowCount !== 1) throw new Error("Live database is missing STAFF_INVITE action policy; run npm run db:migrate.");
+    const staffMfaColumns = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='staff_mfa_credentials' AND column_name = ANY($1::text[])", [["secret_cipher_version", "secret_aad_version", "secret_encryption_algorithm", "secret_encrypted_data_key", "secret_reencrypted_at"]]);
+    if (staffMfaColumns.rows.length !== 5) throw new Error("Live database is missing staff MFA envelope metadata; run npm run db:migrate.");
     console.log(`Admin schema contract valid: ${requiredTables.length} tables, fixed role seed, separated DB roles, case RLS and staff invite policy verified against PostgreSQL.`);
   } finally {
     await pool.end();
