@@ -10,15 +10,18 @@ import type { SavingsDeposit, SavingsOpening, SavingsProduct, SavingsQuote } fro
 import { RelationalCreditService } from "./creditService.js";
 import type { CreditApplication, CreditApplicationRequest, CreditCard, CreditPayment, CreditPaymentQuote, CreditPaymentQuoteRequest, CreditStatement, CreditTransaction, CreditAccount } from "../credit.js";
 import { RelationalRemainingService } from "./remainingService.js";
-import type { FraudReportResponse, InternalRecipientLookup, Notification } from "../types.js";
+import type { ControlPolicy, FraudReportResponse, InternalRecipientLookup, Notification } from "../types.js";
 import type { MfaChallengeResponse, PersistentMfaService } from "../mfa/persistentMfaService.js";
 import { UnitOfWork } from "./unitOfWork.js";
 
 export type RelationalHttpRoute = "auth" | "registration" | "mfa" | "accounts" | "beneficiaries" | "transfers" | "savings" | "credit" | "recipients" | "notifications" | "fraud";
 
+const RELATIONAL_V2_DEFAULT_ROUTES = "auth,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud";
+
 function configuredRoutes(value = process.env.BANKING_RELATIONAL_HTTP_ROUTES): Set<RelationalHttpRoute> {
   const routes = new Set<RelationalHttpRoute>();
-  for (const item of (value ?? "").split(",").map((part) => part.trim().toLowerCase()).filter(Boolean)) {
+  const configured = value?.trim() || (process.env.BANKING_PERSISTENCE_MODE?.trim() === "relational-v2" ? RELATIONAL_V2_DEFAULT_ROUTES : "");
+  for (const item of configured.split(",").map((part) => part.trim().toLowerCase()).filter(Boolean)) {
     if (item === "auth" || item === "registration" || item === "mfa" || item === "accounts" || item === "beneficiaries" || item === "transfers" || item === "savings" || item === "credit" || item === "recipients" || item === "notifications" || item === "fraud") routes.add(item);
     else throw new Error(`BANKING_RELATIONAL_HTTP_ROUTES contains unsupported route group: ${item}.`);
   }
@@ -26,6 +29,7 @@ function configuredRoutes(value = process.env.BANKING_RELATIONAL_HTTP_ROUTES): S
 }
 
 export class RelationalHttpBoundary {
+  private readonly unitOfWork: UnitOfWork;
   private readonly routes: Set<RelationalHttpRoute>;
   private readonly auth: RelationalAuthService;
   private readonly accounts: RelationalAccountReadService;
@@ -37,6 +41,7 @@ export class RelationalHttpBoundary {
   private readonly remaining: RelationalRemainingService;
 
   constructor(unitOfWork: UnitOfWork, routeConfig?: string) {
+    this.unitOfWork = unitOfWork;
     this.routes = configuredRoutes(routeConfig);
     if (["accounts", "beneficiaries", "transfers", "savings", "credit", "mfa", "recipients", "notifications", "fraud"].some((route) => this.routes.has(route as RelationalHttpRoute)) && !this.routes.has("auth")) {
       throw new Error("BANKING_RELATIONAL_HTTP_ROUTES account and command groups require auth so they have a direct session boundary.");
@@ -53,8 +58,42 @@ export class RelationalHttpBoundary {
 
   get enabled(): boolean { return this.routes.size > 0; }
 
+  assertRelationalV2Complete(): void {
+    const required: Array<[string, string[]]> = [
+      ["POST", ["auth", "login"]],
+      ["POST", ["auth", "verify"]],
+      ["POST", ["auth", "refresh"]],
+      ["POST", ["auth", "logout"]],
+      ["POST", ["auth", "logout-all"]],
+      ["GET", ["auth", "mfa", "methods"]],
+      ["POST", ["auth", "otp", "challenges"]],
+      ["GET", ["accounts"]],
+      ["GET", ["beneficiaries"]],
+      ["POST", ["transfers", "quote"]],
+      ["POST", ["transfers"]],
+      ["GET", ["savings", "products"]],
+      ["POST", ["savings", "quotes"]],
+      ["POST", ["savings", "deposits"]],
+      ["GET", ["cards"]],
+      ["POST", ["cards", "00000000-0000-4000-8000-000000000000", "unlock"]],
+      ["GET", ["credit", "applications"]],
+      ["POST", ["credit", "applications"]],
+      ["POST", ["credit", "payment-quotes"]],
+      ["POST", ["credit", "payments"]],
+      ["POST", ["internal-recipients", "lookup"]],
+      ["GET", ["notifications"]],
+      ["POST", ["notifications", "00000000-0000-4000-8000-000000000000", "read"]],
+      ["POST", ["fraud-reports"]],
+      ["GET", ["fraud-reports", "00000000-0000-4000-8000-000000000000"]],
+      ["GET", ["mobile", "control-policy"]],
+    ];
+    const missing = required.filter(([method, segments]) => !this.isRouteEnabled(method, segments)).map(([method, segments]) => `${method} /${segments.join("/")}`);
+    if (missing.length > 0) throw new Error(`Relational-v2 HTTP cutover is incomplete; missing direct routes: ${missing.join(", ")}.`);
+  }
+
   isRouteEnabled(method: string | undefined, segments: readonly string[]): boolean {
     const verb = (method ?? "").toUpperCase();
+    if (this.routes.has("auth") && verb === "GET" && segments.length === 2 && segments[0] === "mobile" && segments[1] === "control-policy") return true;
     if (this.routes.has("auth") && segments[0] === "auth") {
       // Session routes use the relational auth boundary. Registration and MFA
       // lifecycle routes are selected by their dedicated route groups below.
@@ -147,6 +186,35 @@ export class RelationalHttpBoundary {
   }
 
   getUser(customerId: string): Promise<AuthUser> { return this.auth.getUser(customerId); }
+
+  async getControlPolicy(): Promise<ControlPolicy> {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query("SELECT * FROM control_policy WHERE singleton = true");
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) throw new Error("Control policy is not initialized.");
+      const list = (value: unknown): Array<"OTP" | "TOTP" | "BIOMETRIC"> => Array.isArray(value) ? value.map((item) => String(item) as "OTP" | "TOTP" | "BIOMETRIC") : [];
+      return {
+        configVersion: String(row.config_version),
+        globalKillSwitch: Boolean(row.global_kill_switch),
+        transfersEnabled: Boolean(row.transfers_enabled),
+        allowlisted: Boolean(row.allowlist_enabled),
+        maxTransferAmountMinor: String(row.max_transfer_amount_minor),
+        stepUpMethods: list(row.step_up_methods),
+        savingsEnabled: Boolean(row.savings_enabled),
+        savingsAllowlisted: Boolean(row.savings_allowlist_enabled),
+        maxSavingsAmountMinor: String(row.max_savings_amount_minor),
+        savingsStepUpMethods: list(row.savings_step_up_methods),
+        creditEnabled: Boolean(row.credit_enabled),
+        creditAllowlisted: Boolean(row.credit_allowlisted),
+        creditPaymentsEnabled: Boolean(row.credit_payments_enabled),
+        cardControlsEnabled: Boolean(row.card_controls_enabled),
+        maxCreditPaymentAmountMinor: String(row.max_credit_payment_amount_minor),
+        creditPaymentStepUpMethods: list(row.credit_payment_step_up_methods),
+        cardUnlockStepUpMethods: list(row.card_unlock_step_up_methods),
+        updatedAt: new Date(String(row.updated_at)).toISOString(),
+      };
+    });
+  }
 
   verifyCurrentPassword(customerId: string, password: string): Promise<boolean> {
     return this.auth.verifyCurrentPassword(customerId, password);

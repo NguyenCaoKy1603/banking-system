@@ -1,7 +1,7 @@
 # Relational-v2 HTTP cutover matrix
 
 Ngày cập nhật: 2026-08-25  
-Trạng thái: **INCREMENTAL CUTOVER — chưa đủ điều kiện bật `BANKING_PERSISTENCE_MODE=relational-v2` cho toàn bộ HTTP**
+Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — worker chưa bật; staging/production evidence chưa có**
 
 ## Phạm vi đã nối trực tiếp
 
@@ -34,7 +34,7 @@ Trạng thái: **INCREMENTAL CUTOVER — chưa đủ điều kiện bật `BANKI
 | Notifications | `GET /api/v1/notifications`, `POST /api/v1/notifications/:id/read` | `notifications`, `audit_events` | Direct khi `...=notifications` | customer ownership, read-only list, idempotent mark-as-read, no financial mutation |
 | Fraud report | `POST /api/v1/fraud-reports`, `GET /api/v1/fraud-reports/:id` | `fraud_reports`, `fraud_report_idempotency`, `account_transactions`, `audit_events`, `outbox_events` | Direct khi `...=fraud` | transaction ownership, one open report, idempotency, redacted event payload, audit/outbox atomically |
 
-Feature flag này chỉ là lát cắt rehearsal; preview mặc định không đặt flag nên vẫn dùng compatibility adapter legacy.
+Các nhóm route trên là boundary direct của relational-v2. Local preview dùng `IMAGE_DIGEST=unknown` và không được gọi là staging verified; worker/cloud vẫn chưa bật.
 
 ## Các nhóm còn legacy / chưa được phép bật
 
@@ -48,7 +48,7 @@ Feature flag này chỉ là lát cắt rehearsal; preview mặc định không �
 
 ## Cổng chuyển giai đoạn kế tiếp
 
-Không bật `BANKING_PERSISTENCE_MODE=relational-v2`, `WORKER_ENABLED=1` hoặc staging chỉ vì các route đầu tiên đã direct. Chỉ chuyển khi:
+Không bật `WORKER_ENABLED=1` hoặc staging/cloud chỉ vì các route customer đã direct. Chỉ chuyển sang worker/staging khi:
 
 1. Mọi route trong bảng “còn legacy” đã có owner relational và integration test HTTP.
 2. Không còn request path gọi `PostgresRelationalRepository.withState` trong profile relational-v2.
@@ -61,12 +61,13 @@ Không bật `BANKING_PERSISTENCE_MODE=relational-v2`, `WORKER_ENABLED=1` hoặc
 Chỉ dùng local/disposable database:
 
 ```powershell
+$env:BANKING_PERSISTENCE_MODE = "relational-v2"
 $env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud"
 npm run typecheck
 npm run build
 npm run test:critical
 ```
 
-Xóa biến môi trường để quay về preview compatibility. Giá trị này không phải staging evidence và không thay thế cutover gate.
+Giá trị này chỉ dành cho local preview; `IMAGE_DIGEST=unknown`, không phải staging evidence và không thay thế worker/cloud cutover gate.
 
 `registration` là group riêng, không bật cùng `auth` nếu chưa cấu hình provider gửi email/OTP có evidence; `auth` chỉ bao phủ session login/verify/refresh/logout.

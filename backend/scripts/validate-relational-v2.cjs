@@ -8,22 +8,26 @@ const pool = new Pool({ connectionString: databaseUrl, max: 1, ssl: resolvePostg
 
 async function main() {
   try {
+    const requiredMigrations = [
+      "006_relational_v2_foundation",
+      "007_identity_runtime_normalization",
+      "008_transfer_relational_v2",
+      "009_savings_relational_v2",
+      "010_credit_relational_v2",
+      "011_registration_recovery",
+      "029_savings_products_relational_v2",
+      "030_credit_relational_v2_cutover",
+      "031_remaining_relational_v2",
+    ];
     const migrations = await pool.query(
       `SELECT migration_key, checksum
        FROM reference_schema_migrations
-       WHERE migration_key IN ($1, $2, $3, $4, $5, $6)
+       WHERE migration_key = ANY($1::text[])
        ORDER BY migration_key`,
-      [
-        "006_relational_v2_foundation",
-        "007_identity_runtime_normalization",
-        "008_transfer_relational_v2",
-        "009_savings_relational_v2",
-        "010_credit_relational_v2",
-        "011_registration_recovery",
-      ],
+      [requiredMigrations],
     );
-    if (migrations.rowCount !== 6 || migrations.rows.some((row) => !row.checksum)) {
-      throw new Error("Relational-v2 migrations 006-011 are not all applied with checksums.");
+    if (migrations.rowCount !== requiredMigrations.length || migrations.rows.some((row) => !row.checksum)) {
+      throw new Error("Required relational-v2 migrations 006-011 and 029-031 are not all applied with checksums.");
     }
 
     const invariants = await pool.query(`
@@ -39,7 +43,11 @@ async function main() {
         (SELECT COUNT(*) FROM savings_deposits d LEFT JOIN savings_openings o ON o.id = d.opening_id
           WHERE d.opening_id IS NOT NULL AND o.id IS NULL) AS orphan_savings_openings,
         (SELECT COUNT(*) FROM credit_payments p LEFT JOIN credit_payment_quotes q ON q.id = p.quote_id
-          WHERE q.id IS NULL) AS orphan_credit_quotes
+          WHERE q.id IS NULL) AS orphan_credit_quotes,
+        (SELECT COUNT(*) FROM fraud_report_idempotency i LEFT JOIN fraud_reports r ON r.id = i.report_id
+          WHERE i.report_id IS NOT NULL AND r.id IS NULL) AS orphan_fraud_idempotency,
+        (SELECT COUNT(*) FROM recipient_lookups l LEFT JOIN payment_accounts a ON a.id = l.destination_account_id
+          WHERE a.id IS NULL) AS orphan_recipient_lookups
     `);
     const row = invariants.rows[0];
     for (const [key, value] of Object.entries(row)) {
@@ -69,7 +77,7 @@ async function main() {
       invariants: row,
       legacyRuntimeCollections: collections.rows,
       normalizedTables: normalized.rows,
-      note: "reference_runtime_records is retained for read-only reconciliation until HTTP cutover is complete",
+      note: "reference_runtime_records and withState remain migration/regression-only; relational-v2 HTTP must not call the legacy writer",
     }));
   } finally {
     await pool.end();

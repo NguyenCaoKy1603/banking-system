@@ -747,6 +747,12 @@ export async function handleRequest(
     const routePath = requestUrl.pathname.slice(API_PREFIX.length) || "/";
     const segments = pathSegments(routePath);
     const body = bodyAlreadyRead ? parsedBody : await readJson(request);
+    const relationalV2 = process.env.BANKING_PERSISTENCE_MODE?.trim() === "relational-v2";
+    const registrationRoute = (request.method === "POST" && segments[0] === "auth" && segments[1] === "register");
+    if (relationalV2 && registrationRoute && !(options.relationalHttp?.isRouteEnabled(request.method, segments) ?? false)) {
+      writeError(response, 503, traceId, new DomainError(503, "RELATIONAL_ROUTE_OUT_OF_SCOPE", "Registration requires an approved relational email-provider boundary and is disabled in this local relational-v2 cutover."));
+      return;
+    }
 
     if (
       request.method === "POST" &&
@@ -1042,8 +1048,11 @@ export async function handleRequest(
       segments[0] === "mobile" &&
       segments[1] === "control-policy"
     ) {
-      const userId = await requireBearer(request, system, options);
-      writeResponse(response, 200, traceId, system.getControlPolicy(userId));
+      const directPolicyRoute = options.relationalHttp?.isRouteEnabled(request.method, ["mobile", "control-policy"]) ?? false;
+      const userId = await requireBearer(request, system, options, directPolicyRoute ? options.relationalHttp : undefined);
+      writeResponse(response, 200, traceId, directPolicyRoute && options.relationalHttp
+        ? await options.relationalHttp.getControlPolicy()
+        : system.getControlPolicy(userId));
       return;
     }
 
@@ -2193,6 +2202,10 @@ export function createPersistentBankingServer(
             undefined,
             requestContext,
           );
+          return;
+        }
+        if (process.env.BANKING_PERSISTENCE_MODE?.trim() === "relational-v2") {
+          writeError(bufferedResponse as unknown as ServerResponse, 503, requestContext.requestId, new DomainError(503, "RELATIONAL_ROUTE_NOT_CUTOVER", "This HTTP route is not part of the approved relational-v2 boundary."));
           return;
         }
         await repository.withState(system.exportState(), async (state) => {

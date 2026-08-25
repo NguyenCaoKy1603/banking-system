@@ -111,6 +111,7 @@ async function start(): Promise<void> {
       delivery: new NullEmailProvider(),
     });
     const relationalHttp = new RelationalHttpBoundary(repository.unitOfWork);
+    if (runtimeConfig.persistenceMode === "relational-v2") relationalHttp.assertRelationalV2Complete();
     server = createPersistentBankingServer(repository, system, {
       ...httpOptions,
       mfaService,

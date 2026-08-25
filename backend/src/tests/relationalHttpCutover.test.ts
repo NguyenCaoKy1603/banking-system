@@ -4,7 +4,16 @@ import test from "node:test";
 
 import { BankingSystem } from "../bankingSystem.js";
 import { createPersistentBankingServer } from "../http.js";
-import type { RelationalHttpBoundary } from "../database/relationalHttpBoundary.js";
+import { RelationalHttpBoundary } from "../database/relationalHttpBoundary.js";
+import type { UnitOfWork } from "../database/unitOfWork.js";
+
+test("relational-v2 boundary requires every approved customer route group", () => {
+  const unitOfWork = {} as UnitOfWork;
+  const complete = new RelationalHttpBoundary(unitOfWork, "auth,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud");
+  assert.doesNotThrow(() => complete.assertRelationalV2Complete());
+  const incomplete = new RelationalHttpBoundary(unitOfWork, "auth,mfa,accounts,beneficiaries,transfers,savings,credit");
+  assert.throws(() => incomplete.assertRelationalV2Complete(), /cutover is incomplete/);
+});
 
 test("direct relational account route bypasses the legacy state boundary", async (t) => {
   let legacyBoundaryCalls = 0;
