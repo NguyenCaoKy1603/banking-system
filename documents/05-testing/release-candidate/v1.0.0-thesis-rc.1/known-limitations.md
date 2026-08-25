@@ -1,6 +1,6 @@
 # Known limitations and blockers
 
-1. The clean-clone migration fingerprint (`1a768…`) differs from the Windows working-tree fingerprint (`4a500…`) because the fingerprint hashes raw bytes and `002_savings_sandbox.sql` has an EOF newline representation difference. This blocks an immutable release-candidate decision until the fingerprint policy is normalized and rerun.
+1. Migration fingerprinting now normalizes CRLF/CR to LF. The clean clone and Windows checkout both produce canonical digest `1a768…`; raw legacy checksum `5ec06…` for `002_savings_sandbox.sql` is compatibility-only.
 2. This is local/disposable evidence only. No staging deployment, staging HTTPS, remote CI, main-branch merge, registry push, GHCR digest, Cosign signature, SBOM, SLSA/provenance attestation, backup/rollback staging rehearsal, SLO or on-call evidence exists.
 3. No signed RC APK or physical-device E2E was produced. Mobile evidence is unit/contract/static-export evidence.
 4. Money remains synthetic virtual money; this is not a production banking or payment-rail release.

@@ -9,4 +9,4 @@ Notable hardening in the tested source:
 - Admin static image runs as non-root nginx on internal port 8080.
 - All database rehearsal uses disposable databases and migrations 001–032.
 
-Promotion is blocked by the migration fingerprint reproducibility mismatch and by the absence of remote registry/signature/provenance/staging evidence listed in `known-limitations.md`.
+The local quality gate is now reproducible with the canonical migration fingerprint. Promotion remains pending because remote CI, registry digest/signature/provenance and staging evidence listed in `known-limitations.md` do not exist yet.

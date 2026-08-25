@@ -1,7 +1,7 @@
 {
   "artifact": "v1.0.0-thesis-rc.1",
-  "status": "BLOCKED_LOCAL_RC",
-  "testedSourceCommit": "f85ce0788223429ff9c6a560749107819cfef6f9",
+  "status": "LOCAL_RC_READY_EXTERNAL_PENDING",
+  "testedSourceCommit": "167824d5888fac7139bd1cd245fb4fa49502b48c",
   "branch": "codex/p0-postgres-foundation",
   "sourceTreeBeforeEvidenceCommit": "clean",
   "migrationCount": 32,
@@ -20,6 +20,7 @@
     "java": "17.0.12"
   },
   "imageDigest": "unknown",
+  "migrationSetDigest": "1a768560de0b3a9f95c3909335b7aa6e04912b4dbd5c3152153aaa4aa9aa438a",
   "disposableOnly": true,
   "externalPromotion": {
     "push": "not-run",

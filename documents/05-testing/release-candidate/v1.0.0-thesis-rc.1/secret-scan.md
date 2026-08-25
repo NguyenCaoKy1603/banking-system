@@ -6,4 +6,6 @@
 - Backend container image surface: PASS.
 - Final container logs: PASS; no password, secret, OTP, token, CVV, or PIN-like values detected.
 
+- Tested source: `167824d5888fac7139bd1cd245fb4fa49502b48c` clean clone.
+
 Test keys and database credentials were process-local disposable values only and are not present in this evidence or the repository.

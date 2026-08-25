@@ -1,10 +1,10 @@
 # Release-quality rehearsal summary
 
-The final clean-clone `npm run test:release` matrix completed 17/17 PASS on source `f85ce0788223429ff9c6a560749107819cfef6f9`:
+The final clean-clone `npm run test:release` matrix completed 17/17 PASS on source `167824d5888fac7139bd1cd245fb4fa49502b48c`:
 
 | Group | Result |
 | --- | --- |
-| Aggregate unit/HTTP | 172 tests, 139 passed, 0 failed, 33 skipped by guard policy |
+| Aggregate unit/HTTP | 173 tests, 140 passed, 0 failed, 33 skipped by guard policy |
 | Critical HTTP | PASS, 10/10 |
 | Database guard | PASS, 5/5 |
 | Database foundation | PASS, 4/4 |
