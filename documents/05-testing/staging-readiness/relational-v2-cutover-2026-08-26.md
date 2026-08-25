@@ -7,9 +7,10 @@ implementation commit `516083e0be71db7ee813c11bf7bfe82e5568830e`; các commit
 evidence trước đó là `afc1305`, `c6eacea` và `b757b0a`. Lượt này bổ sung
 registration persistent, migration `032`, scheduled Savings/Credit lifecycle và
 release-quality rehearsal trên database disposable, đã được commit tại
-`33f0e256cb1a23178064005052ba13c82c2d4ff7`. Evidence document được ghi nhận
-trong commit `ab863940aeb0ecd630fd2701f38c2160c87f20e0`; hai SHA được giữ
-riêng để phân biệt implementation với bằng chứng.
+`33f0e256cb1a23178064005052ba13c82c2d4ff7`. Evidence document ban đầu được
+ghi nhận trong commit `ab863940aeb0ecd630fd2701f38c2160c87f20e0`, và bản
+clarification cuối hiện ở commit `c1fc3e7`; hai SHA được giữ riêng để phân biệt
+implementation với bằng chứng.
 Trạng thái vẫn là:
 
 ```text
