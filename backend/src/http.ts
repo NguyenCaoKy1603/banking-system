@@ -974,9 +974,15 @@ export async function handleRequest(
       if (typeof data.email !== "string" || typeof data.password !== "string" || typeof data.code !== "string") {
         throw invalidRequest("email, password and code are required to start MFA recovery.");
       }
-      const user = await system.loginPasswordOnly(data.email, data.password, requireDeviceId(request));
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+      const user = relationalAuth
+        ? await relationalAuth.loginPasswordOnly(data.email, data.password, requireDeviceId(request))
+        : await system.loginPasswordOnly(data.email, data.password, requireDeviceId(request));
       const recovery = await options.mfaService.verifyRecoveryCode(user.id, data.code);
-      system.revokeAllSessions(user.id);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(user.id);
+      else system.revokeAllSessions(user.id);
       writeResponse(response, 202, traceId, { ...recovery, status: "RECOVERY_STARTED" });
       return;
     }
@@ -1052,6 +1058,7 @@ export async function handleRequest(
       options,
       relationalRoute ? options.relationalHttp : undefined,
     );
+    const relationalAuth = relationalRoute ? options.relationalHttp : undefined;
 
     if (relationalRoute && options.relationalHttp) {
       if (request.method === "GET" && segments.length === 1 && segments[0] === "beneficiaries") {
@@ -1139,14 +1146,19 @@ export async function handleRequest(
 
     if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "totp" && segments[3] === "enroll") {
       const data = requireObject(body);
-      if (typeof data.password !== "string" || !system.verifyCurrentPassword(userId, data.password)) {
+      const passwordValid = relationalAuth
+        ? await relationalAuth.verifyCurrentPassword(userId, typeof data.password === "string" ? data.password : "")
+        : typeof data.password === "string" && system.verifyCurrentPassword(userId, data.password);
+      if (!passwordValid) {
         throw unauthorized("Current password is invalid.");
       }
       const credentials = await options.mfaService.listCredentials(userId);
       if (credentials.some((credential) => credential.status === "ACTIVE")) {
         await verifyMfaLifecycleChallenge(options.mfaService, request, userId, data, "MFA_FACTOR_CHANGE");
       }
-      const user = system.getUser(userId);
+      const user = relationalAuth
+        ? await relationalAuth.getUser(userId)
+        : system.getUser(userId);
       writeResponse(response, 201, traceId, await options.mfaService.beginTotpEnrollment({
         customerId: userId,
         email: user.email,
@@ -1162,14 +1174,18 @@ export async function handleRequest(
         credentialId: data.credentialId as string,
         code: data.code as string,
       });
-      system.revokeAllSessions(userId);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
       writeResponse(response, 200, traceId, confirmation);
       return;
     }
 
     if (options.mfaService && request.method === "DELETE" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") {
       const data = body === undefined ? {} : requireObject(body);
-      if (typeof data.password !== "string" || !system.verifyCurrentPassword(userId, data.password)) {
+      const passwordValid = relationalAuth
+        ? await relationalAuth.verifyCurrentPassword(userId, typeof data.password === "string" ? data.password : "")
+        : typeof data.password === "string" && system.verifyCurrentPassword(userId, data.password);
+      if (!passwordValid) {
         throw unauthorized("Current password is invalid.");
       }
       const credentials = await options.mfaService.listCredentials(userId);
@@ -1177,7 +1193,8 @@ export async function handleRequest(
         await verifyMfaLifecycleChallenge(options.mfaService, request, userId, data, "MFA_FACTOR_REMOVAL");
       }
       await options.mfaService.revokeCredential(userId, segments[3]);
-      system.revokeAllSessions(userId);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
       writeResponse(response, 204, traceId);
       return;
     }
@@ -1185,7 +1202,8 @@ export async function handleRequest(
     if (options.mfaService && request.method === "POST" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover") {
       const data = requireObject(body);
       const recovery = await options.mfaService.verifyRecoveryCode(userId, data.code as string);
-      system.revokeAllSessions(userId);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
       writeResponse(response, 202, traceId, { ...recovery, status: "RECOVERY_STARTED" });
       return;
     }
@@ -1193,7 +1211,8 @@ export async function handleRequest(
     if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover" && segments[3] === "verify") {
       const data = requireObject(body);
       const recovery = await options.mfaService.verifyRecoveryCode(userId, data.code as string);
-      system.revokeAllSessions(userId);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
       writeResponse(response, 202, traceId, { ...recovery, status: "RECOVERY_STARTED" });
       return;
     }
@@ -1213,7 +1232,10 @@ export async function handleRequest(
 
     if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recovery-codes" && segments[3] === "rotate") {
       const data = requireObject(body);
-      if (typeof data.password === "string" && !system.verifyCurrentPassword(userId, data.password)) {
+      const passwordValid = relationalAuth
+        ? await relationalAuth.verifyCurrentPassword(userId, typeof data.password === "string" ? data.password : "")
+        : typeof data.password === "string" && system.verifyCurrentPassword(userId, data.password);
+      if (typeof data.password === "string" && !passwordValid) {
         throw unauthorized("Current password is invalid.");
       }
       if (typeof data.challengeId !== "string" || typeof data.code !== "string") {
@@ -1229,7 +1251,8 @@ export async function handleRequest(
       if (result.customerId !== userId) {
         throw unauthorized("MFA user binding is invalid.");
       }
-      system.revokeAllSessions(userId);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
       writeResponse(response, 200, traceId, {
         status: "ROTATED",
         recoveryCodes: await options.mfaService.rotateRecoveryCodes(userId),
@@ -1239,7 +1262,9 @@ export async function handleRequest(
 
     if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "challenges" && segments[3] === "resend") {
       const data = requireObject(body);
-      const user = system.getUser(userId);
+      const user = relationalAuth
+        ? await relationalAuth.getUser(userId)
+        : system.getUser(userId);
       writeResponse(response, 200, traceId, await options.mfaService.resendChallenge({
         challengeId: segments[2],
         customerId: userId,
@@ -1276,13 +1301,17 @@ export async function handleRequest(
         const purpose = data.purpose as PersistentStepUpPurpose;
         const resourceId = typeof data.resourceId === "string" ? data.resourceId : null;
         const directTransferCutover = purpose === "TRANSFER" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["transfers"]);
+        const directMfaLifecycle = options.relationalHttp?.isRouteEnabled("POST", ["auth", "otp", "challenges"]) &&
+          ["MFA_FACTOR_CHANGE", "MFA_FACTOR_REMOVAL", "RECOVERY_CODE_ROTATION"].includes(purpose);
         const requestFingerprint = directTransferCutover && options.relationalHttp
           ? await options.relationalHttp.getTransferStepUpRequestFingerprint(resourceId)
-          : system.getStepUpRequestFingerprint(
-            purpose as OtpPurpose,
-            resourceId,
-            typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
-          );
+          : directMfaLifecycle
+            ? (typeof data.requestFingerprint === "string" ? data.requestFingerprint : null)
+            : system.getStepUpRequestFingerprint(
+              purpose as OtpPurpose,
+              resourceId,
+              typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
+            );
         const challenge = await options.mfaService.beginTotpChallenge({
           customerId: userId,
           deviceId: requireDeviceId(request),

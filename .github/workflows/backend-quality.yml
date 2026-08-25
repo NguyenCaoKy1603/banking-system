@@ -160,5 +160,8 @@ jobs:
       - name: Relational-v2 foundation regression
         run: npm run test:database
 
+      - name: Persistent MFA lifecycle regression
+        run: npm run test:mfa:persistence
+
       - name: Worker concurrency, lease and dead-letter regression
         run: npm run test:worker

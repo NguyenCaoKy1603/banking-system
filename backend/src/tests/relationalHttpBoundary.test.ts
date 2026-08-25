@@ -37,4 +37,14 @@ test("relational HTTP boundary rejects unknown route groups", () => {
     () => new RelationalHttpBoundary(unitOfWork, "accounts"),
     /groups require auth/,
   );
+  const mfa = new RelationalHttpBoundary(unitOfWork, "auth,mfa");
+  assert.equal(mfa.isRouteEnabled("POST", ["auth", "login"]), true);
+  assert.equal(mfa.isRouteEnabled("GET", ["auth", "mfa", "methods"]), true);
+  assert.equal(mfa.isRouteEnabled("POST", ["auth", "mfa", "totp", "enroll"]), true);
+  assert.equal(mfa.isRouteEnabled("POST", ["auth", "otp", "challenges"]), true);
+  assert.equal(mfa.isRouteEnabled("POST", ["auth", "mfa", "recover", "enroll"]), true);
+  assert.throws(
+    () => new RelationalHttpBoundary(unitOfWork, "mfa"),
+    /groups require auth/,
+  );
 });

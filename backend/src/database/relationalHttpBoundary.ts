@@ -7,12 +7,12 @@ import { RelationalTransferService, type TransferQuoteCommandInput } from "./tra
 import type { MfaChallengeResponse, PersistentMfaService } from "../mfa/persistentMfaService.js";
 import { UnitOfWork } from "./unitOfWork.js";
 
-export type RelationalHttpRoute = "auth" | "registration" | "accounts" | "beneficiaries" | "transfers";
+export type RelationalHttpRoute = "auth" | "registration" | "mfa" | "accounts" | "beneficiaries" | "transfers";
 
 function configuredRoutes(value = process.env.BANKING_RELATIONAL_HTTP_ROUTES): Set<RelationalHttpRoute> {
   const routes = new Set<RelationalHttpRoute>();
   for (const item of (value ?? "").split(",").map((part) => part.trim().toLowerCase()).filter(Boolean)) {
-    if (item === "auth" || item === "registration" || item === "accounts" || item === "beneficiaries" || item === "transfers") routes.add(item);
+    if (item === "auth" || item === "registration" || item === "mfa" || item === "accounts" || item === "beneficiaries" || item === "transfers") routes.add(item);
     else throw new Error(`BANKING_RELATIONAL_HTTP_ROUTES contains unsupported route group: ${item}.`);
   }
   return routes;
@@ -28,7 +28,7 @@ export class RelationalHttpBoundary {
 
   constructor(unitOfWork: UnitOfWork, routeConfig?: string) {
     this.routes = configuredRoutes(routeConfig);
-    if (["accounts", "beneficiaries", "transfers"].some((route) => this.routes.has(route as RelationalHttpRoute)) && !this.routes.has("auth")) {
+    if (["accounts", "beneficiaries", "transfers", "mfa"].some((route) => this.routes.has(route as RelationalHttpRoute)) && !this.routes.has("auth")) {
       throw new Error("BANKING_RELATIONAL_HTTP_ROUTES account and command groups require auth so they have a direct session boundary.");
     }
     this.auth = new RelationalAuthService(unitOfWork);
@@ -50,6 +50,18 @@ export class RelationalHttpBoundary {
         (verb === "POST" && segments.length === 2 && ["login", "verify", "refresh", "logout"].includes(segments[1] ?? "")) ||
         (verb === "POST" && segments.length === 2 && segments[1] === "logout-all");
       if (sessionRoutes) return true;
+    }
+    if (this.routes.has("mfa") && segments[0] === "auth") {
+      const mfaLifecycleRoute =
+        (verb === "GET" && segments.length === 3 && segments[1] === "mfa" && segments[2] === "methods") ||
+        (verb === "POST" && segments.length === 4 && segments[1] === "mfa" && segments[2] === "totp" && (segments[3] === "enroll" || segments[3] === "confirm")) ||
+        (verb === "DELETE" && segments.length === 4 && segments[1] === "mfa" && segments[2] === "methods") ||
+        (verb === "POST" && segments.length === 3 && segments[1] === "mfa" && segments[2] === "recover") ||
+        (verb === "POST" && segments.length === 4 && segments[1] === "mfa" && segments[2] === "recover" && ["verify", "complete", "enroll"].includes(segments[3] ?? "")) ||
+        (verb === "POST" && segments.length === 4 && segments[1] === "mfa" && segments[2] === "recovery-codes" && segments[3] === "rotate") ||
+        (verb === "POST" && segments.length === 4 && segments[1] === "challenges" && segments[3] === "resend") ||
+        (verb === "POST" && segments.length === 3 && segments[1] === "otp" && segments[2] === "challenges");
+      if (mfaLifecycleRoute) return true;
     }
     if (this.routes.has("registration") && verb === "POST" && segments[0] === "auth" && segments[1] === "register") {
       return segments.length === 2 || (segments.length === 3 && segments[2] === "verify");

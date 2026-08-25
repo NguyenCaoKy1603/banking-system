@@ -75,3 +75,65 @@ test("direct relational command routes bypass the legacy state boundary", async 
   assert.equal((await response.json() as { quoteId: string }).quoteId, "quote-1");
   assert.equal(legacyBoundaryCalls, 0);
 });
+
+test("persistent MFA lifecycle routes bypass the legacy state boundary", async (t) => {
+  let legacyBoundaryCalls = 0;
+  const relationalCalls: string[] = [];
+  const repository = {
+    withState: async (): Promise<never> => {
+      legacyBoundaryCalls += 1;
+      throw new Error("legacy MFA boundary must not run for direct route");
+    },
+  };
+  const relationalHttp = {
+    isRouteEnabled: (method: string | undefined, segments: readonly string[]) =>
+      method === "GET" && segments.join("/") === "auth/mfa/methods" ||
+      method === "POST" && segments.join("/") === "auth/mfa/totp/enroll",
+    authenticate: async () => {
+      relationalCalls.push("authenticate");
+      return { id: "customer-1", fullName: "MFA User", email: "mfa@example.test", phoneNumber: "0900000000", createdAt: new Date().toISOString() };
+    },
+    verifyCurrentPassword: async () => {
+      relationalCalls.push("verifyCurrentPassword");
+      return true;
+    },
+    getUser: async () => {
+      relationalCalls.push("getUser");
+      return { id: "customer-1", fullName: "MFA User", email: "mfa@example.test", phoneNumber: "0900000000", createdAt: new Date().toISOString() };
+    },
+    listCredentials: async () => [],
+  } as unknown as RelationalHttpBoundary;
+  const mfaService = {
+    listCredentials: async () => [],
+    beginTotpEnrollment: async () => ({
+      credentialId: "credential-1",
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      manualSetupKey: "TEST-ONLY-SETUP-KEY",
+      otpauthUri: "otpauth://totp/Reference:mfa@example.test?secret=TEST",
+    }),
+  } as never;
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp, mfaService });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const headers = {
+    Authorization: "Bearer direct-mfa-token",
+    "X-Device-ID": "direct-mfa-device",
+  };
+  const methods = await fetch(`http://127.0.0.1:${address.port}/api/v1/auth/mfa/methods`, { headers });
+  assert.equal(methods.status, 200);
+  assert.deepEqual(await methods.json(), { items: [] });
+  const enroll = await fetch(`http://127.0.0.1:${address.port}/api/v1/auth/mfa/totp/enroll`, {
+    method: "POST",
+    headers: { ...headers, "Content-Type": "application/json" },
+    body: JSON.stringify({ password: "Password1" }),
+  });
+  assert.equal(enroll.status, 201);
+  assert.equal((await enroll.json() as { credentialId: string }).credentialId, "credential-1");
+  assert.equal(legacyBoundaryCalls, 0);
+  assert.ok(relationalCalls.includes("authenticate"));
+  assert.ok(relationalCalls.includes("verifyCurrentPassword"));
+  assert.ok(relationalCalls.includes("getUser"));
+});

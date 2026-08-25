@@ -7,11 +7,12 @@ Trạng thái: **INCREMENTAL CUTOVER — chưa đủ điều kiện bật `BANKI
 
 | Nhóm route | Route | Nguồn dữ liệu hiện tại | Trạng thái | Bằng chứng bắt buộc |
 |---|---|---|---|---|
-| Session | `POST /api/v1/auth/login` | `customers`, `customer_devices`, `auth_sessions`, `refresh_session_*` | Direct khi `BANKING_RELATIONAL_HTTP_ROUTES=auth` | password timing/dummy path, device binding, MFA challenge, session row |
-| Session | `POST /api/v1/auth/verify` | `auth_challenges` + session tables | Direct khi `...=auth` và có persistent MFA | TOTP verify, session rotation, revoke |
-| Session | `POST /api/v1/auth/refresh` | `auth_sessions`, `refresh_session_*` | Direct khi `...=auth` | refresh rotation, replay/revocation |
-| Session | `POST /api/v1/auth/logout` | session/family tables | Direct khi `...=auth` | device binding, family revoke |
-| Session | `POST /api/v1/auth/logout-all` | session/family tables | Direct khi `...=auth` | customer-wide revoke |
+| Session | `POST /api/v1/auth/login` | `customers`, `customer_devices`, `auth_sessions`, `refresh_session_*` | Direct khi `BANKING_RELATIONAL_HTTP_ROUTES=auth,mfa` | password timing/dummy path, device binding, persistent MFA challenge, session row |
+| Session | `POST /api/v1/auth/verify` | `auth_challenges` + session tables | Direct khi `...=auth,mfa` và có persistent MFA | TOTP verify, session rotation, revoke |
+| Session | `POST /api/v1/auth/refresh` | `auth_sessions`, `refresh_session_*` | Direct khi `...=auth,mfa` | refresh rotation, replay/revocation |
+| Session | `POST /api/v1/auth/logout` | session/family tables | Direct khi `...=auth,mfa` | device binding, family revoke |
+| Session | `POST /api/v1/auth/logout-all` | session/family tables | Direct khi `...=auth,mfa` | customer-wide revoke |
+| MFA lifecycle | `/auth/mfa/*`, `/auth/otp/challenges` | `mfa_credentials`, `auth_challenges`, `mfa_recovery_*`, `auth_security_events`, session tables | Direct khi `...=auth,mfa` | TOTP enrollment/confirm, login + step-up challenge, retry/lock/expiry/consume, recovery/reset audit, concurrent one-winner verification, refresh/logout security state |
 | Account read | `GET /api/v1/accounts` | `payment_accounts` | Direct khi `...=accounts` | ownership + money mapping |
 | Account read | `GET /api/v1/accounts/:id/number` | `payment_accounts` | Direct khi `...=accounts` | ownership + reveal audit follow-up |
 | Account read | `GET /api/v1/accounts/:id/transactions` | `account_transactions` | Direct khi `...=accounts` | keyset cursor contract |
@@ -28,7 +29,6 @@ Feature flag này chỉ là lát cắt rehearsal; preview mặc định không �
 | Nhóm | Route/khối | Lý do chưa cutover |
 |---|---|---|
 | Registration | `/auth/register`, `/auth/register/verify` | Có service direct sau feature group `registration`, nhưng local compose dùng `NullEmailProvider`; chỉ rehearsal với provider test được kiểm soát và phải có delivery evidence. |
-| MFA lifecycle | `/auth/mfa/*`, `/auth/otp/challenges` | Challenge đã lưu relational nhưng lifecycle handler còn gọi `BankingSystem` cho password/session/state bridge. |
 | Beneficiary/recipient | `/internal-recipients/*` | Lookup token chưa có persistent direct boundary; beneficiary CRUD đã được nối ở group `beneficiaries`. |
 | Transfer | `/transfers/quote`, `/transfers`, `/transfers/:id` | Core transfer path đã nối; vẫn cần chạy disposable HTTP + TOTP/concurrency/restart evidence trước khi coi là cutover hoàn tất. |
 | Savings | `/savings/*` | Chưa có service transaction hoàn chỉnh; không được để runtime records làm source of truth. |
@@ -50,7 +50,7 @@ Không bật `BANKING_PERSISTENCE_MODE=relational-v2`, `WORKER_ENABLED=1` hoặc
 Chỉ dùng local/disposable database:
 
 ```powershell
-$env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,accounts,beneficiaries,transfers"
+$env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,mfa,accounts,beneficiaries,transfers"
 npm run typecheck
 npm run build
 npm run test:critical

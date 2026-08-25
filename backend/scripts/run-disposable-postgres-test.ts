@@ -84,9 +84,11 @@ async function main(): Promise<void> {
       : testFiles.some((file) => file.includes("workerOutbox"))
         ? "WORKER_DATABASE_URL"
         : testFiles.some((file) => file.includes("admin.database"))
-          ? "ADMIN_DATABASE_URL"
+        ? "ADMIN_DATABASE_URL"
           : testFiles.some((file) => file.includes("persistence"))
             ? "DATABASE_URL"
+            : testFiles.some((file) => file.includes("mfaPersistence"))
+              ? "RELATIONAL_DATABASE_URL"
             : undefined;
   if (!targetEnvironmentVariable) {
     throw new Error(`Cannot infer the disposable database environment variable for: ${testFiles.join(", ")}`);

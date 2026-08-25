@@ -58,6 +58,7 @@
     "test:admin:concurrency": "tsx --test src/tests/admin.concurrency*.test.ts",
     "test:relational": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/relationalPersistence.test.ts",
     "test:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/persistence.test.ts",
+    "test:mfa:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/mfaPersistence.test.ts",
     "test:database": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/databaseFoundation.test.ts",
     "test:database:guard": "tsx --test src/tests/disposableDatabaseGuard.test.ts",
     "seed:e2e": "node --env-file-if-exists=.env --import=tsx scripts/seed-e2e.ts"
