@@ -117,6 +117,6 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 
 - Đã khóa migration `028_dr_recovery_markers` và cập nhật baseline theo 28 migration; evidence Stage 1 chỉ có 5 migration được đánh dấu historical.
 - Đã triển khai logical backup custom-format qua AES-256-GCM, authenticated metadata, manifest SHA-256 plaintext/ciphertext, lock chống chạy trùng, verify, restore DB mới, retention dry-run, surface validator và marker synthetic.
-- Local PostgreSQL 16 rehearsal đạt: verify/tamper tests, restore database mới, 28 migration checksum, counts nghiệp vụ, ledger debit=credit và orphan reference `0`; actual RTO lần chạy là 3.273s, actual RPO chưa đo.
+- Local PostgreSQL 16 rehearsal đạt: verify/tamper tests, restore database mới, 28 migration checksum, counts nghiệp vụ, ledger debit=credit và orphan reference `0`; actual RTO lần chạy là 3.509s, actual RPO chưa đo.
 - Đã thêm policy/runbook PITR, key rotation, provider infrastructure contract, alert/dashboard contract; các file này chưa được nối vào Prometheus/Grafana/KMS/object storage.
 - Còn mở: managed PostgreSQL, base backup + continuous WAL/PITR, KMS/object storage/retention audit, scheduler production, RPO ≤5 phút/RTO ≤60 phút drill, session/outbox recovery cutover và staging evidence. Trạng thái vẫn **UNTRUSTED LOCAL PREVIEW**.
