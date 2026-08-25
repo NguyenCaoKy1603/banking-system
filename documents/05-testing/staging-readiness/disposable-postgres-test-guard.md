@@ -28,15 +28,24 @@ cd backend
 npm run test:database:guard
 npm run test:database
 npm run test:relational
+npm run test:mfa:persistence
+npm run test:savings:persistence
+npm run test:credit:persistence
+npm run test:remaining:persistence
+npm run test:registration:persistence
+npm run test:lifecycle:persistence
 npm run test:persistence
 npm run test:admin:database
+# Worker chỉ chạy trên database disposable sau khi gate worker được bật trong chính test.
+npm run test:worker
 Remove-Item Env:DATABASE_TEST_ADMIN_URL
 ```
 
 Mỗi lệnh PostgreSQL tự tạo tên `banking_test_<pid>_<random>`, chạy migration
-001–028, chạy đúng suite được chọn và xóa database bằng `DROP DATABASE ... WITH
+001–032, chạy đúng suite được chọn và xóa database bằng `DROP DATABASE ... WITH
 (FORCE)` kể cả khi suite thất bại. `test:worker` dùng cùng cơ chế khi worker
-được phép kiểm thử; không bật worker runtime local trong giai đoạn hiện tại.
+được phép kiểm thử. Worker chỉ được bật trong disposable rehearsal với các cờ
+test riêng; không bật worker runtime trên `banking_preview`.
 
 Nếu thiếu `DATABASE_TEST_ADMIN_URL`, suite dừng với lỗi rõ ràng. Nếu đặt
 `P0_RELATIONAL_DATABASE_URL`, `RELATIONAL_DATABASE_URL`, `DATABASE_URL` hoặc
@@ -46,7 +55,8 @@ nối. CI có negative test `npm run test:database:guard` và các workflow khô
 
 ## Trạng thái bằng chứng
 
-Guard hiện đã được kiểm tra bằng suite thuần (5/5) và PostgreSQL disposable thật:
-foundation 4/4, relational 1/1, legacy persistence 11/11, Admin PostgreSQL 8/8.
-Đây là quality evidence local; chưa phải staging/production evidence.
-
+Guard hiện đã được kiểm tra bằng suite thuần (5/5) và PostgreSQL disposable thật;
+mọi suite đều phải áp dụng migration 001–032, không đọc `.env.compose` preview.
+Các lệnh foundation, relational, MFA, Savings, Credit, remaining, registration,
+lifecycle, legacy persistence và Admin PostgreSQL là các quality evidence local
+riêng biệt. Đây là quality evidence local; chưa phải staging/production evidence.

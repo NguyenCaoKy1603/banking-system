@@ -2,7 +2,14 @@
 
 ## Kết luận
 
-Đây là bằng chứng local/provider-neutral cho commit `516083e0be71db7ee813c11bf7bfe82e5568830e`.
+Đây là bằng chứng local/provider-neutral. Baseline trước đó bắt đầu từ
+implementation commit `516083e0be71db7ee813c11bf7bfe82e5568830e`; các commit
+evidence trước đó là `afc1305`, `c6eacea` và `b757b0a`. Lượt này bổ sung
+registration persistent, migration `032`, scheduled Savings/Credit lifecycle và
+release-quality rehearsal trên database disposable, đã được commit tại
+`33f0e256cb1a23178064005052ba13c82c2d4ff7`. Evidence document này cần được
+commit tiếp theo cùng SHA đó; không dùng SHA implementation cũ để đại diện cho
+bằng chứng mới.
 Trạng thái vẫn là:
 
 ```text
@@ -27,23 +34,36 @@ report này. Không được dùng report để gắn nhãn `STAGING VERIFIED` h
 - `b69a552` — recipient lookup, notifications và fraud report relational.
 - `516083e` — HTTP relational-v2 boundary fail-closed, startup completeness
   assertion và cấm fallback `withState` trong profile relational-v2.
+- `032_relational_scheduled_lifecycle` — operation key durable cho Savings
+  maturity/renewal và Credit statement/overdue/payment/reversal.
+- Registration — provider boundary, hash-only OTP, outbox delivery intent và
+  concurrent one-winner verification.
+- Disposable release rehearsal — test runner hợp nhất; worker chỉ chạy trong
+  database disposable, không thay đổi preview.
+- `33f0e256cb1a23178064005052ba13c82c2d4ff7` — implementation commit chứa
+  registration persistent, migration `032`, lifecycle service, disposable
+  tests và unified release-quality runner.
 
-Migration `029`, `030`, `031` đã được áp dụng idempotent vào `banking_preview`;
-không reset hoặc xóa volume. Migration-set digest local là
-`a55097bd3bd54e4dcdc4110eaebc111f2d817c1a2864cec3586a794c4f45f84f`.
+Evidence preview trước đó ghi nhận migration `029`, `030`, `031` đã được áp
+dụng idempotent vào `banking_preview`; lượt này không reset, drop hoặc migrate
+preview. Disposable rehearsal đã áp dụng `001`–`032`; migration-set digest của
+đầy đủ bộ hiện tại là
+`4a50076d5ee5ce2ee1f72ace3816d49c5c8ea63a3454e544978d7815a9ce0b94`.
 
 ## Ma trận route
 
 Các nhóm customer sau đi trực tiếp qua UnitOfWork PostgreSQL:
 
-`auth`, `mfa`, `accounts`, `beneficiaries`, `transfers`, `savings`, `credit`,
-`recipients`, `notifications`, `fraud`.
+`auth`, `registration`, `mfa`, `accounts`, `beneficiaries`, `transfers`,
+`savings`, `credit`, `recipients`, `notifications`, `fraud`.
 
 Route không nằm trong boundary relational-v2 nhận `503 RELATIONAL_ROUTE_NOT_CUTOVER`
 và không gọi `PostgresRelationalRepository.withState`. Startup fail-closed nếu
-thiếu một route đại diện bắt buộc. Các nhóm vẫn explicit out-of-scope là
-registration (chưa có email provider evidence), Savings maturity/renewal,
-Credit settlement/overdue/reversal scheduler và profile/KYC customer.
+thiếu một route đại diện bắt buộc. Registration đã là RELATIONAL-V2 với provider
+fake/recording chỉ trong disposable; provider thật/staging vẫn là gate riêng.
+Savings maturity/renewal và Credit settlement/overdue/reversal đã có service
+relational-v2 và disposable evidence nhưng chưa tự chạy trên preview. Profile/KYC
+customer vẫn explicit out-of-scope.
 
 ## Quality gate local
 
@@ -51,7 +71,7 @@ Credit settlement/overdue/reversal scheduler và profile/KYC customer.
 |---|---:|
 | `npm run typecheck` | PASS |
 | `npm run build` | PASS |
-| `npm test` | 161 tests: 134 PASS, 0 FAIL, 27 SKIPPED |
+| `npm test` | 166 tests: 135 PASS, 0 FAIL, 31 SKIPPED |
 | `npm run test:critical` | 10 PASS |
 | `npm run test:database:guard` | 5 PASS |
 | `npm run test:database` disposable | 4 PASS |
@@ -60,8 +80,12 @@ Credit settlement/overdue/reversal scheduler và profile/KYC customer.
 | `npm run test:savings:persistence` disposable | 2 PASS |
 | `npm run test:credit:persistence` disposable | 3 PASS |
 | `npm run test:remaining:persistence` disposable | 2 PASS |
+| `npm run test:registration:persistence` disposable | 1 PASS |
+| `npm run test:lifecycle:persistence` disposable | 3 PASS |
 | `npm run test:admin:database` disposable | 8 PASS |
 | `npm run test:persistence` disposable regression | 11 PASS |
+| `npm run test:worker` disposable rehearsal | 10 PASS |
+| `npm run test:release` aggregate disposable gate | 14/14 commands PASS |
 | `relationalHttpCutover.test.ts` | 5 PASS |
 | `npm run validate:database` | 49 tables/constraints PASS |
 | `npm run validate:relational-v2` | PASS; migration/checksum/invariant/orphan checks đều 0 |
@@ -88,27 +112,33 @@ tránh đụng database preview; các nhóm đã có lệnh disposable riêng v�
 - Relational adapter: 1.
 - Recipient/notification/fraud relational: 2.
 - Savings relational: 2.
+- Registration relational: 1.
+- Scheduled lifecycle: 3.
 
-Worker test/worker runtime không được bật trong phiên này theo quyết định phạm
-vi; đó là gate tiếp theo, không phải một skip bị che giấu. Outbox validator hiện
-ghi nhận 12 legacy pending events cần operator reconciliation; worker chưa claim
-chúng.
+Worker test đã chạy 10/10 trên disposable với migration 001–032, gồm lease,
+retry/backoff, dead-letter, restart, hai worker và load 1.000 event. Đây không
+phải worker preview: `.env.compose` vẫn `WORKER_ENABLED=0` và
+`WORKER_CUTOVER_CONFIRMED=0`. Rehearsal không claim hoặc thay đổi 12 legacy
+pending events trong preview; chúng vẫn cần operator reconciliation khi có quyết
+định cutover riêng.
 
 ## Compose smoke
 
-Đã build lại `migrate` và `backend`, chạy migration idempotent, restart backend
-không mất volume. `/healthz` và `/versionz` trả `200`, schema `031`,
-`migrationSetDigest` đúng commit và `imageDigest=unknown`. Route registration
-và route không được duyệt trả `503`, chứng minh không rơi về legacy writer.
+Lượt này không khởi động lại hoặc migrate `banking_preview`; Compose preview vẫn
+giữ `IMAGE_DIGEST=unknown`, worker tắt và migration schema preview theo evidence
+trước đó. Route registration đã được đưa vào relational boundary; khi provider
+email còn `disabled`, lỗi delivery được trả rõ ràng thay vì rơi về legacy writer.
+Các scheduled command chỉ được gọi trong disposable rehearsal.
 
 `code_review.md` vẫn được giữ ở trạng thái deleted theo worktree của người dùng;
 không được restore hoặc đưa vào commit này.
 
 ## Việc còn mở trước release candidate
 
-1. Người dùng quyết định phạm vi/provider cho registration và các scheduled
-   lifecycle out-of-scope.
-2. Chỉ sau khi có quyết định đó mới chạy worker rehearsal/lease/retry/restart;
-   không đặt `WORKER_CUTOVER_CONFIRMED=1` trong local hiện tại.
+1. Người dùng quyết định provider/staging evidence cho registration và lịch
+   scheduled; local chỉ giữ implementation + disposable proof.
+2. Không đặt `WORKER_CUTOVER_CONFIRMED=1` hoặc bật worker trên preview. Khi có
+   cutover được phê duyệt mới gắn scheduler vào runtime staging và ghi backlog,
+   lease, retry, dead-letter, restart, reconciliation.
 3. Tạo staging thật với registry digest, signature/provenance, managed secrets,
    HTTPS, backup/rollback và device E2E; sau đó cập nhật evidence cùng commit.

@@ -1,7 +1,7 @@
 # Relational-v2 HTTP cutover matrix
 
 Ngày cập nhật: 2026-08-26
-Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — worker chưa bật; staging/production evidence chưa có**
+Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — worker preview chưa bật; disposable rehearsal PASS; staging/production evidence chưa có**
 
 ## Phạm vi đã nối trực tiếp
 
@@ -12,6 +12,7 @@ Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — worker chưa bật; staging/
 | Session | `POST /api/v1/auth/refresh` | `auth_sessions`, `refresh_session_*` | Direct khi `...=auth,mfa` | refresh rotation, replay/revocation |
 | Session | `POST /api/v1/auth/logout` | session/family tables | Direct khi `...=auth,mfa` | device binding, family revoke |
 | Session | `POST /api/v1/auth/logout-all` | session/family tables | Direct khi `...=auth,mfa` | customer-wide revoke |
+| Registration | `POST /api/v1/auth/register`, `/register/verify` | `pending_registrations`, `auth_challenges`, `customers`, `payment_accounts`, `registration_completions`, `audit_events`, `outbox_events` | **RELATIONAL-V2** khi `...=auth,registration` | provider boundary test, hash-only OTP, outbox intent không chứa mã, one-winner verify, unique identity, TOTP enrollment |
 | MFA lifecycle | `/auth/mfa/*`, `/auth/otp/challenges` | `mfa_credentials`, `auth_challenges`, `mfa_recovery_*`, `auth_security_events`, session tables | Direct khi `...=auth,mfa` | TOTP enrollment/confirm, login + step-up challenge, retry/lock/expiry/consume, recovery/reset audit, concurrent one-winner verification, refresh/logout security state |
 | Account read | `GET /api/v1/accounts` | `payment_accounts` | Direct khi `...=accounts` | ownership + money mapping |
 | Account read | `GET /api/v1/accounts/:id/number` | `payment_accounts` | Direct khi `...=accounts` | ownership + reveal audit follow-up |
@@ -34,17 +35,18 @@ Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — worker chưa bật; staging/
 | Notifications | `GET /api/v1/notifications`, `POST /api/v1/notifications/:id/read` | `notifications`, `audit_events` | Direct khi `...=notifications` | customer ownership, read-only list, idempotent mark-as-read, no financial mutation |
 | Fraud report | `POST /api/v1/fraud-reports`, `GET /api/v1/fraud-reports/:id` | `fraud_reports`, `fraud_report_idempotency`, `account_transactions`, `audit_events`, `outbox_events` | Direct khi `...=fraud` | transaction ownership, one open report, idempotency, redacted event payload, audit/outbox atomically |
 
-Các nhóm route trên là boundary direct của relational-v2. Local preview dùng `IMAGE_DIGEST=unknown` và không được gọi là staging verified; worker/cloud vẫn chưa bật.
+Các nhóm route trên là boundary direct của relational-v2. Local preview dùng `IMAGE_DIGEST=unknown` và không được gọi là staging verified; worker/cloud vẫn chưa bật. Worker/lifecycle chỉ được rehearsal trên database disposable.
 
-## Các nhóm còn legacy / chưa được phép bật
+## Các nhóm còn lại và trạng thái cutover
 
-| Nhóm | Route/khối | Lý do chưa cutover |
+| Nhóm | Route/khối | Bằng chứng/ghi chú |
 |---|---|---|
-| Registration | `/auth/register`, `/auth/register/verify` | EXPLICITLY OUT OF SCOPE cho local cutover: cần email provider test có delivery evidence. |
-| Savings maturity/renewal | maturity command/worker chưa bật | EXPLICITLY OUT OF SCOPE ở bước này: opening/read đã relational; maturity/renewal chỉ chạy sau worker gate. |
-| Credit settlement/maturity | statement close, overdue evaluation, pending/reversal settlement | EXPLICITLY OUT OF SCOPE ở bước này: customer command/read đã relational; settlement cần worker/core callback. |
-| Profile/KYC customer read | chưa có public HTTP contract được phê duyệt | EXPLICITLY OUT OF SCOPE; KYC case là Admin-only và không tự mở customer route mới. |
-| Admin read/action | `/admin/*` | RELATIONAL-V2 qua `AdminRepository`/action engine; không đi qua public `withState`, vẫn cần admin evidence riêng. |
+| Registration | `/auth/register`, `/auth/register/verify` | **RELATIONAL-V2** — provider test/recording dùng trực tiếp trong disposable; staging provider thật vẫn là gate riêng. |
+| Savings maturity/renewal | scheduled command `RelationalLifecycleService` | **RELATIONAL-V2** — row lock, operation key, ledger/audit/outbox, renewal/return và restart catch-up đã có disposable evidence; chưa tự chạy trên preview. |
+| Credit settlement/maturity | statement close, overdue, pending/reversal settlement | **RELATIONAL-V2** — operation key, no-overpay, ledger/audit/outbox, overdue/reversal và restart catch-up đã có disposable evidence; chưa tự chạy trên preview. |
+| Profile/KYC customer read | chưa có public HTTP contract được phê duyệt | **EXPLICITLY OUT OF SCOPE**; KYC case là Admin-only và không tự mở customer route mới. |
+| Legacy HTTP writer / route chưa phân loại | bất kỳ route mới nào ngoài boundary | **LEGACY — BLOCKS CUTOVER**; runtime relational-v2 trả `503` và regression test cấm gọi `withState`. |
+| Admin read/action | `/admin/*` | **RELATIONAL-V2** qua `AdminRepository`/action engine; không đi qua public `withState`, vẫn cần admin evidence riêng. |
 
 ## Cổng chuyển giai đoạn kế tiếp
 
@@ -62,7 +64,7 @@ Chỉ dùng local/disposable database:
 
 ```powershell
 $env:BANKING_PERSISTENCE_MODE = "relational-v2"
-$env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud"
+$env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud"
 npm run typecheck
 npm run build
 npm run test:critical
@@ -70,4 +72,8 @@ npm run test:critical
 
 Giá trị này chỉ dành cho local preview; `IMAGE_DIGEST=unknown`, không phải staging evidence và không thay thế worker/cloud cutover gate.
 
-`registration` là group riêng, không bật cùng `auth` nếu chưa cấu hình provider gửi email/OTP có evidence; `auth` chỉ bao phủ session login/verify/refresh/logout.
+`registration` là group relational-v2; provider fake/recording chỉ được dùng trong
+disposable test. Preview vẫn để `EMAIL_PROVIDER=disabled` nếu chưa có provider
+được phê duyệt, khi đó route không còn 503 boundary nhưng sẽ trả lỗi delivery rõ
+ràng. Scheduled commands chỉ chạy qua disposable rehearsal, không tự chạy trên
+`banking_preview`.
