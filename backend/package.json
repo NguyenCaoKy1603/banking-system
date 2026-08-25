@@ -60,6 +60,7 @@
     "test:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/persistence.test.ts",
     "test:mfa:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/mfaPersistence.test.ts",
     "test:savings:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/savingsRelational.test.ts",
+    "test:credit:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/creditRelational.test.ts",
     "test:database": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/databaseFoundation.test.ts",
     "test:database:guard": "tsx --test src/tests/disposableDatabaseGuard.test.ts",
     "seed:e2e": "node --env-file-if-exists=.env --import=tsx scripts/seed-e2e.ts"

@@ -215,6 +215,7 @@ export class AccountRepository {
     transferId?: string | null;
     savingsOpeningId?: string | null;
     savingsDepositId?: string | null;
+    creditPaymentId?: string | null;
     direction: AccountTransactionRow["direction"];
     amountMinor: string;
     feeMinor?: string;
@@ -229,11 +230,12 @@ export class AccountRepository {
     const result = await this.client.query(
       `INSERT INTO account_transactions
         (id, account_id, transfer_id, savings_opening_id, savings_deposit_id,
+         credit_payment_id,
          direction, amount_minor, fee_minor,
          currency, status, description, counterparty_name, reference,
          occurred_at, created_at, completed_at, kind)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'VND', $9, $10, $11,
-               $12, COALESCE($13::timestamptz, NOW()), NOW(), $14::timestamptz, $15)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'VND', $10, $11, $12,
+               $13, COALESCE($14::timestamptz, NOW()), NOW(), $15::timestamptz, $16)
        RETURNING *`,
       [
         requireUuid(input.id),
@@ -241,6 +243,7 @@ export class AccountRepository {
         input.transferId ? requireUuid(input.transferId, "transferId") : null,
         input.savingsOpeningId ? requireUuid(input.savingsOpeningId, "savingsOpeningId") : null,
         input.savingsDepositId ? requireUuid(input.savingsDepositId, "savingsDepositId") : null,
+        input.creditPaymentId ? requireUuid(input.creditPaymentId, "creditPaymentId") : null,
         input.direction,
         asBigIntString(input.amountMinor, "amountMinor"),
         asBigIntString(input.feeMinor ?? "0", "feeMinor"),

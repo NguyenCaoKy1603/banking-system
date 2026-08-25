@@ -1061,6 +1061,97 @@ export async function handleRequest(
     const relationalAuth = relationalRoute ? options.relationalHttp : undefined;
 
     if (relationalRoute && options.relationalHttp) {
+      if (request.method === "GET" && segments.length === 1 && segments[0] === "cards") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.listCards(userId));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "cards") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getCard(userId, segments[1]));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.listCreditApplications(userId));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") {
+        const data = requireObject(body);
+        if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational credit application.");
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
+        if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational credit application.");
+        const requestFingerprint = await options.relationalHttp.getCreditApplicationRequestFingerprint(data.requestedLimit);
+        const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CREDIT_APPLICATION", resourceId: null, requestFingerprint });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        writeResponse(response, 201, traceId, await options.relationalHttp.submitCreditApplication({ customerId: userId, idempotencyKey: header(request, "idempotency-key") ?? "", request: data as never, traceId }));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "applications") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getCreditApplication(userId, segments[2]));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 4 && segments[0] === "credit" && segments[1] === "applications" && segments[3] === "activate") {
+        const data = requireObject(body);
+        if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational credit activation.");
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
+        if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational credit activation.");
+        const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CARD_ACTIVATION", resourceId: segments[2], requestFingerprint: fingerprint({ applicationId: segments[2] }) });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        writeResponse(response, 200, traceId, await options.relationalHttp.activateCreditApplication({ customerId: userId, applicationId: segments[2], idempotencyKey: header(request, "idempotency-key") ?? "", traceId }));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 3 && segments[0] === "cards" && (segments[2] === "lock" || segments[2] === "unlock")) {
+        const data = requireObject(body);
+        if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational card control.");
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
+        if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational card control.");
+        const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CARD_UNLOCK", resourceId: segments[1], requestFingerprint: fingerprint({ cardId: segments[1] }) });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        const card = segments[2] === "lock" ? await options.relationalHttp.lockCard(userId, segments[1]) : await options.relationalHttp.unlockCard(userId, segments[1]);
+        writeResponse(response, 200, traceId, { card });
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "accounts") {
+        writeResponse(response, 200, traceId, { items: await options.relationalHttp.listCreditAccounts(userId) });
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "accounts") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getCreditAccount(userId, segments[2]));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 4 && segments[0] === "credit" && segments[1] === "accounts" && segments[3] === "transactions") {
+        const limit = requestUrl.searchParams.get("limit");
+        writeResponse(response, 200, traceId, await options.relationalHttp.listCreditTransactions(userId, segments[2], requestUrl.searchParams.get("cursor") ?? undefined, limit === null ? undefined : Number(limit)));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 4 && segments[0] === "credit" && segments[1] === "accounts" && segments[3] === "statements") {
+        const limit = requestUrl.searchParams.get("limit");
+        writeResponse(response, 200, traceId, await options.relationalHttp.listCreditStatements(userId, segments[2], requestUrl.searchParams.get("cursor") ?? undefined, limit === null ? undefined : Number(limit)));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 5 && segments[0] === "credit" && segments[1] === "accounts" && segments[3] === "statements") {
+        writeResponse(response, 200, traceId, { statement: await options.relationalHttp.getCreditStatement(userId, segments[2], segments[4]) });
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "payment-quotes") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, await options.relationalHttp.createCreditPaymentQuote(userId, data as never));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "payments") {
+        const data = requireObject(body);
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
+        if (!options.mfaService || !stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational credit payment.");
+        const quoteId = typeof data.quoteId === "string" ? data.quoteId : "";
+        const requestFingerprint = await options.relationalHttp.getCreditPaymentStepUpRequestFingerprint(quoteId);
+        if (!requestFingerprint) throw notFound("Credit payment quote not found.");
+        const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CREDIT_PAYMENT", resourceId: quoteId, requestFingerprint });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        writeResponse(response, 200, traceId, await options.relationalHttp.submitCreditPayment({ customerId: userId, idempotencyKey: header(request, "idempotency-key") ?? "", quoteId, requestFingerprint, traceId }));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "payments") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getCreditPayment(userId, segments[2]));
+        return;
+      }
       if (request.method === "GET" && segments.length === 2 && segments[0] === "savings" && segments[1] === "products") {
         writeResponse(response, 200, traceId, { items: await options.relationalHttp.listSavingsProducts(userId) });
         return;
@@ -1352,10 +1443,25 @@ export async function handleRequest(
         const purpose = data.purpose as PersistentStepUpPurpose;
         const resourceId = typeof data.resourceId === "string" ? data.resourceId : null;
         const directTransferCutover = purpose === "TRANSFER" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["transfers"]);
+        const directSavingsCutover = purpose === "SAVINGS_OPENING" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["savings", "deposits"]);
+        const directCreditPaymentCutover = purpose === "CREDIT_PAYMENT" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["credit", "payments"]);
+        const directCreditCardCutover = purpose === "CARD_UNLOCK" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["cards", resourceId, "unlock"]);
+        const directCreditApplicationCutover = purpose === "CREDIT_APPLICATION" && options.relationalHttp?.isRouteEnabled("POST", ["credit", "applications"]);
+        const directCreditActivationCutover = purpose === "CARD_ACTIVATION" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["credit", "applications", resourceId, "activate"]);
         const directMfaLifecycle = options.relationalHttp?.isRouteEnabled("POST", ["auth", "otp", "challenges"]) &&
           ["MFA_FACTOR_CHANGE", "MFA_FACTOR_REMOVAL", "RECOVERY_CODE_ROTATION"].includes(purpose);
         const requestFingerprint = directTransferCutover && options.relationalHttp
           ? await options.relationalHttp.getTransferStepUpRequestFingerprint(resourceId)
+          : directSavingsCutover && options.relationalHttp
+            ? await options.relationalHttp.getSavingsStepUpRequestFingerprint(resourceId)
+            : directCreditPaymentCutover && options.relationalHttp
+              ? await options.relationalHttp.getCreditPaymentStepUpRequestFingerprint(resourceId)
+              : directCreditCardCutover
+                ? fingerprint({ cardId: resourceId })
+              : directCreditApplicationCutover
+                  ? (typeof data.requestFingerprint === "string" ? data.requestFingerprint : null)
+                  : directCreditActivationCutover
+                    ? fingerprint({ applicationId: resourceId })
           : directMfaLifecycle
             ? (typeof data.requestFingerprint === "string" ? data.requestFingerprint : null)
             : system.getStepUpRequestFingerprint(

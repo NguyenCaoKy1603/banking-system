@@ -25,6 +25,11 @@ Trạng thái: **INCREMENTAL CUTOVER — chưa đủ điều kiện bật `BANKI
 | Savings quote | `POST /api/v1/savings/quotes` | `savings_quotes`, `savings_products`, `payment_accounts` | Direct khi `...=savings` | amount/product validation, quote expiry/fingerprint |
 | Savings opening | `POST /api/v1/savings/deposits` | `savings_idempotency`, `savings_quotes`, `savings_openings`, `savings_deposits`, `payment_accounts`, `account_transactions`, `ledger_*`, `audit_events`, `outbox_events` | Direct khi `...=savings` và persistent TOTP | one-time quote, concurrent idempotency, atomic debit/ledger/audit/outbox, rollback |
 | Savings read | `GET /api/v1/savings/openings/:id`, `GET /api/v1/savings/deposits*` | `savings_openings`, `savings_deposits` | Direct khi `...=savings` | ownership, restart read, GET không mutate |
+| Credit cards | `GET /api/v1/cards`, `GET /api/v1/cards/:id` | `credit_cards`, `credit_accounts`, `credit_statements`, `credit_transactions`, `credit_payments` | Direct khi `...=credit` | ownership, server-calculated balances, read-only statement/card detail |
+| Credit card controls | `POST /api/v1/cards/:id/lock`, `/unlock` | `credit_cards`, `audit_events`, `outbox_events` | Direct khi `...=credit` và persistent TOTP | TOTP step-up, row lock, valid state transition, audit/outbox |
+| Credit application | `GET/POST /api/v1/credit/applications*`, `POST .../:id/activate` | `credit_applications`, `credit_idempotency`, `credit_accounts`, `credit_cards`, `credit_statements`, `audit_events`, `outbox_events` | Direct khi `...=credit` và persistent TOTP cho command | request idempotency, explicit admin decision state, activation atomicity and restart |
+| Credit account/statement reads | `GET /api/v1/credit/accounts*`, transactions, statements | `credit_accounts`, `credit_transactions`, `credit_statements`, `credit_statement_items`, `credit_payments` | Direct khi `...=credit` | ownership, keyset cursor, GET không mutate |
+| Credit payment | `POST /api/v1/credit/payment-quotes`, `/payments`, `GET /api/v1/credit/payments/:id` | `credit_payment_quotes`, `credit_idempotency`, `payment_accounts`, `credit_accounts`, `credit_statements`, `credit_payments`, `account_transactions`, `ledger_*`, `audit_events`, `outbox_events` | Direct khi `...=credit` và persistent TOTP | latest statement, no overpay, concurrent one-winner, idempotency, atomic payment/ledger/audit/outbox, rollback/restart |
 
 Feature flag này chỉ là lát cắt rehearsal; preview mặc định không đặt flag nên vẫn dùng compatibility adapter legacy.
 
@@ -36,7 +41,7 @@ Feature flag này chỉ là lát cắt rehearsal; preview mặc định không �
 | Beneficiary/recipient | `/internal-recipients/*` | Lookup token chưa có persistent direct boundary; beneficiary CRUD đã được nối ở group `beneficiaries`. |
 | Transfer | `/transfers/quote`, `/transfers`, `/transfers/:id` | Core transfer path đã nối; vẫn cần chạy disposable HTTP + TOTP/concurrency/restart evidence trước khi coi là cutover hoàn tất. |
 | Savings maturity/renewal | maturity command/worker chưa bật | Opening và read đã direct; maturity/renewal vẫn chờ worker cutover và evidence restart/idempotency. |
-| Credit/cards | `/credit/*`, `/cards/*` | Chưa có service transaction hoàn chỉnh; cần ledger/idempotency/reconciliation contract. |
+| Credit settlement/maturity | statement close, overdue evaluation, pending/reversal settlement | Chưa bật durable worker/core callback; customer command/read cutover không tự chuyển trạng thái. |
 | Notifications/fraud | `/notifications/*`, `/fraud-reports/*` | Cần direct repository + outbox/audit ownership. |
 
 ## Cổng chuyển giai đoạn kế tiếp

@@ -7,15 +7,17 @@ import { RelationalTransferService, type TransferQuoteCommandInput } from "./tra
 import { RelationalSavingsService } from "./savingsService.js";
 import type { SavingsListResult, SavingsQuoteRequest, SubmitSavingsOpeningRequest } from "../bankingSystem.js";
 import type { SavingsDeposit, SavingsOpening, SavingsProduct, SavingsQuote } from "../savings.js";
+import { RelationalCreditService } from "./creditService.js";
+import type { CreditApplication, CreditApplicationRequest, CreditCard, CreditPayment, CreditPaymentQuote, CreditPaymentQuoteRequest, CreditStatement, CreditTransaction, CreditAccount } from "../credit.js";
 import type { MfaChallengeResponse, PersistentMfaService } from "../mfa/persistentMfaService.js";
 import { UnitOfWork } from "./unitOfWork.js";
 
-export type RelationalHttpRoute = "auth" | "registration" | "mfa" | "accounts" | "beneficiaries" | "transfers" | "savings";
+export type RelationalHttpRoute = "auth" | "registration" | "mfa" | "accounts" | "beneficiaries" | "transfers" | "savings" | "credit";
 
 function configuredRoutes(value = process.env.BANKING_RELATIONAL_HTTP_ROUTES): Set<RelationalHttpRoute> {
   const routes = new Set<RelationalHttpRoute>();
   for (const item of (value ?? "").split(",").map((part) => part.trim().toLowerCase()).filter(Boolean)) {
-    if (item === "auth" || item === "registration" || item === "mfa" || item === "accounts" || item === "beneficiaries" || item === "transfers" || item === "savings") routes.add(item);
+    if (item === "auth" || item === "registration" || item === "mfa" || item === "accounts" || item === "beneficiaries" || item === "transfers" || item === "savings" || item === "credit") routes.add(item);
     else throw new Error(`BANKING_RELATIONAL_HTTP_ROUTES contains unsupported route group: ${item}.`);
   }
   return routes;
@@ -29,10 +31,11 @@ export class RelationalHttpBoundary {
   private readonly beneficiaries: RelationalBeneficiaryService;
   private readonly transfers: RelationalTransferService;
   private readonly savings: RelationalSavingsService;
+  private readonly credit: RelationalCreditService;
 
   constructor(unitOfWork: UnitOfWork, routeConfig?: string) {
     this.routes = configuredRoutes(routeConfig);
-    if (["accounts", "beneficiaries", "transfers", "savings", "mfa"].some((route) => this.routes.has(route as RelationalHttpRoute)) && !this.routes.has("auth")) {
+    if (["accounts", "beneficiaries", "transfers", "savings", "credit", "mfa"].some((route) => this.routes.has(route as RelationalHttpRoute)) && !this.routes.has("auth")) {
       throw new Error("BANKING_RELATIONAL_HTTP_ROUTES account and command groups require auth so they have a direct session boundary.");
     }
     this.auth = new RelationalAuthService(unitOfWork);
@@ -41,6 +44,7 @@ export class RelationalHttpBoundary {
     this.beneficiaries = new RelationalBeneficiaryService(unitOfWork);
     this.transfers = new RelationalTransferService(unitOfWork);
     this.savings = new RelationalSavingsService(unitOfWork);
+    this.credit = new RelationalCreditService(unitOfWork);
   }
 
   get enabled(): boolean { return this.routes.size > 0; }
@@ -86,6 +90,20 @@ export class RelationalHttpBoundary {
         (verb === "POST" && segments.length === 2 && (segments[1] === "quotes" || segments[1] === "deposits")) ||
         (verb === "GET" && segments.length === 3 && (segments[1] === "openings" || segments[1] === "deposits")) ||
         (verb === "GET" && segments.length === 2 && segments[1] === "deposits");
+    }
+    if (this.routes.has("credit")) {
+      if (segments[0] === "cards") {
+        return (verb === "GET" && (segments.length === 1 || segments.length === 2)) ||
+          (verb === "POST" && segments.length === 3 && ["lock", "unlock"].includes(segments[2] ?? ""));
+      }
+      if (segments[0] === "credit") {
+        return (verb === "GET" && segments.length === 2 && ["applications", "accounts"].includes(segments[1] ?? "")) ||
+          (verb === "POST" && segments.length === 2 && ["applications", "payment-quotes", "payments"].includes(segments[1] ?? "")) ||
+          (verb === "GET" && segments.length === 3 && ["applications", "accounts", "payments"].includes(segments[1] ?? "")) ||
+          (verb === "POST" && segments.length === 4 && segments[1] === "applications" && segments[3] === "activate") ||
+          (verb === "GET" && segments.length === 4 && segments[1] === "accounts" && ["transactions", "statements"].includes(segments[3] ?? "")) ||
+          (verb === "GET" && segments.length === 5 && segments[1] === "accounts" && segments[3] === "statements");
+      }
     }
     if (!this.routes.has("accounts")) return false;
     if (verb === "GET" && segments.length === 1 && segments[0] === "accounts") return true;
@@ -205,4 +223,23 @@ export class RelationalHttpBoundary {
   getSavingsOpening(customerId: string, openingId: string): Promise<SavingsOpening> { return this.savings.getOpening(customerId, openingId); }
   listSavingsDeposits(customerId: string): Promise<SavingsListResult> { return this.savings.listDeposits(customerId); }
   getSavingsDeposit(customerId: string, depositId: string): Promise<SavingsDeposit> { return this.savings.getDeposit(customerId, depositId); }
+
+  listCards(customerId: string): Promise<{ items: CreditCard[] }> { return this.credit.listCards(customerId); }
+  getCard(customerId: string, cardId: string): Promise<{ card: CreditCard; creditAccount: CreditAccount; latestStatement: CreditStatement | null }> { return this.credit.getCard(customerId, cardId); }
+  listCreditApplications(customerId: string): Promise<{ items: CreditApplication[] }> { return this.credit.listApplications(customerId); }
+  getCreditApplication(customerId: string, applicationId: string): Promise<CreditApplication> { return this.credit.getApplication(customerId, applicationId); }
+  getCreditApplicationRequestFingerprint(requestedLimit: unknown): Promise<string> { return this.credit.getApplicationRequestFingerprint(requestedLimit); }
+  submitCreditApplication(input: { customerId: string; idempotencyKey: string; request: CreditApplicationRequest; traceId?: string }): Promise<CreditApplication> { return this.credit.submitApplication(input); }
+  activateCreditApplication(input: { customerId: string; applicationId: string; idempotencyKey: string; traceId?: string }): Promise<CreditApplication> { return this.credit.activateApplication(input); }
+  listCreditAccounts(customerId: string): Promise<CreditAccount[]> { return this.credit.listAccounts(customerId); }
+  getCreditAccount(customerId: string, accountId: string): Promise<CreditAccount> { return this.credit.getAccount(customerId, accountId); }
+  listCreditTransactions(customerId: string, accountId: string, cursor?: string, limit?: number): Promise<{ items: CreditTransaction[]; nextCursor: string | null }> { return this.credit.listTransactions(customerId, accountId, cursor, limit); }
+  listCreditStatements(customerId: string, accountId: string, cursor?: string, limit?: number): Promise<{ items: CreditStatement[]; nextCursor: string | null }> { return this.credit.listStatements(customerId, accountId, cursor, limit); }
+  getCreditStatement(customerId: string, accountId: string, statementId: string): Promise<CreditStatement> { return this.credit.getStatement(customerId, accountId, statementId); }
+  createCreditPaymentQuote(customerId: string, input: CreditPaymentQuoteRequest): Promise<CreditPaymentQuote> { return this.credit.createPaymentQuote(customerId, input); }
+  getCreditPaymentStepUpRequestFingerprint(quoteId: string): Promise<string | null> { return this.credit.getPaymentStepUpRequestFingerprint(quoteId); }
+  submitCreditPayment(input: { customerId: string; idempotencyKey: string; quoteId: string; requestFingerprint: string; traceId?: string }): Promise<CreditPayment> { return this.credit.submitPayment(input); }
+  getCreditPayment(customerId: string, paymentId: string): Promise<CreditPayment> { return this.credit.getPayment(customerId, paymentId); }
+  lockCard(customerId: string, cardId: string): Promise<CreditCard> { return this.credit.setCardStatus(customerId, cardId, "LOCKED"); }
+  unlockCard(customerId: string, cardId: string): Promise<CreditCard> { return this.credit.setCardStatus(customerId, cardId, "ACTIVE"); }
 }
