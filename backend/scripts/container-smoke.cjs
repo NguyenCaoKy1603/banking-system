@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { Secret, TOTP } = require("otpauth");
 
 const baseUrl = (
   process.env.CONTAINER_BASE_URL ??
@@ -8,15 +9,35 @@ const apiSuffix = "/api/v1";
 const rootUrl = baseUrl.endsWith(apiSuffix)
   ? baseUrl.slice(0, -apiSuffix.length) || new URL(baseUrl).origin
   : new URL(baseUrl).origin;
-const operatorKey = process.env.BANKING_SANDBOX_OPERATOR_KEY?.trim();
 const expectExisting = process.env.SMOKE_EXPECT_EXISTING === "1";
 const smokeEmail =
   process.env.SMOKE_EMAIL?.trim() ?? `container-smoke-${Date.now()}@example.invalid`;
 const smokePassword = process.env.SMOKE_PASSWORD ?? "ContainerSmokePassword1";
 const smokeDeviceId = process.env.SMOKE_DEVICE_ID?.trim() ?? "container-smoke-device";
+const registrationCode = process.env.SMOKE_REGISTRATION_CODE?.trim();
+const totpSecret = process.env.SMOKE_TOTP_SECRET?.trim();
+const explicitTotpCode = process.env.SMOKE_TOTP_CODE?.trim();
+let lastTotpStep = -1;
 
-if (!operatorKey) {
-  throw new Error("BANKING_SANDBOX_OPERATOR_KEY is required for the sandbox smoke flow.");
+async function currentTotpCode() {
+  if (explicitTotpCode) {
+    assert.match(explicitTotpCode, /^\d{6}$/, "SMOKE_TOTP_CODE must contain six digits");
+    return explicitTotpCode;
+  }
+  if (!totpSecret) {
+    throw new Error("SMOKE_TOTP_SECRET is required; the smoke flow does not read a sandbox OTP endpoint.");
+  }
+  let now = Date.now();
+  let step = Math.floor(now / 30000);
+  if (step <= lastTotpStep) {
+    const waitMs = ((lastTotpStep + 1) * 30000) - now + 250;
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    now = Date.now();
+    step = Math.floor(now / 30000);
+  }
+  lastTotpStep = step;
+  const totp = new TOTP({ issuer: "Banking Reference", label: "smoke", algorithm: "SHA1", digits: 6, period: 30, secret: Secret.fromBase32(totpSecret) });
+  return totp.generate({ timestamp: now });
 }
 
 async function request(path, init = {}) {
@@ -38,14 +59,6 @@ async function expectOk(path, init = {}, expectedStatus = 200) {
   return body;
 }
 
-async function readSandboxOtp(challengeId) {
-  const body = await expectOk(`/sandbox/otp/${challengeId}`, {
-    headers: { "X-Sandbox-Operator-Key": operatorKey },
-  });
-  assert.equal(typeof body?.otp, "string");
-  return body.otp;
-}
-
 async function registerUser() {
   const begin = await expectOk(
     "/auth/register",
@@ -61,7 +74,9 @@ async function registerUser() {
     },
     202,
   );
-  const otp = await readSandboxOtp(begin.challengeId);
+  if (!registrationCode || !/^\d{6}$/.test(registrationCode)) {
+    throw new Error("SMOKE_REGISTRATION_CODE must come from the configured email test provider.");
+  }
   await expectOk(
     "/auth/register/verify",
     {
@@ -70,7 +85,7 @@ async function registerUser() {
       body: JSON.stringify({
         challengeId: begin.challengeId,
         method: "OTP",
-        proof: otp,
+        proof: registrationCode,
       }),
     },
     201,
@@ -85,7 +100,7 @@ async function loginUser() {
   });
   let login = body;
   if (response.status === 202) {
-    const otp = await readSandboxOtp(body.challengeId);
+    const totp = await currentTotpCode();
     login = await expectOk(
       "/auth/verify",
       {
@@ -93,8 +108,8 @@ async function loginUser() {
         headers: { "X-Device-ID": smokeDeviceId },
         body: JSON.stringify({
           challengeId: body.challengeId,
-          method: "OTP",
-          proof: otp,
+          method: "TOTP",
+          proof: totp,
         }),
       },
       200,
@@ -110,6 +125,19 @@ async function loginUser() {
 async function main() {
   const live = await fetch(`${rootUrl}/livez`);
   assert.equal(live.status, 200, "liveness endpoint is not healthy");
+
+  const startup = await fetch(`${rootUrl}/startupz`);
+  assert.equal(startup.status, 200, "startup probe is not healthy");
+  const startupBody = await startup.json().catch(() => null);
+  assert.equal(startupBody?.status, "ok");
+
+  const version = await fetch(`${rootUrl}/versionz`);
+  assert.equal(version.status, 200, "version metadata endpoint is not healthy");
+  const versionBody = await version.json().catch(() => null);
+  assert.equal(typeof versionBody?.service, "string");
+  assert.equal(typeof versionBody?.commitSha, "string");
+  assert.equal(versionBody?.moneyMode, "virtual");
+  assert.equal("databaseUrl" in (versionBody ?? {}), false);
 
   const ready = await fetch(`${rootUrl}/healthz`);
   const readyBody = await ready.json().catch(() => null);

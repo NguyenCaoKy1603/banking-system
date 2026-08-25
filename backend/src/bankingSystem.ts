@@ -89,7 +89,6 @@ import {
 } from "./savings.js";
 import {
   createId,
-  createSandboxOtp,
   createOpaqueToken,
   fingerprint,
   hashOpaqueToken,
@@ -98,6 +97,13 @@ import {
   verifyPassword,
   verifyPasswordAsync,
 } from "./security.js";
+import {
+  DeterministicOtpCodeGenerator,
+  OtpDigestKeyring,
+  SecureOtpCodeGenerator,
+  type OtpCodeGenerator,
+} from "./mfa/crypto.js";
+import { NullEmailProvider, type VerificationCodeDeliveryPort } from "./mfa/delivery.js";
 import type {
   AuthUser,
   AuthChallengeResponse,
@@ -254,7 +260,7 @@ export type BeneficiaryInput = {
   bankName?: string;
 };
 
-export type SandboxFundingRequest = {
+export type ReferenceFundingRequest = {
   recipientAccountNumber: string;
   amount: Money;
   reason: string;
@@ -263,7 +269,7 @@ export type SandboxFundingRequest = {
 export type SubmitTransferRequest = {
   quoteId: string;
   stepUp: {
-    method: "OTP" | "BIOMETRIC";
+    method: "OTP" | "TOTP" | "BIOMETRIC";
     proof: string;
     challengeId?: string;
   };
@@ -279,7 +285,7 @@ export type SavingsQuoteRequest = {
 export type SubmitSavingsOpeningRequest = {
   quoteId: string;
   stepUp: {
-    method: "OTP" | "BIOMETRIC";
+    method: "OTP" | "TOTP" | "BIOMETRIC";
     proof: string;
     challengeId?: string;
   };
@@ -300,7 +306,18 @@ export type CreditStatementsResult = {
   nextCursor: string | null;
 };
 
-type StepUpMethod = "OTP" | "BIOMETRIC";
+type StepUpMethod = "OTP" | "TOTP" | "BIOMETRIC";
+
+type ExternalStepUpVerification = {
+  userId: string;
+  challengeId: string;
+  deviceId: string;
+  method: StepUpMethod;
+  purpose: OtpPurpose;
+  resourceId: string | null;
+  requestFingerprint: string | null;
+  expiresAt: number;
+};
 
 function normalizeStepUpMethods(
   methods: readonly StepUpMethod[] | undefined,
@@ -311,7 +328,7 @@ function normalizeStepUpMethods(
     new Set(
       configuredMethods.filter(
         (method): method is StepUpMethod =>
-          method === "OTP" || method === "BIOMETRIC",
+          method === "OTP" || method === "TOTP" || method === "BIOMETRIC",
       ),
     ),
   );
@@ -351,6 +368,13 @@ type AuthChallengeRecord = {
   resourceId: string | null;
   requestFingerprint: string | null;
   otpHash: string | null;
+  proofDigest: string | null;
+  digestKeyId: string | null;
+  status: "ACTIVE" | "CONSUMED" | "LOCKED" | "EXPIRED" | "CANCELLED" | "DELIVERY_FAILED";
+  maxAttempts: number;
+  resendCount: number;
+  lastSentAt: number | null;
+  credentialId: string | null;
 };
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
@@ -599,6 +623,8 @@ type LoginContext = {
   attemptKeys: string[];
   user: UserRecord | undefined;
 };
+
+const DUMMY_LOGIN_PASSWORD = hashPassword("reference-dummy-password-material");
 
 export const BANKING_SYSTEM_STATE_VERSION = 7;
 
@@ -882,7 +908,6 @@ export class BankingSystem {
 
   private readonly clock: Clock;
   private readonly bankingEnvironment: string;
-  private readonly sandboxOperatorKey: string;
   private readonly sandboxOtp: string | undefined;
   private readonly sandboxMfaOtp: string | undefined;
   private readonly allowUnsafeDirectSandboxStepUp: boolean;
@@ -900,8 +925,15 @@ export class BankingSystem {
   private readonly usersByPhone = new Map<string, string>();
   private readonly accessSessions = new Map<string, AccessSession>();
   private readonly authChallenges = new Map<string, AuthChallengeRecord>();
+  /** One-request bridge for a challenge verified by the persistent MFA boundary. */
+  private readonly externalStepUpVerifications = new Map<string, ExternalStepUpVerification>();
   private readonly pendingRegistrations = new Map<string, PendingRegistrationRecord>();
-  private readonly sandboxOtpInbox = new Map<string, string>();
+  private readonly testVerificationCodes = new Map<string, string>();
+  private readonly otpDigestKeyring: OtpDigestKeyring;
+  private readonly otpCodeGenerator: OtpCodeGenerator;
+  private readonly mfaCodeGenerator: OtpCodeGenerator;
+  private readonly verificationCodeDelivery: VerificationCodeDeliveryPort;
+  private readonly deliveryRequired: boolean;
   private readonly authAttemptWindows = new Map<
     string,
     { startedAt: number; attempts: number }
@@ -951,9 +983,14 @@ export class BankingSystem {
     options: {
       clock?: Clock;
       core?: CoreBankingPort;
-      sandboxOperatorKey?: string;
+      /** @deprecated Test-only deterministic email code. Never read from environment. */
       sandboxOtp?: string;
+      /** @deprecated Test-only deterministic login code. Never read from environment. */
       sandboxMfaOtp?: string;
+      otpDigestKeyring?: OtpDigestKeyring;
+      otpCodeGenerator?: OtpCodeGenerator;
+      mfaCodeGenerator?: OtpCodeGenerator;
+      verificationCodeDelivery?: VerificationCodeDeliveryPort;
       /** Test-only compatibility switch. Never enabled by the HTTP server. */
       allowUnsafeDirectSandboxStepUp?: boolean;
       mfaRequired?: boolean;
@@ -985,14 +1022,16 @@ export class BankingSystem {
   ) {
     this.clock = options.clock ?? (() => Date.now());
     this.bankingEnvironment = process.env.BANKING_ENV ?? "development";
-    this.sandboxOperatorKey =
-      options.sandboxOperatorKey ??
-      process.env.BANKING_SANDBOX_OPERATOR_KEY ??
-      "sandbox-operator-local";
     this.core = options.core ?? new InMemoryCoreBanking();
-    this.sandboxOtp = options.sandboxOtp ?? process.env.BANKING_SANDBOX_OTP;
-    this.sandboxMfaOtp =
-      options.sandboxMfaOtp ?? process.env.BANKING_SANDBOX_MFA_OTP;
+    this.sandboxOtp = options.sandboxOtp;
+    this.sandboxMfaOtp = options.sandboxMfaOtp;
+    this.otpDigestKeyring = options.otpDigestKeyring ?? OtpDigestKeyring.fromEnvironment({ required: false });
+    this.otpCodeGenerator = options.otpCodeGenerator ?? new SecureOtpCodeGenerator();
+    this.mfaCodeGenerator = options.mfaCodeGenerator ?? (
+      this.sandboxMfaOtp ? new DeterministicOtpCodeGenerator(this.sandboxMfaOtp) : this.otpCodeGenerator
+    );
+    this.deliveryRequired = options.verificationCodeDelivery !== undefined;
+    this.verificationCodeDelivery = options.verificationCodeDelivery ?? new NullEmailProvider();
     this.allowUnsafeDirectSandboxStepUp =
       options.allowUnsafeDirectSandboxStepUp ?? false;
     if (
@@ -1359,6 +1398,37 @@ export class BankingSystem {
     return this.finishLogin(context, valid);
   }
 
+  async loginPasswordOnly(
+    email: string,
+    password: string,
+    deviceId?: string,
+  ): Promise<AuthUser> {
+    const context = this.prepareLogin(email, password, deviceId);
+    const valid = await verifyPasswordAsync(
+      context.normalizedPassword,
+      context.user?.passwordSalt ?? DUMMY_LOGIN_PASSWORD.salt,
+      context.user?.passwordDigest ?? DUMMY_LOGIN_PASSWORD.digest,
+    );
+    if (!context.user || !valid) {
+      for (const attemptKey of context.attemptKeys) {
+        this.recordAuthFailure(attemptKey);
+      }
+      throw unauthorized("Invalid credentials.");
+    }
+    for (const attemptKey of context.attemptKeys) {
+      this.authAttemptWindows.delete(attemptKey);
+    }
+    return this.publicUser(context.user);
+  }
+
+  issueMfaSession(userId: string, deviceId: string): LoginResponse {
+    const user = this.users.get(userId);
+    if (!user) {
+      throw unauthorized("User session is invalid.");
+    }
+    return this.issueTokenPair(user, createId("refresh-family"), this.normalizeDeviceId(deviceId));
+  }
+
   verifyLoginChallenge(
     challengeId: string,
     method: StepUpMethod,
@@ -1368,7 +1438,7 @@ export class BankingSystem {
     this.cleanupExpiredState();
     const tokenHash = hashOpaqueToken(requireString(challengeId, "challengeId"));
     const challenge = this.authChallenges.get(tokenHash);
-    if (!challenge || challenge.expiresAt <= this.clock()) {
+    if (!challenge || challenge.expiresAt <= this.clock() || challenge.status !== "ACTIVE") {
       throw unauthorized("Authentication challenge is invalid or expired.");
     }
     const user = this.users.get(challenge.userId);
@@ -1434,7 +1504,6 @@ export class BankingSystem {
         challenge.resourceId === normalizedResourceId
       ) {
         this.authChallenges.delete(challengeHash);
-        this.sandboxOtpInbox.delete(challengeHash);
       }
     }
     return this.issueOtpChallenge(
@@ -1448,23 +1517,31 @@ export class BankingSystem {
     );
   }
 
-  getSandboxOtp(operatorKey: string, challengeId: string): string {
-    if (this.bankingEnvironment === "production" || operatorKey !== this.sandboxOperatorKey) {
-      throw unauthorized("Sandbox operator authorization failed.");
+  /** Local test harness only; production-like HTTP never exposes this value. */
+  readTestVerificationCode(challengeId: string): string {
+    if (this.bankingEnvironment !== "development") {
+      throw unauthorized("Reference test verification is disabled outside local development.");
     }
     const challengeHash = hashOpaqueToken(requireString(challengeId, "challengeId"));
     const challenge = this.authChallenges.get(challengeHash);
+    if (!challenge) {
+      throw notFound("Sandbox OTP challenge not found or expired.");
+    }
     const configuredOtp = challenge
       ? challenge.purpose === "LOGIN"
         ? this.sandboxMfaOtp ?? this.sandboxOtp
         : this.sandboxOtp
       : undefined;
     const otp =
-      this.sandboxOtpInbox.get(challengeHash) ??
-      (configuredOtp && challenge?.otpHash === hashOpaqueToken(configuredOtp)
+      this.testVerificationCodes.get(challengeHash) ??
+      (configuredOtp && challenge?.proofDigest === this.otpDigestKeyring.digest(
+        challengeHash,
+        configuredOtp,
+        challenge.digestKeyId ?? this.otpDigestKeyring.currentKeyId,
+      )
         ? configuredOtp
         : undefined);
-    if (!challenge || challenge.expiresAt <= this.clock() || !otp) {
+    if (challenge.expiresAt <= this.clock() || !otp) {
       throw notFound("Sandbox OTP challenge not found or expired.");
     }
     return otp;
@@ -1557,23 +1634,113 @@ export class BankingSystem {
     return this.publicUser(user);
   }
 
+  getUser(userId: string): AuthUser {
+    const user = this.users.get(userId);
+    if (!user) {
+      throw notFound("User not found.");
+    }
+    return this.publicUser(user);
+  }
+
+  verifyCurrentPassword(userId: string, password: string): boolean {
+    const user = this.users.get(userId);
+    return Boolean(user && typeof password === "string" && verifyPassword(password, user.passwordSalt, user.passwordDigest));
+  }
+
+  /**
+   * Records a successful verification performed by PersistentMfaService.
+   * The marker is memory-only, bound to the complete command context, and
+   * consumed by exactly one financial command.
+   */
+  registerExternalStepUpVerification(input: {
+    userId: string;
+    challengeId: string;
+    deviceId?: string;
+    method: StepUpMethod;
+    purpose: OtpPurpose;
+    resourceId?: string | null;
+    requestFingerprint?: string | null;
+    expiresAt?: number;
+  }): void {
+    const challengeId = requireString(input.challengeId, "challengeId");
+    const deviceId = this.normalizeDeviceId(input.deviceId);
+    const resourceId = input.resourceId ?? null;
+    const requestFingerprint = input.requestFingerprint ?? null;
+    const key = this.externalStepUpKey(
+      input.userId,
+      challengeId,
+      deviceId,
+      input.purpose,
+      resourceId,
+      requestFingerprint,
+    );
+    this.externalStepUpVerifications.set(key, {
+      userId: input.userId,
+      challengeId,
+      deviceId,
+      method: input.method,
+      purpose: input.purpose,
+      resourceId,
+      requestFingerprint,
+      expiresAt: input.expiresAt ?? this.clock() + AUTH_CHALLENGE_TTL_MS,
+    });
+  }
+
+  private externalStepUpKey(
+    userId: string,
+    challengeId: string,
+    deviceId: string,
+    purpose: OtpPurpose,
+    resourceId: string | null,
+    requestFingerprint: string | null,
+  ): string {
+    return [
+      userId,
+      challengeId,
+      deviceId,
+      purpose,
+      resourceId ?? "",
+      requestFingerprint ?? "",
+    ].join("\u001f");
+  }
+
+  private consumeExternalStepUpVerification(input: {
+    userId: string;
+    challengeId: string;
+    deviceId?: string;
+    method: StepUpMethod;
+    purpose: OtpPurpose;
+    resourceId: string | null;
+    requestFingerprint: string | null;
+  }): boolean {
+    const deviceId = this.normalizeDeviceId(input.deviceId);
+    const key = this.externalStepUpKey(
+      input.userId,
+      input.challengeId,
+      deviceId,
+      input.purpose,
+      input.resourceId,
+      input.requestFingerprint,
+    );
+    const marker = this.externalStepUpVerifications.get(key);
+    if (!marker) return false;
+    this.externalStepUpVerifications.delete(key);
+    return marker.expiresAt > this.clock() && marker.method === input.method;
+  }
+
   listAccounts(userId: string): PaymentAccount[] {
     return this.core.listPaymentAccounts(userId);
   }
 
-  fundSandbox(
-    operatorKey: string,
+  seedReferenceFunding(
     idempotencyKey: string,
-    input: SandboxFundingRequest,
+    input: ReferenceFundingRequest,
   ): FundingReceipt {
-    if (this.bankingEnvironment === "production") {
+    if (this.bankingEnvironment !== "development") {
       throw conflictWithCode(
-        "SANDBOX_DISABLED",
-        "Sandbox Funding bị vô hiệu hóa ngoài môi trường sandbox/development.",
+        "REFERENCE_FIXTURE_DISABLED",
+        "Reference fixture funding chỉ được phép trong local development.",
       );
-    }
-    if (operatorKey !== this.sandboxOperatorKey) {
-      throw unauthorized("Sandbox operator authorization failed.");
     }
     const normalizedKey = requireIdempotencyKey(idempotencyKey, 8);
     const amountMinor = parseMoney(input.amount, "amount");
@@ -1625,9 +1792,9 @@ export class BankingSystem {
     return { ...receipt, amount: { ...receipt.amount } };
   }
 
-  seedCreditSandbox(operatorKey: string, userId: string): CreditCard[] {
-    if (this.bankingEnvironment === "production" || operatorKey !== this.sandboxOperatorKey) {
-      throw unauthorized("Sandbox operator authorization failed.");
+  seedReferenceCredit(userId: string): CreditCard[] {
+    if (this.bankingEnvironment !== "development") {
+      throw unauthorized("Reference fixture credit is disabled outside local development.");
     }
     if (!this.users.has(userId)) {
       throw notFound("Sandbox user not found.");
@@ -1748,7 +1915,10 @@ export class BankingSystem {
     const current = [...this.creditApplications.values()].find(
       (application) =>
         application.userId === userId &&
-        (application.status === "PENDING_ACTIVATION" || application.status === "ACTIVE"),
+        (application.status === "SUBMITTED" ||
+          application.status === "UNDER_REVIEW" ||
+          application.status === "PENDING_ACTIVATION" ||
+          application.status === "ACTIVE"),
     );
     if (current) {
       if (current.requestFingerprint === requestFingerprint) {
@@ -1774,9 +1944,9 @@ export class BankingSystem {
     const application: CreditApplicationRecord = {
       applicationId: newCreditId(),
       requestedLimit: creditMoney(requestedLimitMinor),
-      approvedLimit: creditMoney(requestedLimitMinor),
-      status: "PENDING_ACTIVATION",
-      decisionReason: "SANDBOX_AUTO_APPROVED",
+      approvedLimit: null,
+      status: "SUBMITTED",
+      decisionReason: null,
       creditAccountId: null,
       createdAt: now,
       updatedAt: now,
@@ -1790,7 +1960,47 @@ export class BankingSystem {
       applicationId: application.applicationId,
     });
     this.recordAudit("CREDIT_APPLICATION_SUBMITTED", userId, application.applicationId);
-    this.enqueueOutbox("CREDIT_APPLICATION_APPROVED", application.applicationId, now);
+    this.enqueueOutbox("CREDIT_APPLICATION_SUBMITTED", application.applicationId, now);
+    return toPublicCreditApplication(application);
+  }
+
+  /**
+   * Reference-only bridge used by deterministic tests until the Admin API and
+   * the customer-facing credit repository share the same relational record.
+   * It deliberately requires the existing test-only step-up switch and never
+   * runs in preview/production-like environments. Production decisions must
+   * be made by the Admin four-eyes action executor.
+   */
+  applyReferenceCreditDecisionForTest(
+    applicationId: string,
+    decision: "PENDING_ACTIVATION" | "REJECTED",
+    reasonCode = "REFERENCE_REVIEW",
+    approvedLimit?: Money,
+  ): CreditApplication {
+    if (!this.allowUnsafeDirectSandboxStepUp || this.bankingEnvironment !== "development") {
+      throw unauthorized("Reference credit decisions are disabled outside test fixtures.");
+    }
+    const application = this.creditApplications.get(requireString(applicationId, "applicationId"));
+    if (!application) throw notFound("Credit application not found.");
+    if (application.status !== "SUBMITTED" && application.status !== "UNDER_REVIEW") {
+      throw conflict("Credit application is not awaiting a reference review.");
+    }
+    const now = nowIso(this.clock);
+    const requested = BigInt(application.requestedLimit.amountMinor);
+    const limit = approvedLimit ? parseMoney(approvedLimit, "approvedLimit") : requested;
+    if (decision === "PENDING_ACTIVATION" && (limit <= 0n || limit > requested)) {
+      throw conflict("Approved credit limit is outside the requested limit.");
+    }
+    application.status = decision;
+    application.approvedLimit = decision === "PENDING_ACTIVATION" ? creditMoney(limit) : null;
+    application.decisionReason = requireBoundedString(reasonCode, "reasonCode", 80);
+    application.updatedAt = now;
+    this.recordAudit("CREDIT_APPLICATION_REFERENCE_DECISION", application.userId, application.applicationId);
+    this.enqueueOutbox(
+      decision === "PENDING_ACTIVATION" ? "CREDIT_APPLICATION_APPROVED" : "CREDIT_APPLICATION_REJECTED",
+      application.applicationId,
+      now,
+    );
     return toPublicCreditApplication(application);
   }
 
@@ -2418,7 +2628,7 @@ export class BankingSystem {
     const stepUp = request.stepUp;
     if (
       !stepUp ||
-      (stepUp.method !== "OTP" && stepUp.method !== "BIOMETRIC") ||
+      (stepUp.method !== "OTP" && stepUp.method !== "TOTP" && stepUp.method !== "BIOMETRIC") ||
       typeof stepUp.proof !== "string" ||
       !stepUp.proof.trim()
     ) {
@@ -2430,16 +2640,27 @@ export class BankingSystem {
     }
     try {
       if (stepUp.challengeId) {
-        this.verifyOtpChallenge(
-          stepUp.challengeId,
+        const externallyVerified = this.consumeExternalStepUpVerification({
           userId,
+          challengeId: stepUp.challengeId,
           deviceId,
-          stepUp.method,
-          stepUp.proof,
-          "SAVINGS_OPENING",
-          quoteRecord.quoteId,
+          method: stepUp.method,
+          purpose: "SAVINGS_OPENING",
+          resourceId: quoteRecord.quoteId,
           requestFingerprint,
-        );
+        });
+        if (!externallyVerified) {
+          this.verifyOtpChallenge(
+            stepUp.challengeId,
+            userId,
+            deviceId,
+            stepUp.method,
+            stepUp.proof,
+            "SAVINGS_OPENING",
+            quoteRecord.quoteId,
+            requestFingerprint,
+          );
+        }
       } else if (
         !this.allowUnsafeDirectSandboxStepUp ||
         !(
@@ -2829,7 +3050,7 @@ export class BankingSystem {
     const stepUp = request.stepUp;
     if (
       !stepUp ||
-      (stepUp.method !== "OTP" && stepUp.method !== "BIOMETRIC") ||
+      (stepUp.method !== "OTP" && stepUp.method !== "TOTP" && stepUp.method !== "BIOMETRIC") ||
       typeof stepUp.proof !== "string" ||
       !stepUp.proof.trim()
     ) {
@@ -2845,16 +3066,27 @@ export class BankingSystem {
     });
     try {
       if (stepUp.challengeId) {
-        this.verifyOtpChallenge(
-          stepUp.challengeId,
+        const externallyVerified = this.consumeExternalStepUpVerification({
           userId,
+          challengeId: stepUp.challengeId,
           deviceId,
-          stepUp.method,
-          stepUp.proof,
-          "TRANSFER",
-          quoteId,
-          transferContextFingerprint,
-        );
+          method: stepUp.method,
+          purpose: "TRANSFER",
+          resourceId: quoteId,
+          requestFingerprint: transferContextFingerprint,
+        });
+        if (!externallyVerified) {
+          this.verifyOtpChallenge(
+            stepUp.challengeId,
+            userId,
+            deviceId,
+            stepUp.method,
+            stepUp.proof,
+            "TRANSFER",
+            quoteId,
+            transferContextFingerprint,
+          );
+        }
       } else if (
         !this.allowUnsafeDirectSandboxStepUp ||
         !(
@@ -3074,8 +3306,7 @@ export class BankingSystem {
     };
   }
 
-  processScheduledWork(
-    operatorKey: string,
+  runReferenceScheduledWork(
     userId?: string,
   ): {
     usersProcessed: number;
@@ -3085,11 +3316,8 @@ export class BankingSystem {
     savingsMaturities: number;
     creditStatements: number;
   } {
-    if (
-      this.bankingEnvironment === "production" ||
-      operatorKey !== this.sandboxOperatorKey
-    ) {
-      throw unauthorized("Sandbox operator authorization failed.");
+    if (this.bankingEnvironment !== "development") {
+      throw unauthorized("Reference scheduled work is disabled outside local development.");
     }
     const targetUserIds = userId
       ? [requireString(userId, "userId")]
@@ -3896,7 +4124,7 @@ export class BankingSystem {
     }
     if (
       !stepUp ||
-      (stepUp.method !== "OTP" && stepUp.method !== "BIOMETRIC") ||
+      (stepUp.method !== "OTP" && stepUp.method !== "TOTP" && stepUp.method !== "BIOMETRIC") ||
       typeof stepUp.proof !== "string" ||
       !stepUp.proof.trim()
     ) {
@@ -3908,16 +4136,27 @@ export class BankingSystem {
     }
     try {
       if (stepUp.challengeId) {
-        this.verifyOtpChallenge(
-          stepUp.challengeId,
+        const externallyVerified = this.consumeExternalStepUpVerification({
           userId,
+          challengeId: stepUp.challengeId,
           deviceId,
-          stepUp.method,
-          stepUp.proof,
+          method: stepUp.method,
           purpose,
           resourceId,
           requestFingerprint,
-        );
+        });
+        if (!externallyVerified) {
+          this.verifyOtpChallenge(
+            stepUp.challengeId,
+            userId,
+            deviceId,
+            stepUp.method,
+            stepUp.proof,
+            purpose,
+            resourceId,
+            requestFingerprint,
+          );
+        }
       } else if (
         !this.allowUnsafeDirectSandboxStepUp ||
         !(
@@ -4112,19 +4351,33 @@ export class BankingSystem {
       this.accessSessions.set(hash, { ...session });
     }
     this.authChallenges.clear();
-    this.sandboxOtpInbox.clear();
+    this.testVerificationCodes.clear();
+    const legacySnapshot = (rawState.stateVersion ?? 1) < BANKING_SYSTEM_STATE_VERSION;
     for (const [hash, challenge] of state.authChallenges) {
+      const legacyFixedOtp = challenge.purpose === "LOGIN"
+        ? this.sandboxMfaOtp ?? this.sandboxOtp
+        : this.sandboxOtp;
+      const legacyOtpHashMatches =
+        (legacySnapshot || !challenge.proofDigest) &&
+        Boolean(challenge.otpHash && legacyFixedOtp) &&
+        (challenge.otpHash === hashOpaqueToken(legacyFixedOtp!) || legacySnapshot);
+      const migratedProofDigest = legacyOtpHashMatches && legacyFixedOtp
+        ? this.otpDigestKeyring.digest(hash, legacyFixedOtp!)
+        : challenge.proofDigest ?? challenge.otpHash ?? null;
       this.authChallenges.set(hash, {
         ...challenge,
         methods: [...challenge.methods],
         purpose: challenge.purpose ?? "LOGIN",
         resourceId: challenge.resourceId ?? null,
         requestFingerprint: challenge.requestFingerprint ?? null,
-        otpHash:
-          challenge.otpHash ??
-          (challenge.purpose === "LOGIN" && (this.sandboxMfaOtp ?? this.sandboxOtp)
-            ? hashOpaqueToken(this.sandboxMfaOtp ?? this.sandboxOtp!)
-            : null),
+        otpHash: migratedProofDigest,
+        proofDigest: migratedProofDigest,
+        digestKeyId: challenge.digestKeyId ?? this.otpDigestKeyring.currentKeyId,
+        status: challenge.status ?? "ACTIVE",
+        maxAttempts: challenge.maxAttempts ?? AUTH_RATE_LIMIT_MAX_ATTEMPTS,
+        resendCount: challenge.resendCount ?? 0,
+        lastSentAt: challenge.lastSentAt ?? null,
+        credentialId: challenge.credentialId ?? null,
       });
     }
     this.pendingRegistrations.clear();
@@ -4648,6 +4901,22 @@ export class BankingSystem {
     return null;
   }
 
+  /** Canonical context binding shared by the HTTP MFA boundary and commands. */
+  getStepUpRequestFingerprint(
+    purpose: OtpPurpose,
+    resourceId: string | null,
+    suppliedFingerprint?: string | null,
+  ): string | null {
+    return this.resolveOtpRequestFingerprint(purpose, resourceId) ?? suppliedFingerprint ?? null;
+  }
+
+  getCreditApplicationRequestFingerprint(requestedLimit: unknown): string {
+    const requestedLimitMinor = requestedLimit === undefined
+      ? BigInt(DEFAULT_CREDIT_LIMIT_MINOR)
+      : parseMoney(requestedLimit as Money, "requestedLimit");
+    return fingerprint({ requestedLimitMinor: requestedLimitMinor.toString() });
+  }
+
   private issueOtpChallenge(
     userId: string,
     deviceId: string,
@@ -4660,7 +4929,13 @@ export class BankingSystem {
     const challengeId = createOpaqueToken();
     const expiresAt = this.clock() + AUTH_CHALLENGE_TTL_MS;
     const challengeHash = hashOpaqueToken(challengeId);
-    const otp = fixedOtp ?? createSandboxOtp();
+    const otp = fixedOtp ?? (
+      purpose === "LOGIN" ? this.mfaCodeGenerator.generate() : this.otpCodeGenerator.generate()
+    );
+    const proofDigest = this.otpDigestKeyring.digest(challengeHash, otp);
+    const deterministicTestCode = (this.bankingEnvironment === "development" || this.bankingEnvironment === "test")
+      ? otp
+      : undefined;
     this.authChallenges.set(challengeHash, {
       userId,
       deviceId,
@@ -4670,9 +4945,39 @@ export class BankingSystem {
       purpose,
       resourceId,
       requestFingerprint,
-      otpHash: hashOpaqueToken(otp),
+      otpHash: proofDigest,
+      proofDigest,
+      digestKeyId: this.otpDigestKeyring.currentKeyId,
+      status: "ACTIVE",
+      maxAttempts: 5,
+      resendCount: 0,
+      lastSentAt: this.clock(),
+      credentialId: null,
     });
-    this.sandboxOtpInbox.set(challengeHash, otp);
+    if (deterministicTestCode) {
+      this.testVerificationCodes.set(challengeHash, otp);
+    }
+    void this.verificationCodeDelivery.send({
+      deliveryId: challengeHash,
+      purpose,
+      destination: "masked@example.invalid",
+      code: otp,
+      expiresAt: new Date(expiresAt).toISOString(),
+    }).then((result) => {
+      if (this.deliveryRequired && result.status === "FAILED") {
+        const current = this.authChallenges.get(challengeHash);
+        if (current?.status === "ACTIVE") {
+          current.status = "DELIVERY_FAILED";
+          this.recordAudit("OTP_DELIVERY_FAILED", userId, resourceId);
+        }
+      }
+    }).catch(() => {
+      const current = this.authChallenges.get(challengeHash);
+      if (this.deliveryRequired && current?.status === "ACTIVE") {
+        current.status = "DELIVERY_FAILED";
+        this.recordAudit("OTP_DELIVERY_FAILED", userId, resourceId);
+      }
+    });
     this.recordAudit("OTP_CHALLENGE_CREATED", userId, resourceId);
     return {
       challengeId,
@@ -4694,7 +4999,7 @@ export class BankingSystem {
   ): void {
     const challengeHash = hashOpaqueToken(requireString(challengeId, "challengeId"));
     const challenge = this.authChallenges.get(challengeHash);
-    if (!challenge || challenge.expiresAt <= this.clock()) {
+    if (!challenge || challenge.expiresAt <= this.clock() || challenge.status !== "ACTIVE") {
       throw unauthorized("OTP challenge is invalid or expired.");
     }
     if (challenge.userId !== userId || challenge.deviceId !== this.normalizeDeviceId(deviceId)) {
@@ -4708,20 +5013,29 @@ export class BankingSystem {
       this.recordChallengeFailure(challengeHash, challenge);
       throw unauthorized("OTP challenge context mismatch.");
     }
-    if (!challenge.methods.includes(method) || typeof proof !== "string" || !proof.trim()) {
+    if (
+      (!(challenge.methods.includes(method) || (method === "TOTP" && challenge.methods.includes("OTP")))) ||
+      typeof proof !== "string" ||
+      !proof.trim()
+    ) {
       this.recordChallengeFailure(challengeHash, challenge);
       throw unauthorized("OTP challenge is invalid.");
     }
     const valid =
-      method === "OTP"
-        ? challenge.otpHash !== null && hashOpaqueToken(proof) === challenge.otpHash
+      method === "OTP" || method === "TOTP"
+        ? challenge.proofDigest !== null && this.otpDigestKeyring.verify(
+            challengeHash,
+            proof,
+            challenge.proofDigest,
+            challenge.digestKeyId ?? undefined,
+          )
         : this.allowUnsafeDirectSandboxStepUp && proof === "sandbox-biometric";
     if (!valid) {
       this.recordChallengeFailure(challengeHash, challenge);
       throw unauthorized("OTP challenge verification failed.");
     }
     this.authChallenges.delete(challengeHash);
-    this.sandboxOtpInbox.delete(challengeHash);
+    this.testVerificationCodes.delete(challengeHash);
   }
 
   private cleanupExpiredState(preservedQuoteIds: ReadonlySet<string> = new Set()): void {
@@ -4754,7 +5068,11 @@ export class BankingSystem {
     for (const [challengeHash, challenge] of this.authChallenges) {
       if (challenge.expiresAt <= now) {
         this.authChallenges.delete(challengeHash);
-        this.sandboxOtpInbox.delete(challengeHash);
+      }
+    }
+    for (const [key, marker] of this.externalStepUpVerifications) {
+      if (marker.expiresAt <= now) {
+        this.externalStepUpVerifications.delete(key);
       }
     }
     for (const [registrationId, registration] of this.pendingRegistrations) {
@@ -4973,8 +5291,8 @@ export class BankingSystem {
     challenge: AuthChallengeRecord,
   ): void {
     challenge.attempts += 1;
-    if (challenge.attempts >= AUTH_RATE_LIMIT_MAX_ATTEMPTS) {
-      this.authChallenges.delete(tokenHash);
+    if (challenge.attempts >= challenge.maxAttempts) {
+      challenge.status = "LOCKED";
       throw rateLimited("Too many authentication challenge attempts.");
     }
   }

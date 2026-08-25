@@ -1,4 +1,4 @@
-export type StepUpMethod = "OTP" | "BIOMETRIC";
+export type StepUpMethod = "OTP" | "TOTP" | "BIOMETRIC";
 
 export type ControlPolicy = {
   configVersion: string;

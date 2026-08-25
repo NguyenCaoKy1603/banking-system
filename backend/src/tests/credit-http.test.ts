@@ -5,9 +5,9 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer } from "../http.js";
 
-const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
 
 async function completeRegistration(
+  system: BankingSystem,
   request: (path: string, init?: RequestInit) => Promise<Response>,
   deviceId: string,
 ): Promise<{ user: { id: string } }> {
@@ -22,10 +22,7 @@ async function completeRegistration(
   });
   assert.equal(begin.status, 202);
   const challenge = (await begin.json()) as { challengeId: string };
-  const otpResponse = await request(`/sandbox/otp/${challenge.challengeId}`, {
-    headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY },
-  });
-  const otp = (await otpResponse.json()) as { otp: string };
+  const otp = { otp: system.readTestVerificationCode(challenge.challengeId) };
   const verified = await request("/auth/register/verify", {
     method: "POST",
     body: JSON.stringify({ challengeId: challenge.challengeId, proof: otp.otp }),
@@ -52,29 +49,10 @@ test("HTTP credit sandbox exposes card, statement and idempotent payment flow", 
   });
   const body = (value: unknown) => JSON.stringify(value);
 
-  const registered = await completeRegistration(request, deviceId);
-  const unauthorizedProcessor = await request("/sandbox/process-scheduled", {
-    method: "POST",
-    body: body({ userId: registered.user.id }),
-  });
-  assert.equal(unauthorizedProcessor.status, 401);
-  const invalidProcessor = await request("/sandbox/process-scheduled", {
-    method: "POST",
-    headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY },
-    body: body({ userId: 42 }),
-  });
-  assert.equal(invalidProcessor.status, 422);
-  const processor = await request("/sandbox/process-scheduled", {
-    method: "POST",
-    headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY },
-    body: body({ userId: registered.user.id }),
-  });
-  assert.equal(processor.status, 200);
-  assert.equal(
-    (await processor.json() as { usersProcessed: number }).usersProcessed,
-    1,
-  );
-  system.seedCreditSandbox(SANDBOX_OPERATOR_KEY, registered.user.id);
+  const registered = await completeRegistration(system, request, deviceId);
+  const removedFixtureRoute = await request("/sandbox/process-scheduled", { method: "POST", body: body({ userId: registered.user.id }) });
+  assert.equal(removedFixtureRoute.status, 404);
+  system.seedReferenceCredit(registered.user.id);
   const login = await request("/auth/login", {
     method: "POST",
     body: body({ email: "credit-http@example.com", password: "Password1" }),
@@ -115,7 +93,7 @@ test("HTTP credit sandbox exposes card, statement and idempotent payment flow", 
 
   const accountsResponse = await authRequest("/accounts");
   const accounts = (await accountsResponse.json()) as { accounts: Array<{ id: string }> };
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, "credit-http-funding", {
+  system.seedReferenceFunding("credit-http-funding", {
     recipientAccountNumber: system.getAccountNumber(registered.user.id, accounts.accounts[0]!.id),
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "test fixture funding",

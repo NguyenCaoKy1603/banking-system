@@ -5,9 +5,9 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer, createPersistentBankingServer } from "../http.js";
 
-const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
 
 async function completeRegistration(
+  system: BankingSystem,
   request: (path: string, init?: RequestInit) => Promise<Response>,
   deviceId: string,
   input: { fullName: string; email: string; phoneNumber: string; password: string },
@@ -19,11 +19,7 @@ async function completeRegistration(
   });
   assert.equal(begin.status, 202);
   const challenge = (await begin.json()) as { challengeId: string };
-  const otpResponse = await request(`/sandbox/otp/${challenge.challengeId}`, {
-    headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY },
-  });
-  assert.equal(otpResponse.status, 200);
-  const otp = (await otpResponse.json()) as { otp: string };
+  const otp = { otp: system.readTestVerificationCode(challenge.challengeId) };
   const verified = await request("/auth/register/verify", {
     method: "POST",
     headers: { "X-Device-ID": deviceId },
@@ -170,7 +166,7 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  const registered = await completeRegistration(request, deviceHeaders["X-Device-ID"], {
+  const registered = await completeRegistration(system, request, deviceHeaders["X-Device-ID"], {
     fullName: "HTTP User",
     email: "http@example.com",
     phoneNumber: "0900000000",
@@ -226,7 +222,7 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
   assert.equal(controlPolicy.transfersEnabled, true);
   assert.ok(accounts.accounts[0]?.id);
   const sourceAccountNumber = accountNumberPayload.accountNumber;
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, "http-transfer-funding", {
+  system.seedReferenceFunding("http-transfer-funding", {
     recipientAccountNumber: sourceAccountNumber,
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "test fixture funding",
@@ -524,7 +520,7 @@ test("HTTP transfer reports pending status for asynchronous settlement", async (
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  const registered = await completeRegistration(request, deviceId, {
+  const registered = await completeRegistration(system, request, deviceId, {
     fullName: "Pending HTTP User",
     email: "pending-http@example.com",
     phoneNumber: "0900000003",
@@ -557,7 +553,7 @@ test("HTTP transfer reports pending status for asynchronous settlement", async (
   const recipientAccount = system.listAccounts(recipient.id)[0];
   assert.ok(recipientAccount);
   const sourceAccountNumber = system.getAccountNumber(registered.user.id, accounts.accounts[0].id);
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, "pending-http-funding", {
+  system.seedReferenceFunding("pending-http-funding", {
     recipientAccountNumber: sourceAccountNumber,
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "test fixture funding",
@@ -622,7 +618,7 @@ test("HTTP API supports beneficiary directory CRUD without exposing raw account 
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  await completeRegistration(request, deviceId, {
+  await completeRegistration(system, request, deviceId, {
     fullName: "Beneficiary HTTP User",
     email: "beneficiary-http@example.com",
     phoneNumber: "0900000004",
@@ -722,7 +718,7 @@ test("HTTP auth exposes a device-bound MFA challenge", async (t) => {
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  await completeRegistration(request, deviceId, {
+  await completeRegistration(system, request, deviceId, {
     fullName: "MFA HTTP User",
     email: "mfa-http@example.com",
     phoneNumber: "0900000001",
@@ -778,7 +774,7 @@ test("HTTP auth exposes a server-configured biometric challenge", async (t) => {
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  await completeRegistration(request, deviceId, {
+  await completeRegistration(system, request, deviceId, {
     fullName: "Biometric HTTP User",
     email: "biometric-http@example.com",
     phoneNumber: "0900000002",

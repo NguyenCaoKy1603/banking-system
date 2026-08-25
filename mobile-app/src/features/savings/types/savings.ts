@@ -96,7 +96,7 @@ export type SavingsDepositsResponse = {
 export type SubmitSavingsOpeningRequest = {
   quoteId: string;
   stepUp: {
-    method: "OTP" | "BIOMETRIC";
+    method: "OTP" | "TOTP" | "BIOMETRIC";
     proof: string;
     challengeId?: string;
   };

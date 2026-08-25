@@ -14,7 +14,7 @@ export type CreditDebtEffect = "INCREASE" | "DECREASE" | "NONE";
 export type CreditStatementStatus = "ISSUED" | "PARTIALLY_PAID" | "PAID" | "OVERDUE";
 export type CreditPaymentStatus = "PENDING" | "SUCCEEDED" | "FAILED" | "REVERSED";
 export type CreditPaymentOption = "MINIMUM" | "FULL_STATEMENT" | "CUSTOM";
-export type CreditStepUpMethod = "OTP" | "BIOMETRIC";
+export type CreditStepUpMethod = "OTP" | "TOTP" | "BIOMETRIC";
 
 export type CreditCard = {
   cardId: string;
@@ -123,7 +123,12 @@ export type CreditStepUp = {
   challengeId?: string;
 };
 
-export type CreditApplicationStatus = "PENDING_ACTIVATION" | "ACTIVE" | "REJECTED";
+export type CreditApplicationStatus =
+  | "SUBMITTED"
+  | "UNDER_REVIEW"
+  | "PENDING_ACTIVATION"
+  | "ACTIVE"
+  | "REJECTED";
 
 export type CreditApplication = {
   applicationId: string;

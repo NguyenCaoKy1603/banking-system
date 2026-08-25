@@ -2,7 +2,7 @@ name: banking-reference-preview
 
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16@sha256:c1b3783309b6499c795eed7c20135a1a4d25cae1b575c3d52c6f536129a1b109
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -26,10 +26,16 @@ services:
       args:
         COMMIT_SHA: ${COMMIT_SHA:-local}
     environment:
-      BANKING_ENV: preview
-      NODE_ENV: preview
+      BANKING_ENV: ${BANKING_ENV:-preview}
+      NODE_ENV: ${NODE_ENV:-preview}
+      BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
       BANKING_STORAGE: postgres
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      BUILD_COMMIT_SHA: ${COMMIT_SHA:-local}
+      RELEASE_ID: ${RELEASE_ID:-local}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-unknown}
+      MIGRATION_SET_DIGEST: ${MIGRATION_SET_DIGEST:-unknown}
+      API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,16 +50,24 @@ services:
       args:
         COMMIT_SHA: ${COMMIT_SHA:-local}
     environment:
-      BANKING_ENV: preview
-      NODE_ENV: preview
+      BANKING_ENV: ${BANKING_ENV:-preview}
+      NODE_ENV: ${NODE_ENV:-preview}
+      BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
       BANKING_STORAGE: postgres
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       PORT: 5000
+      BUILD_COMMIT_SHA: ${COMMIT_SHA:-local}
+      RELEASE_ID: ${RELEASE_ID:-local}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-unknown}
+      MIGRATION_SET_DIGEST: ${MIGRATION_SET_DIGEST:-unknown}
+      API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
       BANKING_MFA_REQUIRED: ${BANKING_MFA_REQUIRED:-1}
-      BANKING_MFA_METHODS: ${BANKING_MFA_METHODS:-OTP}
-      BANKING_SANDBOX_MFA_OTP: ${BANKING_SANDBOX_MFA_OTP:?BANKING_SANDBOX_MFA_OTP is required}
-      BANKING_SANDBOX_OTP: ${BANKING_SANDBOX_OTP:?BANKING_SANDBOX_OTP is required}
-      BANKING_SANDBOX_OPERATOR_KEY: ${BANKING_SANDBOX_OPERATOR_KEY:?BANKING_SANDBOX_OPERATOR_KEY is required}
+      BANKING_MFA_METHODS: ${BANKING_MFA_METHODS:-TOTP}
+      BANKING_OTP_PEPPER: ${BANKING_OTP_PEPPER:?BANKING_OTP_PEPPER is required}
+      BANKING_OTP_PEPPER_KEY_ID: ${BANKING_OTP_PEPPER_KEY_ID:-otp-v1}
+      BANKING_MFA_ENCRYPTION_KEY: ${BANKING_MFA_ENCRYPTION_KEY:?BANKING_MFA_ENCRYPTION_KEY is required}
+      BANKING_MFA_ENCRYPTION_KEY_ID: ${BANKING_MFA_ENCRYPTION_KEY_ID:-mfa-v1}
+      BANKING_MFA_RECOVERY_COOLDOWN_MS: ${BANKING_MFA_RECOVERY_COOLDOWN_MS:-86400000}
       BANKING_SETTLE_IMMEDIATELY: ${BANKING_SETTLE_IMMEDIATELY:-1}
       BANKING_ALLOWED_ORIGINS: ${BANKING_ALLOWED_ORIGINS:?BANKING_ALLOWED_ORIGINS is required}
       BANKING_SANDBOX_CREDIT_OVERDUE: ${BANKING_SANDBOX_CREDIT_OVERDUE:-0}
@@ -69,11 +83,68 @@ services:
     ports:
       - "127.0.0.1:${BACKEND_PORT:-5000}:5000"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/healthz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/readyz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 5s
       timeout: 5s
       retries: 12
       start_period: 20s
+    restart: unless-stopped
+
+  admin-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+    environment:
+      BANKING_ENV: ${BANKING_ENV:-preview}
+      NODE_ENV: ${NODE_ENV:-preview}
+      BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
+      ADMIN_STORAGE: postgres
+      ADMIN_PORT: 5001
+      ADMIN_BIND: 0.0.0.0
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      BUILD_COMMIT_SHA: ${COMMIT_SHA:-local}
+      RELEASE_ID: ${RELEASE_ID:-local}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-unknown}
+      MIGRATION_SET_DIGEST: ${MIGRATION_SET_DIGEST:-unknown}
+      API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
+      BANKING_MFA_ENCRYPTION_KEY: ${BANKING_MFA_ENCRYPTION_KEY:?BANKING_MFA_ENCRYPTION_KEY is required}
+      BANKING_MFA_ENCRYPTION_KEY_ID: ${BANKING_MFA_ENCRYPTION_KEY_ID:-mfa-v1}
+      ADMIN_ALLOWED_ORIGINS: ${ADMIN_ALLOWED_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173}
+      ADMIN_SECURE_COOKIES: ${ADMIN_SECURE_COOKIES:-0}
+      DB_POOL_MAX: ${DB_POOL_MAX:-4}
+      DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-5000}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
+      DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-3000}
+      DB_IDLE_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_TRANSACTION_TIMEOUT_MS:-15000}
+      DB_APPLICATION_NAME: ${DB_APPLICATION_NAME:-banking-reference-admin-api}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${ADMIN_API_PORT:-5001}:5001"
+    command: ["node", "dist/adminServer.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5001/livez').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  admin-web:
+    build:
+      context: ./admin-web
+      dockerfile: Dockerfile
+      args:
+        VITE_ADMIN_API_URL: ${VITE_ADMIN_API_URL:-http://127.0.0.1:5001/api/v1}
+    depends_on:
+      admin-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ADMIN_WEB_PORT:-5173}:80"
     restart: unless-stopped
 
   # Opt-in only: the current HTTP server still has a legacy full-state writer.
@@ -88,10 +159,16 @@ services:
       args:
         COMMIT_SHA: ${COMMIT_SHA:-local}
     environment:
-      BANKING_ENV: preview
-      NODE_ENV: preview
+      BANKING_ENV: ${BANKING_ENV:-preview}
+      NODE_ENV: ${NODE_ENV:-preview}
+      BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
       BANKING_STORAGE: postgres
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      BUILD_COMMIT_SHA: ${COMMIT_SHA:-local}
+      RELEASE_ID: ${RELEASE_ID:-local}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-unknown}
+      MIGRATION_SET_DIGEST: ${MIGRATION_SET_DIGEST:-unknown}
+      API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
       BANKING_PERSISTENCE_MODE: ${WORKER_PERSISTENCE_MODE:-relational-v2}
       WORKER_ENABLED: ${WORKER_ENABLED:-1}
       WORKER_ALLOW_LEGACY_WRITER: ${WORKER_ALLOW_LEGACY_WRITER:-0}

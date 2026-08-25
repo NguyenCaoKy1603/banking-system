@@ -4,18 +4,29 @@ import type {
   LoginResponse,
   LoginResult,
   LogoutRequest,
+  MfaLifecyclePurpose,
+  MfaMethodsResponse,
+  RecoveryCompletedResponse,
+  RecoveryStartedResponse,
   RegisterRequest,
   RegisterResponse,
   RefreshTokenRequest,
   RefreshTokenResponse,
+  TotpConfirmationResponse,
+  TotpEnrollmentResponse,
   VerifyAuthChallengeRequest,
 } from "@/features/auth/types/auth";
 import {
   isAuthChallengeResponse,
   isLoginResponse,
+  isMfaMethodsResponse,
+  isRecoveryCompletedResponse,
+  isRecoveryStartedResponse,
   isRegisterResponse,
   isRegistrationChallengeResponse,
   isRefreshTokenResponse,
+  isTotpConfirmationResponse,
+  isTotpEnrollmentResponse,
 } from "@/features/auth/services/authResponseValidators";
 import { requestJson, type RequestAuth } from "@/services/api/httpClient";
 
@@ -32,6 +43,21 @@ function requireNonEmpty(value: string, fieldName: string): string {
 export type AuthRequestOptions = {
   deviceId: string;
 };
+
+export type AuthenticatedRequestOptions = RequestAuth & {
+  accessToken: string;
+  deviceId: string;
+};
+
+function requireAuthenticated(
+  options: AuthenticatedRequestOptions,
+): AuthenticatedRequestOptions {
+  return {
+    ...options,
+    accessToken: requireNonEmpty(options.accessToken, "accessToken"),
+    deviceId: requireNonEmpty(options.deviceId, "deviceId"),
+  };
+}
 
 function createDeviceHeaders(
   options: AuthRequestOptions | undefined,
@@ -152,6 +178,126 @@ export async function revokeAllSessions(
   );
 }
 
+export function listMfaMethods(
+  options: AuthenticatedRequestOptions,
+): Promise<MfaMethodsResponse> {
+  return requestJson<MfaMethodsResponse>(
+    "/auth/mfa/methods",
+    { method: "GET", auth: requireAuthenticated(options) },
+    isMfaMethodsResponse,
+  );
+}
+
+export function beginTotpEnrollment(
+  request: { password: string; displayName?: string },
+  options: AuthenticatedRequestOptions,
+): Promise<TotpEnrollmentResponse> {
+  return requestJson<TotpEnrollmentResponse>(
+    "/auth/mfa/totp/enroll",
+    { method: "POST", body: request, auth: requireAuthenticated(options) },
+    isTotpEnrollmentResponse,
+  );
+}
+
+export function confirmTotpEnrollment(
+  request: { credentialId: string; code: string },
+  options: AuthenticatedRequestOptions,
+): Promise<TotpConfirmationResponse> {
+  return requestJson<TotpConfirmationResponse>(
+    "/auth/mfa/totp/confirm",
+    { method: "POST", body: request, auth: requireAuthenticated(options) },
+    isTotpConfirmationResponse,
+  );
+}
+
+export function createMfaChallenge(
+  request: { purpose: MfaLifecyclePurpose },
+  options: AuthenticatedRequestOptions,
+): Promise<AuthChallengeResponse> {
+  return requestJson<AuthChallengeResponse>(
+    "/auth/otp/challenges",
+    { method: "POST", body: request, auth: requireAuthenticated(options) },
+    (payload): payload is AuthChallengeResponse =>
+      isAuthChallengeResponse(payload) && payload.purpose === request.purpose,
+  );
+}
+
+export async function revokeMfaMethod(
+  credentialId: string,
+  request: { password: string; challengeId: string; code: string },
+  options: AuthenticatedRequestOptions,
+): Promise<void> {
+  await requestJson<null>(
+    `/auth/mfa/methods/${encodeURIComponent(requireNonEmpty(credentialId, "credentialId"))}`,
+    { method: "DELETE", body: request, auth: requireAuthenticated(options) },
+    (payload): payload is null => payload === null,
+  );
+}
+
+export function rotateRecoveryCodes(
+  request: { password: string; challengeId: string; code: string },
+  options: AuthenticatedRequestOptions,
+): Promise<{ status: "ROTATED"; recoveryCodes: string[] }> {
+  return requestJson<{ status: "ROTATED"; recoveryCodes: string[] }>(
+    "/auth/mfa/recovery-codes/rotate",
+    { method: "POST", body: request, auth: requireAuthenticated(options) },
+    (payload): payload is { status: "ROTATED"; recoveryCodes: string[] } =>
+      typeof payload === "object" && payload !== null &&
+      (payload as { status?: unknown }).status === "ROTATED" &&
+      Array.isArray((payload as { recoveryCodes?: unknown }).recoveryCodes) &&
+      (payload as { recoveryCodes: unknown[] }).recoveryCodes.length >= 8 &&
+      (payload as { recoveryCodes: unknown[] }).recoveryCodes.every((code) => typeof code === "string" && code.length >= 16),
+  );
+}
+
+export function startMfaRecovery(
+  request: { email: string; password: string; code: string },
+  options: AuthRequestOptions,
+): Promise<RecoveryStartedResponse> {
+  return requestJson<RecoveryStartedResponse>(
+    "/auth/mfa/recover",
+    { method: "POST", body: request, headers: createDeviceHeaders(options) },
+    isRecoveryStartedResponse,
+  );
+}
+
+export function completeMfaRecovery(
+  recoveryToken: string,
+  options: AuthRequestOptions,
+): Promise<RecoveryCompletedResponse> {
+  return requestJson<RecoveryCompletedResponse>(
+    "/auth/mfa/recover/complete",
+    {
+      method: "POST",
+      body: { recoveryToken: requireNonEmpty(recoveryToken, "recoveryToken") },
+      headers: createDeviceHeaders(options),
+    },
+    isRecoveryCompletedResponse,
+  );
+}
+
+export function beginRecoveryTotpEnrollment(
+  request: { recoveryToken: string; displayName?: string },
+  options: AuthRequestOptions,
+): Promise<TotpEnrollmentResponse> {
+  return requestJson<TotpEnrollmentResponse>(
+    "/auth/mfa/recover/enroll",
+    { method: "POST", body: request, headers: createDeviceHeaders(options) },
+    isTotpEnrollmentResponse,
+  );
+}
+
+export function confirmRecoveryTotpEnrollment(
+  request: { recoveryToken: string; credentialId: string; code: string },
+  options: AuthRequestOptions,
+): Promise<TotpConfirmationResponse> {
+  return requestJson<TotpConfirmationResponse>(
+    "/auth/mfa/totp/confirm",
+    { method: "POST", body: request, headers: createDeviceHeaders(options) },
+    isTotpConfirmationResponse,
+  );
+}
+
 export const authApi = {
   login,
   verifyLoginChallenge,
@@ -160,4 +306,14 @@ export const authApi = {
   refreshSession,
   revokeSession,
   revokeAllSessions,
+  listMfaMethods,
+  beginTotpEnrollment,
+  confirmTotpEnrollment,
+  createMfaChallenge,
+  revokeMfaMethod,
+  rotateRecoveryCodes,
+  startMfaRecovery,
+  completeMfaRecovery,
+  beginRecoveryTotpEnrollment,
+  confirmRecoveryTotpEnrollment,
 };

@@ -1,6 +1,6 @@
 # Mobile banking pilot runbook
 
-> Cập nhật hiện hành 2026-08-17: branch `codex/mini-core-banking-sandbox` giữ M0–M4/M8 và bổ sung clean registration, operator Funding, recipient lookup, dynamic step-up và opt-in Savings/Credit. Sau khi đổi code phải restart backend và reload/rebuild Mobile trước khi test; nút `Hiện đầy đủ`/`Sao chép` lấy số đầy đủ qua endpoint riêng, không lấy từ 4 số cuối. Xem [`mini-core-sandbox-status.md`](01-planning/mini-core-sandbox-status.md).
+> Cập nhật hiện hành 2026-08-25: reference giữ M0–M4/M8 và bổ sung clean registration, Admin four-eyes funding fixture, recipient lookup, dynamic step-up và opt-in Savings/Credit. Sau khi đổi code phải restart backend và reload/rebuild Mobile trước khi test; nút `Hiện đầy đủ`/`Sao chép` lấy số đầy đủ qua endpoint riêng, không lấy từ 4 số cuối. Xem [`mini-core-sandbox-status.md`](01-planning/mini-core-sandbox-status.md).
 
 Tài liệu này là checklist tối thiểu cho bản preview/pilot của mobile app. Nó không thay thế runbook vận hành của ngân hàng/BaaS partner.
 

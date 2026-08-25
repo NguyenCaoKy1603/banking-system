@@ -56,11 +56,12 @@ Chưa có credential thật và chưa có bằng chứng gửi Push/Email thật
 
 Worker ghi heartbeat, có `/livez`, `/readyz`, `/metrics`; metrics không dùng
 customerId/eventId làm label. `outbox:inspect` không in payload; inventory chỉ
-in metadata. `outbox:requeue` bắt buộc operator + lý do và ghi dead-letter/audit.
+in metadata. Requeue phải tạo request qua Admin API, được CONTROL duyệt bằng
+four-eyes và ghi dead-letter/audit; không còn script hoặc credential bypass.
 
 ## Đối soát legacy
 
-Script `backend/scripts/outbox-reconcile.cjs` hỗ trợ năm phân loại bắt buộc.
+Các phân loại legacy được thực hiện bởi Admin domain adapter/runbook có audit.
 `MAPPABLE_AND_FRESH` không sửa payload `{}` cũ: nó khóa event legacy, kiểm tra
 freshness bằng `NOW()`, ánh xạ transfer/funding sang aggregate và notification
 đã tồn tại, tạo event canonical có envelope/deduplication key riêng, rồi đánh
@@ -75,4 +76,4 @@ customer/account/transfer/account transaction không thay đổi.
 Chưa thêm Kafka/RabbitMQ, chưa sửa Mobile/push registration, chưa bật cloud
 deploy. Worker vẫn loại các event `aggregate_type=legacy` hoặc payload `{}`
 khỏi claim; event mới phải ghi canonical envelope trực tiếp trong transaction
-nghiệp vụ, còn event cũ phải đi qua lệnh operator ở runbook.
+nghiệp vụ, còn event cũ phải đi qua request Admin có checker ở runbook.

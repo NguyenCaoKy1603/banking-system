@@ -2,6 +2,7 @@
   "evidenceScope": "local-compose-postgresql",
   "checkedAt": "2026-08-24T06:04:00.412Z",
   "commitSha": "6438083",
+  "evidenceNote": "Historical evidence only; not a current release target. Current deployments must use a clean full SHA and registry digest.",
   "livez": {
     "service": "banking-reference-backend",
     "environment": "preview",

@@ -33,7 +33,6 @@ function prepareTransfer(system: BankingSystem, userId: string, recipientAccount
 
 test("new customers start clean and Sandbox Funding is idempotent", () => {
   const system = new BankingSystem({
-    sandboxOperatorKey: "operator-test",
     sandboxOtp: "123456",
     allowUnsafeDirectSandboxStepUp: true,
   });
@@ -49,12 +48,12 @@ test("new customers start clean and Sandbox Funding is idempotent", () => {
   assert.deepEqual(system.listCards(alice.id), []);
 
   const bobNumber = accountNumber(system, bob.id);
-  const first = system.fundSandbox("operator-test", "funding-1", {
+  const first = system.seedReferenceFunding("funding-1", {
     recipientAccountNumber: bobNumber,
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "Cấp tiền kiểm thử",
   });
-  const replay = system.fundSandbox("operator-test", "funding-1", {
+  const replay = system.seedReferenceFunding("funding-1", {
     recipientAccountNumber: bobNumber,
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "Cấp tiền kiểm thử",
@@ -66,7 +65,6 @@ test("new customers start clean and Sandbox Funding is idempotent", () => {
 
 test("internal transfer credits the real recipient and records both sides", () => {
   const system = new BankingSystem({
-    sandboxOperatorKey: "operator-test",
     sandboxOtp: "123456",
     allowUnsafeDirectSandboxStepUp: true,
   });
@@ -74,7 +72,7 @@ test("internal transfer credits the real recipient and records both sides", () =
   const bob = register(system, "bob-transfer", "0900000012");
   const aliceAccount = system.listAccounts(alice.id)[0]!;
   const bobAccount = system.listAccounts(bob.id)[0]!;
-  system.fundSandbox("operator-test", "fund-transfer", {
+  system.seedReferenceFunding("fund-transfer", {
     recipientAccountNumber: accountNumber(system, alice.id),
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "Cấp tiền kiểm thử",
@@ -108,14 +106,13 @@ test("internal transfer credits the real recipient and records both sides", () =
 
 test("pending transfer holds funds, failure releases hold, and success can be reversed once", () => {
   const pendingSystem = new BankingSystem({
-    sandboxOperatorKey: "operator-test",
     sandboxOtp: "123456",
     allowUnsafeDirectSandboxStepUp: true,
     settleTransfersImmediately: false,
   });
   const alice = register(pendingSystem, "alice-pending", "0900000021");
   const bob = register(pendingSystem, "bob-pending", "0900000022");
-  pendingSystem.fundSandbox("operator-test", "fund-pending", {
+  pendingSystem.seedReferenceFunding("fund-pending", {
     recipientAccountNumber: accountNumber(pendingSystem, alice.id),
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "Cấp tiền kiểm thử",
@@ -139,13 +136,12 @@ test("pending transfer holds funds, failure releases hold, and success can be re
   assert.equal(pendingSystem.listAccounts(alice.id)[0]?.heldAmount.amountMinor, "0");
 
   const immediateSystem = new BankingSystem({
-    sandboxOperatorKey: "operator-test",
     sandboxOtp: "123456",
     allowUnsafeDirectSandboxStepUp: true,
   });
   const sender = register(immediateSystem, "alice-reverse", "0900000031");
   const receiver = register(immediateSystem, "bob-reverse", "0900000032");
-  immediateSystem.fundSandbox("operator-test", "fund-reverse", {
+  immediateSystem.seedReferenceFunding("fund-reverse", {
     recipientAccountNumber: accountNumber(immediateSystem, sender.id),
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "Cấp tiền kiểm thử",
@@ -165,11 +161,11 @@ test("pending transfer holds funds, failure releases hold, and success can be re
 });
 
 test("sandbox OTP is dynamic, scoped and single-use", () => {
-  const system = new BankingSystem({ sandboxOperatorKey: "operator-test" });
+  const system = new BankingSystem({ allowUnsafeDirectSandboxStepUp: true });
   const alice = register(system, "alice-otp", "0900000041");
   const bob = register(system, "bob-otp", "0900000042");
   const account = system.listAccounts(alice.id)[0]!;
-  system.fundSandbox("operator-test", "fund-otp", {
+  system.seedReferenceFunding("fund-otp", {
     recipientAccountNumber: accountNumber(system, alice.id),
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "Cấp tiền kiểm thử",
@@ -186,7 +182,7 @@ test("sandbox OTP is dynamic, scoped and single-use", () => {
     quote.quoteId,
     contextFingerprint,
   );
-  const otp = system.getSandboxOtp("operator-test", challenge.challengeId);
+  const otp = system.readTestVerificationCode(challenge.challengeId);
   const receipt = system.submitTransfer(
     alice.id,
     "otp-transfer-key-01",
@@ -202,7 +198,7 @@ test("sandbox OTP is dynamic, scoped and single-use", () => {
 });
 
 test("HTTP-style registration creates no account before OTP and only one after verification", async () => {
-  const system = new BankingSystem({ sandboxOperatorKey: "operator-registration" });
+  const system = new BankingSystem({ allowUnsafeDirectSandboxStepUp: true });
   const challenge = await system.beginRegistrationAsync(
     {
       fullName: "Registration Candidate",
@@ -214,7 +210,7 @@ test("HTTP-style registration creates no account before OTP and only one after v
     "registration-device",
   );
   assert.equal(system.listAccounts("not-created-yet").length, 0);
-  const otp = system.getSandboxOtp("operator-registration", challenge.challengeId);
+  const otp = system.readTestVerificationCode(challenge.challengeId);
   const result = system.verifyRegistrationChallenge(
     challenge.challengeId,
     otp,
@@ -229,14 +225,13 @@ test("HTTP-style registration creates no account before OTP and only one after v
 
 test("savings pending state holds funds without changing current balance", () => {
   const system = new BankingSystem({
-    sandboxOperatorKey: "operator-savings",
     sandboxOtp: "123456",
     allowUnsafeDirectSandboxStepUp: true,
     settleSavingsImmediately: false,
   });
   const user = register(system, "alice-savings-hold", "0900000061");
   const account = system.listAccounts(user.id)[0]!;
-  system.fundSandbox("operator-savings", "fund-savings-hold", {
+  system.seedReferenceFunding("fund-savings-hold", {
     recipientAccountNumber: accountNumber(system, user.id),
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "Cáº¥p tiá»n kiá»ƒm thá»­",
@@ -278,8 +273,14 @@ test("credit requires explicit application and activation", () => {
     requestedLimit: { currency: "VND", amountMinor: "20000000" },
     stepUp: { method: "OTP", proof: "123456" },
   });
-  assert.equal(application.status, "PENDING_ACTIVATION");
+  assert.equal(application.status, "SUBMITTED");
   assert.deepEqual(system.listCards(user.id), []);
+  const reviewed = system.applyReferenceCreditDecisionForTest(
+    application.applicationId,
+    "PENDING_ACTIVATION",
+    "TEST_APPROVED",
+  );
+  assert.equal(reviewed.status, "PENDING_ACTIVATION");
   const activated = system.activateCreditApplication(
     user.id,
     application.applicationId,
@@ -348,6 +349,16 @@ test("credit application recovery and idempotency keys are scoped per customer",
     request,
   );
   assert.notEqual(bobApplication.applicationId, aliceApplication.applicationId);
+  system.applyReferenceCreditDecisionForTest(
+    aliceApplication.applicationId,
+    "PENDING_ACTIVATION",
+    "TEST_APPROVED",
+  );
+  system.applyReferenceCreditDecisionForTest(
+    bobApplication.applicationId,
+    "PENDING_ACTIVATION",
+    "TEST_APPROVED",
+  );
   assert.throws(
     () =>
       system.activateCreditApplication(

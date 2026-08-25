@@ -6,7 +6,6 @@ import { BankingSystem, type BankingSystemState } from "../bankingSystem.js";
 import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
 
 const databaseUrl = process.env.RELATIONAL_DATABASE_URL?.trim();
-const OPERATOR_KEY = "sandbox-operator-local";
 
 function uniquePhone(): string {
   return `09${randomUUID().replaceAll("-", "").slice(0, 8)}`;
@@ -54,7 +53,7 @@ test("relational adapter persists restart state, serializes one quote submission
       }).user;
       const source = first.listAccounts(sender.id)[0];
       assert.ok(source);
-      first.fundSandbox(OPERATOR_KEY, `relational-funding-${randomUUID()}`, {
+      first.seedReferenceFunding(`relational-funding-${randomUUID()}`, {
         recipientAccountNumber: accountNumber(first, sender.id),
         amount: { currency: "VND", amountMinor: "10000000" },
         reason: "relational persistence fixture",

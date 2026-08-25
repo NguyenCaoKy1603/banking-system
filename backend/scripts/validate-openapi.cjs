@@ -18,15 +18,21 @@ const requiredPaths = [
   "/auth/register",
   "/auth/register/verify",
   "/auth/otp/challenges",
+  "/auth/mfa/methods",
+  "/auth/mfa/totp/enroll",
+  "/auth/mfa/totp/confirm",
+  "/auth/mfa/methods/{credentialId}",
+  "/auth/mfa/recover",
+  "/auth/mfa/recover/verify",
+  "/auth/mfa/recover/complete",
+  "/auth/mfa/recover/enroll",
+  "/auth/challenges/{challengeId}/resend",
   "/auth/login",
   "/auth/verify",
   "/auth/refresh",
   "/auth/logout",
   "/auth/logout-all",
   "/mobile/control-policy",
-  "/sandbox/fundings",
-  "/sandbox/otp/{challengeId}",
-  "/sandbox/process-scheduled",
   "/notifications",
   "/notifications/{notificationId}/read",
   "/fraud-reports",
@@ -104,15 +110,21 @@ const routeContracts = [
   ["POST", "/auth/register", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "register")]],
   ["POST", "/auth/register/verify", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "auth"), segmentGuard(1, "register"), segmentGuard(2, "verify")]],
   ["POST", "/auth/otp/challenges", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "auth"), segmentGuard(1, "otp"), segmentGuard(2, "challenges")]],
+  ["GET", "/auth/mfa/methods", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "auth"), segmentGuard(1, "mfa"), segmentGuard(2, "methods")]],
+  ["POST", "/auth/mfa/totp/enroll", [methodGuard("POST"), "segments.length === 4", segmentGuard(0, "auth"), segmentGuard(1, "mfa"), segmentGuard(2, "totp"), segmentGuard(3, "enroll")]],
+  ["POST", "/auth/mfa/totp/confirm", [methodGuard("POST"), "segments.length === 4", segmentGuard(0, "auth"), segmentGuard(1, "mfa"), segmentGuard(2, "totp"), segmentGuard(3, "confirm")]],
+  ["DELETE", "/auth/mfa/methods/{credentialId}", [methodGuard("DELETE"), "segments.length === 4", segmentGuard(0, "auth"), segmentGuard(1, "mfa"), segmentGuard(2, "methods")]],
+  ["POST", "/auth/mfa/recover", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "auth"), segmentGuard(1, "mfa"), segmentGuard(2, "recover")]],
+  ["POST", "/auth/mfa/recover/verify", [methodGuard("POST"), "segments.length === 4", segmentGuard(0, "auth"), segmentGuard(1, "mfa"), segmentGuard(2, "recover"), segmentGuard(3, "verify")]],
+  ["POST", "/auth/mfa/recover/complete", [methodGuard("POST"), "segments.length === 4", segmentGuard(0, "auth"), segmentGuard(1, "mfa"), segmentGuard(2, "recover"), segmentGuard(3, "complete")]],
+  ["POST", "/auth/mfa/recover/enroll", [methodGuard("POST"), "segments.length === 4", segmentGuard(0, "auth"), segmentGuard(1, "mfa"), segmentGuard(2, "recover"), segmentGuard(3, "enroll")]],
+  ["POST", "/auth/challenges/{challengeId}/resend", [methodGuard("POST"), "segments.length === 4", segmentGuard(0, "auth"), segmentGuard(1, "challenges"), segmentGuard(3, "resend")]],
   ["POST", "/auth/login", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "login")]],
   ["POST", "/auth/verify", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "verify")]],
   ["POST", "/auth/refresh", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "refresh")]],
   ["POST", "/auth/logout", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "logout")]],
   ["POST", "/auth/logout-all", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "auth"), segmentGuard(1, "logout-all")]],
   ["GET", "/mobile/control-policy", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "mobile"), segmentGuard(1, "control-policy")]],
-  ["POST", "/sandbox/fundings", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "sandbox"), segmentGuard(1, "fundings")]],
-  ["GET", "/sandbox/otp/{challengeId}", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "sandbox"), segmentGuard(1, "otp")]],
-  ["POST", "/sandbox/process-scheduled", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "sandbox"), segmentGuard(1, "process-scheduled")]],
   ["GET", "/notifications", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "notifications")]],
   ["POST", "/notifications/{notificationId}/read", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "notifications"), segmentGuard(2, "read")]],
   ["POST", "/fraud-reports", [methodGuard("POST"), "segments.length === 1", segmentGuard(0, "fraud-reports")]],
@@ -244,16 +256,17 @@ if (
 }
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete"]);
-const PUBLIC_OR_OPERATOR_OPERATIONS = new Set([
+const PUBLIC_OPERATIONS = new Set([
   "POST /auth/register",
   "POST /auth/register/verify",
   "POST /auth/login",
   "POST /auth/refresh",
   "POST /auth/verify",
   "POST /auth/logout",
-  "POST /sandbox/fundings",
-  "GET /sandbox/otp/{challengeId}",
-  "POST /sandbox/process-scheduled",
+  "POST /auth/mfa/recover",
+  "POST /auth/mfa/recover/verify",
+  "POST /auth/mfa/recover/complete",
+  "POST /auth/mfa/recover/enroll",
 ]);
 for (const [routePath, pathItem] of Object.entries(document.paths ?? {})) {
   for (const [method, operation] of Object.entries(pathItem ?? {})) {
@@ -262,9 +275,9 @@ for (const [routePath, pathItem] of Object.entries(document.paths ?? {})) {
     }
     const effectiveSecurity = operation.security ?? document.security ?? [];
     const operationKey = `${method.toUpperCase()} ${routePath}`;
-    if (PUBLIC_OR_OPERATOR_OPERATIONS.has(operationKey)) {
+    if (PUBLIC_OPERATIONS.has(operationKey)) {
       if (effectiveSecurity.length !== 0) {
-        throw new Error(`${operationKey} must use its documented public/operator boundary.`);
+        throw new Error(`${operationKey} must use its documented public unauthenticated boundary.`);
       }
       continue;
     }
@@ -404,7 +417,6 @@ for (const routePath of [
 requireResponses("post", "/auth/register", ["409", "422", "429"]);
 requireResponses("post", "/auth/register/verify", ["401", "409", "422", "429"]);
 requireResponses("post", "/auth/otp/challenges", ["401", "422", "429"]);
-requireResponses("post", "/sandbox/fundings", ["401", "409", "422"]);
 
 function requireIdempotencyMinimum(routePath, minimum) {
   const operation = document.paths?.[routePath]?.post;
@@ -432,7 +444,6 @@ for (const routePath of [
   requireIdempotencyMinimum(routePath, 16);
 }
 for (const routePath of [
-  "/sandbox/fundings",
   "/fraud-reports",
   "/credit/applications",
   "/credit/applications/{applicationId}/activate",

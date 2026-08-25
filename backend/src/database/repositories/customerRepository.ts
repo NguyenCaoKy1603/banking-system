@@ -37,13 +37,21 @@ export type SessionCreateInput = {
 export type AuthChallengeCreateInput = {
   id: string;
   customerId?: string | null;
+  pendingRegistrationId?: string | null;
+  credentialId?: string | null;
   deviceId: string;
+  method?: "EMAIL_OTP" | "SMS_OTP" | "TOTP";
   purpose: string;
   resourceId?: string | null;
   requestFingerprint?: string | null;
   methods?: readonly string[];
   otpHash?: string | null;
+  proofDigest?: string | null;
+  digestKeyId?: string | null;
   expiresAt: string;
+  maxAttempts?: number;
+  resendCount?: number;
+  lastSentAt?: string | null;
 };
 
 function mapCustomer(row: Record<string, unknown>): CustomerRow {
@@ -204,19 +212,31 @@ export class CustomerRepository {
   async createAuthChallenge(input: AuthChallengeCreateInput): Promise<void> {
     await this.client.query(
       `INSERT INTO auth_challenges
-        (id, customer_id, device_id, purpose, resource_id, request_fingerprint,
-         methods, otp_hash, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8, $9)`,
+        (id, customer_id, pending_registration_id, credential_id, device_id,
+         method, purpose, resource_id, request_fingerprint, methods,
+         otp_hash, proof_digest, digest_key_id, expires_at, max_attempts,
+         resend_count, last_sent_at, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[],
+               $11, $12, $13, $14, $15, $16, $17, $18)`,
       [
         input.id,
         input.customerId ? requireUuid(input.customerId, "customerId") : null,
+        input.pendingRegistrationId ?? null,
+        input.credentialId ? requireUuid(input.credentialId, "credentialId") : null,
         input.deviceId,
+        input.method ?? (input.methods?.includes("TOTP") ? "TOTP" : "EMAIL_OTP"),
         input.purpose,
         input.resourceId ?? null,
         input.requestFingerprint ?? null,
         input.methods ?? ["OTP"],
-        input.otpHash ?? null,
+        input.otpHash ?? input.proofDigest ?? null,
+        input.proofDigest ?? input.otpHash ?? null,
+        input.digestKeyId ?? null,
         input.expiresAt,
+        input.maxAttempts ?? 5,
+        input.resendCount ?? 0,
+        input.lastSentAt ?? null,
+        "ACTIVE",
       ],
     );
   }
@@ -231,8 +251,10 @@ export class CustomerRepository {
 
   async consumeAuthChallenge(challengeId: string): Promise<boolean> {
     const result = await this.client.query(
-      `UPDATE auth_challenges SET consumed_at = NOW()
-       WHERE id = $1 AND consumed_at IS NULL AND expires_at > NOW()`,
+      `UPDATE auth_challenges
+       SET consumed_at = NOW(), verified_at = COALESCE(verified_at, NOW()),
+           status = 'CONSUMED', updated_at = NOW()
+       WHERE id = $1 AND status IN ('ACTIVE', 'VERIFIED') AND consumed_at IS NULL AND expires_at > NOW()`,
       [challengeId],
     );
     return (result.rowCount ?? 0) === 1;

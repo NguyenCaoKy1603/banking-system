@@ -42,30 +42,25 @@ Worker không expose port host; health chỉ bind loopback trong container. Ki�
 
 Không xóa dead-letter. Chỉ requeue sau khi đã sửa nguyên nhân và ghi lý do:
 
-```powershell
-$env:OUTBOX_OPERATOR="operator-local"
-npm run outbox:requeue -- <event-uuid> "đã sửa template/provider và kiểm tra lại"
-```
+Tạo yêu cầu `POST /api/v1/admin/operations/outbox/events/{eventId}/requeue-requests`
+qua Admin API, sau đó một nhân viên CONTROL duyệt ở hàng đợi bốn mắt. Không có
+script/operator credential bypass cho outbox.
 
 Lệnh ghi `requeued_by`, `requeue_reason` và `OUTBOX_REQUEUED` audit event; unique
 delivery key ngăn tạo delivery trùng.
 
-Với event legacy, operator phải inventory/đối soát trước. Năm phân loại được
-ghi nhận bằng lệnh riêng. `MAPPABLE_AND_FRESH` sẽ kiểm tra aggregate, recipient,
+Với event legacy, nhân viên OPERATIONS phải inventory/đối soát trước. Năm phân loại được
+ghi nhận trong action request. `MAPPABLE_AND_FRESH` sẽ kiểm tra aggregate, recipient,
 transaction và freshness trong cùng transaction, sau đó materialize một event
 envelope canonical mới; payload legacy không bị sửa tại chỗ:
 
-```powershell
-$env:OUTBOX_OPERATOR="operator-local"
-npm run outbox:reconcile -- <event-uuid> MAPPABLE_AND_FRESH "đã đối soát aggregate và còn trong freshness window"
-npm run outbox:reconcile -- <event-uuid> MAPPABLE_BUT_STALE "đã quá hạn theo occurred_at"
-npm run outbox:reconcile -- <event-uuid> AGGREGATE_MISSING "aggregate không còn tồn tại"
-```
+Các phân loại và lý do phải nằm trong payload đã fingerprint của action; CONTROL
+duyệt hoặc từ chối, worker mới thực hiện.
 
 `AGGREGATE_MISSING`/`AMBIGUOUS_RECIPIENT` vào DEAD-letter; `ALREADY_DELIVERED`
 và `MAPPABLE_BUT_STALE` vào SKIPPED, đều ghi audit và không xóa event.
 `MAPPABLE_AND_FRESH` chuyển event legacy sang `SKIPPED` với mã
-`LEGACY_MATERIALIZED`, ghi audit operator và tạo event canonical PENDING để
+`LEGACY_MATERIALIZED`, ghi audit staff và tạo event canonical PENDING để
 worker xử lý; nếu canonical event đã tồn tại theo deduplication key, lệnh dùng
 lại event đó thay vì tạo delivery trùng.
 

@@ -1,6 +1,6 @@
 # Banking reference backend
 
-> Cập nhật 2026-08-17: branch `codex/mini-core-banking-sandbox` dùng registration hai bước, Sandbox Funding operator, người nhận thật, OTP step-up theo context và Savings/Credit opt-in. User mới chỉ có một payment account 0 VND; không còn beneficiary/card/savings tự sinh. `npm run seed:e2e` đã được cập nhật để tự cấp Funding, tạo recipient thật khi có `E2E_RECIPIENT_PASSWORD`, và đi qua credit application/activation.
+> Cập nhật 2026-08-25: reference sandbox dùng registration hai bước, TOTP-based MFA persistent cho login/transaction step-up, Admin four-eyes funding fixture, người nhận thật và Savings/Credit opt-in. User mới chỉ có một payment account 0 VND; không còn beneficiary/card/savings tự sinh. `npm run seed:e2e` yêu cầu email-code từ provider test và TOTP fixture, không đọc OTP từ backend.
 
 Đây là backend reference cho môi trường local của mobile app. Runtime mặc định dùng PostgreSQL persistent relational reference adapter; in-memory chỉ dành cho unit/reference test nhanh. PBKDF2 và core-banking adapter giả lập được dùng để kiểm chứng contract, state machine, refresh rotation, idempotency, audit/outbox và reconciliation.
 
@@ -30,7 +30,7 @@ npm run test:relational
 
 Không dùng component này cho tiền thật, production, KYC/AML hoặc thay thế core-banking partner. Trước pilot phải thay `InMemoryCoreBanking` bằng adapter được partner phê duyệt, dùng database/secret manager/observability thật và hoàn tất legal/compliance/security acceptance.
 
-Process này chủ động từ chối khởi động khi `NODE_ENV=production` hoặc `BANKING_ENV=production` để tránh triển khai nhầm reference backend vào môi trường tiền thật.
+Runtime contract hiện cho phép `NODE_ENV=production` chỉ khi `BANKING_ENV=staging` hoặc `production-like`, nhưng luôn bắt buộc `BANKING_MONEY_MODE=virtual`, PostgreSQL, TOTP/MFA, key hợp lệ, full commit SHA và image digest. `BANKING_ENV=production` và mọi chế độ tiền thật đều bị từ chối; thiếu metadata hoặc secret thì fail closed.
 
 ## Chạy local
 
@@ -44,13 +44,13 @@ npm run test:critical
 npm start
 ```
 
-Để chuẩn bị dữ liệu cho Maestro mà không lấy ID thủ công, khởi động server sandbox rồi chạy `npm run seed:e2e` ở terminal khác. Lệnh này đăng ký/đăng nhập user E2E, tạo beneficiary nếu thiếu, tạo transfer notification và chỉ in các biến không nhạy cảm như `TEST_EMAIL`, `BENEFICIARY_ID`, `QR_PAYLOAD` cùng transfer seed. Password/OTP phải được cấp sẵn trong environment và không được in ra. Hướng dẫn đầy đủ nằm tại [`../documents/05-testing/e2e-sandbox-seed.md`](../documents/05-testing/e2e-sandbox-seed.md).
+Để chuẩn bị dữ liệu cho Maestro mà không lấy ID thủ công, khởi động server sandbox rồi chạy `npm run seed:e2e` ở terminal khác. Lệnh này đăng ký/đăng nhập user E2E, tạo beneficiary nếu thiếu, tạo transfer notification và chỉ in các biến không nhạy cảm như `TEST_EMAIL`, `BENEFICIARY_ID`, `QR_PAYLOAD` cùng transfer seed. Password, email confirmation code và TOTP secret/code phải được cấp sẵn trong environment của test provider và không được in ra. Hướng dẫn đầy đủ nằm tại [`../documents/05-testing/e2e-sandbox-seed.md`](../documents/05-testing/e2e-sandbox-seed.md).
 
-Server mặc định lắng nghe `http://localhost:5000/api/v1`; health/readiness tối giản ở `http://localhost:5000/healthz`. OTP transfer sandbox mặc định là `123456`; nếu bật `BANKING_MFA_REQUIRED=1` hoặc `BANKING_ENV=preview`, OTP login sandbox mặc định là `654321`. Có thể cấu hình challenge login server-driven bằng `BANKING_MFA_METHODS=OTP,BIOMETRIC`. Chỉ dùng các giá trị này trong local test.
+Server mặc định lắng nghe `http://localhost:5000/api/v1`; health/readiness tối giản ở `http://localhost:5000/healthz`. Persistent runtime yêu cầu `BANKING_MFA_METHODS=TOTP`, pepper và encryption key; thiếu key sẽ fail closed. Email provider thật chưa được nối trong reference sandbox.
 
-Giai đoạn 1 bổ sung `/livez` cho liveness độc lập database và `/readyz` là alias readiness của `/healthz`. Health response có service/environment/storage/commit SHA cùng reconciliation/outbox, không chứa credential hoặc dữ liệu tài chính nhạy cảm. Khi `BANKING_ALLOWED_ORIGINS` là allow-list, Origin ngoài danh sách bị từ chối bằng `403 CORS_ORIGIN_DENIED`.
+Giai đoạn 1 bổ sung `/livez` cho liveness độc lập database, `/startupz` cho config/key/repository startup và `/readyz` là readiness có database. `/healthz` dành cho monitoring sâu hơn; `/versionz` trả release ID, commit SHA, image digest, schema/migration fingerprint và money mode, không chứa credential hoặc dữ liệu tài chính nhạy cảm. Khi `BANKING_ALLOWED_ORIGINS` là allow-list, Origin ngoài danh sách bị từ chối bằng `403 CORS_ORIGIN_DENIED`.
 
-Để kiểm thử crash/restart, có thể tắt immediate settlement bằng `BANKING_SETTLE_IMMEDIATELY=0`, `BANKING_SETTLE_SAVINGS_IMMEDIATELY=0` hoặc `BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY=0`. Operator sandbox gọi `POST /api/v1/sandbox/process-scheduled` với `X-Sandbox-Operator-Key` để đưa transfer, savings opening và credit payment đang `PENDING` sang terminal trước khi xử lý đáo hạn/sao kê. Endpoint này chỉ là processor reference tuần tự; worker/core-banking adapter thật vẫn phải chịu trách nhiệm lease, retry, callback, concurrency và reconciliation ở môi trường production.
+Để kiểm thử crash/restart, có thể tắt immediate settlement bằng `BANKING_SETTLE_IMMEDIATELY=0`, `BANKING_SETTLE_SAVINGS_IMMEDIATELY=0` hoặc `BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY=0`. Scheduled work được worker xử lý; test unit gọi boundary fixture nội bộ, còn Admin API chỉ tạo action retry/cancel qua quy trình bốn mắt. Public API không có operator key hoặc endpoint bypass.
 
 Local server mặc định cho phép CORS `*`; production phải cấu hình `BANKING_ALLOWED_ORIGINS` bằng allowlist origin đã phê duyệt. Có thể giới hạn pilot bằng `BANKING_ALLOWLIST_ENABLED=1` và `BANKING_MAX_TRANSFER_AMOUNT_MINOR` (đơn vị minor-unit VND); các giới hạn này được áp ở server.
 

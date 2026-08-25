@@ -12,7 +12,7 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function isStepUpMethod(value: unknown): value is StepUpMethod {
-  return value === "OTP" || value === "BIOMETRIC";
+  return value === "OTP" || value === "TOTP" || value === "BIOMETRIC";
 }
 
 export function isControlPolicy(value: unknown): value is ControlPolicy {

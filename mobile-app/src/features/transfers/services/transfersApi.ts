@@ -60,7 +60,7 @@ function validateSubmitRequest(request: SubmitTransferRequest): void {
 
   if (
     !request.stepUp ||
-    (request.stepUp.method !== "OTP" && request.stepUp.method !== "BIOMETRIC") ||
+    (request.stepUp.method !== "OTP" && request.stepUp.method !== "TOTP" && request.stepUp.method !== "BIOMETRIC") ||
     typeof request.stepUp.proof !== "string" ||
     !request.stepUp.proof.trim()
   ) {

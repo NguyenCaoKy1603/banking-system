@@ -89,8 +89,8 @@ jobs:
       NOTIFICATION_ENDPOINT_ENCRYPTION_KEY: ci-worker-only-key
       BANKING_ENV: development
       BANKING_MFA_REQUIRED: "0"
-      BANKING_SANDBOX_MFA_OTP: "654321"
-      BANKING_SANDBOX_OTP: "123456"
+      BANKING_OTP_PEPPER: "base64:Y2ktb3RwLXBlcHBlci0wMTIzNDU2Nzg5MDEyMzQ1Njc="
+      BANKING_MFA_ENCRYPTION_KEY: "base64:Y2ktbWZhLWVuY3J5cHRpb24ta2V5LTAxMjM0NTY3ODk="
 
     services:
       postgres:

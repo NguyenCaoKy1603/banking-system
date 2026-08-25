@@ -31,7 +31,7 @@ import type {
 } from "@/features/control/types/controlPolicy";
 import { ApiError } from "@/services/api/ApiError";
 import {
-  getSandboxBiometricProof,
+  getDeviceBoundAssertion,
   requestBiometricAuthentication,
 } from "@/services/security/biometricAuth";
 import {
@@ -139,7 +139,10 @@ export function TransferScreen() {
       setStepUpMethod((currentMethod) =>
         challenge.methods.includes(currentMethod)
           ? currentMethod
-          : challenge.methods[0] ?? "OTP",
+          : challenge.methods.find(
+              (method): method is StepUpMethod =>
+                method === "OTP" || method === "TOTP" || method === "BIOMETRIC",
+            ) ?? "OTP",
       );
       setStepUpProof("");
     },
@@ -612,7 +615,7 @@ export function TransferScreen() {
 
     try {
       await requestBiometricAuthentication("Xác thực giao dịch");
-      const biometricProof = getSandboxBiometricProof();
+      const biometricProof = getDeviceBoundAssertion();
       if (!biometricProof) {
         setError("Backend/risk provider chưa cung cấp biometric assertion.");
         return;
@@ -879,14 +882,14 @@ export function TransferScreen() {
           <View style={styles.formCard}>
             <Text style={styles.stepTitle}>4. Xác thực bước hai</Text>
             <Text style={styles.description}>
-              Backend/risk engine sẽ quyết định chính sách OTP hoặc sinh trắc học.
+              Backend/risk engine sẽ quyết định chính sách TOTP hoặc sinh trắc học.
             </Text>
-            {transferChallenge?.methods.includes("OTP") ? (
+            {transferChallenge?.methods.some((method) => method === "OTP" || method === "TOTP") ? (
               <PrimaryButton
                 disabled={isSubmitting}
-                label={stepUpMethod === "OTP" ? "Đang dùng OTP" : "Dùng OTP"}
+                label={stepUpMethod === "TOTP" ? "Đang dùng TOTP" : stepUpMethod === "OTP" ? "Đang dùng mã xác thực" : "Dùng mã TOTP"}
                 onPress={() => {
-                  setStepUpMethod("OTP");
+                  setStepUpMethod(transferChallenge.methods.includes("TOTP") ? "TOTP" : "OTP");
                   setStepUpProof("");
                   setError(undefined);
                 }}
@@ -905,13 +908,13 @@ export function TransferScreen() {
                 testID="transfer-step-up-biometric"
               />
             ) : null}
-            {stepUpMethod === "OTP" ? (
+            {stepUpMethod === "OTP" || stepUpMethod === "TOTP" ? (
               <TextField
                 accessibilityLabel="Mã xác thực bước hai"
                 autoCapitalize="none"
                 editable={!manualReviewCode}
                 error={error}
-                label="Mã xác thực OTP"
+                label={stepUpMethod === "TOTP" ? "Mã TOTP" : "Mã xác thực"}
                 onChangeText={(value) => {
                   setStepUpProof(value);
                   setError(undefined);

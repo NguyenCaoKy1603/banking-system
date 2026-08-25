@@ -11,9 +11,9 @@
   `SANDBOX_FUNDING_SUCCEEDED` theo inventory; chưa đánh dấu published giả và
   chưa tự động gửi lại.
 - Phân loại hiện tại: `REVIEW_REQUIRED`. Chưa đủ bằng chứng để kết luận
-  recipient/freshness cho từng event nên operator phải đối soát từng ID.
+  recipient/freshness cho từng event nên nhân viên OPERATIONS phải đối soát từng ID và tạo Admin action.
 - Worker claim query loại `aggregate_type=legacy`/payload `{}`; 16 event này
-  vẫn PENDING cho tới khi chạy lệnh reconcile có operator + lý do.
+  vẫn PENDING cho tới khi có Admin request với lý do và checker CONTROL.
 
 ## Cập nhật đối soát preview — 2026-08-25
 
@@ -45,8 +45,8 @@ Worker integration trên database disposable `banking_worker_test` kiểm tra:
 3. Event version không hỗ trợ vào OUTBOX dead-letter và không đụng bảng tài chính.
 4. Provider lỗi đạt max attempts thì delivery vào DELIVERY dead-letter.
 5. Legacy full-state writer bị chặn khi worker heartbeat còn sống.
-6. Legacy payload rỗng không bị worker claim; reconcile/requeue phải do operator
-   gọi và có audit.
+6. Legacy payload rỗng không bị worker claim; reconcile/requeue phải do Admin
+   action có checker và audit.
 7. Graceful shutdown dừng claim, ghi `STOPPED` và đóng pool.
 8. Endpoint ciphertext hỏng bị revoke và dead-letter mà không gọi provider.
 

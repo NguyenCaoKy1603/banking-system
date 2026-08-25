@@ -1,13 +1,18 @@
 import { createBankingServer, createPersistentBankingServer } from "./http.js";
 import { BankingSystem } from "./bankingSystem.js";
 import { PostgresRelationalRepository } from "./postgresRelationalRepository.js";
+import { LocalDevelopmentKeyEncryptionAdapter, OtpDigestKeyring } from "./mfa/crypto.js";
+import { NullEmailProvider } from "./mfa/delivery.js";
+import { PersistentMfaService } from "./mfa/persistentMfaService.js";
+import { readRuntimeConfig } from "./runtimeConfig.js";
+import { runtimeMetadata } from "./runtimeMetadata.js";
 
-type StepUpMethod = "OTP" | "BIOMETRIC";
+type StepUpMethod = "TOTP";
 
 function readConfiguredMethods(): StepUpMethod[] | undefined {
   const rawValue = process.env.BANKING_MFA_METHODS?.trim();
   if (!rawValue) {
-    return undefined;
+    return ["TOTP"];
   }
 
   const methods = Array.from(
@@ -18,41 +23,51 @@ function readConfiguredMethods(): StepUpMethod[] | undefined {
 
   if (
     methods.length === 0 ||
-    methods.some((method) => method !== "OTP" && method !== "BIOMETRIC")
+      methods.some((method) => method !== "TOTP")
   ) {
     throw new Error(
-      "BANKING_MFA_METHODS must contain only OTP and/or BIOMETRIC.",
+      "BANKING_MFA_METHODS must contain only TOTP in production-like runtime.",
     );
   }
 
   return methods as StepUpMethod[];
 }
 
-if (process.env.NODE_ENV === "production" || process.env.BANKING_ENV === "production") {
-  throw new Error(
-    "The reference backend is sandbox-only and refuses to start in production.",
-  );
-}
+const runtimeConfig = readRuntimeConfig();
 
 const port = Number(process.env.PORT ?? 5000);
-const storage = (process.env.BANKING_STORAGE ?? "postgres").trim().toLowerCase();
-const bankingEnvironment = (process.env.BANKING_ENV ?? "development").trim().toLowerCase();
-const buildCommitSha = process.env.BUILD_COMMIT_SHA?.trim() || "local";
+const storage = runtimeConfig.storage;
+const bankingEnvironment = runtimeConfig.bankingEnvironment;
+const buildCommitSha = runtimeConfig.commitSha;
 const allowedOrigins = (process.env.BANKING_ALLOWED_ORIGINS ?? "")
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 async function start(): Promise<void> {
+  const configuredMethods = readConfiguredMethods();
+  let startupReady = false;
   const system = new BankingSystem({
     settleTransfersImmediately: process.env.BANKING_SETTLE_IMMEDIATELY !== "0",
     creditOverdueSeed: process.env.BANKING_SANDBOX_CREDIT_OVERDUE === "1",
-    authChallengeMethods: readConfiguredMethods(),
+    authChallengeMethods: configuredMethods,
+    stepUpMethods: configuredMethods,
+    savingsStepUpMethods: configuredMethods,
+    creditPaymentStepUpMethods: configuredMethods,
+    cardUnlockStepUpMethods: configuredMethods,
   });
   const httpOptions = {
     allowedOrigins: allowedOrigins.length > 0 ? allowedOrigins : undefined,
     environment: bankingEnvironment,
     storage,
     commitSha: buildCommitSha,
+    runtimeMetadata: runtimeMetadata({
+      releaseId: runtimeConfig.releaseId,
+      commitSha: runtimeConfig.commitSha,
+      imageDigest: runtimeConfig.imageDigest,
+      environment: runtimeConfig.bankingEnvironment,
+      moneyMode: runtimeConfig.moneyMode,
+    }),
+    startupReady: () => startupReady,
   };
   let repository: PostgresRelationalRepository | undefined;
   let server;
@@ -60,7 +75,15 @@ async function start(): Promise<void> {
   if (storage === "postgres") {
     repository = new PostgresRelationalRepository();
     await repository.initialize();
-    server = createPersistentBankingServer(repository, system, httpOptions);
+    const encryption = LocalDevelopmentKeyEncryptionAdapter.fromEnvironment({ required: true });
+    const otpDigestKeyring = OtpDigestKeyring.fromEnvironment({ required: true });
+    const mfaService = new PersistentMfaService({
+      unitOfWork: repository.unitOfWork,
+      encryption,
+      otpDigestKeyring,
+      delivery: new NullEmailProvider(),
+    });
+    server = createPersistentBankingServer(repository, system, { ...httpOptions, mfaService });
   } else if (storage === "in-memory") {
     server = createBankingServer(system, httpOptions);
   } else {
@@ -72,6 +95,8 @@ async function start(): Promise<void> {
   if (repository) {
     await repository.healthCheck();
   }
+
+  startupReady = true;
 
   server.listen(port, "0.0.0.0", () => {
     console.log(JSON.stringify({

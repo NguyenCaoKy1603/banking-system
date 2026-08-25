@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Banking immutable release manifest",
+  "type": "object",
+  "required": ["releaseId", "sourceCommit", "sourceTree", "image", "database", "contracts", "build"],
+  "properties": {
+    "releaseId": { "type": "string", "minLength": 1 },
+    "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sourceTree": { "const": "clean" },
+    "image": {
+      "type": "object",
+      "required": ["reference", "digest", "signatureVerified", "attestations"],
+      "properties": {
+        "reference": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "signatureVerified": { "type": "boolean" },
+        "sbomDigest": { "type": ["string", "null"] },
+        "provenanceDigest": { "type": ["string", "null"] },
+        "attestations": {
+          "type": "object",
+          "required": ["sbom", "provenance"],
+          "properties": { "sbom": { "type": "boolean" }, "provenance": { "type": "boolean" } }
+        }
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": ["migrationSetDigest", "minimumCompatibleSchema", "maximumCompatibleSchema"],
+      "properties": {
+        "migrationSetDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "minimumCompatibleSchema": { "type": "integer" },
+        "maximumCompatibleSchema": { "type": "integer" }
+      }
+    },
+    "contracts": { "type": "object", "required": ["openapiDigest", "configSchemaVersion"] },
+    "build": { "type": "object", "required": ["builtAt", "builder"] }
+  }
+}

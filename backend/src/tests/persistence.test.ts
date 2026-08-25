@@ -13,7 +13,6 @@ import { createPersistentBankingServer } from "../http.js";
 import { PostgresSnapshotRepository } from "../postgresSnapshotRepository.js";
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
-const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
 
 function getAccountNumber(system: BankingSystem, userId: string): string {
   const account = system.listAccounts(userId)[0];
@@ -238,7 +237,7 @@ test("PostgreSQL snapshot persists users and serializes concurrent transfer subm
       restoredSystem.importState(state as BankingSystemState);
       const account = restoredSystem.listAccounts(registered.id)[0];
       assert.ok(account);
-      restoredSystem.fundSandbox(SANDBOX_OPERATOR_KEY, `persistent-funding-${randomUUID()}`, {
+      restoredSystem.seedReferenceFunding(`persistent-funding-${randomUUID()}`, {
         recipientAccountNumber: getAccountNumber(restoredSystem, registered.id),
         amount: { currency: "VND", amountMinor: "10000000" },
         reason: "persistent transfer fixture funding",
@@ -347,7 +346,7 @@ test("PostgreSQL snapshot keeps fraud reports idempotent, restartable and user-s
       }).user;
       const account = system.listAccounts(owner.id)[0];
       assert.ok(account);
-      system.fundSandbox(SANDBOX_OPERATOR_KEY, `stage2-fraud-funding-${randomUUID()}`, {
+      system.seedReferenceFunding(`stage2-fraud-funding-${randomUUID()}`, {
         recipientAccountNumber: getAccountNumber(system, owner.id),
         amount: { currency: "VND", amountMinor: "1000000" },
         reason: "stage2 fraud regression fixture",
@@ -507,7 +506,7 @@ test("PostgreSQL persistent HTTP server restores state across restart", {
     async (state) => {
       const fixture = new BankingSystem({ sandboxOtp: "123456" });
       fixture.importState(state as BankingSystemState);
-      fixture.fundSandbox(SANDBOX_OPERATOR_KEY, `persistent-http-funding-${uniqueSuffix}`, {
+      fixture.seedReferenceFunding(`persistent-http-funding-${uniqueSuffix}`, {
         recipientAccountNumber: getAccountNumber(fixture, registered.user.id),
         amount: { currency: "VND", amountMinor: "10000000" },
         reason: "persistent HTTP transfer fixture funding",
@@ -642,7 +641,7 @@ test("PostgreSQL snapshot persists a savings opening across restart", {
       }).user;
       const account = firstSystem.listAccounts(user.id)[0];
       assert.ok(account);
-      firstSystem.fundSandbox(SANDBOX_OPERATOR_KEY, `persistent-savings-funding-${randomUUID()}`, {
+      firstSystem.seedReferenceFunding(`persistent-savings-funding-${randomUUID()}`, {
         recipientAccountNumber: getAccountNumber(firstSystem, user.id),
         amount: { currency: "VND", amountMinor: "10000000" },
         reason: "persistent savings fixture funding",
@@ -723,8 +722,8 @@ test("PostgreSQL snapshot persists M7 credit state and serializes concurrent pay
         phoneNumber: `09${String(Date.now()).slice(-8)}`,
         password: "Password1",
       }).user;
-      firstSystem.seedCreditSandbox(SANDBOX_OPERATOR_KEY, user.id);
-      firstSystem.fundSandbox(SANDBOX_OPERATOR_KEY, `persistent-credit-funding-${randomUUID()}`, {
+      firstSystem.seedReferenceCredit(user.id);
+      firstSystem.seedReferenceFunding(`persistent-credit-funding-${randomUUID()}`, {
         recipientAccountNumber: getAccountNumber(firstSystem, user.id),
         amount: { currency: "VND", amountMinor: "10000000" },
         reason: "persistent credit fixture funding",

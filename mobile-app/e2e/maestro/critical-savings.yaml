@@ -17,7 +17,7 @@ appId: ${APP_ID}
     timeout: 10000
 - tapOn:
     id: login-mfa-code
-- inputText: ${MFA_OTP}
+- inputText: ${MFA_TOTP}
 - tapOn:
     id: login-mfa-submit
 - extendedWaitUntil:
@@ -54,7 +54,7 @@ appId: ${APP_ID}
     id: savings-review-confirm
 - tapOn:
     id: savings-step-up-code
-- inputText: ${TRANSFER_OTP}
+- inputText: ${TRANSFER_TOTP}
 - pressKey: BACK
 - tapOn:
     id: savings-submit

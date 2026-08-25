@@ -56,6 +56,14 @@ export const EVENT_POLICIES: readonly EventPolicy[] = [
   policy("security.device_revoked", "SECURITY", ["PUSH", "EMAIL"], 5, null, ["SECURITY_DEVICE_REVOKED"]),
   policy("security.sessions_revoked", "SECURITY", ["PUSH", "EMAIL"], 5, null, ["SECURITY_SESSIONS_REVOKED"]),
   policy("sandbox.funding_succeeded", "SECURITY", [], 90, 24 * 60 * 60, ["SANDBOX_FUNDING_SUCCEEDED"]),
+  // Admin mutations are internal integration events.  They intentionally do
+  // not fan out to customer channels, but they still use the same canonical
+  // envelope and worker validation as customer-facing events.
+  policy("admin.simulation_funding_succeeded", "SECURITY", [], 90, null, ["ADMIN_SIMULATION_FUNDING_SUCCEEDED"]),
+  policy("admin.simulation_funding_reversal_succeeded", "SECURITY", [], 90, null, ["ADMIN_SIMULATION_FUNDING_REVERSAL_SUCCEEDED"]),
+  policy("admin.transfer_reversal_succeeded", "TRANSFER", [], 90, null, ["ADMIN_TRANSFER_REVERSAL_SUCCEEDED"]),
+  policy("admin.transfer_operation_requested", "TRANSFER", [], 90, null, ["ADMIN_TRANSFER_OPERATION_REQUESTED"]),
+  policy("admin.staff_invite_created", "SECURITY", [], 90, null, ["STAFF_INVITE_CREATED"]),
 ];
 
 const byName = new Map<string, EventPolicy>();

@@ -87,6 +87,12 @@ export function ProfileScreen() {
         />
 
         <PrimaryButton
+          label="Bảo mật MFA / Authenticator"
+          onPress={() => router.push("/mfa")}
+          testID="profile-mfa"
+        />
+
+        <PrimaryButton
           label="Mã QR nhận tiền"
           onPress={() => router.push("/qr")}
           testID="profile-qr"

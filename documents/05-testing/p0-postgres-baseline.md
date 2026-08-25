@@ -2,12 +2,12 @@
 
 Ngày đo: 2026-08-24 (Asia/Bangkok)
 Nhánh: `codex/p0-postgres-foundation`
-Mã nguồn đã đồng bộ: `f135d4e`
+Mã nguồn đã đồng bộ tại thời điểm baseline: `f135d4e` (bằng chứng lịch sử, không phải release target hiện tại).
 Môi trường: Docker Compose, PostgreSQL 16, backend `127.0.0.1:5000`.
 
 ## Bằng chứng baseline
 
-- Image backend đã rebuild từ `f135d4e`; health trả `commitSha=f135d4e`, `status=ok`, reconciliation `ok`.
+- Image backend đã rebuild từ `f135d4e`; health trả `commitSha=f135d4e`, `status=ok`, reconciliation `ok` tại thời điểm 2026-08-24. Đây là evidence lịch sử; release hiện tại phải qua `npm run release:gate` và dùng digest registry.
 - Backup custom-format: `C:\Temp\banking-p0-baseline\p0-baseline-20260824.dump` (111,342 bytes).
 - `pg_restore --list` đọc được archive, 193 mục TOC; backup chưa được xóa.
 - Trước migration v2, database có 13 customer/account, 6 quote, 6 transfer, 18 account transaction, 12 journal, 30 ledger entry, 117 audit event, 12 outbox event và 36 record trong `reference_runtime_records`.
@@ -20,13 +20,14 @@ Migration runner đã chạy thành công từ database rỗng và chạy lại 
 Lệnh:
 
 ```powershell
-$env:PERF_OPERATOR_KEY = "<local operator key>"
-$env:PERF_OTP = "<local transfer OTP>"
-$env:PERF_MFA_OTP = "<local MFA OTP>"
+$env:PERF_TOTP_SECRET = "<disposable TOTP fixture secret>"
 $env:PERF_READ_ITERATIONS = "10"
 $env:PERF_TRANSFER_CONCURRENCY = "20"
 node performance/node/stage2-smoke.cjs
 ```
+
+Fixture owner phải được cấp số dư trước qua Admin four-eyes; harness không có
+operator key hoặc public funding endpoint.
 
 Kết quả workload legacy persistent (không phải relational-v2 cutover):
 

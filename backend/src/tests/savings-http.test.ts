@@ -5,9 +5,9 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer } from "../http.js";
 
-const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
 
 async function completeRegistration(
+  system: BankingSystem,
   request: (path: string, init?: RequestInit) => Promise<Response>,
 ): Promise<{ user: { id: string } }> {
   const begin = await request("/auth/register", {
@@ -21,10 +21,7 @@ async function completeRegistration(
   });
   assert.equal(begin.status, 202);
   const challenge = (await begin.json()) as { challengeId: string };
-  const otpResponse = await request(`/sandbox/otp/${challenge.challengeId}`, {
-    headers: { "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY },
-  });
-  const otp = (await otpResponse.json()) as { otp: string };
+  const otp = { otp: system.readTestVerificationCode(challenge.challengeId) };
   const verified = await request("/auth/register/verify", {
     method: "POST",
     body: JSON.stringify({ challengeId: challenge.challengeId, proof: otp.otp }),
@@ -51,7 +48,7 @@ test("HTTP savings flow exposes quote, MFA/idempotency opening and deposit detai
     });
   const json = (value: unknown) => JSON.stringify(value);
 
-  const registered = await completeRegistration(request);
+  const registered = await completeRegistration(system, request);
   const loginResponse = await request("/auth/login", {
     method: "POST",
     body: json({ email: "savings-http@example.com", password: "Password1" }),
@@ -63,7 +60,7 @@ test("HTTP savings flow exposes quote, MFA/idempotency opening and deposit detai
   const accounts = (await accountsResponse.json()) as { accounts: Array<{ id: string }> };
   const accountId = accounts.accounts[0]?.id;
   assert.ok(accountId);
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, "savings-http-funding", {
+  system.seedReferenceFunding("savings-http-funding", {
     recipientAccountNumber: system.getAccountNumber(registered.user.id, accountId),
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "test fixture funding",

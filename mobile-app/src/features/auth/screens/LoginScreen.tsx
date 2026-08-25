@@ -19,7 +19,7 @@ import type { LoginFieldErrors, LoginFormValues } from "@/features/auth/types/au
 import { validateLoginForm } from "@/features/auth/validation/authValidation";
 import { ApiError } from "@/services/api/ApiError";
 import {
-  getSandboxBiometricProof,
+  getDeviceBoundAssertion,
   requestBiometricAuthentication,
 } from "@/services/security/biometricAuth";
 import { colors, spacing } from "@/theme";
@@ -97,7 +97,7 @@ export function LoginScreen() {
   }
 
   async function handleVerifyChallenge() {
-    if (!pendingLoginChallenge || !pendingLoginChallenge.methods.includes("OTP")) {
+    if (!pendingLoginChallenge || (!pendingLoginChallenge.methods.includes("OTP") && !pendingLoginChallenge.methods.includes("TOTP"))) {
       return;
     }
     if (Date.now() >= Date.parse(pendingLoginChallenge.expiresAt)) {
@@ -118,7 +118,7 @@ export function LoginScreen() {
     try {
       await verifyLoginChallenge({
         challengeId: pendingLoginChallenge.challengeId,
-        method: "OTP",
+        method: pendingLoginChallenge.methods.includes("TOTP") ? "TOTP" : "OTP",
         proof: challengeProof,
       });
     } catch (error: unknown) {
@@ -157,7 +157,7 @@ export function LoginScreen() {
 
     try {
       await requestBiometricAuthentication("Xác thực đăng nhập");
-      const biometricProof = getSandboxBiometricProof();
+      const biometricProof = getDeviceBoundAssertion();
       if (!biometricProof) {
         setServerError("Backend/risk provider chưa cung cấp biometric assertion.");
         return;
@@ -211,12 +211,12 @@ export function LoginScreen() {
               <Text style={styles.description}>
                 Hệ thống yêu cầu thêm một bước xác thực trước khi mở phiên đăng nhập.
               </Text>
-              {pendingLoginChallenge.methods.includes("OTP") ? (
+              {pendingLoginChallenge.methods.includes("OTP") || pendingLoginChallenge.methods.includes("TOTP") ? (
                 <TextField
                   accessibilityLabel="Mã xác thực đăng nhập"
                   autoCapitalize="none"
                   error={serverError}
-                  label="Mã OTP"
+                  label="Mã TOTP"
                   onChangeText={(value) => {
                     setChallengeProof(value);
                     setServerError(undefined);
@@ -241,7 +241,7 @@ export function LoginScreen() {
                   testID="login-request-error"
                 />
               ) : null}
-              {pendingLoginChallenge.methods.includes("OTP") ? (
+              {pendingLoginChallenge.methods.includes("OTP") || pendingLoginChallenge.methods.includes("TOTP") ? (
                 <PrimaryButton
                   disabled={isVerifyingChallenge}
                   label={isVerifyingChallenge ? "Đang xác thực..." : "Xác thực và đăng nhập"}
@@ -327,6 +327,14 @@ export function LoginScreen() {
               </Pressable>
             </Link>
           </View>
+
+          {!pendingLoginChallenge ? (
+            <Link href="./recover" asChild>
+              <Pressable accessibilityRole="link" hitSlop={8}>
+                <Text style={styles.link}>Mất Authenticator? Dùng recovery code</Text>
+              </Pressable>
+            </Link>
+          ) : null}
 
           <View style={styles.notice}>
             <Text style={styles.noticeText}>

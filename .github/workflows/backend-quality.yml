@@ -5,11 +5,13 @@ on:
     paths:
       - "backend/**"
       - "documents/api/**"
+      - "documents/admin/**"
       - ".github/workflows/backend-quality.yml"
   pull_request:
     paths:
       - "backend/**"
       - "documents/api/**"
+      - "documents/admin/**"
       - ".github/workflows/backend-quality.yml"
 
 jobs:
@@ -23,12 +25,12 @@ jobs:
       NOTIFICATION_ENDPOINT_ENCRYPTION_KEY: ci-worker-only-key
       BANKING_ENV: development
       BANKING_MFA_REQUIRED: "0"
-      BANKING_SANDBOX_MFA_OTP: "654321"
-      BANKING_SANDBOX_OTP: "123456"
+      BANKING_OTP_PEPPER: "base64:Y2ktb3RwLXBlcHBlci0wMTIzNDU2Nzg5MDEyMzQ1Njc="
+      BANKING_MFA_ENCRYPTION_KEY: "base64:Y2ktbWZhLWVuY3J5cHRpb24ta2V5LTAxMjM0NTY3ODk="
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:c1b3783309b6499c795eed7c20135a1a4d25cae1b575c3d52c6f536129a1b109
         env:
           POSTGRES_USER: banking
           POSTGRES_PASSWORD: banking
@@ -67,6 +69,11 @@ jobs:
       - name: Apply PostgreSQL migration from empty database
         run: npm run db:migrate
 
+      - name: Verify migration plan and checksums
+        run: |
+          npm run db:migrate -- --plan
+          npm run db:migrate -- --verify-only
+
       - name: Re-run PostgreSQL migration idempotently
         run: npm run db:migrate
 
@@ -94,6 +101,12 @@ jobs:
       - name: Validate OpenAPI draft and implementation markers
         run: npm run validate:openapi
 
+      - name: Validate Admin schema, authorization registry and OpenAPI
+        run: |
+          npm run validate:admin-schema
+          npm run validate:admin-authz
+          npm run validate:admin-openapi
+
       - name: Dependency security audit
         run: npm audit --omit=dev --audit-level=high
 
@@ -108,6 +121,17 @@ jobs:
 
       - name: Critical API tests
         run: npm run test:critical
+
+      - name: Admin authorization and four-eyes tests
+        run: npm run test:admin
+
+      - name: Admin API HTTP E2E (MFA, CSRF and four-eyes)
+        run: npm run test:admin:e2e
+
+      - name: Admin PostgreSQL integration and concurrency tests
+        run: |
+          npm run test:admin:database
+          npm run test:admin:concurrency
 
       - name: Relational persistence regression
         env:

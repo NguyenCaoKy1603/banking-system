@@ -5,7 +5,6 @@ import { BankingSystem, OUTBOX_EVENT_RETENTION_MS } from "../bankingSystem.js";
 import { InMemoryCoreBanking } from "../coreBanking.js";
 import type { LoginResponse, LoginResult } from "../types.js";
 
-const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
 let fixtureSequence = 0;
 
 function requireTokenPair(result: LoginResult): LoginResponse {
@@ -39,7 +38,7 @@ function prepareTransferFixture(system: BankingSystem, userId: string) {
   const account = system.listAccounts(userId)[0];
   assert.ok(account);
   fixtureSequence += 1;
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, `fixture-funding-${fixtureSequence}`, {
+  system.seedReferenceFunding(`fixture-funding-${fixtureSequence}`, {
     recipientAccountNumber: getAccountNumber(system, userId),
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "test fixture funding",
@@ -765,7 +764,7 @@ test("transaction cursor remains stable when a newer transaction is inserted", (
   const account = system.listAccounts(user.id)[0]!;
   const accountNumber = system.getAccountNumber(user.id, account.id);
   for (let index = 1; index <= 3; index += 1) {
-    system.fundSandbox(SANDBOX_OPERATOR_KEY, `cursor-funding-${index}`, {
+    system.seedReferenceFunding(`cursor-funding-${index}`, {
       recipientAccountNumber: accountNumber,
       amount: { currency: "VND", amountMinor: String(index * 1000) },
       reason: `cursor fixture ${index}`,
@@ -776,7 +775,7 @@ test("transaction cursor remains stable when a newer transaction is inserted", (
   const first = system.listTransactions(user.id, account.id, undefined, 2);
   assert.equal(first.items.length, 2);
   assert.ok(first.nextCursor);
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, "cursor-funding-newer", {
+  system.seedReferenceFunding("cursor-funding-newer", {
     recipientAccountNumber: accountNumber,
     amount: { currency: "VND", amountMinor: "4000" },
     reason: "newer cursor fixture",
@@ -809,7 +808,7 @@ test("reconciliation reports core minus ledger difference", () => {
   });
   const account = system.listAccounts(registered.user.id)[0];
   assert.ok(account);
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, "reconciliation-funding", {
+  system.seedReferenceFunding("reconciliation-funding", {
     recipientAccountNumber: getAccountNumber(system, registered.user.id),
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "test fixture funding",
@@ -943,10 +942,7 @@ test("pending transfer can be recovered and settled without a second debit", () 
   );
   assert.equal(system.listTransactions(registered.user.id, account.id).items.length, 2);
 
-  const processing = system.processScheduledWork(
-    "sandbox-operator-local",
-    registered.user.id,
-  );
+  const processing = system.runReferenceScheduledWork(registered.user.id);
   assert.equal(processing.transfersSettled, 1);
   const settled = system.getTransfer(registered.user.id, pending.transferId);
   assert.equal(settled.status, "SUCCEEDED");
@@ -1025,7 +1021,7 @@ test("transfer reversal fails atomically when recipient funds are reserved", () 
   }).user;
   const senderAccount = system.listAccounts(sender.id)[0]!;
   const recipientAccount = system.listAccounts(recipient.id)[0]!;
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, "reversal-source-funding", {
+  system.seedReferenceFunding("reversal-source-funding", {
     recipientAccountNumber: getAccountNumber(system, sender.id),
     amount: { currency: "VND", amountMinor: "2000000" },
     reason: "reversal atomicity fixture",
@@ -1152,7 +1148,7 @@ test("cleanup removes expired quotes and retained published outbox events", () =
   assert.ok(publishedFunding);
   system.markOutboxPublished(publishedFunding.id);
 
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, "cleanup-pending-funding", {
+  system.seedReferenceFunding("cleanup-pending-funding", {
     recipientAccountNumber: getAccountNumber(system, registered.user.id),
     amount: { currency: "VND", amountMinor: "100000" },
     reason: "cleanup pending outbox fixture",

@@ -76,7 +76,7 @@ function validateStepUp(request: CreditPaymentRequest): void {
   requireResourceId(request.quoteId, "quoteId");
   if (
     !request.stepUp ||
-    (request.stepUp.method !== "OTP" && request.stepUp.method !== "BIOMETRIC") ||
+    (request.stepUp.method !== "OTP" && request.stepUp.method !== "TOTP" && request.stepUp.method !== "BIOMETRIC") ||
     !request.stepUp.proof.trim()
   ) {
     throw new TypeError("stepUp.proof không được để trống.");
@@ -117,7 +117,7 @@ export function lockCreditCard(cardId: string, auth: RequestAuth): Promise<{ car
 
 export function unlockCreditCard(
   cardId: string,
-  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string },
+  stepUp: { method: "OTP" | "TOTP" | "BIOMETRIC"; proof: string; challengeId?: string },
   auth: RequestAuth,
 ): Promise<{ card: CreditCard }> {
   if (!stepUp.proof.trim()) throw new TypeError("stepUp.proof không được để trống.");
@@ -157,7 +157,7 @@ export function submitCreditApplication(
 
 export function activateCreditApplication(
   applicationId: string,
-  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string },
+  stepUp: { method: "OTP" | "TOTP" | "BIOMETRIC"; proof: string; challengeId?: string },
   options: { auth: RequestAuth; idempotencyKey: string },
 ): Promise<CreditApplication> {
   validateStepUp({ quoteId: applicationId, stepUp });

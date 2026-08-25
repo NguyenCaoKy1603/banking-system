@@ -39,7 +39,7 @@ function isCreditApplicationValue(value: unknown): value is CreditApplication {
     isString(value.applicationId) &&
     isMoney(value.requestedLimit) &&
     (value.approvedLimit === null || isMoney(value.approvedLimit)) &&
-    ["PENDING_ACTIVATION", "ACTIVE", "REJECTED"].includes(String(value.status)) &&
+    ["SUBMITTED", "UNDER_REVIEW", "PENDING_ACTIVATION", "ACTIVE", "REJECTED"].includes(String(value.status)) &&
     isNullableString(value.decisionReason) &&
     (value.creditAccountId === null || isString(value.creditAccountId)) &&
     isNonEmptyDateTime(value.createdAt) &&

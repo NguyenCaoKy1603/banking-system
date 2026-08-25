@@ -22,12 +22,11 @@ export async function requestBiometricAuthentication(
   }
 }
 
-export function getSandboxBiometricProof(): string {
-  if (process.env.NODE_ENV === "production") {
-    return "";
-  }
-  return (
-    process.env.EXPO_PUBLIC_SANDBOX_BIOMETRIC_PROOF ??
-    (process.env.NODE_ENV === "development" ? "sandbox-biometric" : "")
-  );
+/**
+ * Returns a cryptographic device assertion only when a future server/provider
+ * supplies one. A local biometric prompt by itself is deliberately not sent
+ * as an authentication proof.
+ */
+export function getDeviceBoundAssertion(): string {
+  return process.env.EXPO_PUBLIC_DEVICE_ASSERTION?.trim() ?? "";
 }

@@ -13,6 +13,15 @@ export type RelationalStateOperation<T> = (state: unknown) => Promise<{
   nextState: unknown;
 }>;
 
+export type RelationalStateBoundaryOptions = {
+  /**
+   * MFA owns lockable PostgreSQL tables outside the legacy full-state replay.
+   * Preserve those rows while the compatibility adapter rewrites banking
+   * aggregates for the current request.
+   */
+  preservePersistentAuthState?: boolean;
+};
+
 export type PostgresRelationalRepositoryOptions = {
   connectionString?: string;
   maxConnections?: number;
@@ -74,6 +83,35 @@ function arrayEntries(value: unknown): Array<[string, unknown]> {
   );
 }
 
+type PreservedPersistentAuthState = {
+  mfaCredentials: Row[];
+  mfaChallenges: Row[];
+  mfaRecoveryCodes: Row[];
+  mfaRecoveryRequests: Row[];
+  authSecurityEvents: Row[];
+  pendingRegistrations: Row[];
+  rateLimitBuckets: Row[];
+  registrationCompletions: Row[];
+};
+
+async function readRows(client: PoolClient, table: string): Promise<Row[]> {
+  const result = await client.query(`SELECT * FROM ${table}`);
+  return result.rows as Row[];
+}
+
+async function insertRow(
+  client: PoolClient,
+  table: string,
+  columns: readonly string[],
+  row: Row,
+): Promise<void> {
+  const placeholders = columns.map((_, index) => `$${index + 1}`).join(", ");
+  await client.query(
+    `INSERT INTO ${table} (${columns.join(", ")}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+    columns.map((column) => row[column] ?? null),
+  );
+}
+
 /**
  * PostgreSQL adapter for the reference sandbox.
  *
@@ -127,9 +165,22 @@ export class PostgresRelationalRepository {
         "PostgreSQL relational columns are missing. Run `npm run db:migrate` before starting the persistent backend.",
       );
     }
+    const mfaTables = await this.pool.query<{ credential_table: string | null; event_table: string | null }>(
+      `SELECT to_regclass('public.mfa_credentials') AS credential_table,
+              to_regclass('public.auth_security_events') AS event_table`,
+    );
+    if (!mfaTables.rows[0]?.credential_table || !mfaTables.rows[0]?.event_table) {
+      throw new Error(
+        "PostgreSQL MFA schema is not initialized. Run `npm run db:migrate` before starting the persistent backend.",
+      );
+    }
   }
 
-  async withState<T>(initialState: unknown, operation: RelationalStateOperation<T>): Promise<T> {
+  async withState<T>(
+    initialState: unknown,
+    operation: RelationalStateOperation<T>,
+    boundaryOptions: RelationalStateBoundaryOptions = {},
+  ): Promise<T> {
     if (process.env.BANKING_PERSISTENCE_MODE?.trim() === "relational-v2") {
       throw new Error(
         "Legacy PostgresRelationalRepository is disabled in relational-v2 mode; use direct transactional repositories before enabling the worker.",
@@ -162,7 +213,13 @@ export class PostgresRelationalRepository {
       );
       const current = await this.readState(client, initialState);
       const { result, nextState } = await operation(current);
-      await this.writeState(client, nextState as BankingSystemState);
+      const preservedPersistentAuthState = boundaryOptions.preservePersistentAuthState
+        ? await this.snapshotPersistentAuthState(client)
+        : undefined;
+      await this.writeState(client, nextState as BankingSystemState, boundaryOptions);
+      if (preservedPersistentAuthState) {
+        await this.restorePersistentAuthState(client, preservedPersistentAuthState);
+      }
       // A legacy snapshot is only removed after the relational projection has
       // committed successfully; this also avoids queuing deferred ledger
       // triggers twice during one migration transaction.
@@ -184,6 +241,15 @@ export class PostgresRelationalRepository {
     await this.pool.query("SELECT 1 FROM reference_runtime_records LIMIT 1");
   }
 
+  async customerAccessStatus(customerId: string): Promise<"ACTIVE" | "LOCKED" | null> {
+    const result = await this.pool.query<{ access_status: string | null }>(
+      "SELECT COALESCE(access_status, 'ACTIVE') AS access_status FROM customers WHERE id = $1",
+      [customerId],
+    );
+    const status = result.rows[0]?.access_status;
+    return status === "LOCKED" ? "LOCKED" : status ? "ACTIVE" : null;
+  }
+
   async close(): Promise<void> {
     await this.pool.close();
   }
@@ -200,10 +266,22 @@ export class PostgresRelationalRepository {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await this.truncateRelationalState(client);
-      await client.query("DELETE FROM reference_state_snapshots WHERE snapshot_key = $1", [
-        this.legacySnapshotKey,
-      ]);
+      // `clear` is an explicit disposable-test operation, not the request
+      // boundary.  Use TRUNCATE ... CASCADE so the append-only audit trigger
+      // is bypassed only for this opt-in reset path; normal public requests
+      // use the compatibility-preserving writer above.
+      await client.query(`
+        TRUNCATE TABLE
+          reference_state_snapshots,
+          reference_runtime_records,
+          audit_events,
+          outbox_events,
+          ledger_entries,
+          ledger_journals,
+          staff_users,
+          customers
+        RESTART IDENTITY CASCADE
+      `);
       await client.query("COMMIT");
     } catch (error: unknown) {
       await client.query("ROLLBACK").catch(() => undefined);
@@ -347,7 +425,14 @@ export class PostgresRelationalRepository {
         id: isUuid(row.entry_id) ? String(row.entry_id) : randomUUID(),
         journalId: stateJournalId,
         occurredAt: asIso(row.occurred_at ?? new Date()),
-        accountId: String(row.account_ref),
+        // Older Admin domain adapters persisted payment accounts with the
+        // `payment-account:` namespace while the in-memory core identifies
+        // accounts by their bare UUID.  Normalize both representations at
+        // the relational boundary so reconciliation and subsequent writes
+        // use one canonical account identity.
+        accountId: String(row.account_ref).startsWith("payment-account:")
+          ? String(row.account_ref).slice("payment-account:".length)
+          : String(row.account_ref),
         side: String(row.side),
         amountMinor: String(row.amount_minor),
         currency: "VND",
@@ -365,6 +450,7 @@ export class PostgresRelationalRepository {
         ownerId: String(row.customer_id),
         destinationOwnerId: row.destination_owner_id ? String(row.destination_owner_id) : "",
         accountId: String(row.source_account_id),
+        quoteId: String(row.quote_id),
         destinationAccountId: row.destination_account_id ? String(row.destination_account_id) : "",
         transactionId: row.source_transaction_id ? String(row.source_transaction_id) : "",
         destinationTransactionId: row.destination_transaction_id
@@ -562,8 +648,129 @@ export class PostgresRelationalRepository {
     return state;
   }
 
-  private async writeState(client: PoolClient, state: BankingSystemState): Promise<void> {
-    await this.truncateRelationalState(client);
+  private async snapshotPersistentAuthState(client: PoolClient): Promise<PreservedPersistentAuthState> {
+    return {
+      mfaCredentials: await readRows(client, "mfa_credentials"),
+      mfaChallenges: await readRows(client, "auth_challenges"),
+      mfaRecoveryCodes: await readRows(client, "mfa_recovery_codes"),
+      mfaRecoveryRequests: await readRows(client, "mfa_recovery_requests"),
+      authSecurityEvents: await readRows(client, "auth_security_events"),
+      pendingRegistrations: await readRows(client, "pending_registrations"),
+      rateLimitBuckets: await readRows(client, "rate_limit_buckets"),
+      registrationCompletions: await readRows(client, "registration_completions"),
+    };
+  }
+
+  private async restorePersistentAuthState(
+    client: PoolClient,
+    snapshot: PreservedPersistentAuthState,
+  ): Promise<void> {
+    const customerResult = await client.query<{ id: string }>("SELECT id::text AS id FROM customers");
+    const customerIds = new Set(customerResult.rows.map((row) => String(row.id)));
+    const pendingResult = await client.query<{ id: string }>("SELECT id FROM pending_registrations");
+    const pendingIds = new Set(pendingResult.rows.map((row) => String(row.id)));
+    const accountResult = await client.query<{ id: string }>("SELECT id::text AS id FROM payment_accounts");
+    const accountIds = new Set(accountResult.rows.map((row) => String(row.id)));
+    const credentialIds = new Set<string>();
+
+    for (const row of snapshot.pendingRegistrations) {
+      await insertRow(client, "pending_registrations", [
+        "id", "full_name", "email", "phone_number", "password_salt", "password_digest",
+        "device_id", "challenge_id", "expires_at", "created_at",
+      ], row);
+      pendingIds.add(String(row.id));
+    }
+    for (const row of snapshot.rateLimitBuckets) {
+      await insertRow(client, "rate_limit_buckets", [
+        "bucket_key", "window_started_at", "attempts", "updated_at",
+      ], row);
+    }
+    for (const row of snapshot.mfaCredentials) {
+      if (customerIds.has(String(row.customer_id))) {
+        await insertRow(client, "mfa_credentials", [
+          "id", "customer_id", "credential_type", "display_name", "status",
+          "secret_ciphertext", "secret_key_id", "algorithm", "digits", "period_seconds",
+          "last_accepted_time_step", "enrolled_at", "last_used_at", "revoked_at",
+          "compromised_at", "created_at", "updated_at",
+        ], row);
+        credentialIds.add(String(row.id));
+      }
+    }
+    for (const row of snapshot.mfaRecoveryCodes) {
+      if (customerIds.has(String(row.customer_id))) {
+        await insertRow(client, "mfa_recovery_codes", [
+          "id", "customer_id", "code_digest", "salt", "digest_key_id", "status",
+          "created_at", "used_at", "revoked_at",
+        ], row);
+      }
+    }
+    for (const row of snapshot.mfaRecoveryRequests) {
+      if (customerIds.has(String(row.customer_id))) {
+        await insertRow(client, "mfa_recovery_requests", [
+          "id", "customer_id", "public_token_hash", "status", "requested_method", "risk_level",
+          "requested_at", "expires_at", "verified_at", "approved_at", "completed_at",
+          "cancelled_at", "cooldown_until", "reviewed_by", "review_reason", "created_at", "updated_at",
+        ], row);
+      }
+    }
+
+    const restoredChallengeIds = new Set<string>();
+    for (const row of snapshot.mfaChallenges) {
+      const customerId = row.customer_id === null ? null : String(row.customer_id);
+      const pendingRegistrationId = row.pending_registration_id === null
+        ? null
+        : String(row.pending_registration_id);
+      const credentialId = row.credential_id === null ? null : String(row.credential_id);
+      if (
+        (customerId !== null && !customerIds.has(customerId)) ||
+        (pendingRegistrationId !== null && !pendingIds.has(pendingRegistrationId)) ||
+        (credentialId !== null && !credentialIds.has(credentialId))
+      ) {
+        continue;
+      }
+      await insertRow(client, "auth_challenges", [
+        "id", "customer_id", "pending_registration_id", "credential_id", "device_id",
+        "method", "purpose", "resource_id", "request_fingerprint", "methods", "otp_hash",
+        "expires_at", "attempts", "created_at", "consumed_at", "proof_digest", "digest_key_id",
+        "max_attempts", "resend_count", "last_sent_at", "verified_at", "cancelled_at", "locked_at",
+        "created_ip_fingerprint", "created_device_fingerprint", "status", "updated_at",
+      ], row);
+      restoredChallengeIds.add(String(row.id));
+    }
+    for (const row of snapshot.authSecurityEvents) {
+      const customerId = row.customer_id === null ? null : String(row.customer_id);
+      const challengeId = row.challenge_id === null ? null : String(row.challenge_id);
+      if (
+        (customerId !== null && !customerIds.has(customerId)) ||
+        (challengeId !== null && !restoredChallengeIds.has(challengeId))
+      ) {
+        continue;
+      }
+      await insertRow(client, "auth_security_events", [
+        "id", "customer_id", "event_type", "purpose", "device_fingerprint",
+        "network_fingerprint", "risk_score", "risk_decision", "challenge_id", "resource_id",
+        "occurred_at", "metadata",
+      ], row);
+    }
+    for (const row of snapshot.registrationCompletions) {
+      if (
+        pendingIds.has(String(row.pending_registration_id)) &&
+        customerIds.has(String(row.customer_id)) &&
+        accountIds.has(String(row.account_id))
+      ) {
+        await insertRow(client, "registration_completions", [
+          "pending_registration_id", "customer_id", "account_id", "created_at",
+        ], row);
+      }
+    }
+  }
+
+  private async writeState(
+    client: PoolClient,
+    state: BankingSystemState,
+    boundaryOptions: RelationalStateBoundaryOptions = {},
+  ): Promise<void> {
+    await this.truncateRelationalState(client, boundaryOptions);
     const now = new Date().toISOString();
     const userIds = new Set(state.users.map(([userId]) => userId));
 
@@ -574,6 +781,12 @@ export class PostgresRelationalRepository {
           INSERT INTO customers
             (id, full_name, email, phone_number, password_salt, password_digest, created_at)
           VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (id) DO UPDATE SET
+            full_name = EXCLUDED.full_name,
+            email = EXCLUDED.email,
+            phone_number = EXCLUDED.phone_number,
+            password_salt = EXCLUDED.password_salt,
+            password_digest = EXCLUDED.password_digest
         `,
         [
           record.id,
@@ -599,6 +812,19 @@ export class PostgresRelationalRepository {
              available_minor, current_minor, status, version, updated_at,
              account_number, bank_name, opening_balance_minor, held_minor)
           VALUES ($1, $2, $3, $4, 'VND', $5, $6, $7, 0, $8, $9, $10, $11, $12)
+          ON CONFLICT (id) DO UPDATE SET
+            customer_id = EXCLUDED.customer_id,
+            display_name = EXCLUDED.display_name,
+            masked_number = EXCLUDED.masked_number,
+            available_minor = EXCLUDED.available_minor,
+            current_minor = EXCLUDED.current_minor,
+            status = EXCLUDED.status,
+            updated_at = EXCLUDED.updated_at,
+            account_number = EXCLUDED.account_number,
+            bank_name = EXCLUDED.bank_name,
+            opening_balance_minor = EXCLUDED.opening_balance_minor,
+            held_minor = EXCLUDED.held_minor,
+            version = GREATEST(payment_accounts.version, EXCLUDED.version)
         `,
         [
           record.id,
@@ -627,6 +853,16 @@ export class PostgresRelationalRepository {
                masked_account_number, account_number_fingerprint, bank_name,
                status, destination_account_id, destination_owner_id, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (id) DO UPDATE SET
+              customer_id = EXCLUDED.customer_id,
+              display_name = EXCLUDED.display_name,
+              account_holder_name = EXCLUDED.account_holder_name,
+              masked_account_number = EXCLUDED.masked_account_number,
+              account_number_fingerprint = EXCLUDED.account_number_fingerprint,
+              bank_name = EXCLUDED.bank_name,
+              status = EXCLUDED.status,
+              destination_account_id = EXCLUDED.destination_account_id,
+              destination_owner_id = EXCLUDED.destination_owner_id
           `,
           [
             record.id,
@@ -654,6 +890,10 @@ export class PostgresRelationalRepository {
       if (consumedTransferId) {
         quoteByTransferId.set(String(consumedTransferId), { quoteId, record });
       }
+      // A few historical reference fixtures persisted the transfer relation
+      // without the deferred consumed-transfer edge. Keep the quote keyed by
+      // its own ID as a compatibility fallback for that data.
+      quoteByTransferId.set(String(quoteId), { quoteId, record });
       await client.query(
         `
           INSERT INTO transfer_quotes
@@ -661,7 +901,20 @@ export class PostgresRelationalRepository {
              amount_minor, fee_minor, currency, expires_at, consumed_at,
              created_at, beneficiary_snapshot, destination_account_id,
              destination_owner_id, consumed_transfer_id, request_fingerprint)
-          VALUES ($1, $2, $3, $4, $5, $6, 'VND', $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
+            VALUES ($1, $2, $3, $4, $5, $6, 'VND', $7, $8, $9, $10::jsonb, $11, $12, $13, $14)
+          ON CONFLICT (id) DO UPDATE SET
+            customer_id = EXCLUDED.customer_id,
+            source_account_id = EXCLUDED.source_account_id,
+            beneficiary_id = EXCLUDED.beneficiary_id,
+            amount_minor = EXCLUDED.amount_minor,
+            fee_minor = EXCLUDED.fee_minor,
+            expires_at = EXCLUDED.expires_at,
+            consumed_at = EXCLUDED.consumed_at,
+            beneficiary_snapshot = EXCLUDED.beneficiary_snapshot,
+            destination_account_id = EXCLUDED.destination_account_id,
+            destination_owner_id = EXCLUDED.destination_owner_id,
+            consumed_transfer_id = EXCLUDED.consumed_transfer_id,
+            request_fingerprint = EXCLUDED.request_fingerprint
         `,
         [
           quote.quoteId,
@@ -698,7 +951,9 @@ export class PostgresRelationalRepository {
       const core = asRecord(coreTransferById.get(transferId));
       const idempotency = idempotencyByTransferId.get(transferId);
       const userId = String(record.userId);
-      const quote = quoteByTransferId.get(transferId);
+      const quote =
+        quoteByTransferId.get(transferId) ??
+        quoteByTransferId.get(String(core.quoteId ?? ""));
       if (!quote) {
         throw new Error(`Cannot persist transfer ${transferId} without its consumed quote.`);
       }
@@ -716,6 +971,24 @@ export class PostgresRelationalRepository {
              destination_owner_id, source_transaction_id,
              destination_transaction_id, ledger_journal_id, refunded, held_minor)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'VND', $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+          ON CONFLICT (id) DO UPDATE SET
+            customer_id = EXCLUDED.customer_id,
+            source_account_id = EXCLUDED.source_account_id,
+            quote_id = EXCLUDED.quote_id,
+            idempotency_key = EXCLUDED.idempotency_key,
+            request_fingerprint = EXCLUDED.request_fingerprint,
+            reference = EXCLUDED.reference,
+            amount_minor = EXCLUDED.amount_minor,
+            fee_minor = EXCLUDED.fee_minor,
+            status = EXCLUDED.status,
+            updated_at = EXCLUDED.updated_at,
+            destination_account_id = EXCLUDED.destination_account_id,
+            destination_owner_id = EXCLUDED.destination_owner_id,
+            source_transaction_id = EXCLUDED.source_transaction_id,
+            destination_transaction_id = EXCLUDED.destination_transaction_id,
+            ledger_journal_id = EXCLUDED.ledger_journal_id,
+            refunded = EXCLUDED.refunded,
+            held_minor = EXCLUDED.held_minor
         `,
         [
           transferId,
@@ -743,17 +1016,30 @@ export class PostgresRelationalRepository {
 
     const journalIds = new Map<string, string>();
     for (const [journalId, journalEntries] of state.core.ledger.journals) {
-      const dbId = isUuid(journalId) ? journalId : randomUUID();
-      journalIds.set(journalId, dbId);
       const firstOccurredAt = asRecord(journalEntries[0]).occurredAt ?? now;
-      await client.query(
+      const existingJournal = await client.query<{ id: string }>(
+        "SELECT id::text AS id FROM ledger_journals WHERE aggregate_id = $1 ORDER BY created_at, id LIMIT 1",
+        [journalId],
+      );
+      let dbId = existingJournal.rows[0]?.id;
+      if (!dbId) {
+        dbId = isUuid(journalId) ? journalId : randomUUID();
+        await client.query(
         `
           INSERT INTO ledger_journals
             (id, aggregate_id, journal_type, currency, occurred_at, created_at)
           VALUES ($1, $2, 'REFERENCE', 'VND', $3, $3)
+          ON CONFLICT (journal_type, aggregate_id) DO NOTHING
         `,
-        [dbId, journalId, firstOccurredAt],
-      );
+          [dbId, journalId, firstOccurredAt],
+        );
+        const insertedJournal = await client.query<{ id: string }>(
+          "SELECT id::text AS id FROM ledger_journals WHERE aggregate_id = $1 ORDER BY created_at, id LIMIT 1",
+          [journalId],
+        );
+        dbId = insertedJournal.rows[0]?.id ?? dbId;
+      }
+      journalIds.set(journalId, dbId);
       let lineNumber = 1;
       for (const entryValue of journalEntries) {
         const entry = asRecord(entryValue);
@@ -763,6 +1049,7 @@ export class PostgresRelationalRepository {
               (journal_id, line_number, account_ref, side, amount_minor,
                currency, entry_id, occurred_at)
             VALUES ($1, $2, $3, $4, $5, 'VND', $6, $7)
+            ON CONFLICT (journal_id, line_number) DO NOTHING
           `,
           [
             dbId,
@@ -799,6 +1086,19 @@ export class PostgresRelationalRepository {
                fee_minor, currency, status, description, counterparty_name,
                reference, occurred_at, created_at, completed_at, kind)
             VALUES ($1, $2, $3, $4, $5, $6, 'VND', $7, $8, $9, $10, $11, $12, $13, $14)
+            ON CONFLICT (id) DO UPDATE SET
+              account_id = EXCLUDED.account_id,
+              transfer_id = EXCLUDED.transfer_id,
+              direction = EXCLUDED.direction,
+              amount_minor = EXCLUDED.amount_minor,
+              fee_minor = EXCLUDED.fee_minor,
+              status = EXCLUDED.status,
+              description = EXCLUDED.description,
+              counterparty_name = EXCLUDED.counterparty_name,
+              reference = EXCLUDED.reference,
+              occurred_at = EXCLUDED.occurred_at,
+              completed_at = EXCLUDED.completed_at,
+              kind = EXCLUDED.kind
           `,
           [
             item.id,
@@ -852,6 +1152,12 @@ export class PostgresRelationalRepository {
           INSERT INTO fraud_reports
             (id, customer_id, account_id, transaction_id, reason, status, created_at)
           VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (id) DO UPDATE SET
+            customer_id = EXCLUDED.customer_id,
+            account_id = EXCLUDED.account_id,
+            transaction_id = EXCLUDED.transaction_id,
+            reason = EXCLUDED.reason,
+            status = EXCLUDED.status
         `,
         [
           report.reportId,
@@ -871,6 +1177,7 @@ export class PostgresRelationalRepository {
           INSERT INTO audit_events
             (id, event_type, actor_customer_id, resource_id, occurred_at, payload)
           VALUES ($1, $2, $3, $4, $5, '{}'::jsonb)
+          ON CONFLICT (id) DO NOTHING
         `,
         [
           event.id,
@@ -894,6 +1201,7 @@ export class PostgresRelationalRepository {
              created_at, updated_at)
           VALUES ($1, $2, 1, 'legacy', $3, 1, $4, '{}'::jsonb, $5, 100,
                   $6, $7, $8, $9, $6, $6)
+          ON CONFLICT (id) DO NOTHING
         `,
         [
           event.id,
@@ -959,7 +1267,10 @@ export class PostgresRelationalRepository {
     void journalIds;
   }
 
-  private async truncateRelationalState(client: PoolClient): Promise<void> {
+  private async truncateRelationalState(
+    client: PoolClient,
+    boundaryOptions: RelationalStateBoundaryOptions = {},
+  ): Promise<void> {
     // DELETE is used instead of TRUNCATE because the draft ledger schema has
     // deferred constraint triggers; PostgreSQL rejects a second TRUNCATE in a
     // transaction that already queued those trigger events.
@@ -968,6 +1279,21 @@ export class PostgresRelationalRepository {
     await client.query(
       "UPDATE transfer_quotes SET consumed_transfer_id = NULL WHERE consumed_transfer_id IS NOT NULL",
     );
+    if (boundaryOptions.preservePersistentAuthState) {
+      // These rows are owned by the persistent MFA boundary, not by the
+      // legacy JSON replay. Remove them only temporarily so customer/account
+      // rows can be rewritten without violating foreign keys; the caller
+      // restores the snapshot immediately before COMMIT.
+      for (const table of [
+        "auth_security_events",
+        "mfa_recovery_codes",
+        "mfa_recovery_requests",
+        "auth_challenges",
+        "mfa_credentials",
+      ]) {
+        await client.query(`DELETE FROM ${table}`);
+      }
+    }
     for (const table of [
       // Transitional compatibility only.  The legacy state adapter is not
       // allowed to leave v2 rows pointing at customers it is about to replay.
@@ -982,11 +1308,11 @@ export class PostgresRelationalRepository {
       "command_idempotency",
       "registration_completions",
       "reference_runtime_records",
-      "outbox_events",
-      "audit_events",
-      "fraud_reports",
+      // Admin control-plane rows are independent sources of truth. They are
+      // intentionally not part of the legacy replay deletion set; deleting
+      // them would violate the append-only audit trigger and could destroy a
+      // pending four-eyes request while a public request is being handled.
       "notifications",
-      "account_transactions",
       "credit_statement_items",
       "credit_payments",
       "credit_payment_quotes",
@@ -997,15 +1323,8 @@ export class PostgresRelationalRepository {
       "savings_deposits",
       "savings_openings",
       "savings_quotes",
-      "transfers",
-      "transfer_quotes",
-      "beneficiaries",
-      "payment_accounts",
-      "ledger_entries",
-      "ledger_journals",
       "auth_sessions",
       "customer_devices",
-      "customers",
     ]) {
       await client.query(`DELETE FROM ${table}`);
     }

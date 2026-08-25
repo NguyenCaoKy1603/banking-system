@@ -11,11 +11,11 @@ Phạm vi: reference sandbox cho đồ án; không phải hệ thống xử lý 
 
 - M0–M4 và M8 vẫn có trong chương trình: nền tảng, auth/eKYC mô phỏng, account/history, transfer/beneficiary/QR và notification/deep-link.
 - Đăng ký mới hoàn tất qua hai bước OTP; trước khi xác minh chưa tạo user/account. Sau xác minh chỉ có một payment account, số dư 0 VND, không tự tạo beneficiary, savings hoặc credit.
-- Sandbox Funding là thao tác operator riêng, có idempotency và không có customer route. Funding tạo journal cân bằng, transaction và notification.
+- Sandbox Funding chỉ còn là fixture nội bộ hoặc Admin action four-eyes; không có customer route/operator-key endpoint. Funding tạo journal cân bằng, transaction, audit và outbox.
 - Tra cứu người nhận dùng số tài khoản thật; beneficiary lưu destination nội bộ và chỉ trả dữ liệu công khai đã che. Quote lưu snapshot bất biến và chỉ được submit một lần.
 - Transfer immediate tạo debit nguồn, credit người nhận, fee journal, transaction hai phía, audit/outbox và reconciliation. Transfer pending giữ tiền bằng hold; FAILED giải phóng hold; REVERSED chỉ áp dụng sau SUCCEEDED.
-- OTP step-up có purpose/resource/device/fingerprint, dùng một lần. Local sandbox có thể cấu hình mã cố định rõ ràng qua environment; khi không cấu hình, mã được sinh ngẫu nhiên và chỉ operator endpoint mới đọc được.
-- Savings và Credit không còn là sản phẩm mặc định: savings mở sau khi người dùng chọn; credit đi qua application → approval sandbox → activation step-up → tạo thẻ/account với dư nợ ban đầu 0.
+- OTP step-up có purpose/resource/device/fingerprint, dùng một lần. Public API không còn endpoint đọc OTP fixture; test dùng adapter nội bộ hoặc provider test được cấp riêng.
+- Savings và Credit không còn là sản phẩm mặc định: savings mở sau khi người dùng chọn; credit đi qua `SUBMITTED` → Admin review/decision (`PENDING_ACTIVATION`) → activation step-up → tạo thẻ/account với dư nợ ban đầu 0.
 - Home và Account Detail dùng endpoint riêng để hiện số tài khoản đầy đủ. Danh sách chỉ trả số đã che; nút Hiện đầy đủ và Sao chép lấy cùng một chuỗi đầy đủ, không lấy từ 4 số cuối.
 
 ## Chất lượng đã chạy trên branch này

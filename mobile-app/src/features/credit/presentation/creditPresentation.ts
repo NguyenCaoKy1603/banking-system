@@ -22,6 +22,17 @@ export function getCreditCardStatusLabel(status: string): string {
   }
 }
 
+export function getCreditApplicationStatusLabel(status: string): string {
+  switch (status) {
+    case "SUBMITTED": return "Đã gửi hồ sơ";
+    case "UNDER_REVIEW": return "Đang được thẩm định";
+    case "PENDING_ACTIVATION": return "Đã duyệt, chờ kích hoạt";
+    case "ACTIVE": return "Đang hoạt động";
+    case "REJECTED": return "Không được phê duyệt";
+    default: return status;
+  }
+}
+
 export function getCreditStatementStatusLabel(status: CreditStatementStatus): string {
   switch (status) {
     case "ISSUED": return "Đã phát hành";

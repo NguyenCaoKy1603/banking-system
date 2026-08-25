@@ -44,7 +44,7 @@ export type LoginResponse = {
   user: AuthUser;
 };
 
-export type AuthChallengeMethod = "OTP" | "BIOMETRIC";
+export type AuthChallengeMethod = "OTP" | "EMAIL_OTP" | "TOTP" | "BIOMETRIC";
 
 export type AuthChallengeResponse = {
   challengeId: string;
@@ -52,13 +52,17 @@ export type AuthChallengeResponse = {
   methods: AuthChallengeMethod[];
   purpose:
     | "REGISTRATION_VERIFY"
+    | "REGISTRATION_EMAIL_VERIFY"
     | "LOGIN"
     | "TRANSFER"
     | "SAVINGS_OPENING"
     | "CREDIT_APPLICATION"
     | "CARD_ACTIVATION"
     | "CREDIT_PAYMENT"
-    | "CARD_UNLOCK";
+    | "CARD_UNLOCK"
+    | "RECOVERY_CODE_ROTATION"
+    | "MFA_FACTOR_CHANGE"
+    | "MFA_FACTOR_REMOVAL";
 };
 
 export type LoginResult = LoginResponse | AuthChallengeResponse;
@@ -81,4 +85,55 @@ export type LogoutRequest = {
 
 export type RegisterResponse = {
   user: AuthUser;
+};
+
+export type MfaCredentialSummary = {
+  id: string;
+  customerId: string;
+  credentialType: "TOTP" | "PASSKEY" | "OOB_SMS";
+  displayName: string;
+  status: "PENDING" | "ACTIVE" | "SUSPENDED" | "REVOKED";
+  algorithm: string;
+  digits: number;
+  periodSeconds: number;
+  lastAcceptedTimeStep: number | null;
+  enrolledAt: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  compromisedAt: string | null;
+  createdAt: string;
+};
+
+export type MfaMethodsResponse = {
+  items: MfaCredentialSummary[];
+};
+
+export type TotpEnrollmentResponse = {
+  credentialId: string;
+  status: "PENDING";
+  expiresAt: string;
+  manualSetupKey: string;
+  otpauthUri: string;
+};
+
+export type TotpConfirmationResponse = {
+  credentialId: string;
+  status: "ACTIVE";
+  recoveryCodes: string[];
+};
+
+export type MfaLifecyclePurpose =
+  | "RECOVERY_CODE_ROTATION"
+  | "MFA_FACTOR_CHANGE"
+  | "MFA_FACTOR_REMOVAL";
+
+export type RecoveryStartedResponse = {
+  status: "RECOVERY_STARTED";
+  recoveryRequestId: string;
+  recoveryToken: string;
+  cooldownUntil: string;
+};
+
+export type RecoveryCompletedResponse = {
+  status: "RECOVERY_COMPLETED";
 };

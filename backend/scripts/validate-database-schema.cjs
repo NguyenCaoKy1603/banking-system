@@ -39,6 +39,26 @@ const outboxWorkerOperationsSchema = fs.readFileSync(
   path.resolve(__dirname, "../database/013_outbox_worker_operations.sql"),
   "utf8",
 );
+const mfaCredentialsSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/014_mfa_credentials.sql"),
+  "utf8",
+);
+const mfaChallengeHardeningSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/015_auth_challenge_hardening.sql"),
+  "utf8",
+);
+const mfaRecoverySchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/016_mfa_recovery.sql"),
+  "utf8",
+);
+const authSecurityEventsSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/017_auth_security_events.sql"),
+  "utf8",
+);
+const mfaConstraintSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/018_mfa_challenge_constraints.sql"),
+  "utf8",
+);
 
 const requiredTables = [
   "customers",
@@ -92,6 +112,7 @@ const outboxWorkerTables = [
   "dead_letter_events",
   "worker_instances",
 ];
+const mfaTables = ["mfa_credentials", "mfa_recovery_codes", "mfa_recovery_requests", "auth_security_events"];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -139,6 +160,10 @@ const registrationTableBlocks = new Map(
 const outboxWorkerTableBlocks = new Map(
   outboxWorkerTables.map((tableName) => [tableName, tableBlock(outboxWorkerSchema, tableName)]),
 );
+const mfaCredentialBlock = tableBlock(mfaCredentialsSchema, "mfa_credentials");
+const mfaRecoveryCodeBlock = tableBlock(mfaRecoverySchema, "mfa_recovery_codes");
+const mfaRecoveryRequestBlock = tableBlock(mfaRecoverySchema, "mfa_recovery_requests");
+const authSecurityEventBlock = tableBlock(authSecurityEventsSchema, "auth_security_events");
 
 function requireColumn(tableName, columnName, definitionPattern) {
   const block = tableBlocks.get(tableName);
@@ -197,6 +222,64 @@ for (const [label, pattern] of [
 ]) {
   if (!pattern.test(schema)) {
     throw new Error(`Missing database invariant: ${label}`);
+  }
+}
+for (const [label, pattern] of [
+  ["MFA challenge method not-null follow-up", /ALTER\s+COLUMN\s+method\s+SET\s+NOT\s+NULL/i],
+  ["MFA challenge purpose allow-list", /auth_challenges_purpose_ck/i],
+  ["MFA challenge credential binding", /auth_challenges_method_credential_ck/i],
+]) {
+  if (!pattern.test(mfaConstraintSchema)) {
+    throw new Error(`Missing MFA follow-up invariant: ${label}`);
+  }
+}
+
+for (const [tableName, block] of [
+  ["mfa_credentials", mfaCredentialBlock],
+  ["mfa_recovery_codes", mfaRecoveryCodeBlock],
+  ["mfa_recovery_requests", mfaRecoveryRequestBlock],
+  ["auth_security_events", authSecurityEventBlock],
+]) {
+  if (!/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS/i.test(
+    tableName === "mfa_credentials" ? mfaCredentialsSchema :
+      tableName === "auth_security_events" ? authSecurityEventsSchema : mfaRecoverySchema,
+  )) {
+    throw new Error(`MFA table ${tableName} must be additive and rerunnable.`);
+  }
+  if (!/\bid\s+uuid\s+PRIMARY\s+KEY/i.test(block)) {
+    throw new Error(`MFA table ${tableName}.id must use PostgreSQL uuid.`);
+  }
+}
+for (const [tableName, columnName, pattern] of [
+  ["mfa_credentials", "customer_id", /uuid\s+NOT\s+NULL\s+REFERENCES\s+customers/i],
+  ["mfa_credentials", "secret_ciphertext", /text/i],
+  ["mfa_credentials", "secret_key_id", /text/i],
+  ["mfa_credentials", "last_accepted_time_step", /bigint/i],
+  ["mfa_recovery_codes", "code_digest", /text\s+NOT\s+NULL/i],
+  ["mfa_recovery_codes", "salt", /text\s+NOT\s+NULL/i],
+  ["mfa_recovery_requests", "status", /text\s+NOT\s+NULL/i],
+  ["auth_security_events", "metadata", /jsonb\s+NOT\s+NULL/i],
+]) {
+  const block = {
+    mfa_credentials: mfaCredentialBlock,
+    mfa_recovery_codes: mfaRecoveryCodeBlock,
+    mfa_recovery_requests: mfaRecoveryRequestBlock,
+    auth_security_events: authSecurityEventBlock,
+  }[tableName];
+  const columnPattern = new RegExp(`^\\s*${escapeRegExp(columnName)}\\s+([^,\\n]+)`, "mi");
+  const match = block.match(columnPattern);
+  if (!match || !pattern.test(match[1])) {
+    throw new Error(`Column ${tableName}.${columnName} does not match MFA requirements.`);
+  }
+}
+for (const [label, pattern] of [
+  ["challenge method", /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+method\s+text/i],
+  ["challenge keyed digest", /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+proof_digest\s+text/i],
+  ["challenge status", /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+status\s+text\s+NOT\s+NULL/i],
+  ["challenge terminal checks", /auth_challenges_terminal_timestamp_ck/i],
+]) {
+  if (!pattern.test(mfaChallengeHardeningSchema)) {
+    throw new Error(`Missing MFA challenge invariant: ${label}`);
   }
 }
 
@@ -414,7 +497,7 @@ async function validateLiveDatabase() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     console.log(
-        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
+        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
     );
     return;
   }
@@ -442,6 +525,7 @@ async function validateLiveDatabase() {
       ...creditV2Tables,
       ...registrationTables,
       ...outboxWorkerTables,
+      ...mfaTables,
     ]) {
       if (!liveTables.has(tableName)) {
         throw new Error(`Live PostgreSQL database is missing table: ${tableName}`);
@@ -530,6 +614,16 @@ async function validateLiveDatabase() {
       ["notification_deliveries", "endpoint_id", "uuid"],
       ["dead_letter_events", "source_id", "uuid"],
       ["worker_instances", "last_heartbeat_at", "timestamptz"],
+      ["mfa_credentials", "customer_id", "uuid"],
+      ["mfa_credentials", "secret_ciphertext", "text"],
+      ["mfa_credentials", "secret_key_id", "text"],
+      ["mfa_credentials", "last_accepted_time_step", "int8"],
+      ["mfa_recovery_codes", "customer_id", "uuid"],
+      ["mfa_recovery_codes", "code_digest", "text"],
+      ["mfa_recovery_requests", "customer_id", "uuid"],
+      ["mfa_recovery_requests", "public_token_hash", "text"],
+      ["auth_security_events", "customer_id", "uuid"],
+      ["auth_security_events", "metadata", "jsonb"],
     ]) {
       if (liveColumns.get(`${tableName}.${columnName}`) !== expectedType) {
         throw new Error(
@@ -571,6 +665,10 @@ async function validateLiveDatabase() {
       /notification_deliveries FOREIGN KEY \(outbox_event_id\) REFERENCES outbox_events/i,
       /notification_deliveries FOREIGN KEY \(endpoint_id\) REFERENCES notification_endpoints/i,
       /dead_letter_events UNIQUE \(source_kind, source_id\)/i,
+      /mfa_credentials FOREIGN KEY \(customer_id\) REFERENCES customers/i,
+      /mfa_recovery_codes FOREIGN KEY \(customer_id\) REFERENCES customers/i,
+      /mfa_recovery_requests FOREIGN KEY \(customer_id\) REFERENCES customers/i,
+      /auth_security_events FOREIGN KEY \(customer_id\) REFERENCES customers/i,
     ]) {
       if (!definitions.some((definition) => pattern.test(definition))) {
         throw new Error(`Live PostgreSQL constraint missing: ${pattern}`);

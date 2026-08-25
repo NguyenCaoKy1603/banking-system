@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "node --env-file-if-exists=.env --import=tsx --watch src/server.ts",
     "start": "node --env-file-if-exists=.env --import=tsx src/server.ts",
+    "admin:dev": "node --env-file-if-exists=.env --import=tsx src/adminServer.ts",
+    "start:admin": "node dist/adminServer.js",
+    "admin:bootstrap": "node --env-file-if-exists=.env --import=tsx scripts/admin-bootstrap.ts",
     "start:persistent": "npm run db:migrate && npm start",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
@@ -13,7 +16,13 @@
     "validate:outbox": "node --env-file-if-exists=.env scripts/validate-outbox-worker.cjs",
     "validate:relational-v2": "node --env-file-if-exists=.env scripts/validate-relational-v2.cjs",
     "p0:inventory": "node --env-file-if-exists=.env scripts/p0-inventory.cjs",
+    "release:gate": "node scripts/release-gate.cjs",
+    "release:migration-fingerprint": "node scripts/migration-fingerprint.cjs",
+    "release:manifest": "node scripts/create-release-manifest.cjs",
     "validate:openapi": "node scripts/validate-openapi.cjs",
+    "validate:admin-schema": "node --env-file-if-exists=.env scripts/validate-admin-schema.cjs",
+    "validate:admin-authz": "node --env-file-if-exists=.env --import=tsx scripts/validate-admin-authz.ts",
+    "validate:admin-openapi": "node scripts/validate-admin-openapi.cjs",
     "db:migrate": "node --env-file-if-exists=.env scripts/apply-migration.cjs",
     "start:runtime": "node dist/server.js",
     "worker:dev": "node --env-file-if-exists=.env --import=tsx --watch src/worker.ts",
@@ -22,13 +31,15 @@
     "test:worker:load": "node scripts/run-worker-load-test.cjs",
     "outbox:inspect": "node --env-file-if-exists=.env scripts/outbox-inspect.cjs",
     "outbox:inventory": "node --env-file-if-exists=.env scripts/outbox-inventory.cjs",
-    "outbox:reconcile": "node --env-file-if-exists=.env scripts/outbox-reconcile.cjs",
-    "outbox:requeue": "node --env-file-if-exists=.env scripts/outbox-requeue.cjs",
     "test:container-smoke": "node scripts/container-smoke.cjs",
     "reset:sandbox": "node --env-file-if-exists=.env --import=tsx scripts/reset-sandbox.ts",
-    "sandbox:fund": "node --env-file-if-exists=.env --import=tsx scripts/sandbox-fund.ts",
     "test": "node scripts/run-core-tests.cjs",
     "test:critical": "tsx --test src/tests/http.test.ts",
+    "test:mfa": "tsx --test src/tests/mfa*.test.ts",
+    "test:admin": "tsx --test src/tests/admin*.test.ts",
+    "test:admin:e2e": "tsx --test src/tests/adminHttp.e2e.test.ts src/tests/adminP0.e2e.test.ts",
+    "test:admin:database": "tsx --test src/tests/admin.database*.test.ts",
+    "test:admin:concurrency": "tsx --test src/tests/admin.concurrency*.test.ts",
     "test:relational": "tsx --test src/tests/relationalPersistence.test.ts",
     "test:database": "tsx --test src/tests/databaseFoundation.test.ts",
     "seed:e2e": "node --env-file-if-exists=.env --import=tsx scripts/seed-e2e.ts"
@@ -41,6 +52,7 @@
     "yaml": "^2.9.0"
   },
   "dependencies": {
+    "otpauth": "^9.5.1",
     "pg": "^8.23.0"
   }
 }

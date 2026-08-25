@@ -17,40 +17,41 @@ const databaseUrl =
   process.env.WORKER_DATABASE_URL?.trim();
 
 async function clearDatabase(database: DatabasePool): Promise<void> {
-  await database.query("UPDATE transfer_quotes SET consumed_transfer_id = NULL WHERE consumed_transfer_id IS NOT NULL");
-  for (const table of [
-    "notification_deliveries",
-    "dead_letter_events",
-    "notification_endpoints",
-    "notification_preferences",
-    "worker_instances",
-    "savings_maturity_operations",
-    "savings_idempotency",
-    "credit_idempotency",
-    "refresh_session_records",
-    "refresh_session_families",
-    "auth_challenges",
-    "pending_registrations",
-    "rate_limit_buckets",
-    "command_idempotency",
-    "registration_completions",
-    "reference_runtime_records",
-    "outbox_events",
-    "notifications",
-    "audit_events",
-    "account_transactions",
-    "ledger_entries",
-    "ledger_journals",
-    "transfers",
-    "transfer_quotes",
-    "beneficiaries",
-    "payment_accounts",
-    "auth_sessions",
-    "customer_devices",
-    "customers",
-  ]) {
-    await database.query(`DELETE FROM ${table}`);
-  }
+  // This helper owns a disposable worker test database. TRUNCATE avoids
+  // mutating append-only audit/outbox rows through the production DELETE guard.
+  await database.query(`
+    TRUNCATE TABLE
+      notification_deliveries,
+      dead_letter_events,
+      notification_endpoints,
+      notification_preferences,
+      worker_instances,
+      savings_maturity_operations,
+      savings_idempotency,
+      credit_idempotency,
+      refresh_session_records,
+      refresh_session_families,
+      auth_challenges,
+      pending_registrations,
+      rate_limit_buckets,
+      command_idempotency,
+      registration_completions,
+      reference_runtime_records,
+      outbox_events,
+      notifications,
+      audit_events,
+      account_transactions,
+      ledger_entries,
+      ledger_journals,
+      transfers,
+      transfer_quotes,
+      beneficiaries,
+      payment_accounts,
+      auth_sessions,
+      customer_devices,
+      customers
+    RESTART IDENTITY CASCADE
+  `);
 }
 
 before(async () => {

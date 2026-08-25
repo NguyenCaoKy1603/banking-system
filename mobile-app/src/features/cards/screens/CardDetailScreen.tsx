@@ -12,7 +12,7 @@ import { getCreditCardStatusLabel, getCreditStatementStatusLabel } from "@/featu
 import { getCreditCard, lockCreditCard, unlockCreditCard } from "@/features/credit/services/creditApi";
 import type { CreditCardDetailResponse, CreditStepUpMethod } from "@/features/credit/types/credit";
 import { ApiError } from "@/services/api/ApiError";
-import { getSandboxBiometricProof, requestBiometricAuthentication } from "@/services/security/biometricAuth";
+import { getDeviceBoundAssertion, requestBiometricAuthentication } from "@/services/security/biometricAuth";
 import { colors, spacing } from "@/theme";
 
 function getErrorMessage(error: unknown): string {
@@ -33,7 +33,7 @@ export function CardDetailScreen() {
   const [detail, setDetail] = useState<CreditCardDetailResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [stepUpMethod, setStepUpMethod] = useState<CreditStepUpMethod>("OTP");
+  const [stepUpMethod, setStepUpMethod] = useState<CreditStepUpMethod>("TOTP");
   const [stepUpProof, setStepUpProof] = useState("");
   const [unlockChallengeId, setUnlockChallengeId] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
@@ -69,7 +69,7 @@ export function CardDetailScreen() {
       if (card.status === "ACTIVE") {
         const response = await lockCreditCard(card.cardId, auth);
         setDetail((current) => current ? { ...current, card: response.card } : current);
-        setNotice("Thẻ đã được khóa trong sandbox.");
+        setNotice("Thẻ đã được khóa trong môi trường mô phỏng.");
       } else if (card.status === "LOCKED") {
         if (!unlockChallengeId) {
           const challenge = await createOtpChallenge(
@@ -77,16 +77,23 @@ export function CardDetailScreen() {
             auth,
           );
           setUnlockChallengeId(challenge.challengeId);
-          setNotice("Đã tạo yêu cầu xác thực. Nhập OTP sandbox rồi bấm Mở khóa thẻ lần nữa.");
+          setStepUpMethod(
+            challenge.methods.includes("TOTP")
+              ? "TOTP"
+              : challenge.methods.includes("OTP")
+                ? "OTP"
+                : "BIOMETRIC",
+          );
+          setNotice("Đã tạo yêu cầu xác thực. Nhập mã xác thực rồi bấm Mở khóa thẻ lần nữa.");
           return;
         }
         let proof = stepUpProof.trim();
         if (stepUpMethod === "BIOMETRIC") {
-          await requestBiometricAuthentication("Xác thực để mở khóa thẻ sandbox");
-          proof = getSandboxBiometricProof();
+          await requestBiometricAuthentication("Xác thực để mở khóa thẻ");
+          proof = getDeviceBoundAssertion();
         }
         if (!proof) {
-          setError("Cần nhập mã OTP sandbox hoặc xác thực sinh trắc học để mở khóa.");
+          setError("Cần nhập mã xác thực hoặc hoàn tất phương thức được hỗ trợ để mở khóa.");
           return;
         }
         const response = await unlockCreditCard(
@@ -147,10 +154,10 @@ export function CardDetailScreen() {
               <View style={styles.card}>
                 <Text style={styles.sectionTitle}>Mở khóa thẻ</Text>
                 <View style={styles.methodRow}>
-                  <Pressable accessibilityRole="button" accessibilityState={{ selected: stepUpMethod === "OTP" }} onPress={() => setStepUpMethod("OTP")} style={[styles.methodButton, stepUpMethod === "OTP" ? styles.methodSelected : null]} testID="credit-unlock-otp"><Text style={styles.methodLabel}>OTP</Text></Pressable>
+                  <Pressable accessibilityRole="button" accessibilityState={{ selected: stepUpMethod === "OTP" || stepUpMethod === "TOTP" }} onPress={() => setStepUpMethod("TOTP")} style={[styles.methodButton, stepUpMethod === "OTP" || stepUpMethod === "TOTP" ? styles.methodSelected : null]} testID="credit-unlock-otp"><Text style={styles.methodLabel}>Mã TOTP</Text></Pressable>
                   <Pressable accessibilityRole="button" accessibilityState={{ selected: stepUpMethod === "BIOMETRIC" }} onPress={() => setStepUpMethod("BIOMETRIC")} style={[styles.methodButton, stepUpMethod === "BIOMETRIC" ? styles.methodSelected : null]} testID="credit-unlock-biometric"><Text style={styles.methodLabel}>Sinh trắc học</Text></Pressable>
                 </View>
-                {stepUpMethod === "OTP" ? <TextField accessibilityLabel="Mã xác thực mở khóa thẻ" keyboardType="number-pad" label="Mã OTP sandbox" onChangeText={setStepUpProof} secureTextEntry testID="credit-unlock-code" value={stepUpProof} /> : null}
+                {stepUpMethod === "OTP" || stepUpMethod === "TOTP" ? <TextField accessibilityLabel="Mã xác thực mở khóa thẻ" keyboardType="number-pad" label={stepUpMethod === "TOTP" ? "Mã TOTP" : "Mã xác thực"} onChangeText={setStepUpProof} secureTextEntry testID="credit-unlock-code" value={stepUpProof} /> : null}
               </View>
             ) : null}
             <PrimaryButton disabled={isSaving || (detail.card.status !== "ACTIVE" && detail.card.status !== "LOCKED")} label={detail.card.status === "ACTIVE" ? "Khóa thẻ" : detail.card.status === "LOCKED" ? "Mở khóa thẻ" : "Không thể thao tác"} onPress={() => void handleToggleLock()} testID="card-toggle-lock" />

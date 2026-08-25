@@ -10,15 +10,18 @@ const baseUrl = (process.env.PERF_BASE_URL ?? "http://127.0.0.1:5000/api/v1").re
 const rootUrl = baseUrl.endsWith("/api/v1")
   ? baseUrl.slice(0, -"/api/v1".length)
   : new URL(baseUrl).origin;
-const operatorKey = process.env.PERF_OPERATOR_KEY?.trim();
-const registrationOtp = process.env.PERF_OTP?.trim();
-const mfaOtp = process.env.PERF_MFA_OTP?.trim() || registrationOtp;
+const ownerEmail = process.env.PERF_OWNER_EMAIL?.trim();
+const recipientEmail = process.env.PERF_RECIPIENT_EMAIL?.trim();
+const ownerTotpSecret = process.env.PERF_OWNER_TOTP_SECRET?.trim();
+const recipientTotpSecret = process.env.PERF_RECIPIENT_TOTP_SECRET?.trim();
+const ownerDevice = process.env.PERF_OWNER_DEVICE_ID?.trim() ?? "stage2-perf-owner";
+const recipientDevice = process.env.PERF_RECIPIENT_DEVICE_ID?.trim() ?? "stage2-perf-recipient";
 const readIterations = Number(process.env.PERF_READ_ITERATIONS ?? "20");
 const transferConcurrency = Number(process.env.PERF_TRANSFER_CONCURRENCY ?? "20");
 const password = process.env.PERF_PASSWORD ?? "Stage2PerformancePassword1";
 
-if (!operatorKey || !registrationOtp || !mfaOtp) {
-  throw new Error("PERF_OPERATOR_KEY, PERF_OTP and PERF_MFA_OTP are required.");
+if (!ownerEmail || !recipientEmail || !ownerTotpSecret || !recipientTotpSecret) {
+  throw new Error("PERF_OWNER_EMAIL, PERF_RECIPIENT_EMAIL, PERF_OWNER_TOTP_SECRET and PERF_RECIPIENT_TOTP_SECRET are required for an existing MFA fixture.");
 }
 if (!Number.isInteger(readIterations) || readIterations < 1 || readIterations > 200) {
   throw new Error("PERF_READ_ITERATIONS must be an integer between 1 and 200.");
@@ -28,15 +31,6 @@ if (!Number.isInteger(transferConcurrency) || transferConcurrency < 2 || transfe
 }
 
 const nowSuffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-const ownerEmail = `stage2-perf-owner-${nowSuffix}@example.invalid`;
-const recipientEmail = `stage2-perf-recipient-${nowSuffix}@example.invalid`;
-const ownerDevice = `stage2-perf-owner-${nowSuffix}`;
-const recipientDevice = `stage2-perf-recipient-${nowSuffix}`;
-const ownerPhoneSuffix = `${Date.now()}${Math.floor(Math.random() * 1_000_000)}`.slice(-8);
-const recipientPhoneSuffix = `${Date.now() + 1}${Math.floor(Math.random() * 1_000_000)}`.slice(-8);
-const ownerRateKey = `198.51.100.${Math.floor(Math.random() * 200) + 1}`;
-const recipientRateKey = `203.0.113.${Math.floor(Math.random() * 200) + 1}`;
-
 function percentile(values, ratio) {
   const sorted = [...values].sort((left, right) => left - right);
   if (sorted.length === 0) return 0;
@@ -99,48 +93,37 @@ async function expectStatus(path, init, expectedStatus) {
   return result.body;
 }
 
-async function readOtp(challengeId) {
-  const body = await expectStatus(`/sandbox/otp/${challengeId}`, {
-    headers: { "X-Sandbox-Operator-Key": operatorKey },
-  }, 200);
-  assert.equal(typeof body?.otp, "string");
-  return body.otp;
+const totpState = new Map();
+async function totpCode(secret) {
+  const { Secret, TOTP } = require("otpauth");
+  let now = Date.now();
+  let step = Math.floor(now / 30000);
+  const lastStep = totpState.get(secret) ?? -1;
+  if (step <= lastStep) {
+    await new Promise((resolve) => setTimeout(resolve, ((lastStep + 1) * 30000) - now + 250));
+    now = Date.now();
+    step = Math.floor(now / 30000);
+  }
+  totpState.set(secret, step);
+  const totp = new TOTP({ issuer: "Banking Reference", label: "stage2-perf", algorithm: "SHA1", digits: 6, period: 30, secret: Secret.fromBase32(secret) });
+  return totp.generate({ timestamp: now });
 }
 
-async function register(email, deviceId, phoneSuffix, rateKey) {
-  const challenge = await expectStatus("/auth/register", {
-    method: "POST",
-    headers: { "X-Device-ID": deviceId, "X-Forwarded-For": rateKey },
-    body: JSON.stringify({
-      fullName: "Stage 2 Performance User",
-      email,
-      phoneNumber: `09${phoneSuffix.slice(-8)}`,
-      password,
-    }),
-  }, 202);
-  const otp = await readOtp(challenge.challengeId);
-  return expectStatus("/auth/register/verify", {
-    method: "POST",
-    headers: { "X-Device-ID": deviceId },
-    body: JSON.stringify({ challengeId: challenge.challengeId, method: "OTP", proof: otp }),
-  }, 201);
-}
-
-async function login(email, deviceId) {
+async function login(email, deviceId, secret) {
   const first = await request("/auth/login", {
     method: "POST",
     headers: { "X-Device-ID": deviceId },
     body: JSON.stringify({ email, password }),
   });
   if (first.response.status === 202) {
-    const otp = await readOtp(first.body.challengeId);
+    const otp = await totpCode(secret);
     return expectStatus("/auth/verify", {
       method: "POST",
       headers: { "X-Device-ID": deviceId },
       body: JSON.stringify({
         challengeId: first.body.challengeId,
-        method: "OTP",
-        proof: otp || mfaOtp,
+        method: "TOTP",
+        proof: otp,
       }),
     }, 200);
   }
@@ -159,10 +142,8 @@ async function main() {
   const healthSamples = [];
   const readSamples = [];
   const quoteSamples = [];
-  const owner = await register(ownerEmail, ownerDevice, ownerPhoneSuffix, ownerRateKey);
-  const recipient = await register(recipientEmail, recipientDevice, recipientPhoneSuffix, recipientRateKey);
-  const ownerSession = await login(owner.user.email, ownerDevice);
-  const recipientSession = await login(recipient.user.email, recipientDevice);
+  const ownerSession = await login(ownerEmail, ownerDevice, ownerTotpSecret);
+  const recipientSession = await login(recipientEmail, recipientDevice, recipientTotpSecret);
   const ownerHeaders = authHeaders(ownerSession, ownerDevice);
   const recipientHeaders = authHeaders(recipientSession, recipientDevice);
 
@@ -171,25 +152,16 @@ async function main() {
   const ownerAccountId = ownerAccounts.accounts[0]?.id;
   const recipientAccountId = recipientAccounts.accounts[0]?.id;
   assert.ok(ownerAccountId && recipientAccountId);
+  const ownerAccount = ownerAccounts.accounts[0];
+  assert.ok(ownerAccount);
+  const availableMinor = BigInt(ownerAccount.availableBalance?.amountMinor ?? "0");
+  if (availableMinor < 100_000n) {
+    throw new Error("PERF owner fixture must be pre-funded; use the Admin four-eyes funding workflow before running this smoke.");
+  }
 
   const recipientNumber = await expectStatus(`/accounts/${recipientAccountId}/number`, {
     headers: recipientHeaders,
   }, 200);
-  await expectStatus("/sandbox/fundings", {
-    method: "POST",
-    headers: {
-      "X-Sandbox-Operator-Key": operatorKey,
-      "Idempotency-Key": `stage2-perf-funding-${nowSuffix}`,
-    },
-    body: JSON.stringify({
-      recipientAccountNumber: (await expectStatus(`/accounts/${ownerAccountId}/number`, {
-        headers: ownerHeaders,
-      }, 200)).accountNumber,
-      amount: { currency: "VND", amountMinor: "5000000" },
-      reason: "stage2 performance disposable funding",
-    }),
-  }, 200);
-
   const beneficiary = await expectStatus("/beneficiaries", {
     method: "POST",
     headers: ownerHeaders,
@@ -233,14 +205,14 @@ async function main() {
     headers: ownerHeaders,
     body: JSON.stringify({ purpose: "TRANSFER", resourceId: quote.quoteId }),
   }, 201);
-  const transferOtp = await readOtp(challenge.challengeId);
+  const transferOtp = await totpCode(ownerTotpSecret);
   const transferHeaders = {
     ...ownerHeaders,
     "Idempotency-Key": `stage2-perf-transfer-${nowSuffix}`,
   };
   const transferPayload = JSON.stringify({
     quoteId: quote.quoteId,
-    stepUp: { method: "OTP", proof: transferOtp, challengeId: challenge.challengeId },
+    stepUp: { method: "TOTP", proof: transferOtp, challengeId: challenge.challengeId },
   });
   const transferSamples = await Promise.all(
     Array.from({ length: transferConcurrency }, () => request("/transfers", {
@@ -251,7 +223,8 @@ async function main() {
   );
   const transferIds = new Set(transferSamples.map((sample) => sample.body?.transferId).filter(Boolean));
   assert.equal(transferIds.size, 1, "concurrent replay must produce one canonical transfer");
-  assert.equal(transferSamples.filter((sample) => sample.response.status !== 200).length, 0);
+  assert.equal(transferSamples.filter((sample) => sample.response.status === 200).length, 1, "only one request may consume a TOTP challenge");
+  assert.ok(transferSamples.every((sample) => sample.response.status === 200 || sample.response.status === 409), "replayed requests must be rejected as step-up conflicts");
 
   const finalHealthResult = await requestRoot("/healthz");
   assert.equal(finalHealthResult.response.status, 200);

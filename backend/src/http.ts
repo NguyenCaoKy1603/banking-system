@@ -7,8 +7,17 @@ import {
 import { randomUUID } from "node:crypto";
 
 import { BankingSystem, type BankingSystemState } from "./bankingSystem.js";
-import { DomainError, invalidRequest, notFound, unauthorized } from "./errors.js";
-import type { RelationalStateOperation } from "./postgresRelationalRepository.js";
+import { DomainError, conflictWithCode, invalidRequest, notFound, unauthorized } from "./errors.js";
+import type {
+  RelationalStateBoundaryOptions,
+  RelationalStateOperation,
+} from "./postgresRelationalRepository.js";
+import type {
+  MfaChallengePurpose,
+  PersistentMfaService,
+} from "./mfa/persistentMfaService.js";
+import type { OtpPurpose } from "./types.js";
+import type { RuntimeMetadata } from "./runtimeMetadata.js";
 
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 1_000_000;
@@ -18,6 +27,12 @@ export type HttpOptions = {
   environment?: string;
   storage?: string;
   commitSha?: string;
+  runtimeMetadata?: RuntimeMetadata;
+  startupReady?: boolean | (() => boolean);
+  /** PostgreSQL-backed MFA boundary. Omitted only for legacy unit-test servers. */
+  mfaService?: PersistentMfaService;
+  /** Optional persistent customer-access gate owned by the Admin control plane. */
+  customerAccessStatus?: (customerId: string) => Promise<"ACTIVE" | "LOCKED" | null>;
 };
 
 type RequestStateDisposition =
@@ -96,12 +111,28 @@ function writeResponse(
   response.end(JSON.stringify(payload));
 }
 
+function writeTextResponse(
+  response: ServerResponse,
+  status: number,
+  traceId: string,
+  body: string,
+): void {
+  response.statusCode = status;
+  response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+  response.setHeader("Cache-Control", "no-store");
+  response.setHeader("X-Request-ID", traceId);
+  response.end(body);
+}
+
 function writeError(
   response: ServerResponse,
   status: number,
   traceId: string,
   error: DomainError,
 ): void {
+  if (error.retryAfterSeconds !== null) {
+    response.setHeader("Retry-After", String(Math.max(1, Math.ceil(error.retryAfterSeconds))));
+  }
   writeResponse(response, status, traceId, {
     code: error.code,
     message: error.message,
@@ -110,19 +141,34 @@ function writeError(
   });
 }
 
-function runtimeMetadata(options: HttpOptions = {}): {
-  service: string;
-  environment: string;
-  storage: string;
-  commitSha: string;
-} {
+function runtimeMetadataFor(options: HttpOptions = {}): RuntimeMetadata & { storage: string } {
+  if (options.runtimeMetadata) {
+    return {
+      ...options.runtimeMetadata,
+      storage: options.storage?.trim() || process.env.BANKING_STORAGE?.trim() || "in-memory",
+    };
+  }
   return {
     service: "banking-reference-backend",
+    releaseId: process.env.RELEASE_ID?.trim() || "local",
+    imageDigest: process.env.IMAGE_DIGEST?.trim() || "unknown",
     environment:
       options.environment?.trim() || process.env.BANKING_ENV?.trim() || "development",
+    moneyMode: process.env.BANKING_MONEY_MODE?.trim() || "virtual",
+    schemaVersion: process.env.SCHEMA_VERSION?.trim() || "unknown",
+    migrationSetDigest: process.env.MIGRATION_SET_DIGEST?.trim() || "unknown",
+    apiContractDigest: process.env.API_CONTRACT_DIGEST?.trim() || "unknown",
+    builtAt: process.env.BUILD_CREATED_AT?.trim() || null,
+    startedAt: new Date().toISOString(),
     storage: options.storage?.trim() || process.env.BANKING_STORAGE?.trim() || "in-memory",
     commitSha: options.commitSha?.trim() || process.env.BUILD_COMMIT_SHA?.trim() || "local",
   };
+}
+
+function isStartupReady(options: HttpOptions): boolean {
+  return typeof options.startupReady === "function"
+    ? options.startupReady()
+    : options.startupReady !== false;
 }
 
 class BufferedResponse {
@@ -201,7 +247,7 @@ function requireObject(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
-function requireBearer(request: IncomingMessage, system: BankingSystem): string {
+async function requireBearer(request: IncomingMessage, system: BankingSystem, options: HttpOptions): Promise<string> {
   const authorization = header(request, "authorization");
   if (!authorization?.startsWith("Bearer ")) {
     throw unauthorized("Access token is required.");
@@ -210,7 +256,11 @@ function requireBearer(request: IncomingMessage, system: BankingSystem): string 
   if (!deviceId?.trim()) {
     throw unauthorized("Device binding is required.");
   }
-  return system.authenticate(authorization.slice("Bearer ".length), deviceId).id;
+  const userId = system.authenticate(authorization.slice("Bearer ".length), deviceId).id;
+  if (options.customerAccessStatus && (await options.customerAccessStatus(userId)) === "LOCKED") {
+    throw unauthorized("Customer access is locked by the control plane.");
+  }
+  return userId;
 }
 
 function requireDeviceId(request: IncomingMessage): string {
@@ -224,6 +274,88 @@ function requireDeviceId(request: IncomingMessage): string {
 function getRateLimitKey(request: IncomingMessage): string {
   const forwardedFor = header(request, "x-forwarded-for")?.split(",")[0]?.trim();
   return forwardedFor || request.socket.remoteAddress || "unknown-client";
+}
+
+type PersistentStepUpPurpose = Extract<
+  MfaChallengePurpose,
+  "TRANSFER" | "SAVINGS_OPENING" | "CREDIT_APPLICATION" | "CARD_ACTIVATION" | "CREDIT_PAYMENT" | "CARD_UNLOCK" | "RECOVERY_CODE_ROTATION" | "MFA_FACTOR_CHANGE" | "MFA_FACTOR_REMOVAL"
+>;
+
+async function verifyMfaLifecycleChallenge(
+  mfaService: PersistentMfaService,
+  request: IncomingMessage,
+  customerId: string,
+  data: Record<string, unknown>,
+  purpose: "MFA_FACTOR_CHANGE" | "MFA_FACTOR_REMOVAL",
+): Promise<void> {
+  if (typeof data.challengeId !== "string" || typeof data.code !== "string") {
+    throw conflictWithCode("MFA_CURRENT_FACTOR_REQUIRED", "Current TOTP verification is required for this MFA change.");
+  }
+  const result = await mfaService.verifyChallenge({
+    challengeId: data.challengeId,
+    customerId,
+    deviceId: requireDeviceId(request),
+    proof: data.code,
+    purpose,
+    resourceId: null,
+    requestFingerprint: null,
+  });
+  if (result.customerId !== customerId) {
+    throw unauthorized("MFA user binding is invalid.");
+  }
+}
+
+async function verifyPersistentStepUp(
+  mfaService: PersistentMfaService,
+  system: BankingSystem,
+  request: IncomingMessage,
+  userId: string,
+  data: Record<string, unknown>,
+  purpose: PersistentStepUpPurpose,
+  resourceId: string | null,
+  suppliedFingerprint?: string | null,
+): Promise<void> {
+  const rawStepUp = data.stepUp;
+  if (typeof rawStepUp !== "object" || rawStepUp === null || Array.isArray(rawStepUp)) {
+    throw invalidRequest("stepUp is required for this command.");
+  }
+  const stepUp = rawStepUp as Record<string, unknown>;
+  if (stepUp.method !== "TOTP") {
+    throw conflictWithCode("STEP_UP_INVALID", "Production-like runtime chỉ chấp nhận TOTP cho step-up.");
+  }
+  if (typeof stepUp.challengeId !== "string" || !stepUp.challengeId.trim()) {
+    throw invalidRequest("stepUp.challengeId is required.");
+  }
+  if (typeof stepUp.proof !== "string" || !stepUp.proof.trim()) {
+    throw invalidRequest("stepUp.proof is required.");
+  }
+  const deviceId = requireDeviceId(request);
+  const requestFingerprint = system.getStepUpRequestFingerprint(
+    purpose as OtpPurpose,
+    resourceId,
+    suppliedFingerprint,
+  );
+  const result = await mfaService.verifyChallenge({
+    challengeId: stepUp.challengeId,
+    customerId: userId,
+    deviceId,
+    proof: stepUp.proof,
+    purpose,
+    resourceId,
+    requestFingerprint,
+  });
+  if (result.customerId !== userId) {
+    throw unauthorized("MFA user binding is invalid.");
+  }
+  system.registerExternalStepUpVerification({
+    userId,
+    challengeId: stepUp.challengeId,
+    deviceId,
+    method: "TOTP",
+    purpose: purpose as OtpPurpose,
+    resourceId,
+    requestFingerprint,
+  });
 }
 
 function pathSegments(pathname: string): string[] {
@@ -252,6 +384,17 @@ function isAuthenticatedRoute(
     segments.length === 3 &&
     segments[0] === "notifications" &&
     segments[2] === "read"
+  ) {
+    return true;
+  }
+  if (
+    (method === "GET" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") ||
+    (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "totp" && (segments[3] === "enroll" || segments[3] === "confirm")) ||
+    (method === "DELETE" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") ||
+    (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recovery-codes" && segments[3] === "rotate") ||
+    (method === "POST" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover") ||
+    (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover" && (segments[3] === "verify" || segments[3] === "complete")) ||
+    (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "challenges" && segments[3] === "resend")
   ) {
     return true;
   }
@@ -426,7 +569,7 @@ export async function handleRequest(
     response.setHeader("Access-Control-Allow-Origin", origin);
   }
   response.setHeader("Vary", "Origin");
-  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID, X-Sandbox-Operator-Key");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID");
   response.setHeader("Access-Control-Allow-Methods", "DELETE,GET,PATCH,POST,OPTIONS");
 
   if (request.method === "OPTIONS") {
@@ -438,10 +581,23 @@ export async function handleRequest(
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "GET" && requestUrl.pathname === "/livez") {
       writeResponse(response, 200, traceId, {
-        ...runtimeMetadata(options),
+        ...runtimeMetadataFor(options),
         status: "ok",
         checkedAt: new Date().toISOString(),
       });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/startupz") {
+      const ready = isStartupReady(options);
+      writeResponse(response, ready ? 200 : 503, traceId, {
+        ...runtimeMetadataFor(options),
+        status: ready ? "ok" : "starting",
+        checkedAt: new Date().toISOString(),
+      });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/versionz") {
+      writeResponse(response, 200, traceId, runtimeMetadataFor(options));
       return;
     }
     if (
@@ -450,9 +606,13 @@ export async function handleRequest(
     ) {
       const health = system.getHealth();
       writeResponse(response, health.status === "ok" ? 200 : 503, traceId, {
-        ...runtimeMetadata(options),
+        ...runtimeMetadataFor(options),
         ...health,
       });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/metrics" && options.mfaService) {
+      writeTextResponse(response, 200, traceId, options.mfaService.metrics.prometheus());
       return;
     }
 
@@ -462,70 +622,6 @@ export async function handleRequest(
     const routePath = requestUrl.pathname.slice(API_PREFIX.length) || "/";
     const segments = pathSegments(routePath);
     const body = bodyAlreadyRead ? parsedBody : await readJson(request);
-
-    if (
-      request.method === "POST" &&
-      segments.length === 2 &&
-      segments[0] === "sandbox" &&
-      segments[1] === "fundings"
-    ) {
-      const data = requireObject(body);
-      writeResponse(
-        response,
-        200,
-        traceId,
-        system.fundSandbox(
-          header(request, "x-sandbox-operator-key") ?? "",
-          header(request, "idempotency-key") ?? "",
-          data as never,
-        ),
-      );
-      return;
-    }
-
-    if (
-      request.method === "GET" &&
-      segments.length === 3 &&
-      segments[0] === "sandbox" &&
-      segments[1] === "otp"
-    ) {
-      writeResponse(
-        response,
-        200,
-        traceId,
-        { otp: system.getSandboxOtp(header(request, "x-sandbox-operator-key") ?? "", segments[2]) },
-      );
-      return;
-    }
-
-    if (
-      request.method === "POST" &&
-      segments.length === 2 &&
-      segments[0] === "sandbox" &&
-      segments[1] === "process-scheduled"
-    ) {
-      const data = body === undefined ? {} : requireObject(body);
-      const unsupportedField = Object.keys(data).find((key) => key !== "userId");
-      if (unsupportedField) {
-        throw invalidRequest(`Unsupported scheduled-work field: ${unsupportedField}.`);
-      }
-      if (
-        Object.prototype.hasOwnProperty.call(data, "userId") &&
-        (typeof data.userId !== "string" || !data.userId.trim())
-      ) {
-        throw invalidRequest("userId must be a non-empty string when provided.");
-      }
-      writeResponse(
-        response,
-        200,
-        traceId,
-        system.processScheduledWork(
-          header(request, "x-sandbox-operator-key") ?? "",
-          typeof data.userId === "string" ? data.userId.trim() : undefined,
-        ),
-      );
-      return;
-    }
 
     if (
       request.method === "POST" &&
@@ -577,6 +673,29 @@ export async function handleRequest(
       segments[1] === "login"
     ) {
       const data = requireObject(body);
+      if (options.mfaService) {
+        const user = await system.loginPasswordOnly(
+          data.email as string,
+          data.password as string,
+          requireDeviceId(request),
+        );
+        if (options.customerAccessStatus && (await options.customerAccessStatus(user.id)) === "LOCKED") {
+          throw unauthorized("Customer access is locked by the control plane.");
+        }
+        const challenge = await options.mfaService.beginLoginChallenge({
+          customerId: user.id,
+          deviceId: requireDeviceId(request),
+          networkFingerprint: getRateLimitKey(request),
+        });
+        writeResponse(response, 202, traceId, {
+          challengeId: challenge.challengeId,
+          expiresAt: challenge.expiresAt,
+          methods: ["TOTP"],
+          method: "TOTP",
+          purpose: "LOGIN",
+        });
+        return;
+      }
       const result = await system.loginAsync(
         data.email as string,
         data.password as string,
@@ -598,13 +717,29 @@ export async function handleRequest(
       segments[1] === "verify"
     ) {
       const data = requireObject(body);
+      if (options.mfaService) {
+        const result = await options.mfaService.verifyChallenge({
+          challengeId: data.challengeId as string,
+          deviceId: requireDeviceId(request),
+          proof: data.proof as string,
+          purpose: "LOGIN",
+        });
+        if (!result.customerId) {
+          throw unauthorized("MFA user binding is invalid.");
+        }
+        if (options.customerAccessStatus && (await options.customerAccessStatus(result.customerId)) === "LOCKED") {
+          throw unauthorized("Customer access is locked by the control plane.");
+        }
+        writeResponse(response, 200, traceId, system.issueMfaSession(result.customerId, requireDeviceId(request)));
+        return;
+      }
       writeResponse(
         response,
         200,
         traceId,
         system.verifyLoginChallenge(
           data.challengeId as string,
-          data.method as "OTP" | "BIOMETRIC",
+          data.method as "OTP" | "TOTP" | "BIOMETRIC",
           data.proof as string,
           requireDeviceId(request),
         ),
@@ -648,10 +783,91 @@ export async function handleRequest(
       segments[0] === "auth" &&
       segments[1] === "logout-all"
     ) {
-      const userId = requireBearer(request, system);
+      const userId = await requireBearer(request, system, options);
       system.revokeAllSessions(userId);
       writeResponse(response, 204, traceId);
       return;
+    }
+
+    // Recovery may start after the normal session has been revoked.  Accept a
+    // password + recovery code (or a one-time recovery token for completion)
+    // before the bearer-authenticated route gate; never issue a banking session
+    // from this endpoint.
+    if (
+      options.mfaService &&
+      request.method === "POST" &&
+      segments[0] === "auth" &&
+      segments[1] === "mfa" &&
+      ((segments.length === 3 && segments[2] === "recover") ||
+        (segments.length === 4 && segments[2] === "recover" && (segments[3] === "verify" || segments[3] === "complete"))) &&
+      !header(request, "authorization")
+    ) {
+      const data = requireObject(body);
+      if (segments[3] === "complete") {
+        if (typeof data.recoveryToken !== "string" || !data.recoveryToken.trim()) {
+          throw invalidRequest("recoveryToken is required.");
+        }
+        await options.mfaService.completeRecovery({ recoveryToken: data.recoveryToken });
+        writeResponse(response, 202, traceId, { status: "RECOVERY_COMPLETED" });
+        return;
+      }
+      if (typeof data.email !== "string" || typeof data.password !== "string" || typeof data.code !== "string") {
+        throw invalidRequest("email, password and code are required to start MFA recovery.");
+      }
+      const user = await system.loginPasswordOnly(data.email, data.password, requireDeviceId(request));
+      const recovery = await options.mfaService.verifyRecoveryCode(user.id, data.code);
+      system.revokeAllSessions(user.id);
+      writeResponse(response, 202, traceId, { ...recovery, status: "RECOVERY_STARTED" });
+      return;
+    }
+
+    // A completed recovery request yields only a short-lived enrollment
+    // capability. It cannot read banking data or mint a session; it exists
+    // solely to replace the revoked TOTP factor.
+    if (
+      options.mfaService &&
+      request.method === "POST" &&
+      segments.length === 4 &&
+      segments[0] === "auth" &&
+      segments[1] === "mfa" &&
+      segments[2] === "recover" &&
+      segments[3] === "enroll" &&
+      !header(request, "authorization")
+    ) {
+      const data = requireObject(body);
+      if (typeof data.recoveryToken !== "string" || !data.recoveryToken.trim()) {
+        throw invalidRequest("recoveryToken is required.");
+      }
+      writeResponse(response, 201, traceId, await options.mfaService.beginRecoveryTotpEnrollment({
+        recoveryToken: data.recoveryToken,
+        displayName: typeof data.displayName === "string" ? data.displayName : undefined,
+      }));
+      return;
+    }
+
+    if (
+      options.mfaService &&
+      request.method === "POST" &&
+      segments.length === 4 &&
+      segments[0] === "auth" &&
+      segments[1] === "mfa" &&
+      segments[2] === "totp" &&
+      segments[3] === "confirm" &&
+      !header(request, "authorization")
+    ) {
+      const data = requireObject(body);
+      if (
+        typeof data.recoveryToken === "string" &&
+        typeof data.credentialId === "string" &&
+        typeof data.code === "string"
+      ) {
+        writeResponse(response, 200, traceId, await options.mfaService.confirmTotpEnrollment({
+          recoveryToken: data.recoveryToken,
+          credentialId: data.credentialId,
+          code: data.code,
+        }));
+        return;
+      }
     }
 
     if (
@@ -660,7 +876,7 @@ export async function handleRequest(
       segments[0] === "mobile" &&
       segments[1] === "control-policy"
     ) {
-      const userId = requireBearer(request, system);
+      const userId = await requireBearer(request, system, options);
       writeResponse(response, 200, traceId, system.getControlPolicy(userId));
       return;
     }
@@ -669,7 +885,125 @@ export async function handleRequest(
       throw notFound("API route not found.");
     }
 
-    const userId = requireBearer(request, system);
+    const userId = await requireBearer(request, system, options);
+
+    if (options.mfaService && request.method === "GET" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") {
+      writeResponse(response, 200, traceId, { items: await options.mfaService.listCredentials(userId) });
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "totp" && segments[3] === "enroll") {
+      const data = requireObject(body);
+      if (typeof data.password !== "string" || !system.verifyCurrentPassword(userId, data.password)) {
+        throw unauthorized("Current password is invalid.");
+      }
+      const credentials = await options.mfaService.listCredentials(userId);
+      if (credentials.some((credential) => credential.status === "ACTIVE")) {
+        await verifyMfaLifecycleChallenge(options.mfaService, request, userId, data, "MFA_FACTOR_CHANGE");
+      }
+      const user = system.getUser(userId);
+      writeResponse(response, 201, traceId, await options.mfaService.beginTotpEnrollment({
+        customerId: userId,
+        email: user.email,
+        displayName: typeof data.displayName === "string" ? data.displayName : undefined,
+      }));
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "totp" && segments[3] === "confirm") {
+      const data = requireObject(body);
+      const confirmation = await options.mfaService.confirmTotpEnrollment({
+        customerId: userId,
+        credentialId: data.credentialId as string,
+        code: data.code as string,
+      });
+      system.revokeAllSessions(userId);
+      writeResponse(response, 200, traceId, confirmation);
+      return;
+    }
+
+    if (options.mfaService && request.method === "DELETE" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") {
+      const data = body === undefined ? {} : requireObject(body);
+      if (typeof data.password !== "string" || !system.verifyCurrentPassword(userId, data.password)) {
+        throw unauthorized("Current password is invalid.");
+      }
+      const credentials = await options.mfaService.listCredentials(userId);
+      if (credentials.some((credential) => credential.status === "ACTIVE")) {
+        await verifyMfaLifecycleChallenge(options.mfaService, request, userId, data, "MFA_FACTOR_REMOVAL");
+      }
+      await options.mfaService.revokeCredential(userId, segments[3]);
+      system.revokeAllSessions(userId);
+      writeResponse(response, 204, traceId);
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover") {
+      const data = requireObject(body);
+      const recovery = await options.mfaService.verifyRecoveryCode(userId, data.code as string);
+      system.revokeAllSessions(userId);
+      writeResponse(response, 202, traceId, { ...recovery, status: "RECOVERY_STARTED" });
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover" && segments[3] === "verify") {
+      const data = requireObject(body);
+      const recovery = await options.mfaService.verifyRecoveryCode(userId, data.code as string);
+      system.revokeAllSessions(userId);
+      writeResponse(response, 202, traceId, { ...recovery, status: "RECOVERY_STARTED" });
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover" && segments[3] === "complete") {
+      const data = requireObject(body);
+      if (typeof data.recoveryToken !== "string" || !data.recoveryToken.trim()) {
+        throw invalidRequest("recoveryToken is required.");
+      }
+      await options.mfaService.completeRecovery({
+        customerId: userId,
+        recoveryToken: data.recoveryToken,
+      });
+      writeResponse(response, 202, traceId, { status: "RECOVERY_COMPLETED" });
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recovery-codes" && segments[3] === "rotate") {
+      const data = requireObject(body);
+      if (typeof data.password === "string" && !system.verifyCurrentPassword(userId, data.password)) {
+        throw unauthorized("Current password is invalid.");
+      }
+      if (typeof data.challengeId !== "string" || typeof data.code !== "string") {
+        throw invalidRequest("challengeId and code are required for recovery-code rotation.");
+      }
+      const result = await options.mfaService.verifyChallenge({
+        challengeId: data.challengeId,
+        customerId: userId,
+        deviceId: requireDeviceId(request),
+        proof: data.code,
+        purpose: "RECOVERY_CODE_ROTATION",
+      });
+      if (result.customerId !== userId) {
+        throw unauthorized("MFA user binding is invalid.");
+      }
+      system.revokeAllSessions(userId);
+      writeResponse(response, 200, traceId, {
+        status: "ROTATED",
+        recoveryCodes: await options.mfaService.rotateRecoveryCodes(userId),
+      });
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "challenges" && segments[3] === "resend") {
+      const data = requireObject(body);
+      const user = system.getUser(userId);
+      writeResponse(response, 200, traceId, await options.mfaService.resendChallenge({
+        challengeId: segments[2],
+        customerId: userId,
+        deviceId: requireDeviceId(request),
+        destination: user.email,
+        networkFingerprint: getRateLimitKey(request),
+      }));
+      return;
+    }
 
     if (
       request.method === "POST" &&
@@ -679,6 +1013,45 @@ export async function handleRequest(
       segments[2] === "challenges"
     ) {
       const data = requireObject(body);
+      if (options.mfaService) {
+        const supportedPurposes = new Set<PersistentStepUpPurpose>([
+          "TRANSFER",
+          "SAVINGS_OPENING",
+          "CREDIT_APPLICATION",
+          "CARD_ACTIVATION",
+          "CREDIT_PAYMENT",
+          "CARD_UNLOCK",
+          "RECOVERY_CODE_ROTATION",
+          "MFA_FACTOR_CHANGE",
+          "MFA_FACTOR_REMOVAL",
+        ]);
+        if (typeof data.purpose !== "string" || !supportedPurposes.has(data.purpose as PersistentStepUpPurpose)) {
+          throw invalidRequest("purpose is not supported for persistent TOTP step-up.");
+        }
+        const purpose = data.purpose as PersistentStepUpPurpose;
+        const resourceId = typeof data.resourceId === "string" ? data.resourceId : null;
+        const requestFingerprint = system.getStepUpRequestFingerprint(
+          purpose as OtpPurpose,
+          resourceId,
+          typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
+        );
+        const challenge = await options.mfaService.beginTotpChallenge({
+          customerId: userId,
+          deviceId: requireDeviceId(request),
+          purpose,
+          resourceId,
+          requestFingerprint,
+          networkFingerprint: getRateLimitKey(request),
+        });
+        writeResponse(response, 201, traceId, {
+          challengeId: challenge.challengeId,
+          expiresAt: challenge.expiresAt,
+          methods: ["TOTP"],
+          method: "TOTP",
+          purpose,
+        });
+        return;
+      }
       writeResponse(
         response,
         201,
@@ -778,6 +1151,18 @@ export async function handleRequest(
 
     if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "CREDIT_APPLICATION",
+          null,
+          system.getCreditApplicationRequestFingerprint(data.requestedLimit),
+        );
+      }
       writeResponse(
         response,
         201,
@@ -805,6 +1190,17 @@ export async function handleRequest(
       segments[3] === "activate"
     ) {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "CARD_ACTIVATION",
+          segments[2],
+        );
+      }
       writeResponse(
         response,
         200,
@@ -842,6 +1238,17 @@ export async function handleRequest(
       segments[2] === "unlock"
     ) {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "CARD_UNLOCK",
+          segments[1],
+        );
+      }
       writeResponse(response, 200, traceId, {
         card: system.unlockCard(userId, segments[1], data as never, requireDeviceId(request)),
       });
@@ -925,6 +1332,17 @@ export async function handleRequest(
 
     if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "payments") {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "CREDIT_PAYMENT",
+          typeof data.quoteId === "string" ? data.quoteId : null,
+        );
+      }
       const payment = system.submitCreditPayment(
         userId,
         header(request, "idempotency-key") ?? "",
@@ -1015,6 +1433,17 @@ export async function handleRequest(
       segments[1] === "deposits"
     ) {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "SAVINGS_OPENING",
+          typeof data.quoteId === "string" ? data.quoteId : null,
+        );
+      }
       const opening = system.submitSavingsOpening(
         userId,
         header(request, "idempotency-key") ?? "",
@@ -1128,6 +1557,17 @@ export async function handleRequest(
 
     if (request.method === "POST" && segments.length === 1 && segments[0] === "transfers") {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "TRANSFER",
+          typeof data.quoteId === "string" ? data.quoteId : null,
+        );
+      }
       const receipt = system.submitTransfer(
         userId,
         header(request, "idempotency-key") ?? "",
@@ -1181,16 +1621,25 @@ export function createBankingServer(
 
 export function createPersistentBankingServer(
   repository: {
-    withState<T>(initialState: unknown, operation: RelationalStateOperation<T>): Promise<T>;
+    withState<T>(
+      initialState: unknown,
+      operation: RelationalStateOperation<T>,
+      boundaryOptions?: RelationalStateBoundaryOptions,
+    ): Promise<T>;
     healthCheck?: () => Promise<void>;
+    customerAccessStatus?: (customerId: string) => Promise<"ACTIVE" | "LOCKED" | null>;
   },
   system = new BankingSystem(),
   options: HttpOptions = {},
 ): Server {
+  const resolvedOptions: HttpOptions = {
+    ...options,
+    customerAccessStatus: options.customerAccessStatus ?? repository.customerAccessStatus?.bind(repository),
+  };
   return createServer((request, response) => {
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-    if (request.method === "GET" && pathname === "/livez") {
-      void handleRequest(request, response, system, options);
+    if (request.method === "GET" && ["/livez", "/startupz", "/versionz"].includes(pathname)) {
+      void handleRequest(request, response, system, resolvedOptions);
       return;
     }
     if (
@@ -1200,7 +1649,7 @@ export function createPersistentBankingServer(
     ) {
       void repository
         .healthCheck()
-        .then(() => handleRequest(request, response, system, options))
+        .then(() => handleRequest(request, response, system, resolvedOptions))
         .catch(() => {
           const traceId = getRequestId(request);
           writeError(
@@ -1226,7 +1675,7 @@ export function createPersistentBankingServer(
             request,
             bufferedResponse as unknown as ServerResponse,
             system,
-            options,
+            resolvedOptions,
             parsedBody,
             true,
             {
@@ -1249,7 +1698,7 @@ export function createPersistentBankingServer(
             result: undefined,
             nextState,
           };
-        }),
+        }, { preservePersistentAuthState: Boolean(options.mfaService) }),
       )
       .then(() => bufferedResponse.flush())
       .catch((error: unknown) => {

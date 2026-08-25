@@ -3,7 +3,7 @@
 Ngày cập nhật: 2026-08-24
 Trạng thái: **Local/CI implementation đã có; cloud preview chưa triển khai**
 
-Đây là runbook cho môi trường preview dùng dữ liệu và tiền mô phỏng. Backend reference vẫn từ chối `BANKING_ENV=production`/`NODE_ENV=production`; không dùng cho tiền thật, core banking, KYC/AML hoặc phát hành cho khách hàng.
+Đây là runbook cho môi trường preview dùng dữ liệu và tiền mô phỏng. Preview local vẫn dùng `NODE_ENV=preview`; Staging/Production-like dùng `NODE_ENV=production` nhưng phải qua runtime guard, luôn `BANKING_MONEY_MODE=virtual`, không có chế độ tiền thật. Không dùng cho core banking, KYC/AML hoặc phát hành cho khách hàng.
 
 ## Kiến trúc
 
@@ -38,7 +38,7 @@ Invoke-RestMethod http://127.0.0.1:5000/healthz
 docker compose --env-file .env.compose exec backend node scripts/container-smoke.cjs
 ```
 
-`/livez` chỉ xác nhận process còn chạy. `/healthz` và `/readyz` là readiness: phải truy cập được PostgreSQL, reconciliation không mismatch và outbox không vượt ngưỡng. Response chỉ chứa metadata service/environment/storage/commit, health state và trace ID; không chứa URL database, OTP, token hay account number.
+`/livez` chỉ xác nhận process còn chạy. `/startupz` chỉ xanh sau khi config/key/repository khởi tạo; `/healthz` và `/readyz` yêu cầu PostgreSQL, reconciliation không mismatch và outbox không vượt ngưỡng. `/versionz` dùng để đối chiếu release manifest. Response chỉ chứa metadata service/environment/storage/release/commit/digest, health state và trace ID; không chứa URL database, OTP, token hay account number.
 
 ## Migration, restart và persistence
 
@@ -49,7 +49,7 @@ docker compose --env-file .env.compose down
 docker compose --env-file .env.compose up -d
 ```
 
-Migration Node-native đọc SQL `001`–`005`, dùng transaction và advisory lock. Chạy lại migration phải in `already applied` và không tạo bảng trùng. `down` không kèm `--volumes` giữ dữ liệu; chỉ dùng `docker compose down --volumes` khi chủ động reset dữ liệu giả lập.
+Migration Node-native đọc toàn bộ SQL đang được Git theo dõi, dùng transaction, advisory lock và checksum. Dùng `npm run db:migrate -- --plan` để xem pending, `--verify-only` để fail nếu schema/checksum lệch, `--target <migration_key>` để apply đến mốc được duyệt. `down` không kèm `--volumes` giữ dữ liệu; chỉ dùng `docker compose down --volumes` khi chủ động reset dữ liệu giả lập.
 
 CI chạy smoke flow lần đầu, restart Backend, rồi login lại cùng user để chứng minh PostgreSQL volume giữ state. CI disposable không được dùng dữ liệu thật.
 
