@@ -1275,7 +1275,8 @@ export async function handleRequest(
         }
         const purpose = data.purpose as PersistentStepUpPurpose;
         const resourceId = typeof data.resourceId === "string" ? data.resourceId : null;
-        const requestFingerprint = purpose === "TRANSFER" && options.relationalHttp && resourceId
+        const directTransferCutover = purpose === "TRANSFER" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["transfers"]);
+        const requestFingerprint = directTransferCutover && options.relationalHttp
           ? await options.relationalHttp.getTransferStepUpRequestFingerprint(resourceId)
           : system.getStepUpRequestFingerprint(
             purpose as OtpPurpose,
