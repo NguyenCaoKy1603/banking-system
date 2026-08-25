@@ -21,4 +21,10 @@ LABEL org.opencontainers.image.title="banking-admin-web" \
       org.opencontainers.image.version="${RELEASE_ID}"
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 80
+# Run the static server as the unprivileged nginx user. The server listens on
+# 8080 because a non-root process cannot bind the privileged port 80.
+RUN mkdir -p /var/cache/nginx /var/log/nginx /var/run \
+    && chown -R nginx:nginx /var/cache/nginx /var/log/nginx /var/run /etc/nginx/conf.d /usr/share/nginx/html \
+    && sed -i -E 's#pid[[:space:]]+/run/nginx.pid;#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf
+USER nginx
+EXPOSE 8080

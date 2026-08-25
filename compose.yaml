@@ -184,7 +184,7 @@ services:
       admin-api:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${ADMIN_WEB_PORT:-5173}:80"
+      - "127.0.0.1:${ADMIN_WEB_PORT:-5173}:8080"
     restart: unless-stopped
 
   # Opt-in only: local customer HTTP routes are now direct relational-v2 when
