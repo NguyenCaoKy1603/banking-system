@@ -8,6 +8,8 @@ Runbook Docker/preview persistent của Giai đoạn 1 nằm tại [`preview-dep
 
 P0 secret management nằm tại [`secret-management-runbook.md`](secret-management-runbook.md), registry metadata-only tại [`secret-registry.yaml`](secret-registry.yaml), còn migration/checkpoint re-encryption và backup reference nằm ở [`migration-runbook.md`](migration-runbook.md) và [`backup-restore-runbook.md`](backup-restore-runbook.md).
 
+Observability local preview và giới hạn evidence nằm tại [`observability-local-preview.md`](observability-local-preview.md). Tài liệu này cố định trạng thái `UNTRUSTED LOCAL PREVIEW` với `IMAGE_DIGEST=unknown`; không suy diễn thành staging/production.
+
 ## Kiểm tra cấu hình
 
 ```powershell

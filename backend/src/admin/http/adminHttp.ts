@@ -8,6 +8,9 @@ import { StaffAuthService } from "../auth/staffAuthService.js";
 import { AdminActionEngine } from "../actions/actionEngine.js";
 import type { AdminCaseScope, AdminRepository } from "../repositories/adminRepository.js";
 import type { RuntimeMetadata } from "../../runtimeMetadata.js";
+import { createRequestContext, normalizeRequestId, requestContextHeaders, type RequestContext } from "../../observability/requestContext.js";
+import { createStructuredLogger, type StructuredLogger } from "../../observability/logger.js";
+import { PrometheusRegistry, registerHttpMetrics } from "../../observability/metrics.js";
 
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 500_000;
@@ -27,10 +30,41 @@ export type AdminHttpOptions = {
   runtimeMetadata?: RuntimeMetadata;
   startupReady?: boolean;
   secureCookies?: boolean;
+  metrics?: PrometheusRegistry;
+  logger?: StructuredLogger;
+  serviceName?: string;
+  instrumented?: boolean;
 };
 
 function header(request: IncomingMessage, name: string): string | undefined { const value = request.headers[name.toLowerCase()]; return Array.isArray(value) ? value[0] : value; }
-function requestId(request: IncomingMessage): string { return header(request, "x-request-id")?.trim() || `admin-${crypto.randomUUID()}`; }
+function requestId(request: IncomingMessage): string { return normalizeRequestId(header(request, "x-request-id"), "admin"); }
+function metricRoute(request: IncomingMessage): string {
+  const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+  if (["/livez", "/startupz", "/readyz", "/versionz", "/metrics"].includes(pathname)) return pathname;
+  const parts = pathname.split("/").filter(Boolean).slice(0, 6).map((part) => /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(part) || /^\d{8,}$/.test(part) || part.length > 48 ? ":id" : part);
+  return `/${parts.join("/")}`.slice(0, 64) || "/";
+}
+function outcomeForStatus(status: number): string { return status >= 500 ? "platform_failure" : status === 401 || status === 403 || status === 429 ? "security_rejection" : status >= 400 ? "domain_rejection" : "success"; }
+function instrumentResponse(request: IncomingMessage, response: ServerResponse, options: AdminHttpOptions, context: RequestContext): void {
+  const registry = options.metrics;
+  if (!registry || typeof (response as unknown as { once?: unknown }).once !== "function") return;
+  const startedAt = performance.now();
+  const method = (request.method ?? "GET").toUpperCase();
+  const route = metricRoute(request);
+  registry.add("http_requests_active", 1, { service: options.serviceName ?? "banking-admin-api" });
+  let completed = false;
+  const complete = (): void => {
+    if (completed) return;
+    completed = true;
+    const status = response.statusCode || 500;
+    registry.increment("http_requests_total", 1, { method, route, status_class: `${Math.floor(status / 100)}xx`, outcome: outcomeForStatus(status) });
+    registry.observe("http_request_duration_seconds", (performance.now() - startedAt) / 1000, { method, route });
+    registry.add("http_requests_active", -1, { service: options.serviceName ?? "banking-admin-api" });
+    options.logger?.log(status >= 400 ? "info" : "info", "http_request_completed", { requestId: context.requestId, traceId: context.traceId, spanId: context.spanId, method, route, statusClass: `${Math.floor(status / 100)}xx`, outcome: outcomeForStatus(status), durationMs: Math.round((performance.now() - startedAt) * 100) / 100 });
+  };
+  response.once("finish", complete);
+  response.once("close", complete);
+}
 function parseCookies(request: IncomingMessage): Record<string, string> { const raw = header(request, "cookie") ?? ""; return Object.fromEntries(raw.split(";").map((part) => part.trim().split("=")).filter(([key, value]) => key && value).map(([key, value]) => [key, decodeURIComponent(value)])); }
 function cookie(name: string, value: string, options: { httpOnly?: boolean; maxAge?: number; secure?: boolean } = {}): string { return `${name}=${encodeURIComponent(value)}; Path=/; SameSite=Strict${options.httpOnly ? "; HttpOnly" : ""}${options.secure ? "; Secure" : ""}${options.maxAge === undefined ? "" : `; Max-Age=${options.maxAge}`}`; }
 function write(response: ServerResponse, status: number, traceId: string, body?: unknown, headers: Record<string, string> = {}): void { response.statusCode = status; response.setHeader("Content-Type", "application/json; charset=utf-8"); response.setHeader("Cache-Control", "no-store"); response.setHeader("X-Request-ID", traceId); response.setHeader("X-Content-Type-Options", "nosniff"); response.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"); response.setHeader("Referrer-Policy", "no-referrer"); for (const [key, value] of Object.entries(headers)) response.setHeader(key, value); if (body === undefined) response.end(); else response.end(JSON.stringify(body)); }
@@ -66,15 +100,18 @@ function setAuthCookies(response: ServerResponse, tokens: { accessToken: string;
   response.setHeader("Set-Cookie", [cookie(accessName, tokens.accessToken, { httpOnly: true, maxAge: tokens.expiresInSeconds, secure }), cookie(refreshName, tokens.refreshToken, { httpOnly: true, maxAge: 8 * 60 * 60, secure }), cookie(CSRF_COOKIE, tokens.csrfToken, { maxAge: tokens.expiresInSeconds, secure })]);
 }
 
-export async function handleAdminRequest(request: IncomingMessage, response: ServerResponse, options: AdminHttpOptions): Promise<void> {
-  const traceId = requestId(request);
+export async function handleAdminRequest(request: IncomingMessage, response: ServerResponse, options: AdminHttpOptions, requestContext?: RequestContext): Promise<void> {
+  const context = requestContext ?? createRequestContext(request, "admin");
+  const traceId = context.requestId;
+  for (const [name, value] of Object.entries(requestContextHeaders(context))) response.setHeader(name, value);
+  if (!options.instrumented) instrumentResponse(request, response, options, context);
   const origin = header(request, "origin");
   if (origin && options.allowedOrigins?.length && !options.allowedOrigins.includes(origin)) { writeError(response, traceId, new DomainError(403, "CORS_ORIGIN_DENIED", "Admin origin is not allowed.")); return; }
   const fetchSite = header(request, "sec-fetch-site");
   if (fetchSite === "cross-site" && origin && !options.allowedOrigins?.includes(origin)) { writeError(response, traceId, new DomainError(403, "CORS_ORIGIN_DENIED", "Cross-site Admin request is not allowed.")); return; }
   if (origin && options.allowedOrigins?.includes(origin)) { response.setHeader("Access-Control-Allow-Origin", origin); response.setHeader("Access-Control-Allow-Credentials", "true"); response.setHeader("Vary", "Origin"); }
   const url = new URL(request.url ?? "/", "http://localhost");
-  if (request.method === "OPTIONS") { write(response, 204, traceId, undefined, { "Access-Control-Allow-Origin": origin ?? "null", "Access-Control-Allow-Credentials": "true", "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token, X-Request-ID, Idempotency-Key", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS" }); return; }
+  if (request.method === "OPTIONS") { write(response, 204, traceId, undefined, { "Access-Control-Allow-Origin": origin ?? "null", "Access-Control-Allow-Credentials": "true", "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token, X-Request-ID, Idempotency-Key, traceparent, tracestate", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS" }); return; }
   const metadata = options.runtimeMetadata ?? {
     service: "banking-admin-api",
     releaseId: process.env.RELEASE_ID?.trim() || "local",
@@ -91,6 +128,7 @@ export async function handleAdminRequest(request: IncomingMessage, response: Ser
   if (url.pathname === "/livez") { write(response, 200, traceId, { ...metadata, status: "ok" }); return; }
   if (url.pathname === "/startupz") { const ready = options.startupReady !== false; write(response, ready ? 200 : 503, traceId, { ...metadata, status: ready ? "ok" : "starting" }); return; }
   if (url.pathname === "/versionz") { write(response, 200, traceId, metadata); return; }
+  if (url.pathname === "/metrics" && options.metrics) { response.statusCode = 200; response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8"); response.end(options.metrics.prometheus()); return; }
   if (url.pathname === "/readyz") { try { await options.repository.initialize(); write(response, 200, traceId, { service: "banking-admin-api", status: "ready" }); } catch { writeError(response, traceId, new DomainError(503, "PERSISTENCE_UNAVAILABLE", "Admin persistence is unavailable.")); } return; }
   if (!url.pathname.startsWith(`${API_PREFIX}/admin`)) { writeError(response, traceId, notFound("Admin API route not found.")); return; }
   const pathname = url.pathname.slice(API_PREFIX.length);
@@ -197,4 +235,20 @@ export async function handleAdminRequest(request: IncomingMessage, response: Ser
   }
 }
 
-export function createAdminServer(options: AdminHttpOptions): Server { return createServer((request, response) => { void handleAdminRequest(request, response, options); }); }
+export function createAdminServer(options: AdminHttpOptions): Server {
+  const metrics = options.metrics ?? new PrometheusRegistry();
+  registerHttpMetrics(metrics);
+  const resolvedOptions: AdminHttpOptions = {
+    ...options,
+    metrics,
+    logger: options.logger ?? createStructuredLogger({ service: options.serviceName ?? "banking-admin-api" }),
+    serviceName: options.serviceName ?? "banking-admin-api",
+    instrumented: true,
+  };
+  return createServer((request, response) => {
+    const context = createRequestContext(request, "admin");
+    for (const [name, value] of Object.entries(requestContextHeaders(context))) response.setHeader(name, value);
+    instrumentResponse(request, response, resolvedOptions, context);
+    void handleAdminRequest(request, response, resolvedOptions, context);
+  });
+}

@@ -4,7 +4,6 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
-import { randomUUID } from "node:crypto";
 
 import { BankingSystem, type BankingSystemState } from "./bankingSystem.js";
 import { DomainError, conflictWithCode, invalidRequest, notFound, unauthorized } from "./errors.js";
@@ -18,6 +17,9 @@ import type {
 } from "./mfa/persistentMfaService.js";
 import type { OtpPurpose } from "./types.js";
 import type { RuntimeMetadata } from "./runtimeMetadata.js";
+import { createRequestContext, normalizeRequestId, requestContextHeaders, type RequestContext } from "./observability/requestContext.js";
+import { createStructuredLogger, type StructuredLogger } from "./observability/logger.js";
+import { collectDatabaseMetrics, PrometheusRegistry, registerBusinessMetrics, registerHttpMetrics, type DatabasePoolMetricSnapshot } from "./observability/metrics.js";
 
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 1_000_000;
@@ -29,6 +31,14 @@ export type HttpOptions = {
   commitSha?: string;
   runtimeMetadata?: RuntimeMetadata;
   startupReady?: boolean | (() => boolean);
+  /** Direct persistence/schema check used by readiness, never by liveness. */
+  readinessCheck?: () => Promise<void>;
+  metrics?: PrometheusRegistry;
+  logger?: StructuredLogger;
+  serviceName?: string;
+  databaseMetrics?: () => DatabasePoolMetricSnapshot;
+  /** Internal marker: persistent server instruments the real response before buffering. */
+  instrumented?: boolean;
   /** PostgreSQL-backed MFA boundary. Omitted only for legacy unit-test servers. */
   mfaService?: PersistentMfaService;
   /** Optional persistent customer-access gate owned by the Admin control plane. */
@@ -92,7 +102,71 @@ function header(request: IncomingMessage, name: string): string | undefined {
 }
 
 function getRequestId(request: IncomingMessage): string {
-  return header(request, "x-request-id")?.trim() || `backend-${randomUUID()}`;
+  return normalizeRequestId(header(request, "x-request-id"));
+}
+
+function metricRoute(request: IncomingMessage): string {
+  const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+  if (["/livez", "/startupz", "/readyz", "/healthz", "/versionz", "/metrics"].includes(pathname)) return pathname;
+  const parts = pathname.split("/").filter(Boolean).slice(0, 6).map((part) =>
+    /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(part) || /^\d{8,}$/.test(part) || part.length > 48 ? ":id" : part,
+  );
+  return `/${parts.join("/")}`.slice(0, 64) || "/";
+}
+
+function outcomeForStatus(status: number): string {
+  if (status >= 500) return "platform_failure";
+  if (status === 401 || status === 403 || status === 429) return "security_rejection";
+  if (status >= 400) return "domain_rejection";
+  return "success";
+}
+
+function instrumentResponse(request: IncomingMessage, response: ServerResponse, options: HttpOptions, context: RequestContext): void {
+  const registry = options.metrics;
+  if (!registry || typeof (response as unknown as { once?: unknown }).once !== "function") return;
+  const startedAt = performance.now();
+  const route = metricRoute(request);
+  const method = (request.method ?? "GET").toUpperCase();
+  registry.add("http_requests_active", 1, { service: options.serviceName ?? "banking-reference-backend" });
+  let completed = false;
+  const complete = (): void => {
+    if (completed) return;
+    completed = true;
+    const status = response.statusCode || 500;
+    const statusClass = `${Math.floor(status / 100)}xx`;
+    const outcome = outcomeForStatus(status);
+    registry.increment("http_requests_total", 1, { method, route, status_class: statusClass, outcome });
+    registry.observe("http_request_duration_seconds", (performance.now() - startedAt) / 1000, { method, route });
+    if (route.includes("/transfers")) {
+      const operation = route.includes("/quote") ? "quote" : route.endsWith("/transfers") ? "submit" : "read";
+      registry.increment("banking_transfer_requests_total", 1, { operation, outcome });
+    }
+    registry.add("http_requests_active", -1, { service: options.serviceName ?? "banking-reference-backend" });
+    options.logger?.log(status >= 500 ? "error" : status >= 400 ? "info" : "info", "http_request_completed", {
+      requestId: context.requestId,
+      traceId: context.traceId,
+      spanId: context.spanId,
+      method,
+      route,
+      statusClass,
+      outcome,
+      durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+    });
+  };
+  response.once("finish", complete);
+  response.once("close", complete);
+}
+
+function collectRuntimeMetrics(options: HttpOptions): void {
+  if (!options.metrics) return;
+  collectDatabaseMetrics(options.metrics, options.databaseMetrics?.());
+}
+
+function recordBusinessHealth(options: HttpOptions, health: { status: string; reconciliation?: string; pendingOutboxEvents?: number }): void {
+  if (!options.metrics) return;
+  options.metrics.increment("banking_health_checks_total", 1, { status: health.status });
+  options.metrics.set("banking_reconciliation_mismatch", health.reconciliation === "mismatch" ? 1 : 0);
+  options.metrics.set("banking_outbox_pending_events", Number(health.pendingOutboxEvents ?? 0));
 }
 
 function writeResponse(
@@ -546,8 +620,12 @@ export async function handleRequest(
   parsedBody?: unknown,
   bodyAlreadyRead = false,
   stateBoundary?: RequestStateBoundary,
+  requestContext?: RequestContext,
 ): Promise<void> {
-  const traceId = getRequestId(request);
+  const context = requestContext ?? createRequestContext(request);
+  const traceId = context.requestId;
+  for (const [name, value] of Object.entries(requestContextHeaders(context))) response.setHeader(name, value);
+  if (!options.instrumented) instrumentResponse(request, response, options, context);
   const configuredOrigins = options.allowedOrigins ?? ["*"];
   const origin = header(request, "origin");
   if (
@@ -569,7 +647,7 @@ export async function handleRequest(
     response.setHeader("Access-Control-Allow-Origin", origin);
   }
   response.setHeader("Vary", "Origin");
-  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID, traceparent, tracestate");
   response.setHeader("Access-Control-Allow-Methods", "DELETE,GET,PATCH,POST,OPTIONS");
 
   if (request.method === "OPTIONS") {
@@ -604,15 +682,31 @@ export async function handleRequest(
       request.method === "GET" &&
       (requestUrl.pathname === "/healthz" || requestUrl.pathname === "/readyz")
     ) {
+      if (options.readinessCheck && !options.instrumented) {
+        try {
+          await options.readinessCheck();
+        } catch {
+          writeError(
+            response,
+            503,
+            traceId,
+            new DomainError(503, "PERSISTENCE_UNAVAILABLE", "Persistent sandbox is temporarily unavailable."),
+          );
+          return;
+        }
+      }
       const health = system.getHealth();
+      recordBusinessHealth(options, health);
       writeResponse(response, health.status === "ok" ? 200 : 503, traceId, {
         ...runtimeMetadataFor(options),
         ...health,
       });
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/metrics" && options.mfaService) {
-      writeTextResponse(response, 200, traceId, options.mfaService.metrics.prometheus());
+    if (request.method === "GET" && requestUrl.pathname === "/metrics" && (options.mfaService || options.metrics)) {
+      collectRuntimeMetrics(options);
+      const sections = [options.metrics?.prometheus(), options.mfaService?.metrics.prometheus()].filter(Boolean);
+      writeTextResponse(response, 200, traceId, `${sections.join("\n")}`);
       return;
     }
 
@@ -1614,8 +1708,17 @@ export function createBankingServer(
   system = new BankingSystem(),
   options: HttpOptions = {},
 ): Server {
+  const metrics = options.metrics ?? new PrometheusRegistry();
+  registerHttpMetrics(metrics);
+  registerBusinessMetrics(metrics);
+  const resolvedOptions: HttpOptions = {
+    ...options,
+    metrics,
+    logger: options.logger ?? createStructuredLogger({ service: options.serviceName ?? "banking-reference-backend" }),
+    serviceName: options.serviceName ?? "banking-reference-backend",
+  };
   return createServer((request, response) => {
-    void handleRequest(request, response, system, options);
+    void handleRequest(request, response, system, resolvedOptions, undefined, false, undefined, createRequestContext(request));
   });
 }
 
@@ -1627,6 +1730,7 @@ export function createPersistentBankingServer(
       boundaryOptions?: RelationalStateBoundaryOptions,
     ): Promise<T>;
     healthCheck?: () => Promise<void>;
+    poolMetrics?: () => DatabasePoolMetricSnapshot;
     customerAccessStatus?: (customerId: string) => Promise<"ACTIVE" | "LOCKED" | null>;
   },
   system = new BankingSystem(),
@@ -1635,11 +1739,23 @@ export function createPersistentBankingServer(
   const resolvedOptions: HttpOptions = {
     ...options,
     customerAccessStatus: options.customerAccessStatus ?? repository.customerAccessStatus?.bind(repository),
+    readinessCheck: options.readinessCheck ?? repository.healthCheck?.bind(repository),
+    databaseMetrics: options.databaseMetrics ?? repository.poolMetrics?.bind(repository),
   };
+  const metrics = resolvedOptions.metrics ?? new PrometheusRegistry();
+  registerHttpMetrics(metrics);
+  registerBusinessMetrics(metrics);
+  resolvedOptions.metrics = metrics;
+  resolvedOptions.logger = resolvedOptions.logger ?? createStructuredLogger({ service: resolvedOptions.serviceName ?? "banking-reference-backend" });
+  resolvedOptions.serviceName = resolvedOptions.serviceName ?? "banking-reference-backend";
+  resolvedOptions.instrumented = true;
   return createServer((request, response) => {
+    const requestContext = createRequestContext(request);
+    for (const [name, value] of Object.entries(requestContextHeaders(requestContext))) response.setHeader(name, value);
+    instrumentResponse(request, response, resolvedOptions, requestContext);
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
     if (request.method === "GET" && ["/livez", "/startupz", "/versionz"].includes(pathname)) {
-      void handleRequest(request, response, system, resolvedOptions);
+      void handleRequest(request, response, system, resolvedOptions, undefined, false, undefined, requestContext);
       return;
     }
     if (
@@ -1649,9 +1765,9 @@ export function createPersistentBankingServer(
     ) {
       void repository
         .healthCheck()
-        .then(() => handleRequest(request, response, system, resolvedOptions))
+        .then(() => handleRequest(request, response, system, resolvedOptions, undefined, false, undefined, requestContext))
         .catch(() => {
-          const traceId = getRequestId(request);
+          const traceId = requestContext.requestId;
           writeError(
             response,
             503,
@@ -1686,6 +1802,7 @@ export function createPersistentBankingServer(
                 requestState.disposition = "ROLLBACK_ALL";
               },
             },
+            requestContext,
           );
           const requestEndState = system.exportState();
           const nextState =

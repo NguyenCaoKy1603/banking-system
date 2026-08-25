@@ -20,6 +20,10 @@ export type DatabasePoolMetrics = {
   idle: number;
   waiting: number;
   max: number;
+  queryTotal: number;
+  queryErrors: number;
+  slowQueries: number;
+  lastSlowQueryDurationMs: number;
 };
 
 function positiveInt(value: string | undefined, fallback: number, name: string): number {
@@ -133,10 +137,16 @@ function poolConfig(options: DatabasePoolOptions): PoolConfig {
 export class DatabasePool {
   private readonly pool: Pool;
   private readonly configuredMax: number;
+  private readonly slowQueryThresholdMs: number;
+  private queryTotal = 0;
+  private queryErrors = 0;
+  private slowQueries = 0;
+  private lastSlowQueryDurationMs = 0;
 
   constructor(options: DatabasePoolOptions = {}) {
     const config = poolConfig(options);
     this.configuredMax = config.max ?? 4;
+    this.slowQueryThresholdMs = positiveInt(process.env.DB_SLOW_QUERY_THRESHOLD_MS, 250, "DB_SLOW_QUERY_THRESHOLD_MS");
     this.pool = new Pool(config);
   }
 
@@ -152,7 +162,20 @@ export class DatabasePool {
     text: string,
     values?: unknown[],
   ): Promise<QueryResult<T>> {
-    return this.pool.query<T>(text, values);
+    const startedAt = performance.now();
+    this.queryTotal += 1;
+    try {
+      return await this.pool.query<T>(text, values);
+    } catch (error) {
+      this.queryErrors += 1;
+      throw error;
+    } finally {
+      const durationMs = performance.now() - startedAt;
+      if (durationMs >= this.slowQueryThresholdMs) {
+        this.slowQueries += 1;
+        this.lastSlowQueryDurationMs = durationMs;
+      }
+    }
   }
 
   metrics(): DatabasePoolMetrics {
@@ -161,6 +184,10 @@ export class DatabasePool {
       idle: this.pool.idleCount,
       waiting: this.pool.waitingCount,
       max: this.configuredMax,
+      queryTotal: this.queryTotal,
+      queryErrors: this.queryErrors,
+      slowQueries: this.slowQueries,
+      lastSlowQueryDurationMs: this.lastSlowQueryDurationMs,
     };
   }
 

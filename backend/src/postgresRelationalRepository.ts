@@ -239,6 +239,12 @@ export class PostgresRelationalRepository {
   async healthCheck(): Promise<void> {
     await this.pool.query("SELECT 1");
     await this.pool.query("SELECT 1 FROM reference_runtime_records LIMIT 1");
+    const migration = await this.pool.query<{ migration_key: string }>(
+      "SELECT migration_key FROM reference_schema_migrations ORDER BY migration_key DESC LIMIT 1",
+    );
+    if (!migration.rows[0]?.migration_key) {
+      throw new Error("PostgreSQL schema migration evidence is missing.");
+    }
   }
 
   async customerAccessStatus(customerId: string): Promise<"ACTIVE" | "LOCKED" | null> {

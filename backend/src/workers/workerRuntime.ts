@@ -126,6 +126,8 @@ export class WorkerRuntime {
   private initialized = false;
   private heartbeatTimer: NodeJS.Timeout | undefined;
   private activeRuns = 0;
+  private lifecycleStatus: WorkerStatus = "STARTING";
+  private lastLoopErrorAt: string | null = null;
 
   constructor(
     readonly config: WorkerConfig,
@@ -197,6 +199,10 @@ export class WorkerRuntime {
       this.metrics.set("database_pool_waiting", poolMetrics.waiting);
       this.metrics.set("database_pool_total", poolMetrics.total);
       this.metrics.set("database_pool_idle", poolMetrics.idle);
+      this.metrics.set("database_query_total", poolMetrics.queryTotal);
+      this.metrics.set("database_query_errors_total", poolMetrics.queryErrors);
+      this.metrics.set("database_slow_queries_total", poolMetrics.slowQueries);
+      this.metrics.set("database_last_slow_query_duration_seconds", poolMetrics.lastSlowQueryDurationMs / 1000);
       return {
         reclaimed,
         claimed: claimedEvents.length,
@@ -229,6 +235,7 @@ export class WorkerRuntime {
         // unbounded crash loop.  Keep the process alive for health/metrics and
         // let the next iteration retry after the normal poll delay.
         this.metrics.increment("worker_loop_error_total");
+        this.lastLoopErrorAt = new Date().toISOString();
         await new Promise((resolve) => setTimeout(resolve, this.config.pollIntervalMs));
       }
     }
@@ -255,14 +262,25 @@ export class WorkerRuntime {
     await this.database.healthCheck();
     const metrics = await this.repository.metrics(this.config.workerId);
     const poolMetrics = this.database.metrics();
+    const heartbeatAge = Number(metrics.worker_heartbeat_age_seconds ?? 0);
+    const lifecycleHealthy = this.initialized && this.lifecycleStatus === "READY";
+    const status = lifecycleHealthy && heartbeatAge < 60 ? "ok" : "degraded";
     return {
-      status: "ok",
+      status,
+      lifecycle: this.lifecycleStatus,
+      initialized: this.initialized,
+      checkedAt: new Date().toISOString(),
+      lastLoopErrorAt: this.lastLoopErrorAt,
       workerId: this.config.workerId,
       workerVersion: this.config.workerVersion,
       ...metrics,
       database_pool_waiting: poolMetrics.waiting,
       database_pool_total: poolMetrics.total,
       database_pool_idle: poolMetrics.idle,
+      database_query_total: poolMetrics.queryTotal,
+      database_query_errors_total: poolMetrics.queryErrors,
+      database_slow_queries_total: poolMetrics.slowQueries,
+      database_last_slow_query_duration_seconds: poolMetrics.lastSlowQueryDurationMs / 1000,
       ...this.metrics.snapshot(),
     };
   }
@@ -351,7 +369,7 @@ export class WorkerRuntime {
       this.metrics.increment("outbox_retry_total", 1, { event_type: event.eventType, error_class: classified.errorClass });
       return false;
     } finally {
-      this.metrics.set("outbox_handler_duration_seconds", (performance.now() - startedAt) / 1000, { event_type: event.eventType });
+      this.metrics.observe("outbox_handler_duration_seconds", (performance.now() - startedAt) / 1000, { event_type: event.eventType });
     }
   }
 
@@ -434,6 +452,7 @@ export class WorkerRuntime {
   }
 
   private async setStatus(status: WorkerStatus): Promise<void> {
+    this.lifecycleStatus = status;
     await this.repository.heartbeat({
       workerId: this.config.workerId,
       workerVersion: this.config.workerVersion,
