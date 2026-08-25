@@ -67,6 +67,14 @@ Credit settlement/overdue/reversal scheduler và profile/KYC customer.
 | `npm run validate:relational-v2` | PASS; migration/checksum/invariant/orphan checks đều 0 |
 | `npm run validate:outbox` | PASS; secret-like errors/orphan/invalid records 0 |
 
+Client/admin checks cũng xanh trong cùng phiên local:
+
+- Mobile lint, typecheck, unit: 46 suite / 259 test PASS; OpenAPI 43 path,
+  Maestro 10 flow syntax và public-env scan 193 file PASS.
+- Admin Web lint, test: 3/3 và build PASS.
+- `docker compose --env-file .env.compose config --quiet` PASS; chỉ backend,
+  migrate, PostgreSQL, Admin API/Web đang chạy. Không có worker đang chạy.
+
 ### Phân loại 27 SKIPPED trong aggregate `npm test`
 
 Các skip này là do aggregate test không tự cấp `DATABASE_TEST_ADMIN_URL` để
