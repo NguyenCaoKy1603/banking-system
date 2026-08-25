@@ -1,6 +1,6 @@
 # Release-quality rehearsal summary
 
-The final clean-clone `npm run test:release` matrix completed 17/17 PASS on source `167824d5888fac7139bd1cd245fb4fa49502b48c`:
+The final clean-clone `npm run test:release` matrix completed 17/17 PASS on source `9399604be95bb4c578eca1f4421c1702a5384193`:
 
 | Group | Result |
 | --- | --- |

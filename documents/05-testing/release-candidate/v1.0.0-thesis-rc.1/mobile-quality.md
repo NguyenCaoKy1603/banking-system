@@ -1,6 +1,6 @@
 # Mobile quality evidence
 
-- Tested source: `167824d5888fac7139bd1cd245fb4fa49502b48c` clean clone.
+- Tested source: `9399604be95bb4c578eca1f4421c1702a5384193` clean clone.
 - `npm ci --ignore-scripts`: PASS, 0 vulnerabilities.
 - `npm run lint`: PASS.
 - `npm run typecheck`: PASS.
