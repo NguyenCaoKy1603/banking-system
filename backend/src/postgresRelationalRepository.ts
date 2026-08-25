@@ -247,6 +247,40 @@ export class PostgresRelationalRepository {
     }
   }
 
+  /**
+   * Read-only business health snapshot for `/healthz` and `/readyz`.
+   * Liveness never calls this query.  The checks intentionally use relational
+   * facts rather than the legacy in-memory replay so a running worker and API
+   * cannot report conflicting outbox state.
+   */
+  async businessHealthCheck(): Promise<{
+    status: "ok" | "degraded";
+    reconciliation: "ok" | "mismatch";
+    outbox: "ok" | "degraded";
+    pendingOutboxEvents: number;
+  }> {
+    const result = await this.pool.query<{ pending_outbox: string; balance_mismatch: string; transfer_mismatch: string }>(
+      `SELECT
+         (SELECT COUNT(*) FROM outbox_events WHERE status = 'PENDING')::text AS pending_outbox,
+         (SELECT COUNT(*) FROM payment_accounts WHERE available_minor > current_minor)::text AS balance_mismatch,
+         (SELECT COUNT(*)
+            FROM transfers transfer
+            LEFT JOIN payment_accounts source ON source.id = transfer.source_account_id
+            LEFT JOIN payment_accounts destination ON destination.id = transfer.destination_account_id
+           WHERE source.id IS NULL OR (transfer.destination_account_id IS NOT NULL AND destination.id IS NULL))::text AS transfer_mismatch`,
+    );
+    const row = result.rows[0];
+    const pendingOutboxEvents = Number(row?.pending_outbox ?? 0);
+    const mismatch = Number(row?.balance_mismatch ?? 0) > 0 || Number(row?.transfer_mismatch ?? 0) > 0;
+    const outbox = pendingOutboxEvents > Number(process.env.BANKING_OUTBOX_PENDING_THRESHOLD ?? 100) ? "degraded" : "ok";
+    return {
+      status: mismatch || outbox === "degraded" ? "degraded" : "ok",
+      reconciliation: mismatch ? "mismatch" : "ok",
+      outbox,
+      pendingOutboxEvents,
+    };
+  }
+
   async customerAccessStatus(customerId: string): Promise<"ACTIVE" | "LOCKED" | null> {
     const result = await this.pool.query<{ access_status: string | null }>(
       "SELECT COALESCE(access_status, 'ACTIVE') AS access_status FROM customers WHERE id = $1",

@@ -33,6 +33,13 @@ export type HttpOptions = {
   startupReady?: boolean | (() => boolean);
   /** Direct persistence/schema check used by readiness, never by liveness. */
   readinessCheck?: () => Promise<void>;
+  /** Database-backed business health snapshot; kept separate from liveness. */
+  businessHealthCheck?: () => Promise<{
+    status: "ok" | "degraded";
+    reconciliation: "ok" | "mismatch";
+    outbox: "ok" | "degraded";
+    pendingOutboxEvents: number;
+  }>;
   metrics?: PrometheusRegistry;
   logger?: StructuredLogger;
   serviceName?: string;
@@ -696,6 +703,18 @@ export async function handleRequest(
         }
       }
       const health = system.getHealth();
+      if (options.businessHealthCheck) {
+        try {
+          const databaseHealth = await options.businessHealthCheck();
+          health.status = health.status === "ok" && databaseHealth.status === "ok" ? "ok" : "degraded";
+          health.reconciliation = health.reconciliation === "ok" && databaseHealth.reconciliation === "ok" ? "ok" : "mismatch";
+          health.outbox = databaseHealth.outbox;
+          health.pendingOutboxEvents = databaseHealth.pendingOutboxEvents;
+        } catch {
+          health.status = "degraded";
+          health.outbox = "degraded";
+        }
+      }
       recordBusinessHealth(options, health);
       writeResponse(response, health.status === "ok" ? 200 : 503, traceId, {
         ...runtimeMetadataFor(options),
@@ -1731,6 +1750,12 @@ export function createPersistentBankingServer(
     ): Promise<T>;
     healthCheck?: () => Promise<void>;
     poolMetrics?: () => DatabasePoolMetricSnapshot;
+    businessHealthCheck?: () => Promise<{
+      status: "ok" | "degraded";
+      reconciliation: "ok" | "mismatch";
+      outbox: "ok" | "degraded";
+      pendingOutboxEvents: number;
+    }>;
     customerAccessStatus?: (customerId: string) => Promise<"ACTIVE" | "LOCKED" | null>;
   },
   system = new BankingSystem(),
@@ -1740,6 +1765,7 @@ export function createPersistentBankingServer(
     ...options,
     customerAccessStatus: options.customerAccessStatus ?? repository.customerAccessStatus?.bind(repository),
     readinessCheck: options.readinessCheck ?? repository.healthCheck?.bind(repository),
+    businessHealthCheck: options.businessHealthCheck ?? repository.businessHealthCheck?.bind(repository),
     databaseMetrics: options.databaseMetrics ?? repository.poolMetrics?.bind(repository),
   };
   const metrics = resolvedOptions.metrics ?? new PrometheusRegistry();
