@@ -25,6 +25,9 @@ services:
       target: runtime
       args:
         COMMIT_SHA: ${COMMIT_SHA:-local}
+        RELEASE_ID: ${RELEASE_ID:-local}
+        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
     environment:
       BANKING_ENV: ${BANKING_ENV:-preview}
       NODE_ENV: ${NODE_ENV:-preview}
@@ -49,6 +52,9 @@ services:
       target: runtime
       args:
         COMMIT_SHA: ${COMMIT_SHA:-local}
+        RELEASE_ID: ${RELEASE_ID:-local}
+        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
     environment:
       BANKING_ENV: ${BANKING_ENV:-preview}
       NODE_ENV: ${NODE_ENV:-preview}
@@ -97,6 +103,9 @@ services:
       target: runtime
       args:
         COMMIT_SHA: ${COMMIT_SHA:-local}
+        RELEASE_ID: ${RELEASE_ID:-local}
+        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
     environment:
       BANKING_ENV: ${BANKING_ENV:-preview}
       NODE_ENV: ${NODE_ENV:-preview}
@@ -158,6 +167,9 @@ services:
       target: runtime
       args:
         COMMIT_SHA: ${COMMIT_SHA:-local}
+        RELEASE_ID: ${RELEASE_ID:-local}
+        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
     environment:
       BANKING_ENV: ${BANKING_ENV:-preview}
       NODE_ENV: ${NODE_ENV:-preview}
