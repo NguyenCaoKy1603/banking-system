@@ -3,6 +3,7 @@
   "status": "LOCAL_RC_READY_EXTERNAL_PENDING",
   "testedSourceCommit": "9399604be95bb4c578eca1f4421c1702a5384193",
   "branch": "codex/p0-postgres-foundation",
+  "evidenceRecordedAt": "2026-08-26T04:09:03+07:00",
   "sourceTreeBeforeEvidenceCommit": "clean",
   "migrationCount": 32,
   "releaseGateBeforeEvidenceCommit": {

@@ -1,5 +1,14 @@
 {
   "status": "PASS_CANONICALIZED",
+  "testedSourceCommit": "9399604be95bb4c578eca1f4421c1702a5384193",
+  "branch": "codex/p0-postgres-foundation",
+  "evidenceRecordedAt": "2026-08-26T04:09:03+07:00",
+  "toolchain": {
+    "node": "v24.19.0",
+    "npm": "11.17.0",
+    "docker": "28.4.0",
+    "compose": "v2.39.4-desktop.1"
+  },
   "schemaVersion": "032",
   "migrationCount": 32,
   "workingTreeDigest": "1a768560de0b3a9f95c3909335b7aa6e04912b4dbd5c3152153aaa4aa9aa438a",

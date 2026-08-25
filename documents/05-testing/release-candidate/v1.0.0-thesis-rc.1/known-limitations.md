@@ -1,5 +1,12 @@
 # Known limitations and blockers
 
+## Evidence metadata
+
+- Tested source commit: `9399604be95bb4c578eca1f4421c1702a5384193`.
+- Branch: `codex/p0-postgres-foundation`.
+- Evidence recorded: `2026-08-26` (Asia/Bangkok).
+- Status values in this document are explicit `PASS`, `NOT RUN`, or limitation statements; no credential is included.
+
 1. Migration fingerprinting now normalizes CRLF/CR to LF. The clean clone and Windows checkout both produce canonical digest `1a768…`; raw legacy checksum `5ec06…` for `002_savings_sandbox.sql` is compatibility-only.
 2. This is local/disposable evidence only. No staging deployment, staging HTTPS, remote CI, main-branch merge, registry push, GHCR digest, Cosign signature, SBOM, SLSA/provenance attestation, backup/rollback staging rehearsal, SLO or on-call evidence exists.
 3. No signed RC APK or physical-device E2E was produced. Mobile evidence is unit/contract/static-export evidence.

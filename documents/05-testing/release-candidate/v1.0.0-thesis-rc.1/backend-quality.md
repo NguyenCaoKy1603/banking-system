@@ -1,5 +1,13 @@
 # Backend quality evidence
 
+## Run metadata
+
+- Tested source commit: `9399604be95bb4c578eca1f4421c1702a5384193`.
+- Branch: `codex/p0-postgres-foundation`.
+- Evidence recorded: `2026-08-26` (Asia/Bangkok).
+- Toolchain: Node `v24.19.0`, npm `11.17.0`, Docker `28.4.0`, Compose `v2.39.4-desktop.1`.
+- Commands: `npm ci --ignore-scripts`, secret scans, `release:gate`, `release:migration-fingerprint`, `typecheck`, `build`, `npm audit --omit=dev --audit-level=high`, `test:release`, disposable validators.
+
 - Tested source: `9399604be95bb4c578eca1f4421c1702a5384193` in a clean clone.
 - `npm ci --ignore-scripts`: PASS, 0 vulnerabilities.
 - `npm run release:gate`: PASS before evidence commit; 32 tracked migrations and clean tree.

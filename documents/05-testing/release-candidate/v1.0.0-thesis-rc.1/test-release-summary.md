@@ -1,5 +1,13 @@
 # Release-quality rehearsal summary
 
+## Run metadata
+
+- Tested source commit: `9399604be95bb4c578eca1f4421c1702a5384193`.
+- Branch: `codex/p0-postgres-foundation`.
+- Evidence recorded: `2026-08-26` (Asia/Bangkok).
+- Toolchain: Node `v24.19.0`, npm `11.17.0`, PostgreSQL `16.15` disposable image.
+- Command: `npm run test:release` with disposable PostgreSQL credentials injected only for the test process.
+
 The final clean-clone `npm run test:release` matrix completed 17/17 PASS on source `9399604be95bb4c578eca1f4421c1702a5384193`:
 
 | Group | Result |
