@@ -7,6 +7,7 @@ import {
 import { conflictWithCode, invalidRequest, notFound, rateLimited, unauthorized } from "../errors.js";
 import { UnitOfWork } from "../database/unitOfWork.js";
 import { MfaRepository, type MfaChallengeRow, type MfaCredentialRow } from "../database/repositories/mfaRepository.js";
+import { OutboxRepository } from "../database/repositories/outboxRepository.js";
 import { createId, createOpaqueToken, fingerprint, hashOpaqueToken } from "../security.js";
 import {
   buildTotpUri,
@@ -462,6 +463,27 @@ export class PersistentMfaService {
         createdDeviceFingerprint: fingerprint(input.deviceId),
         createdIpFingerprint: input.networkFingerprint ? fingerprint(input.networkFingerprint) : null,
       });
+      if (input.purpose === "REGISTRATION_EMAIL_VERIFY" && input.pendingRegistrationId) {
+        // The outbox records only the committed delivery intent.  The one-time
+        // code is handed directly to the test/approved provider and is never
+        // persisted in PostgreSQL, logs or an event payload.
+        await new OutboxRepository(client).append({
+          id: createId("registration-email-delivery"),
+          eventType: "security.registration_otp_requested",
+          aggregateType: "registration",
+          aggregateId: input.pendingRegistrationId,
+          deduplicationKey: `registration-email-delivery:${challengeHash}`,
+          occurredAt: sentAt,
+          traceId: null,
+          payload: {
+            deliveryReference: challengeHash,
+            pendingRegistrationId: input.pendingRegistrationId,
+            destinationFingerprint: fingerprint(input.destination),
+            maskedDestination: maskEmail(input.destination),
+            expiresAt,
+          },
+        });
+      }
     });
 
     const delivery: VerificationCodeDeliveryInput = {

@@ -140,6 +140,7 @@ const requiredTablesByMigration = {
   "026_secret_envelope_metadata": ["encryption_rekey_checkpoints"],
   "027_secret_rotation_inventory": [],
   "028_dr_recovery_markers": ["dr_recovery_markers"],
+  "032_relational_scheduled_lifecycle": ["credit_lifecycle_operations"],
 };
 
 async function main() {

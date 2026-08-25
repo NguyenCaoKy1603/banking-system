@@ -77,25 +77,27 @@ async function main(): Promise<void> {
   await runCommand(process.execPath, [migrationScript], migrationEnvironment);
 
   const testEnvironment: NodeJS.ProcessEnv = { ...guardEnvironment };
-  const targetEnvironmentVariable = testFiles.some((file) => file.includes("databaseFoundation"))
-    ? "P0_RELATIONAL_DATABASE_URL"
-    : testFiles.some((file) => file.includes("relationalPersistence"))
-      ? "RELATIONAL_DATABASE_URL"
-      : testFiles.some((file) => file.includes("workerOutbox"))
-        ? "WORKER_DATABASE_URL"
-        : testFiles.some((file) => file.includes("admin.database"))
-        ? "ADMIN_DATABASE_URL"
-          : testFiles.some((file) => file.includes("persistence"))
-            ? "DATABASE_URL"
-              : testFiles.some((file) => file.includes("mfaPersistence"))
-              ? "RELATIONAL_DATABASE_URL"
-              : testFiles.some((file) => file.includes("savingsRelational"))
-                ? "RELATIONAL_DATABASE_URL"
-                : testFiles.some((file) => file.includes("creditRelational"))
-                  ? "RELATIONAL_DATABASE_URL"
-                : testFiles.some((file) => file.includes("remainingRelational"))
-                  ? "RELATIONAL_DATABASE_URL"
-              : undefined;
+  let targetEnvironmentVariable: string | undefined;
+  if (testFiles.some((file) => file.includes("databaseFoundation"))) {
+    targetEnvironmentVariable = "P0_RELATIONAL_DATABASE_URL";
+  } else if (testFiles.some((file) => file.includes("relationalPersistence"))) {
+    targetEnvironmentVariable = "RELATIONAL_DATABASE_URL";
+  } else if (testFiles.some((file) => file.includes("workerOutbox"))) {
+    targetEnvironmentVariable = "WORKER_DATABASE_URL";
+  } else if (testFiles.some((file) => file.includes("admin.database"))) {
+    targetEnvironmentVariable = "ADMIN_DATABASE_URL";
+  } else if (testFiles.some((file) => file.includes("persistence"))) {
+    targetEnvironmentVariable = "DATABASE_URL";
+  } else if (testFiles.some((file) => [
+    "mfaPersistence",
+    "savingsRelational",
+    "creditRelational",
+    "remainingRelational",
+    "registrationRelational",
+    "lifecycleRelational",
+  ].some((name) => file.includes(name)))) {
+    targetEnvironmentVariable = "RELATIONAL_DATABASE_URL";
+  }
   if (!targetEnvironmentVariable) {
     throw new Error(`Cannot infer the disposable database environment variable for: ${testFiles.join(", ")}`);
   }

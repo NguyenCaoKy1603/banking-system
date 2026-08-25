@@ -16,7 +16,7 @@ import { UnitOfWork } from "./unitOfWork.js";
 
 export type RelationalHttpRoute = "auth" | "registration" | "mfa" | "accounts" | "beneficiaries" | "transfers" | "savings" | "credit" | "recipients" | "notifications" | "fraud";
 
-const RELATIONAL_V2_DEFAULT_ROUTES = "auth,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud";
+const RELATIONAL_V2_DEFAULT_ROUTES = "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud";
 
 function configuredRoutes(value = process.env.BANKING_RELATIONAL_HTTP_ROUTES): Set<RelationalHttpRoute> {
   const routes = new Set<RelationalHttpRoute>();
@@ -65,6 +65,8 @@ export class RelationalHttpBoundary {
       ["POST", ["auth", "refresh"]],
       ["POST", ["auth", "logout"]],
       ["POST", ["auth", "logout-all"]],
+      ["POST", ["auth", "register"]],
+      ["POST", ["auth", "register", "verify"]],
       ["GET", ["auth", "mfa", "methods"]],
       ["POST", ["auth", "otp", "challenges"]],
       ["GET", ["accounts"]],

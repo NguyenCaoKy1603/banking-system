@@ -48,6 +48,7 @@ export const EVENT_POLICIES: readonly EventPolicy[] = [
   policy("credit.payment_pending", "CREDIT", ["PUSH"], 20, 24 * 60 * 60, ["CREDIT_PAYMENT_PENDING"]),
   policy("credit.payment_succeeded", "CREDIT", ["PUSH", "EMAIL"], 20, 7 * 24 * 60 * 60, ["CREDIT_PAYMENT_SUCCEEDED"]),
   policy("credit.payment_failed", "CREDIT", ["PUSH", "EMAIL"], 20, 7 * 24 * 60 * 60, ["CREDIT_PAYMENT_FAILED"]),
+  policy("credit.payment_reversed", "CREDIT", ["PUSH", "EMAIL"], 20, 7 * 24 * 60 * 60, ["CREDIT_PAYMENT_REVERSED"]),
   policy("credit.statement_issued", "CREDIT", ["PUSH", "EMAIL"], 35, 14 * 24 * 60 * 60, ["CREDIT_STATEMENT_ISSUED"]),
   policy("credit.statement_overdue", "CREDIT", ["PUSH", "EMAIL"], 10, 30 * 24 * 60 * 60, ["CREDIT_STATEMENT_OVERDUE"]),
   policy("credit.card_locked", "CREDIT", ["PUSH", "EMAIL"], 5, null, ["CREDIT_CARD_LOCKED"]),
@@ -55,6 +56,10 @@ export const EVENT_POLICIES: readonly EventPolicy[] = [
   policy("fraud.report_created", "SECURITY", ["PUSH", "EMAIL"], 5, null, ["FRAUD_REPORT_CREATED"]),
   policy("security.device_revoked", "SECURITY", ["PUSH", "EMAIL"], 5, null, ["SECURITY_DEVICE_REVOKED"]),
   policy("security.sessions_revoked", "SECURITY", ["PUSH", "EMAIL"], 5, null, ["SECURITY_SESSIONS_REVOKED"]),
+  // Registration verification is delivered by the provider boundary.  This
+  // intent event is retained for reconciliation/audit and deliberately has no
+  // worker fan-out so an OTP can never be reconstructed from the outbox.
+  policy("security.registration_otp_requested", "SECURITY", [], 15, 10 * 60, ["REGISTRATION_OTP_REQUESTED"]),
   policy("sandbox.funding_succeeded", "SECURITY", [], 90, 24 * 60 * 60, ["SANDBOX_FUNDING_SUCCEEDED"]),
   // Admin mutations are internal integration events.  They intentionally do
   // not fan out to customer channels, but they still use the same canonical

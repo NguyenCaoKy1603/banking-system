@@ -17,6 +17,7 @@
     "validate:relational-v2": "node --env-file-if-exists=.env scripts/validate-relational-v2.cjs",
     "p0:inventory": "node --env-file-if-exists=.env scripts/p0-inventory.cjs",
     "release:gate": "node scripts/release-gate.cjs",
+    "test:release": "node scripts/test-release.cjs",
     "release:migration-fingerprint": "node scripts/migration-fingerprint.cjs",
     "release:manifest": "node scripts/create-release-manifest.cjs",
     "release:verify-manifest": "node scripts/verify-release-manifest.cjs",
@@ -62,6 +63,8 @@
     "test:savings:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/savingsRelational.test.ts",
     "test:credit:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/creditRelational.test.ts",
     "test:remaining:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/remainingRelational.test.ts",
+    "test:registration:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/registrationRelational.test.ts",
+    "test:lifecycle:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/lifecycleRelational.test.ts",
     "test:database": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/databaseFoundation.test.ts",
     "test:database:guard": "tsx --test src/tests/disposableDatabaseGuard.test.ts",
     "seed:e2e": "node --env-file-if-exists=.env --import=tsx scripts/seed-e2e.ts"
