@@ -1,4 +1,6 @@
-# Stage 1 backup/restore rehearsal — local Compose
+# Stage 1 backup/restore rehearsal — local Compose (historical)
+
+> Historical evidence only. This report used five migrations and must not be used for the current P1 baseline; the current rehearsal is [`backup-restore/p1-local-restore-2026-08-25.md`](backup-restore/p1-local-restore-2026-08-25.md).
 
 Ngày kiểm tra: 2026-08-24 13:02 +07
 

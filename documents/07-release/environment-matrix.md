@@ -13,7 +13,7 @@
 | Image | build local | build local | registry digest | cùng digest đã pass Staging |
 | Replicas | 1 | 1 | tối thiểu 2 API | tối thiểu 2 API |
 | Worker | tùy chọn | tùy chọn | 1–2, lease/restart | ít nhất 1, drain có kiểm soát |
-| Backup | không cam kết | không cam kết | RPO 24h/RTO 2h | RPO 15–60m/RTO 1h |
+| Backup | không cam kết | mục tiêu RPO 24h/RTO 2h; local logical rehearsal | mục tiêu RPO 24h/RTO 2h | mục tiêu RPO ≤5m/RTO ≤60m |
 | Tiền | virtual only | virtual only | virtual only | virtual only |
 
 Môi trường không dùng chung network, database, secret namespace, DNS, logging hoặc backup. Không có endpoint sandbox funding/operator key trong Staging/Production-like.

@@ -68,6 +68,10 @@ const secretRotationSchema = fs.readFileSync(
   path.resolve(__dirname, "../database/027_secret_rotation_inventory.sql"),
   "utf8",
 );
+const drRecoverySchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/028_dr_recovery_markers.sql"),
+  "utf8",
+);
 const secretSchema = `${secretMetadataSchema}\n${secretRotationSchema}`;
 
 const requiredTables = [
@@ -124,6 +128,7 @@ const outboxWorkerTables = [
 ];
 const mfaTables = ["mfa_credentials", "mfa_recovery_codes", "mfa_recovery_requests", "auth_security_events"];
 const secretMetadataTables = ["encryption_rekey_checkpoints"];
+const drRecoveryTables = ["dr_recovery_markers"];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -521,7 +526,7 @@ for (const [label, pattern] of [
   }
 }
 
-if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(`${schema}\n${savingsSchema}\n${creditSchema}\n${runtimeSchema}\n${v2Schema}\n${identityV2Schema}\n${transferV2Schema}\n${savingsV2Schema}\n${creditV2Schema}\n${registrationSchema}\n${outboxWorkerSchema}\n${outboxWorkerOperationsSchema}\n${secretSchema}`)) {
+if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(`${schema}\n${savingsSchema}\n${creditSchema}\n${runtimeSchema}\n${v2Schema}\n${identityV2Schema}\n${transferV2Schema}\n${savingsV2Schema}\n${creditV2Schema}\n${registrationSchema}\n${outboxWorkerSchema}\n${outboxWorkerOperationsSchema}\n${secretSchema}\n${drRecoverySchema}`)) {
   throw new Error("The draft migration must not contain destructive DROP statements.");
 }
 
@@ -529,7 +534,7 @@ async function validateLiveDatabase() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     console.log(
-        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length + secretMetadataTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
+        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length + secretMetadataTables.length + drRecoveryTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
     );
     return;
   }
@@ -559,6 +564,7 @@ async function validateLiveDatabase() {
       ...outboxWorkerTables,
       ...mfaTables,
       ...secretMetadataTables,
+      ...drRecoveryTables,
     ]) {
       if (!liveTables.has(tableName)) {
         throw new Error(`Live PostgreSQL database is missing table: ${tableName}`);
@@ -676,6 +682,10 @@ async function validateLiveDatabase() {
       ["encryption_rekey_checkpoints", "job_id", "text"],
       ["encryption_rekey_checkpoints", "last_record_id", "uuid"],
       ["encryption_rekey_checkpoints", "failed_count", "int8"],
+      ["dr_recovery_markers", "id", "uuid"],
+      ["dr_recovery_markers", "committed_at", "timestamptz"],
+      ["dr_recovery_markers", "marker_hash", "text"],
+      ["dr_recovery_markers", "source_release_id", "text"],
     ]) {
       if (liveColumns.get(`${tableName}.${columnName}`) !== expectedType) {
         throw new Error(
@@ -728,7 +738,7 @@ async function validateLiveDatabase() {
     }
 
     console.log(
-      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length + secretMetadataTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
+      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length + secretMetadataTables.length + drRecoveryTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
     );
   } finally {
     await pool.end();

@@ -1,8 +1,8 @@
-# Backup và restore runbook — Staging/Production-like
+# Backup và restore runbook — P1
 
 Ngày cập nhật: 2026-08-25
 
-Database chỉ chứa dữ liệu synthetic/virtual-money. Backup phải tách namespace môi trường và được restore thử vào database mới trước khi coi là bằng chứng.
+Database chỉ chứa dữ liệu synthetic/virtual-money. Backup phải tách namespace môi trường và được restore thử vào database mới trước khi coi là bằng chứng. Local preview hiện đã có rehearsal tự động hóa; staging/production-like vẫn là gate provider thủ công.
 
 ## Trước migration hoặc promotion
 
@@ -24,16 +24,24 @@ Database chỉ chứa dữ liệu synthetic/virtual-money. Backup phải tách n
 
 Provider managed PostgreSQL, backup/PITR và quyền restore chưa được cấu hình trong workspace; phần này vẫn là gate thủ công.
 
-## Local encrypted backup reference
+## Local preview logical backup reference
 
-Local/CI có thể mã hóa stream dump bằng AES-256-GCM envelope để kiểm tra quy trình mà không ghi khóa vào file. `BACKUP_ENCRYPTION_KEY` chỉ được cấp từ môi trường gọi lệnh và không được in log:
+`backup-create.cjs` dùng `pg_dump --format=custom` và truyền stream trực tiếp qua AES-256-GCM; không ghi plaintext dump. `BACKUP_ENCRYPTION_KEY` chỉ được cấp từ môi trường gọi lệnh và không được in log:
 
 ```powershell
-$env:BACKUP_ENCRYPTION_KEY = "base64:<32-byte-ci-or-local-key>"
-docker compose --env-file .env.compose exec -T postgres pg_dump -U $env:POSTGRES_USER $env:POSTGRES_DB |
-  node backend/scripts/encrypted-backup.cjs --encrypt --input=- --output=preview.sql.enc --metadata=preview.metadata.json
-node backend/scripts/encrypted-backup.cjs --decrypt --input=preview.sql.enc --output=- |
-  psql "$env:DATABASE_URL"
+$env:BACKUP_ENCRYPTION_KEY = "base64:<32-byte-disposable-local-key>"
+$env:BACKUP_ENCRYPTION_KEY_ID = "backup-local-v1"
+$env:BANKING_ENV = "preview"
+node backend/scripts/backup-create.cjs --driver=docker --compose-env=.env.compose
+node backend/scripts/backup-verify.cjs --manifest=<manifest.json>
+node backend/scripts/restore-rehearsal.cjs --driver=docker --compose-env=.env.compose --manifest=<manifest.json>
+node backend/scripts/backup-retention.cjs --retention-days=14
 ```
 
-Không dùng `--allow-plaintext-output` trên máy hoặc runner dùng dữ liệu thật. Metadata chỉ ghi environment, schema, release digest, key ID và checksum; không ghi giá trị khóa hay database URL. KMS/object storage/restore approval thật vẫn phải được cấu hình ở provider.
+`restore-rehearsal.cjs` verify trước rồi mới stream decrypt vào `pg_restore` của database mới; target có prefix `restore_` và mặc định được dọn sau validation. Không dùng `--allow-plaintext-output` với dữ liệu thật. Manifest chỉ ghi metadata, checksum, LSN và count tổng hợp; không ghi key value, password, `DATABASE_URL` hay customer data. KMS/object storage/restore approval thật vẫn phải được cấu hình ở provider.
+
+## PITR và key rotation
+
+- `npm run backup:pitr:check -- --driver=docker --compose-env=..\.env.compose` chỉ kiểm tra PostgreSQL prerequisite; local hiện trả `NOT_CONFIGURED_LOCAL_PREVIEW` vì chưa bật WAL archive.
+- Base backup/WAL/PITR, object storage, retention audit, alert và RPO/RTO production-like xem [`pitr-runbook.md`](pitr-runbook.md), [`backup-policy.md`](backup-policy.md) và [`backup-key-rotation.md`](backup-key-rotation.md).
+- Không tự xóa source volume hoặc giả lập `archive_mode` để tạo evidence.

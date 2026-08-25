@@ -13,7 +13,7 @@ Nếu checksum mismatch, migration pending ngoài allow-list, lock timeout hoặ
 
 ## Ciphertext re-encryption checkpoint
 
-Migration `026_secret_envelope_metadata` bổ sung metadata và bảng checkpoint cho MFA/notification ciphertext; `027_secret_rotation_inventory` bổ sung endpoint key ID và mốc tái mã hóa. Chạy inventory trước; chỉ áp dụng khi đã có current/previous keyring, backup đã được kiểm chứng và có phê duyệt:
+Migration `026_secret_envelope_metadata` bổ sung metadata và bảng checkpoint cho MFA/notification ciphertext; `027_secret_rotation_inventory` bổ sung endpoint key ID và mốc tái mã hóa; `028_dr_recovery_markers` bổ sung marker không chứa secret để đo RPO trong provider PITR rehearsal. Chạy inventory trước; chỉ áp dụng khi đã có current/previous keyring, backup đã được kiểm chứng và có phê duyệt:
 
 ```powershell
 cd backend

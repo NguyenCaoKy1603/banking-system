@@ -10,3 +10,9 @@
 .env.compose
 *.log
 artifacts/
+**/*.dump
+**/*.dump.enc
+**/*.sql.enc
+**/base-backup/
+**/wal-archive/
+**/restore-data/

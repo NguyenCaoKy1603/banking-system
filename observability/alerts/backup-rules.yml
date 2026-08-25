@@ -1,0 +1,22 @@
+groups:
+  - name: banking-backup-contract
+    # Contract only: not connected to a Prometheus server in local preview.
+    rules:
+      - alert: BankingBackupMissing
+        expr: time() - banking_backup_last_success_timestamp_seconds > 93600
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "Logical backup is older than 26 hours"
+      - alert: BankingBackupVerificationFailed
+        expr: increase(banking_backup_verification_failures_total[15m]) > 0
+        for: 5m
+        labels: { severity: critical }
+      - alert: BankingWalArchiveLagAtRisk
+        expr: banking_wal_archive_lag_seconds > 300
+        for: 5m
+        labels: { severity: critical }
+      - alert: BankingBaseBackupStale
+        expr: time() - banking_base_backup_last_success_timestamp_seconds > 691200
+        for: 15m
+        labels: { severity: warning }
