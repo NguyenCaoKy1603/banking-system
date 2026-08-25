@@ -52,6 +52,10 @@ test("production-like runtime contract is strict and virtual-money only", () => 
     /BANKING_PERSISTENCE_MODE=relational-v2/,
   );
   assert.throws(
+    () => readRuntimeConfig({ ...productionEnv(), BANKING_RELATIONAL_HTTP_ROUTES: "auth,accounts" }),
+    /local\/disposable rehearsal flag/,
+  );
+  assert.throws(
     () => readRuntimeConfig({ ...productionEnv(), BUILD_COMMIT_SHA: "local" }),
     /full 40-character Git commit SHA/,
   );

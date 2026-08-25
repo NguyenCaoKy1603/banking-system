@@ -4,6 +4,7 @@ import { PostgresRelationalRepository } from "./postgresRelationalRepository.js"
 import { KeyEncryptionKeyringAdapter, OtpDigestKeyring } from "./mfa/crypto.js";
 import { NullEmailProvider } from "./mfa/delivery.js";
 import { PersistentMfaService } from "./mfa/persistentMfaService.js";
+import { RelationalHttpBoundary } from "./database/relationalHttpBoundary.js";
 import { readRuntimeConfig } from "./runtimeConfig.js";
 import { runtimeMetadata } from "./runtimeMetadata.js";
 import { createRuntimeSecretProvider, referenceFor } from "./secrets/runtimeSecrets.js";
@@ -109,7 +110,12 @@ async function start(): Promise<void> {
       environmentScope: bankingEnvironment,
       delivery: new NullEmailProvider(),
     });
-    server = createPersistentBankingServer(repository, system, { ...httpOptions, mfaService });
+    const relationalHttp = new RelationalHttpBoundary(repository.unitOfWork);
+    server = createPersistentBankingServer(repository, system, {
+      ...httpOptions,
+      mfaService,
+      relationalHttp: relationalHttp.enabled ? relationalHttp : undefined,
+    });
   } else if (storage === "in-memory") {
     server = createBankingServer(system, httpOptions);
   } else {

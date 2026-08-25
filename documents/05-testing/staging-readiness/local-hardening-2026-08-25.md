@@ -34,8 +34,11 @@ endpoint hoặc thiết bị Android staging trong report này.
 | --- | --- |
 | `npm run typecheck` trong `backend/` | PASS |
 | `npm run build` trong `backend/` | PASS |
-| `npm test` trong `backend/` | 142 tests, 123 PASS, 19 SKIPPED, 0 FAIL |
+| `npm test` trong `backend/` | 145 tests, 126 PASS, 19 SKIPPED, 0 FAIL |
 | `npm run test:critical` | 10 PASS |
+| `relationalAuthService` disposable local rehearsal | PASS; issue → authenticate → refresh rotation → revoke |
+| `relationalRegistrationService` disposable local rehearsal | PASS với `FakeEmailProvider`; OTP challenge → completion → account allocation |
+| direct relational HTTP boundary test | PASS; account route không gọi `withState` |
 | `npm run test:database` trên PostgreSQL disposable | 4 PASS |
 | `npm run test:relational` trên PostgreSQL disposable | 1 PASS |
 | `npm run test:worker` trên PostgreSQL disposable | 10 PASS |
@@ -56,10 +59,13 @@ endpoint hoặc thiết bị Android staging trong report này.
 
 ## Giới hạn còn lại
 
-- HTTP backend vẫn dùng `PostgresRelationalRepository.withState` cho request;
-  relational-v2 direct services mới được nối ở mức foundation/registration/
-  transfer test, chưa phủ toàn bộ auth, read, savings và credit. Vì vậy không
-  được đặt `WORKER_CUTOVER_CONFIRMED=1` hoặc ghi `STAGING VERIFIED`.
+- HTTP backend hiện có feature group opt-in `BANKING_RELATIONAL_HTTP_ROUTES`:
+  session auth và account/transaction reads đã có direct boundary; registration
+  là group riêng vì cần email provider. Transfer quote/submit, MFA lifecycle,
+  beneficiary, notifications, savings và credit vẫn đi qua
+  `PostgresRelationalRepository.withState`. Vì vậy chưa được đặt
+  `BANKING_PERSISTENCE_MODE=relational-v2` cho toàn bộ HTTP, chưa đặt
+  `WORKER_CUTOVER_CONFIRMED=1` và chưa ghi `STAGING VERIFIED`.
 - Chưa có provider cloud cụ thể, registry/GHCR digest, Cosign identity thật,
   managed secret client/IAM, PostgreSQL staging TLS, DNS/HTTPS, APK signing,
   device E2E, backup/restore staging hoặc rollback evidence.

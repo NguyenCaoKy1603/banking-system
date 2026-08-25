@@ -201,6 +201,14 @@ export class AccountRepository {
     return result.rows.map((row) => mapTransaction(row as Record<string, unknown>));
   }
 
+  async findTransaction(accountId: string, transactionId: string): Promise<AccountTransactionRow | null> {
+    const result = await this.client.query(
+      "SELECT * FROM account_transactions WHERE account_id = $1 AND id = $2",
+      [requireUuid(accountId, "accountId"), requireUuid(transactionId, "transactionId")],
+    );
+    return result.rows[0] ? mapTransaction(result.rows[0] as Record<string, unknown>) : null;
+  }
+
   async appendTransaction(input: {
     id: string;
     accountId: string;

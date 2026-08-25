@@ -20,6 +20,7 @@ import type { RuntimeMetadata } from "./runtimeMetadata.js";
 import { createRequestContext, normalizeRequestId, requestContextHeaders, type RequestContext } from "./observability/requestContext.js";
 import { createStructuredLogger, type StructuredLogger } from "./observability/logger.js";
 import { collectDatabaseMetrics, PrometheusRegistry, registerBusinessMetrics, registerHttpMetrics, type DatabasePoolMetricSnapshot } from "./observability/metrics.js";
+import type { RelationalHttpBoundary } from "./database/relationalHttpBoundary.js";
 
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 1_000_000;
@@ -50,6 +51,8 @@ export type HttpOptions = {
   mfaService?: PersistentMfaService;
   /** Optional persistent customer-access gate owned by the Admin control plane. */
   customerAccessStatus?: (customerId: string) => Promise<"ACTIVE" | "LOCKED" | null>;
+  /** Optional route-scoped direct relational boundary used during cutover. */
+  relationalHttp?: RelationalHttpBoundary;
 };
 
 type RequestStateDisposition =
@@ -328,7 +331,12 @@ function requireObject(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
-async function requireBearer(request: IncomingMessage, system: BankingSystem, options: HttpOptions): Promise<string> {
+async function requireBearer(
+  request: IncomingMessage,
+  system: BankingSystem,
+  options: HttpOptions,
+  relationalAuth?: RelationalHttpBoundary,
+): Promise<string> {
   const authorization = header(request, "authorization");
   if (!authorization?.startsWith("Bearer ")) {
     throw unauthorized("Access token is required.");
@@ -337,7 +345,9 @@ async function requireBearer(request: IncomingMessage, system: BankingSystem, op
   if (!deviceId?.trim()) {
     throw unauthorized("Device binding is required.");
   }
-  const userId = system.authenticate(authorization.slice("Bearer ".length), deviceId).id;
+  const userId = (relationalAuth
+    ? await relationalAuth.authenticate(authorization.slice("Bearer ".length), deviceId)
+    : system.authenticate(authorization.slice("Bearer ".length), deviceId)).id;
   if (options.customerAccessStatus && (await options.customerAccessStatus(userId)) === "LOCKED") {
     throw unauthorized("Customer access is locked by the control plane.");
   }
@@ -743,15 +753,21 @@ export async function handleRequest(
       segments[1] === "register"
     ) {
       const data = requireObject(body);
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
       writeResponse(
         response,
         202,
         traceId,
-        await system.beginRegistrationAsync(
-          data as never,
-          getRateLimitKey(request),
-          requireDeviceId(request),
-        ),
+        relationalAuth && options.mfaService
+          ? await relationalAuth.beginRegistration(
+            data as never,
+            requireDeviceId(request),
+            options.mfaService,
+            getRateLimitKey(request),
+          )
+          : await system.beginRegistrationAsync(data as never, getRateLimitKey(request), requireDeviceId(request)),
       );
       return;
     }
@@ -764,17 +780,21 @@ export async function handleRequest(
       segments[2] === "verify"
     ) {
       const data = requireObject(body);
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
       writeResponse(
         response,
         201,
         traceId,
-        await Promise.resolve(
-          system.verifyRegistrationChallenge(
+        relationalAuth && options.mfaService
+          ? await relationalAuth.verifyRegistration(
             data.challengeId as string,
             data.proof as string,
             requireDeviceId(request),
-          ),
-        ),
+            options.mfaService,
+          )
+          : await Promise.resolve(system.verifyRegistrationChallenge(data.challengeId as string, data.proof as string, requireDeviceId(request))),
       );
       return;
     }
@@ -786,12 +806,13 @@ export async function handleRequest(
       segments[1] === "login"
     ) {
       const data = requireObject(body);
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
       if (options.mfaService) {
-        const user = await system.loginPasswordOnly(
-          data.email as string,
-          data.password as string,
-          requireDeviceId(request),
-        );
+        const user = relationalAuth
+          ? await relationalAuth.loginPasswordOnly(data.email as string, data.password as string, requireDeviceId(request))
+          : await system.loginPasswordOnly(data.email as string, data.password as string, requireDeviceId(request));
         if (options.customerAccessStatus && (await options.customerAccessStatus(user.id)) === "LOCKED") {
           throw unauthorized("Customer access is locked by the control plane.");
         }
@@ -809,16 +830,25 @@ export async function handleRequest(
         });
         return;
       }
-      const result = await system.loginAsync(
+      if (relationalAuth) {
+        const user = await relationalAuth.loginPasswordOnly(
+          data.email as string,
+          data.password as string,
+          requireDeviceId(request),
+        );
+        writeResponse(response, 200, traceId, await relationalAuth.issueMfaSession(user.id, requireDeviceId(request)));
+        return;
+      }
+      const session = await system.loginAsync(
         data.email as string,
         data.password as string,
         requireDeviceId(request),
       );
       writeResponse(
         response,
-        "accessToken" in result ? 200 : 202,
+        "accessToken" in session ? 200 : 202,
         traceId,
-        result,
+        session,
       );
       return;
     }
@@ -830,6 +860,9 @@ export async function handleRequest(
       segments[1] === "verify"
     ) {
       const data = requireObject(body);
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
       if (options.mfaService) {
         const result = await options.mfaService.verifyChallenge({
           challengeId: data.challengeId as string,
@@ -843,7 +876,9 @@ export async function handleRequest(
         if (options.customerAccessStatus && (await options.customerAccessStatus(result.customerId)) === "LOCKED") {
           throw unauthorized("Customer access is locked by the control plane.");
         }
-        writeResponse(response, 200, traceId, system.issueMfaSession(result.customerId, requireDeviceId(request)));
+        writeResponse(response, 200, traceId, relationalAuth
+          ? await relationalAuth.issueMfaSession(result.customerId, requireDeviceId(request))
+          : system.issueMfaSession(result.customerId, requireDeviceId(request)));
         return;
       }
       writeResponse(
@@ -867,12 +902,12 @@ export async function handleRequest(
       segments[1] === "refresh"
     ) {
       const data = requireObject(body);
-      writeResponse(
-        response,
-        200,
-        traceId,
-        system.refresh(data.refreshToken as string, requireDeviceId(request)),
-      );
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+      writeResponse(response, 200, traceId, relationalAuth
+        ? await relationalAuth.refresh(data.refreshToken as string, requireDeviceId(request))
+        : system.refresh(data.refreshToken as string, requireDeviceId(request)));
       return;
     }
 
@@ -883,7 +918,13 @@ export async function handleRequest(
       segments[1] === "logout"
     ) {
       const data = requireObject(body);
-      if (!system.revoke(data.refreshToken as string, requireDeviceId(request))) {
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+      const revoked = relationalAuth
+        ? await relationalAuth.revoke(data.refreshToken as string, requireDeviceId(request))
+        : system.revoke(data.refreshToken as string, requireDeviceId(request));
+      if (!revoked) {
         throw unauthorized("Refresh token is invalid.");
       }
       writeResponse(response, 204, traceId);
@@ -896,8 +937,12 @@ export async function handleRequest(
       segments[0] === "auth" &&
       segments[1] === "logout-all"
     ) {
-      const userId = await requireBearer(request, system, options);
-      system.revokeAllSessions(userId);
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+      const userId = await requireBearer(request, system, options, relationalAuth);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
       writeResponse(response, 204, traceId);
       return;
     }
@@ -998,7 +1043,13 @@ export async function handleRequest(
       throw notFound("API route not found.");
     }
 
-    const userId = await requireBearer(request, system, options);
+    const relationalRoute = options.relationalHttp?.isRouteEnabled(request.method, segments) ?? false;
+    const userId = await requireBearer(
+      request,
+      system,
+      options,
+      relationalRoute ? options.relationalHttp : undefined,
+    );
 
     if (options.mfaService && request.method === "GET" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") {
       writeResponse(response, 200, traceId, { items: await options.mfaService.listCredentials(userId) });
@@ -1248,7 +1299,11 @@ export async function handleRequest(
     }
 
     if (request.method === "GET" && segments.length === 1 && segments[0] === "accounts") {
-      writeResponse(response, 200, traceId, { accounts: system.listAccounts(userId) });
+      writeResponse(response, 200, traceId, {
+        accounts: relationalRoute && options.relationalHttp
+          ? await options.relationalHttp.listAccounts(userId)
+          : system.listAccounts(userId),
+      });
       return;
     }
 
@@ -1478,7 +1533,9 @@ export async function handleRequest(
       segments[2] === "number"
     ) {
       writeResponse(response, 200, traceId, {
-        accountNumber: system.getAccountNumber(userId, segments[1]),
+        accountNumber: relationalRoute && options.relationalHttp
+          ? await options.relationalHttp.getAccountNumber(userId, segments[1])
+          : system.getAccountNumber(userId, segments[1]),
       });
       return;
     }
@@ -1491,12 +1548,19 @@ export async function handleRequest(
     ) {
       const limitValue = requestUrl.searchParams.get("limit");
       const limit = limitValue === null ? undefined : Number(limitValue);
-      const result = system.listTransactions(
-        userId,
-        segments[1],
-        requestUrl.searchParams.get("cursor") ?? undefined,
-        limit,
-      );
+      const result = relationalRoute && options.relationalHttp
+        ? await options.relationalHttp.listTransactions(
+          userId,
+          segments[1],
+          requestUrl.searchParams.get("cursor") ?? undefined,
+          limit,
+        )
+        : system.listTransactions(
+          userId,
+          segments[1],
+          requestUrl.searchParams.get("cursor") ?? undefined,
+          limit,
+        );
       writeResponse(response, 200, traceId, result);
       return;
     }
@@ -1511,7 +1575,9 @@ export async function handleRequest(
         response,
         200,
         traceId,
-        system.getTransaction(userId, segments[1], segments[3]),
+        relationalRoute && options.relationalHttp
+          ? await options.relationalHttp.getTransaction(userId, segments[1], segments[3])
+          : system.getTransaction(userId, segments[1], segments[3]),
       );
       return;
     }
@@ -1806,8 +1872,23 @@ export function createPersistentBankingServer(
     const traceId = getRequestId(request);
     const bufferedResponse = new BufferedResponse(response);
     void readJson(request)
-      .then((parsedBody) =>
-        repository.withState(system.exportState(), async (state) => {
+      .then(async (parsedBody) => {
+        const routeSegments = pathSegments(new URL(request.url ?? "/", "http://localhost").pathname.slice(API_PREFIX.length) || "/");
+        const directRelationalRoute = resolvedOptions.relationalHttp?.isRouteEnabled(request.method, routeSegments) ?? false;
+        if (directRelationalRoute) {
+          await handleRequest(
+            request,
+            bufferedResponse as unknown as ServerResponse,
+            system,
+            resolvedOptions,
+            parsedBody,
+            true,
+            undefined,
+            requestContext,
+          );
+          return;
+        }
+        await repository.withState(system.exportState(), async (state) => {
           system.importState(state as never);
           const transactionStartState = system.exportState();
           const requestState = {
@@ -1841,8 +1922,8 @@ export function createPersistentBankingServer(
             result: undefined,
             nextState,
           };
-        }, { preservePersistentAuthState: Boolean(options.mfaService) }),
-      )
+        }, { preservePersistentAuthState: Boolean(options.mfaService) });
+      })
       .then(() => bufferedResponse.flush())
       .catch((error: unknown) => {
         if (!response.headersSent) {

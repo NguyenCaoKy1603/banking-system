@@ -6,6 +6,10 @@ import { AccountRepository } from "./repositories/accountRepository.js";
 import { AuditRepository } from "./repositories/auditRepository.js";
 import { CustomerRepository } from "./repositories/customerRepository.js";
 import { OutboxRepository } from "./repositories/outboxRepository.js";
+import { conflict, invalidRequest, rateLimited, unauthorized } from "../errors.js";
+import { fingerprint, hashOpaqueToken, hashPasswordAsync } from "../security.js";
+import type { MfaChallengeResponse, PersistentMfaService } from "../mfa/persistentMfaService.js";
+import { MfaRepository } from "./repositories/mfaRepository.js";
 
 export type RegistrationCommandInput = {
   pendingRegistrationId: string;
@@ -14,9 +18,120 @@ export type RegistrationCommandInput = {
   traceId?: string;
 };
 
+export type RegistrationBeginInput = {
+  fullName: string;
+  email: string;
+  phoneNumber: string;
+  password: string;
+};
+
 /** Atomic registration cutover primitive for the normalized identity tables. */
 export class RelationalRegistrationService {
   constructor(private readonly unitOfWork: UnitOfWork) {}
+
+  async begin(
+    input: RegistrationBeginInput,
+    deviceId: string,
+    mfaService: PersistentMfaService,
+    rateLimitKey?: string,
+  ): Promise<MfaChallengeResponse> {
+    const fullName = typeof input.fullName === "string" ? input.fullName.trim() : "";
+    const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
+    const phoneNumber = typeof input.phoneNumber === "string" ? input.phoneNumber.trim() : "";
+    const password = typeof input.password === "string" ? input.password : "";
+    if (!fullName) throw invalidRequest("fullName is required.", { fullName: "fullName is required." });
+    if (!/^\S+@\S+\.\S+$/.test(email)) throw invalidRequest("Email is invalid.", { email: "Email is invalid." });
+    if (!phoneNumber) throw invalidRequest("phoneNumber is required.", { phoneNumber: "phoneNumber is required." });
+    if (password.length < 8) throw invalidRequest("Password is too short.", { password: "Password must contain at least 8 characters." });
+    const passwordMaterial = await hashPasswordAsync(password);
+    const pendingRegistrationId = randomUUID();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    await this.unitOfWork.transaction(async ({ client }) => {
+      const customers = new CustomerRepository(client);
+      const rate = await new MfaRepository(client).atomicRateLimit({
+        bucketKey: `relational-registration:${fingerprint(rateLimitKey?.trim() || `email:${email}`)}`,
+        windowSeconds: 600,
+        maxAttempts: 5,
+      });
+      if (!rate.allowed) throw rateLimited("Too many registration attempts.", rate.retryAfterSeconds);
+      if (await customers.findCustomerByEmail(email) || await customers.findCustomerByPhone(phoneNumber)) {
+        throw conflict("Email or phone number already exists.");
+      }
+      await customers.createPendingRegistration({
+        id: pendingRegistrationId,
+        fullName,
+        email,
+        phoneNumber,
+        passwordSalt: passwordMaterial.salt,
+        passwordDigest: passwordMaterial.digest,
+        deviceId,
+        expiresAt,
+      });
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "REGISTRATION_STARTED",
+        resourceId: pendingRegistrationId,
+        occurredAt: new Date().toISOString(),
+        payload: { rateLimitKey: rateLimitKey ?? null },
+      });
+    }, { maxRetries: 1 });
+    try {
+      return await mfaService.createEmailChallenge({
+        pendingRegistrationId,
+        deviceId,
+        purpose: "REGISTRATION_EMAIL_VERIFY",
+        destination: email,
+        resourceId: pendingRegistrationId,
+        requestFingerprint: fingerprint({ email, phoneNumber }),
+        networkFingerprint: rateLimitKey,
+      });
+    } catch (error) {
+      // A delivery failure must not leave a reusable registration payload.
+      await this.unitOfWork.transaction(async ({ client }) => {
+        await client.query(
+          "UPDATE auth_challenges SET pending_registration_id = NULL, updated_at = NOW() WHERE pending_registration_id = $1",
+          [pendingRegistrationId],
+        );
+        await client.query("DELETE FROM pending_registrations WHERE id = $1", [pendingRegistrationId]);
+      }, { maxRetries: 1 }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async verify(
+    challengeId: string,
+    proof: string,
+    deviceId: string,
+    mfaService: PersistentMfaService,
+  ): Promise<{ customerId: string; accountId: string }> {
+    const challengeHash = hashOpaqueToken(challengeId);
+    const context = await this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query(
+        `SELECT pending_registration_id, resource_id, request_fingerprint, device_id, purpose
+           FROM auth_challenges WHERE id = $1`,
+        [challengeHash],
+      );
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row || row.purpose !== "REGISTRATION_EMAIL_VERIFY" || String(row.device_id) !== deviceId) {
+        throw unauthorized("Registration challenge is invalid or expired.");
+      }
+      return {
+        pendingRegistrationId: String(row.pending_registration_id ?? row.resource_id ?? ""),
+        resourceId: row.resource_id ? String(row.resource_id) : null,
+        requestFingerprint: row.request_fingerprint ? String(row.request_fingerprint) : null,
+      };
+    });
+    if (!context.pendingRegistrationId) throw unauthorized("Registration challenge is invalid or expired.");
+    await mfaService.verifyChallenge({
+      challengeId,
+      deviceId,
+      proof,
+      purpose: "REGISTRATION_EMAIL_VERIFY",
+      resourceId: context.resourceId,
+      requestFingerprint: context.requestFingerprint,
+    });
+    return this.complete({ pendingRegistrationId: context.pendingRegistrationId });
+  }
 
   async complete(input: RegistrationCommandInput): Promise<{ customerId: string; accountId: string }> {
     return this.unitOfWork.transaction(async ({ client }) => {
@@ -62,6 +177,16 @@ export class RelationalRegistrationService {
           (pending_registration_id, customer_id, account_id)
          VALUES ($1, $2, $3)`,
         [input.pendingRegistrationId, customer.id, account.id],
+      );
+      // The challenge keeps an audit-safe resource reference, but the FK to
+      // the short-lived pending payload must be detached before consumption.
+      // Otherwise PostgreSQL correctly refuses to delete the registration
+      // while auth_challenges still points at it.
+      await client.query(
+        `UPDATE auth_challenges
+            SET pending_registration_id = NULL, updated_at = NOW()
+          WHERE pending_registration_id = $1`,
+        [input.pendingRegistrationId],
       );
       if (!(await customers.consumePendingRegistration(input.pendingRegistrationId))) {
         throw new RelationalConflictError("REGISTRATION_ALREADY_CONSUMED", "Registration challenge was already consumed.");

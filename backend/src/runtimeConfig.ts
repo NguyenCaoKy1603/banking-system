@@ -117,6 +117,9 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     if (env.BANKING_MFA_REQUIRED !== "1") {
       throw new Error("BANKING_MFA_REQUIRED=1 is required in staging and production-like runtimes.");
     }
+    if (env.BANKING_RELATIONAL_HTTP_ROUTES?.trim()) {
+      throw new Error("BANKING_RELATIONAL_HTTP_ROUTES is a local/disposable rehearsal flag and is forbidden in staging and production-like runtimes.");
+    }
     const methods = (env.BANKING_MFA_METHODS?.trim() || "TOTP")
       .split(",")
       .map((method) => method.trim())
