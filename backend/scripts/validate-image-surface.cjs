@@ -3,7 +3,9 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
-const image = process.argv.find((value) => value.startsWith("--image="))?.slice("--image=".length) || process.argv[process.argv.indexOf("--image") + 1];
+const inlineImage = process.argv.find((value) => value.startsWith("--image="));
+const imageFlagIndex = process.argv.indexOf("--image");
+const image = inlineImage?.slice("--image=".length) || (imageFlagIndex >= 0 ? process.argv[imageFlagIndex + 1] : undefined);
 if (!image?.trim()) {
   console.error("Usage: node scripts/validate-image-surface.cjs --image=<local-or-registry-image>");
   process.exit(2);
