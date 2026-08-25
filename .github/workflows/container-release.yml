@@ -155,10 +155,11 @@ jobs:
     needs: [mobile-quality, admin-quality, container-smoke]
     runs-on: ubuntu-latest
     env:
-      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/banking-backend
-      ADMIN_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/banking-admin-web
+      # Docker repository names are lowercase; the GitHub owner is mixed-case.
+      IMAGE_NAME: ghcr.io/nguyencaoky1603/banking-backend
+      ADMIN_IMAGE_NAME: ghcr.io/nguyencaoky1603/banking-admin-web
       ADMIN_API_URL: ${{ vars.STAGING_ADMIN_API_URL }}
-      RELEASE_ID: release-${{ github.run_number }}-${{ github.sha }}
+      RELEASE_ID: ${{ startsWith(github.ref, 'refs/tags/v1.0.0-thesis-rc.') && github.ref_name || format('release-{0}-{1}', github.run_number, github.sha) }}
       COMMIT_SHA: ${{ github.sha }}
     steps:
       - name: Checkout the exact merge commit

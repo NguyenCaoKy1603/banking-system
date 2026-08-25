@@ -104,7 +104,7 @@ jobs:
 
       - name: Validate transactional outbox worker boundary
         env:
-          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_worker_test
+          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_worker
         run: npm run validate:outbox
 
       - name: Validate OpenAPI draft and implementation markers
