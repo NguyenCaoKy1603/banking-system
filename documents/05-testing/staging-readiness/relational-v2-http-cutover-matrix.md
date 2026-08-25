@@ -1,7 +1,7 @@
 # Relational-v2 HTTP cutover matrix
 
 Ngày cập nhật: 2026-08-26
-Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — worker preview chưa bật; disposable rehearsal PASS; staging/production evidence chưa có**
+Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — runtime email/scheduler disposable rehearsal PASS; worker preview chưa bật; staging/production evidence chưa có**
 
 ## Phạm vi đã nối trực tiếp
 
@@ -12,7 +12,7 @@ Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — worker preview chưa bật; 
 | Session | `POST /api/v1/auth/refresh` | `auth_sessions`, `refresh_session_*` | Direct khi `...=auth,mfa` | refresh rotation, replay/revocation |
 | Session | `POST /api/v1/auth/logout` | session/family tables | Direct khi `...=auth,mfa` | device binding, family revoke |
 | Session | `POST /api/v1/auth/logout-all` | session/family tables | Direct khi `...=auth,mfa` | customer-wide revoke |
-| Registration | `POST /api/v1/auth/register`, `/register/verify` | `pending_registrations`, `auth_challenges`, `customers`, `payment_accounts`, `registration_completions`, `audit_events`, `outbox_events` | **RELATIONAL-V2** khi `...=auth,registration` | provider boundary test, hash-only OTP, outbox intent không chứa mã, one-winner verify, unique identity, TOTP enrollment |
+| Registration | `POST /api/v1/auth/register`, `/register/verify` | `pending_registrations`, `auth_challenges`, `customers`, `payment_accounts`, `registration_completions`, `audit_events`, `outbox_events` | **RELATIONAL-V2** khi `...=auth,registration` | HTTP capture provider disposable, hash-only OTP, outbox intent không chứa mã, one-winner verify, unique identity, TOTP enrollment; staging phải dùng HTTPS + Secret Manager |
 | MFA lifecycle | `/auth/mfa/*`, `/auth/otp/challenges` | `mfa_credentials`, `auth_challenges`, `mfa_recovery_*`, `auth_security_events`, session tables | Direct khi `...=auth,mfa` | TOTP enrollment/confirm, login + step-up challenge, retry/lock/expiry/consume, recovery/reset audit, concurrent one-winner verification, refresh/logout security state |
 | Account read | `GET /api/v1/accounts` | `payment_accounts` | Direct khi `...=accounts` | ownership + money mapping |
 | Account read | `GET /api/v1/accounts/:id/number` | `payment_accounts` | Direct khi `...=accounts` | ownership + reveal audit follow-up |
@@ -41,9 +41,9 @@ Các nhóm route trên là boundary direct của relational-v2. Local preview d�
 
 | Nhóm | Route/khối | Bằng chứng/ghi chú |
 |---|---|---|
-| Registration | `/auth/register`, `/auth/register/verify` | **RELATIONAL-V2** — provider test/recording dùng trực tiếp trong disposable; staging provider thật vẫn là gate riêng. |
-| Savings maturity/renewal | scheduled command `RelationalLifecycleService` | **RELATIONAL-V2** — row lock, operation key, ledger/audit/outbox, renewal/return và restart catch-up đã có disposable evidence; chưa tự chạy trên preview. |
-| Credit settlement/maturity | statement close, overdue, pending/reversal settlement | **RELATIONAL-V2** — operation key, no-overpay, ledger/audit/outbox, overdue/reversal và restart catch-up đã có disposable evidence; chưa tự chạy trên preview. |
+| Registration | `/auth/register`, `/auth/register/verify` | **RELATIONAL-V2** — HTTP capture adapter, timeout/retry, redacted health và one-time digest verification đã PASS trên disposable; staging provider thật vẫn là gate riêng. |
+| Savings maturity/renewal | scheduled command `RelationalLifecycleService` | **RELATIONAL-V2** — scheduler startup catch-up, poll/batch, row lock, operation key, ledger/audit/outbox, renewal/return và restart catch-up đã có disposable evidence; chưa tự chạy trên preview. |
+| Credit settlement/maturity | statement close, overdue, pending/reversal settlement | **RELATIONAL-V2** — scheduler dùng cùng command/operation key, no-overpay, ledger/audit/outbox, overdue/reversal và restart catch-up đã có disposable evidence; chưa tự chạy trên preview. |
 | Profile/KYC customer read | chưa có public HTTP contract được phê duyệt | **EXPLICITLY OUT OF SCOPE**; KYC case là Admin-only và không tự mở customer route mới. |
 | Legacy HTTP writer / route chưa phân loại | bất kỳ route mới nào ngoài boundary | **LEGACY — BLOCKS CUTOVER**; runtime relational-v2 trả `503` và regression test cấm gọi `withState`. |
 | Admin read/action | `/admin/*` | **RELATIONAL-V2** qua `AdminRepository`/action engine; không đi qua public `withState`, vẫn cần admin evidence riêng. |
@@ -72,8 +72,9 @@ npm run test:critical
 
 Giá trị này chỉ dành cho local preview; `IMAGE_DIGEST=unknown`, không phải staging evidence và không thay thế worker/cloud cutover gate.
 
-`registration` là group relational-v2; provider fake/recording chỉ được dùng trong
+`registration` là group relational-v2; HTTP capture provider chỉ được dùng trong
 disposable test. Preview vẫn để `EMAIL_PROVIDER=disabled` nếu chưa có provider
 được phê duyệt, khi đó route không còn 503 boundary nhưng sẽ trả lỗi delivery rõ
-ràng. Scheduled commands chỉ chạy qua disposable rehearsal, không tự chạy trên
+ràng. Runtime HTTP provider + hai worker + hai scheduler đã chạy qua
+`npm run test:integrated:disposable`; scheduled commands không tự chạy trên
 `banking_preview`.
