@@ -7,6 +7,16 @@ import { AuditRepository } from "./repositories/auditRepository.js";
 import { LedgerRepository } from "./repositories/ledgerRepository.js";
 import { OutboxRepository } from "./repositories/outboxRepository.js";
 import { TransferRepository, type TransferRow } from "./repositories/transferRepository.js";
+import { fingerprint } from "../security.js";
+import { parseMoney, toMoney } from "../money.js";
+import type { Beneficiary, TransferQuote, TransferReceipt } from "../types.js";
+import { conflict, invalidRequest, notFound } from "../errors.js";
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function assertUuid(value: string, field: string): void {
+  if (!UUID_PATTERN.test(value)) throw invalidRequest(`${field} is invalid.`, { [field]: `${field} must be a UUID.` });
+}
 
 export type TransferFaultPoint =
   | "after_idempotency_reserved"
@@ -31,6 +41,41 @@ export type TransferCommandInput = {
   fault?: (point: TransferFaultPoint) => void | Promise<void>;
 };
 
+export type TransferQuoteCommandInput = {
+  customerId: string;
+  sourceAccountId: string;
+  beneficiaryId: string;
+  amount: unknown;
+  now?: string;
+};
+
+function publicBeneficiary(row: Record<string, unknown>): Beneficiary {
+  return {
+    id: String(row.id),
+    displayName: String(row.display_name),
+    accountHolderName: row.account_holder_name
+      ? String(row.account_holder_name)
+      : row.destination_full_name
+        ? String(row.destination_full_name)
+        : undefined,
+    maskedAccountNumber: String(row.masked_account_number),
+    bankName: String(row.bank_name),
+    status: String(row.status) as Beneficiary["status"],
+  };
+}
+
+function publicTransfer(row: TransferRow): TransferReceipt {
+  return {
+    transferId: row.id,
+    reference: row.reference,
+    status: row.status,
+    amount: toMoney(BigInt(row.amountMinor)),
+    fee: toMoney(BigInt(row.feeMinor)),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 /**
  * Direct-table transfer use case.  Controllers can keep their existing HTTP
  * contract and pass the authenticated customer/validated quote context here.
@@ -39,7 +84,61 @@ export type TransferCommandInput = {
 export class RelationalTransferService {
   constructor(private readonly unitOfWork: UnitOfWork) {}
 
+  async createQuote(input: TransferQuoteCommandInput): Promise<TransferQuote> {
+    assertUuid(input.sourceAccountId, "sourceAccountId");
+    assertUuid(input.beneficiaryId, "beneficiaryId");
+    const amountMinor = parseMoney(input.amount, "amount");
+    if (amountMinor <= 0n || amountMinor > 500_000_000n) throw conflict("Transfer amount is outside the sandbox limit.");
+    const now = input.now ?? new Date().toISOString();
+    const feeMinor = 1_000n;
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const accounts = new AccountRepository(client);
+      const transfers = new TransferRepository(client);
+      const source = await accounts.findOwnedAccount(input.customerId, input.sourceAccountId);
+      if (!source) throw notFound("Account not found.");
+      if (source.status !== "ACTIVE") throw conflict("The source account is not active.");
+      const destination = await transfers.findActiveDestinationAccount(input.beneficiaryId, input.customerId);
+      if (!destination) throw notFound("Beneficiary not found.");
+      if (String(destination.status) !== "ACTIVE") throw conflict("Beneficiary is not active.");
+      if (String(destination.destination_status) !== "ACTIVE") throw conflict("The recipient account is not active.");
+      if (String(destination.destination_account_id) === source.id) throw conflict("A transfer cannot be sent to the source account.");
+      const beneficiary: Beneficiary = publicBeneficiary(destination);
+      const quoteId = randomUUID();
+      const expiresAt = new Date(Date.parse(now) + 5 * 60 * 1000).toISOString();
+      await transfers.createQuote({
+        id: quoteId,
+        customerId: input.customerId,
+        sourceAccountId: source.id,
+        beneficiaryId: input.beneficiaryId,
+        amountMinor: amountMinor.toString(),
+        feeMinor: feeMinor.toString(),
+        expiresAt,
+        requestFingerprint: fingerprint({ quoteId, amountMinor: amountMinor.toString() }),
+        beneficiarySnapshot: beneficiary,
+        destinationAccountId: String(destination.destination_account_id),
+        destinationOwnerId: String(destination.destination_customer_id),
+      });
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "TRANSFER_QUOTED",
+        actorCustomerId: input.customerId,
+        resourceId: quoteId,
+        occurredAt: now,
+      });
+      return {
+        quoteId,
+        sourceAccountId: source.id,
+        beneficiary,
+        amount: toMoney(amountMinor),
+        fee: toMoney(feeMinor),
+        totalDebit: toMoney(amountMinor + feeMinor),
+        expiresAt,
+      };
+    }, { maxRetries: 1 });
+  }
+
   async submit(input: TransferCommandInput): Promise<TransferRow> {
+    assertUuid(input.quoteId, "quoteId");
     const now = input.now ?? new Date().toISOString();
     return this.unitOfWork.transaction(
       async ({ client }) => {
@@ -294,5 +393,32 @@ export class RelationalTransferService {
       },
       { traceId: input.traceId, maxRetries: 1 },
     );
+  }
+
+  async get(customerId: string, transferId: string): Promise<TransferReceipt> {
+    assertUuid(transferId, "transferId");
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query(
+        "SELECT * FROM transfers WHERE id = $1 AND customer_id = $2",
+        [transferId, customerId],
+      );
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) throw notFound("Transfer not found.");
+      const mapped = await new TransferRepository(client).findById(String(row.id));
+      if (!mapped) throw notFound("Transfer not found.");
+      return publicTransfer(mapped);
+    });
+  }
+
+  async getStepUpRequestFingerprint(quoteId: string): Promise<string | null> {
+    assertUuid(quoteId, "quoteId");
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const quote = await new TransferRepository(client).findQuoteForUpdate(quoteId);
+      return quote?.requestFingerprint ?? null;
+    });
+  }
+
+  toPublic(row: TransferRow): TransferReceipt {
+    return publicTransfer(row);
   }
 }

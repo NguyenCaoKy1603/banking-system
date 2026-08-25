@@ -1,16 +1,18 @@
-import type { AuthUser, LoginResponse, PaymentAccount, Transaction, TransactionDetail } from "../types.js";
+import type { AuthUser, Beneficiary, LoginResponse, PaymentAccount, Transaction, TransactionDetail, TransferQuote, TransferReceipt } from "../types.js";
 import { RelationalAccountReadService } from "./relationalAccountReadService.js";
 import { RelationalAuthService } from "./relationalAuthService.js";
 import { RelationalRegistrationService, type RegistrationBeginInput } from "./registrationService.js";
+import { RelationalBeneficiaryService } from "./relationalBeneficiaryService.js";
+import { RelationalTransferService, type TransferQuoteCommandInput } from "./transferService.js";
 import type { MfaChallengeResponse, PersistentMfaService } from "../mfa/persistentMfaService.js";
 import { UnitOfWork } from "./unitOfWork.js";
 
-export type RelationalHttpRoute = "auth" | "registration" | "accounts";
+export type RelationalHttpRoute = "auth" | "registration" | "accounts" | "beneficiaries" | "transfers";
 
 function configuredRoutes(value = process.env.BANKING_RELATIONAL_HTTP_ROUTES): Set<RelationalHttpRoute> {
   const routes = new Set<RelationalHttpRoute>();
   for (const item of (value ?? "").split(",").map((part) => part.trim().toLowerCase()).filter(Boolean)) {
-    if (item === "auth" || item === "registration" || item === "accounts") routes.add(item);
+    if (item === "auth" || item === "registration" || item === "accounts" || item === "beneficiaries" || item === "transfers") routes.add(item);
     else throw new Error(`BANKING_RELATIONAL_HTTP_ROUTES contains unsupported route group: ${item}.`);
   }
   return routes;
@@ -21,15 +23,19 @@ export class RelationalHttpBoundary {
   private readonly auth: RelationalAuthService;
   private readonly accounts: RelationalAccountReadService;
   private readonly registration: RelationalRegistrationService;
+  private readonly beneficiaries: RelationalBeneficiaryService;
+  private readonly transfers: RelationalTransferService;
 
   constructor(unitOfWork: UnitOfWork, routeConfig?: string) {
     this.routes = configuredRoutes(routeConfig);
-    if (this.routes.has("accounts") && !this.routes.has("auth")) {
-      throw new Error("BANKING_RELATIONAL_HTTP_ROUTES accounts requires auth so account reads have a direct session boundary.");
+    if (["accounts", "beneficiaries", "transfers"].some((route) => this.routes.has(route as RelationalHttpRoute)) && !this.routes.has("auth")) {
+      throw new Error("BANKING_RELATIONAL_HTTP_ROUTES account and command groups require auth so they have a direct session boundary.");
     }
     this.auth = new RelationalAuthService(unitOfWork);
     this.accounts = new RelationalAccountReadService(unitOfWork);
     this.registration = new RelationalRegistrationService(unitOfWork);
+    this.beneficiaries = new RelationalBeneficiaryService(unitOfWork);
+    this.transfers = new RelationalTransferService(unitOfWork);
   }
 
   get enabled(): boolean { return this.routes.size > 0; }
@@ -47,6 +53,17 @@ export class RelationalHttpBoundary {
     }
     if (this.routes.has("registration") && verb === "POST" && segments[0] === "auth" && segments[1] === "register") {
       return segments.length === 2 || (segments.length === 3 && segments[2] === "verify");
+    }
+    if (this.routes.has("beneficiaries") && segments[0] === "beneficiaries") {
+      return (verb === "GET" && (segments.length === 1 || segments.length === 2)) ||
+        (verb === "POST" && segments.length === 1) ||
+        (verb === "PATCH" && segments.length === 2) ||
+        (verb === "DELETE" && segments.length === 2);
+    }
+    if (this.routes.has("transfers") && segments[0] === "transfers") {
+      return (verb === "POST" && segments.length === 2 && segments[1] === "quote") ||
+        (verb === "POST" && segments.length === 1) ||
+        (verb === "GET" && segments.length === 2);
     }
     if (!this.routes.has("accounts")) return false;
     if (verb === "GET" && segments.length === 1 && segments[0] === "accounts") return true;
@@ -104,5 +121,48 @@ export class RelationalHttpBoundary {
 
   getTransaction(customerId: string, accountId: string, transactionId: string): Promise<TransactionDetail> {
     return this.accounts.getTransaction(customerId, accountId, transactionId);
+  }
+
+  listBeneficiaries(customerId: string): Promise<Beneficiary[]> {
+    return this.beneficiaries.list(customerId);
+  }
+
+  getBeneficiary(customerId: string, beneficiaryId: string): Promise<Beneficiary> {
+    return this.beneficiaries.get(customerId, beneficiaryId);
+  }
+
+  createBeneficiary(customerId: string, input: { displayName: unknown; accountNumber: unknown }): Promise<Beneficiary> {
+    return this.beneficiaries.create(customerId, input);
+  }
+
+  renameBeneficiary(customerId: string, beneficiaryId: string, displayName: unknown): Promise<Beneficiary> {
+    return this.beneficiaries.rename(customerId, beneficiaryId, displayName);
+  }
+
+  removeBeneficiary(customerId: string, beneficiaryId: string): Promise<void> {
+    return this.beneficiaries.remove(customerId, beneficiaryId);
+  }
+
+  createTransferQuote(input: TransferQuoteCommandInput): Promise<TransferQuote> {
+    return this.transfers.createQuote(input);
+  }
+
+  async submitTransfer(input: {
+    customerId: string;
+    idempotencyKey: string;
+    quoteId: string;
+    requestFingerprint: string;
+    traceId?: string;
+  }): Promise<TransferReceipt> {
+    const transfer = await this.transfers.submit(input);
+    return this.transfers.toPublic(transfer);
+  }
+
+  getTransfer(customerId: string, transferId: string): Promise<TransferReceipt> {
+    return this.transfers.get(customerId, transferId);
+  }
+
+  getTransferStepUpRequestFingerprint(quoteId: string): Promise<string | null> {
+    return this.transfers.getStepUpRequestFingerprint(quoteId);
   }
 }

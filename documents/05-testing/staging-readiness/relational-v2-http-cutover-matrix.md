@@ -16,6 +16,10 @@ Trạng thái: **INCREMENTAL CUTOVER — chưa đủ điều kiện bật `BANKI
 | Account read | `GET /api/v1/accounts/:id/number` | `payment_accounts` | Direct khi `...=accounts` | ownership + reveal audit follow-up |
 | Account read | `GET /api/v1/accounts/:id/transactions` | `account_transactions` | Direct khi `...=accounts` | keyset cursor contract |
 | Account read | `GET /api/v1/accounts/:id/transactions/:txId` | `account_transactions` | Direct khi `...=accounts` | ownership + not-found contract |
+| Beneficiary | `GET/POST/PATCH/DELETE /api/v1/beneficiaries/*` | `beneficiaries`, `payment_accounts`, `customers` | Direct khi `...=beneficiaries` | ownership, destination status, append-only audit; delete chuyển thành `BLOCKED` |
+| Transfer quote | `POST /api/v1/transfers/quote` | `transfer_quotes`, `beneficiaries`, `payment_accounts` | Direct khi `...=transfers` | quote expiry, recipient ownership, quote fingerprint |
+| Transfer submit | `POST /api/v1/transfers` | `transfers`, `payment_accounts`, `account_transactions`, `ledger_*`, `audit_events`, `outbox_events` | Direct khi `...=transfers` và persistent TOTP | idempotency, quote consume, lock ordering, balanced ledger, atomic outbox |
+| Transfer read | `GET /api/v1/transfers/:id` | `transfers` | Direct khi `...=transfers` | customer ownership + receipt mapping |
 
 Feature flag này chỉ là lát cắt rehearsal; preview mặc định không đặt flag nên vẫn dùng compatibility adapter legacy.
 
@@ -25,8 +29,8 @@ Feature flag này chỉ là lát cắt rehearsal; preview mặc định không �
 |---|---|---|
 | Registration | `/auth/register`, `/auth/register/verify` | Có service direct sau feature group `registration`, nhưng local compose dùng `NullEmailProvider`; chỉ rehearsal với provider test được kiểm soát và phải có delivery evidence. |
 | MFA lifecycle | `/auth/mfa/*`, `/auth/otp/challenges` | Challenge đã lưu relational nhưng lifecycle handler còn gọi `BankingSystem` cho password/session/state bridge. |
-| Beneficiary/recipient | `/beneficiaries/*`, `/internal-recipients/*` | Cần repository read/write và expiry/idempotency trực tiếp. |
-| Transfer | `/transfers/quote`, `/transfers`, `/transfers/:id` | `RelationalTransferService.submit` đã có nhưng quote creation, step-up binding, receipt mapping và HTTP integration chưa nối. |
+| Beneficiary/recipient | `/internal-recipients/*` | Lookup token chưa có persistent direct boundary; beneficiary CRUD đã được nối ở group `beneficiaries`. |
+| Transfer | `/transfers/quote`, `/transfers`, `/transfers/:id` | Core transfer path đã nối; vẫn cần chạy disposable HTTP + TOTP/concurrency/restart evidence trước khi coi là cutover hoàn tất. |
 | Savings | `/savings/*` | Chưa có service transaction hoàn chỉnh; không được để runtime records làm source of truth. |
 | Credit/cards | `/credit/*`, `/cards/*` | Chưa có service transaction hoàn chỉnh; cần ledger/idempotency/reconciliation contract. |
 | Notifications/fraud | `/notifications/*`, `/fraud-reports/*` | Cần direct repository + outbox/audit ownership. |
@@ -46,7 +50,7 @@ Không bật `BANKING_PERSISTENCE_MODE=relational-v2`, `WORKER_ENABLED=1` hoặc
 Chỉ dùng local/disposable database:
 
 ```powershell
-$env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,accounts"
+$env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,accounts,beneficiaries,transfers"
 npm run typecheck
 npm run build
 npm run test:critical

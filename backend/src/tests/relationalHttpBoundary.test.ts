@@ -25,12 +25,16 @@ test("relational HTTP boundary is opt-in and route scoped", () => {
 
 test("relational HTTP boundary rejects unknown route groups", () => {
   const unitOfWork = {} as ConstructorParameters<typeof RelationalHttpBoundary>[0];
+  const transfers = new RelationalHttpBoundary(unitOfWork, "auth,transfers");
+  assert.equal(transfers.isRouteEnabled("POST", ["transfers", "quote"]), true);
+  assert.equal(transfers.isRouteEnabled("POST", ["transfers"]), true);
+  assert.equal(transfers.isRouteEnabled("GET", ["transfers", "transfer-1"]), true);
   assert.throws(
-    () => new RelationalHttpBoundary(unitOfWork, "auth,transfers"),
+    () => new RelationalHttpBoundary(unitOfWork, "auth,unknown"),
     /unsupported route group/,
   );
   assert.throws(
     () => new RelationalHttpBoundary(unitOfWork, "accounts"),
-    /accounts requires auth/,
+    /groups require auth/,
   );
 });

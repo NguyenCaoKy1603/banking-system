@@ -111,6 +111,130 @@ function mapIdempotency(row: Record<string, unknown>): CommandIdempotencyRow {
 export class TransferRepository {
   constructor(private readonly client: PoolClient) {}
 
+  async findOwnedBeneficiary(customerId: string, beneficiaryId: string): Promise<Record<string, unknown> | null> {
+    const result = await this.client.query(
+      `SELECT * FROM beneficiaries
+       WHERE id = $1 AND customer_id = $2`,
+      [requireUuid(beneficiaryId, "beneficiaryId"), requireUuid(customerId, "customerId")],
+    );
+    return result.rows[0] ? result.rows[0] as Record<string, unknown> : null;
+  }
+
+  async listBeneficiaries(customerId: string): Promise<Array<Record<string, unknown>>> {
+    const result = await this.client.query(
+      `SELECT * FROM beneficiaries
+       WHERE customer_id = $1
+       ORDER BY created_at DESC, id`,
+      [requireUuid(customerId, "customerId")],
+    );
+    return result.rows as Array<Record<string, unknown>>;
+  }
+
+  async createBeneficiary(input: {
+    id: string;
+    customerId: string;
+    displayName: string;
+    accountHolderName: string;
+    maskedAccountNumber: string;
+    accountNumberFingerprint: string;
+    bankName: string;
+    destinationAccountId: string;
+    destinationOwnerId: string;
+  }): Promise<Record<string, unknown>> {
+    const result = await this.client.query(
+      `INSERT INTO beneficiaries
+        (id, customer_id, display_name, masked_account_number,
+         account_number_fingerprint, bank_name, status, created_at,
+         account_holder_name, destination_account_id, destination_owner_id)
+       VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', NOW(), $7, $8, $9)
+       RETURNING *`,
+      [
+        requireUuid(input.id),
+        requireUuid(input.customerId, "customerId"),
+        input.displayName,
+        input.maskedAccountNumber,
+        input.accountNumberFingerprint,
+        input.bankName,
+        input.accountHolderName,
+        requireUuid(input.destinationAccountId, "destinationAccountId"),
+        requireUuid(input.destinationOwnerId, "destinationOwnerId"),
+      ],
+    );
+    return result.rows[0] as Record<string, unknown>;
+  }
+
+  async updateBeneficiaryName(customerId: string, beneficiaryId: string, displayName: string): Promise<Record<string, unknown> | null> {
+    const result = await this.client.query(
+      `UPDATE beneficiaries
+       SET display_name = $3
+       WHERE id = $1 AND customer_id = $2
+       RETURNING *`,
+      [requireUuid(beneficiaryId, "beneficiaryId"), requireUuid(customerId, "customerId"), displayName],
+    );
+    return result.rows[0] ? result.rows[0] as Record<string, unknown> : null;
+  }
+
+  async blockBeneficiary(customerId: string, beneficiaryId: string): Promise<boolean> {
+    const result = await this.client.query(
+      `UPDATE beneficiaries
+       SET status = 'BLOCKED'
+       WHERE id = $1 AND customer_id = $2 AND status <> 'BLOCKED'`,
+      [requireUuid(beneficiaryId, "beneficiaryId"), requireUuid(customerId, "customerId")],
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  async findActiveDestinationAccount(beneficiaryId: string, customerId: string): Promise<Record<string, unknown> | null> {
+    const result = await this.client.query(
+      `SELECT b.*, a.status AS destination_status, a.customer_id AS destination_customer_id,
+              a.id AS destination_account_id, a.masked_number AS destination_masked_number,
+              a.bank_name AS destination_bank_name, c.full_name AS destination_full_name
+       FROM beneficiaries b
+       JOIN payment_accounts a ON a.id = b.destination_account_id
+       JOIN customers c ON c.id = a.customer_id
+       WHERE b.id = $1 AND b.customer_id = $2`,
+      [requireUuid(beneficiaryId, "beneficiaryId"), requireUuid(customerId, "customerId")],
+    );
+    return result.rows[0] ? result.rows[0] as Record<string, unknown> : null;
+  }
+
+  async createQuote(input: {
+    id: string;
+    customerId: string;
+    sourceAccountId: string;
+    beneficiaryId: string;
+    amountMinor: string;
+    feeMinor: string;
+    expiresAt: string;
+    requestFingerprint: string;
+    beneficiarySnapshot: unknown;
+    destinationAccountId: string;
+    destinationOwnerId: string;
+  }): Promise<TransferQuoteRow> {
+    const result = await this.client.query(
+      `INSERT INTO transfer_quotes
+        (id, customer_id, source_account_id, beneficiary_id, amount_minor,
+         fee_minor, currency, expires_at, created_at, request_fingerprint,
+         beneficiary_snapshot, destination_account_id, destination_owner_id)
+       VALUES ($1, $2, $3, $4, $5, $6, 'VND', $7, NOW(), $8, $9::jsonb, $10, $11)
+       RETURNING *`,
+      [
+        requireUuid(input.id),
+        requireUuid(input.customerId, "customerId"),
+        requireUuid(input.sourceAccountId, "sourceAccountId"),
+        requireUuid(input.beneficiaryId, "beneficiaryId"),
+        asBigIntString(input.amountMinor, "amountMinor"),
+        asBigIntString(input.feeMinor, "feeMinor"),
+        input.expiresAt,
+        input.requestFingerprint,
+        JSON.stringify(input.beneficiarySnapshot),
+        requireUuid(input.destinationAccountId, "destinationAccountId"),
+        requireUuid(input.destinationOwnerId, "destinationOwnerId"),
+      ],
+    );
+    return mapQuote(result.rows[0] as Record<string, unknown>);
+  }
+
   async findQuoteForUpdate(quoteId: string): Promise<TransferQuoteRow | null> {
     const result = await this.client.query("SELECT * FROM transfer_quotes WHERE id = $1 FOR UPDATE", [requireUuid(quoteId, "quoteId")]);
     return result.rows[0] ? mapQuote(result.rows[0] as Record<string, unknown>) : null;

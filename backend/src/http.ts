@@ -21,6 +21,8 @@ import { createRequestContext, normalizeRequestId, requestContextHeaders, type R
 import { createStructuredLogger, type StructuredLogger } from "./observability/logger.js";
 import { collectDatabaseMetrics, PrometheusRegistry, registerBusinessMetrics, registerHttpMetrics, type DatabasePoolMetricSnapshot } from "./observability/metrics.js";
 import type { RelationalHttpBoundary } from "./database/relationalHttpBoundary.js";
+import { DatabaseCommandError } from "./database/commandErrors.js";
+import { fingerprint } from "./security.js";
 
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 1_000_000;
@@ -1051,6 +1053,85 @@ export async function handleRequest(
       relationalRoute ? options.relationalHttp : undefined,
     );
 
+    if (relationalRoute && options.relationalHttp) {
+      if (request.method === "GET" && segments.length === 1 && segments[0] === "beneficiaries") {
+        writeResponse(response, 200, traceId, { items: await options.relationalHttp.listBeneficiaries(userId) });
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "beneficiaries") {
+        writeResponse(response, 200, traceId, { beneficiary: await options.relationalHttp.getBeneficiary(userId, segments[1]) });
+        return;
+      }
+      if (request.method === "POST" && segments.length === 1 && segments[0] === "beneficiaries") {
+        const data = requireObject(body);
+        writeResponse(response, 201, traceId, {
+          beneficiary: await options.relationalHttp.createBeneficiary(userId, {
+            displayName: data.displayName,
+            accountNumber: data.accountNumber,
+          }),
+        });
+        return;
+      }
+      if (request.method === "PATCH" && segments.length === 2 && segments[0] === "beneficiaries") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, {
+          beneficiary: await options.relationalHttp.renameBeneficiary(userId, segments[1], data.displayName),
+        });
+        return;
+      }
+      if (request.method === "DELETE" && segments.length === 2 && segments[0] === "beneficiaries") {
+        await options.relationalHttp.removeBeneficiary(userId, segments[1]);
+        writeResponse(response, 204, traceId);
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "transfers" && segments[1] === "quote") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, await options.relationalHttp.createTransferQuote({
+          customerId: userId,
+          sourceAccountId: data.sourceAccountId as string,
+          beneficiaryId: data.beneficiaryId as string,
+          amount: data.amount,
+        }));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 1 && segments[0] === "transfers") {
+        const data = requireObject(body);
+        const quoteId = typeof data.quoteId === "string" ? data.quoteId : "";
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp)
+          ? data.stepUp as Record<string, unknown>
+          : null;
+        if (!options.mfaService || !stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") {
+          throw invalidRequest("TOTP step-up challenge is required for relational transfer submission.");
+        }
+        const transferRequestFingerprint = await options.relationalHttp.getTransferStepUpRequestFingerprint(quoteId);
+        if (!transferRequestFingerprint) throw notFound("Transfer quote not found.");
+        const verified = await options.mfaService.verifyChallenge({
+          challengeId: stepUp.challengeId,
+          customerId: userId,
+          deviceId: requireDeviceId(request),
+          proof: stepUp.proof,
+          purpose: "TRANSFER",
+          resourceId: quoteId,
+          requestFingerprint: transferRequestFingerprint,
+        });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        const idempotencyKey = header(request, "idempotency-key")?.trim() ?? "";
+        if (idempotencyKey.length < 16) throw invalidRequest("Idempotency-Key must contain at least 16 characters.");
+        writeResponse(response, 200, traceId, await options.relationalHttp.submitTransfer({
+          customerId: userId,
+          idempotencyKey,
+          quoteId,
+          requestFingerprint: transferRequestFingerprint,
+          traceId,
+        }));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "transfers") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getTransfer(userId, segments[1]));
+        return;
+      }
+    }
+
     if (options.mfaService && request.method === "GET" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") {
       writeResponse(response, 200, traceId, { items: await options.mfaService.listCredentials(userId) });
       return;
@@ -1194,11 +1275,13 @@ export async function handleRequest(
         }
         const purpose = data.purpose as PersistentStepUpPurpose;
         const resourceId = typeof data.resourceId === "string" ? data.resourceId : null;
-        const requestFingerprint = system.getStepUpRequestFingerprint(
-          purpose as OtpPurpose,
-          resourceId,
-          typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
-        );
+        const requestFingerprint = purpose === "TRANSFER" && options.relationalHttp && resourceId
+          ? await options.relationalHttp.getTransferStepUpRequestFingerprint(resourceId)
+          : system.getStepUpRequestFingerprint(
+            purpose as OtpPurpose,
+            resourceId,
+            typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
+          );
         const challenge = await options.mfaService.beginTotpChallenge({
           customerId: userId,
           deviceId: requireDeviceId(request),
@@ -1776,6 +1859,11 @@ export async function handleRequest(
     if (error instanceof DomainError) {
       stateBoundary?.rejectDomainRequest();
       writeError(response, error.status, traceId, error);
+      return;
+    }
+    if (error instanceof DatabaseCommandError) {
+      stateBoundary?.rejectDomainRequest();
+      writeError(response, error.status, traceId, new DomainError(error.status, error.code, error.message));
       return;
     }
 

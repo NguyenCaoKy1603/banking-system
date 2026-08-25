@@ -34,11 +34,11 @@ endpoint hoặc thiết bị Android staging trong report này.
 | --- | --- |
 | `npm run typecheck` trong `backend/` | PASS |
 | `npm run build` trong `backend/` | PASS |
-| `npm test` trong `backend/` | 145 tests, 126 PASS, 19 SKIPPED, 0 FAIL |
+| `npm test` trong `backend/` | 146 tests, 127 PASS, 19 SKIPPED, 0 FAIL |
 | `npm run test:critical` | 10 PASS |
 | `relationalAuthService` disposable local rehearsal | PASS; issue → authenticate → refresh rotation → revoke |
 | `relationalRegistrationService` disposable local rehearsal | PASS với `FakeEmailProvider`; OTP challenge → completion → account allocation |
-| direct relational HTTP boundary test | PASS; account route không gọi `withState` |
+| direct relational HTTP boundary test | PASS; account và transfer quote route không gọi `withState` |
 | `npm run test:database` trên PostgreSQL disposable | 4 PASS |
 | `npm run test:relational` trên PostgreSQL disposable | 1 PASS |
 | `npm run test:worker` trên PostgreSQL disposable | 10 PASS |
@@ -60,10 +60,10 @@ endpoint hoặc thiết bị Android staging trong report này.
 ## Giới hạn còn lại
 
 - HTTP backend hiện có feature group opt-in `BANKING_RELATIONAL_HTTP_ROUTES`:
-  session auth và account/transaction reads đã có direct boundary; registration
-  là group riêng vì cần email provider. Transfer quote/submit, MFA lifecycle,
-  beneficiary, notifications, savings và credit vẫn đi qua
-  `PostgresRelationalRepository.withState`. Vì vậy chưa được đặt
+  session auth, account/transaction reads, beneficiary CRUD và transfer
+  quote/submit/read đã có direct boundary; registration là group riêng vì cần
+  email provider. Internal-recipient lookup, MFA lifecycle, notifications,
+  savings và credit vẫn đi qua `PostgresRelationalRepository.withState`. Vì vậy chưa được đặt
   `BANKING_PERSISTENCE_MODE=relational-v2` cho toàn bộ HTTP, chưa đặt
   `WORKER_CUTOVER_CONFIRMED=1` và chưa ghi `STAGING VERIFIED`.
 - Chưa có provider cloud cụ thể, registry/GHCR digest, Cosign identity thật,
