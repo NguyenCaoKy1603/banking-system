@@ -23,6 +23,33 @@
         }
       }
     },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "adminWeb": {
+          "type": ["object", "null"],
+          "required": ["reference", "digest"],
+          "properties": {
+            "reference": { "type": "string", "minLength": 1 },
+            "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+            "signatureVerified": { "type": "boolean" },
+            "attestations": {
+              "type": "object",
+              "required": ["sbom", "provenance"],
+              "properties": { "sbom": { "type": "boolean" }, "provenance": { "type": "boolean" } }
+            }
+          }
+        },
+        "mobileApk": {
+          "type": ["object", "null"],
+          "required": ["sha256"],
+          "properties": {
+            "artifact": { "type": ["string", "null"] },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
+      }
+    },
     "database": {
       "type": "object",
       "required": ["migrationSetDigest", "minimumCompatibleSchema", "maximumCompatibleSchema"],
@@ -33,6 +60,13 @@
       }
     },
     "contracts": { "type": "object", "required": ["openapiDigest", "configSchemaVersion"] },
-    "build": { "type": "object", "required": ["builtAt", "builder"] }
+    "build": { "type": "object", "required": ["builtAt", "builder"] },
+    "promotion": {
+      "type": "object",
+      "properties": {
+        "staging": { "type": ["object", "null"] },
+        "productionLike": { "type": ["object", "null"] }
+      }
+    }
   }
 }

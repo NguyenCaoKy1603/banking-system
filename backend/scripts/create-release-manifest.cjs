@@ -19,6 +19,13 @@ const root = path.resolve(__dirname, "../..");
 const sourceCommit = arg("source-commit", git("rev-parse", "HEAD"));
 const imageDigest = arg("image-digest");
 const imageReference = arg("image");
+const adminImageDigest = arg("admin-image-digest", null);
+const adminImageReference = arg("admin-image", null);
+const adminSignatureVerified = arg("admin-signature-verified", "false") === "true";
+const adminSbomPresent = arg("admin-sbom-present", "false") === "true";
+const adminProvenancePresent = arg("admin-provenance-present", "false") === "true";
+const apkSha256 = arg("apk-sha256", null);
+const apkArtifact = arg("apk-artifact", null);
 const releaseId = arg("release-id");
 const output = arg("output", path.join(root, "release-manifest.json"));
 const signatureVerified = arg("signature-verified", "false") === "true";
@@ -32,6 +39,14 @@ if (checkedOutCommit.toLowerCase() !== sourceCommit.toLowerCase()) throw new Err
 if (git("status", "--porcelain=v1")) throw new Error("release manifest requires a clean source tree; run release:gate first.");
 if (!/^sha256:[0-9a-f]{64}$/i.test(imageDigest ?? "")) throw new Error("image-digest must be a manifest sha256 digest.");
 if (!imageReference?.trim()) throw new Error("image reference is required.");
+if ((adminImageReference && !adminImageDigest) || (!adminImageReference && adminImageDigest)) {
+  throw new Error("admin-image and admin-image-digest must be supplied together.");
+}
+if (adminImageDigest && !/^sha256:[0-9a-f]{64}$/i.test(adminImageDigest)) throw new Error("admin-image-digest must be a manifest sha256 digest.");
+if (adminImageReference && (!adminSignatureVerified || !adminSbomPresent || !adminProvenancePresent)) {
+  throw new Error("Admin Web image requires verified signature, SBOM and provenance flags.");
+}
+if (apkSha256 && !/^[0-9a-f]{64}$/i.test(apkSha256)) throw new Error("apk-sha256 must be a 64-character SHA-256 hex digest.");
 if (!releaseId?.trim()) throw new Error("release-id is required.");
 
 const migrationDirectory = path.join(root, "backend", "database");
@@ -59,6 +74,19 @@ const manifest = {
       provenance: provenancePresent,
     },
   },
+  artifacts: {
+    adminWeb: adminImageReference && adminImageDigest
+      ? {
+          reference: adminImageReference,
+          digest: adminImageDigest,
+          signatureVerified: adminSignatureVerified,
+          attestations: { sbom: adminSbomPresent, provenance: adminProvenancePresent },
+        }
+      : null,
+    mobileApk: apkSha256
+      ? { artifact: apkArtifact, sha256: apkSha256 }
+      : null,
+  },
   database: {
     firstMigration,
     lastMigration,
@@ -72,6 +100,7 @@ const manifest = {
   },
   build: {
     workflowRunId: arg("workflow-run-id", null),
+    ciRunId: arg("ci-run-id", arg("workflow-run-id", null)),
     builtAt: arg("built-at", new Date().toISOString()),
     builder: arg("builder", "github-actions"),
   },
@@ -79,4 +108,4 @@ const manifest = {
   rollbackTargetDigest: arg("rollback-target-digest", null),
 };
 writeFileSync(output, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", flag: "w" });
-console.log(JSON.stringify({ output, releaseId, sourceCommit, imageDigest, migrationSetDigest: manifest.database.migrationSetDigest }, null, 2));
+console.log(JSON.stringify({ output, releaseId, sourceCommit, imageDigest, adminImageDigest, apkSha256, migrationSetDigest: manifest.database.migrationSetDigest }, null, 2));

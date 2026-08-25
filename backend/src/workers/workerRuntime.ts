@@ -38,6 +38,12 @@ export type WorkerConfig = {
   environment?: "development" | "test" | "preview" | "staging" | "production-like";
 };
 
+export function assertWorkerCutoverConfirmed(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.WORKER_CUTOVER_CONFIRMED !== "1") {
+    throw new Error("Worker start is blocked until the HTTP relational-v2 cutover is explicitly confirmed.");
+  }
+}
+
 function positiveEnv(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
   if (!raw) return fallback;

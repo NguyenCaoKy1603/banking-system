@@ -1,6 +1,7 @@
 import type { RuntimeConfig } from "../runtimeConfig.js";
 import { LocalDevelopmentSecretProvider } from "./LocalDevelopmentSecretProvider.js";
 import { ManagedSecretProvider, type ManagedSecretClient } from "./ManagedSecretProvider.js";
+import { MountedSecretClient } from "./MountedSecretClient.js";
 import { SecretCache } from "./secretCache.js";
 import type { SecretProvider, SecretReference } from "./SecretProvider.js";
 
@@ -25,7 +26,9 @@ export function createRuntimeSecretProvider(
   if (env.BANKING_SECRET_PROVIDER?.trim().toLowerCase() !== "managed") {
     throw new Error("Staging and production-like runtimes require BANKING_SECRET_PROVIDER=managed.");
   }
-  return new SecretCache(new ManagedSecretProvider(options.managedClient));
+  const mountedDirectory = env.BANKING_MANAGED_SECRETS_DIR?.trim();
+  const managedClient = options.managedClient ?? (mountedDirectory ? new MountedSecretClient(mountedDirectory) : undefined);
+  return new SecretCache(new ManagedSecretProvider(managedClient));
 }
 
 export function referenceFor(

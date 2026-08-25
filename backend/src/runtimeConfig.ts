@@ -12,6 +12,7 @@ export type RuntimeConfig = {
   bankingEnvironment: BankingRuntimeEnvironment;
   moneyMode: "virtual";
   storage: "postgres" | "in-memory";
+  persistenceMode: "legacy-state" | "relational-v2";
   isProductionLike: boolean;
   commitSha: string;
   releaseId: string;
@@ -72,6 +73,7 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   const bankingEnvironment = (env.BANKING_ENV?.trim().toLowerCase() || "development") as BankingRuntimeEnvironment;
   const moneyMode = (env.BANKING_MONEY_MODE?.trim().toLowerCase() || "virtual");
   const storage = (env.BANKING_STORAGE?.trim().toLowerCase() || "postgres") as RuntimeConfig["storage"];
+  const persistenceMode = (env.BANKING_PERSISTENCE_MODE?.trim().toLowerCase() || "legacy-state") as RuntimeConfig["persistenceMode"];
   const isProductionLike = bankingEnvironment === "staging" || bankingEnvironment === "production-like";
 
   if (!new Set(["development", "test", "preview", "production"]).has(nodeEnv)) {
@@ -89,6 +91,9 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
   if (storage !== "postgres" && storage !== "in-memory") {
     throw new Error("BANKING_STORAGE must be postgres or in-memory.");
   }
+  if (persistenceMode !== "legacy-state" && persistenceMode !== "relational-v2") {
+    throw new Error("BANKING_PERSISTENCE_MODE must be legacy-state or relational-v2.");
+  }
 
   if (isProductionLike) {
     if (nodeEnv !== "production") {
@@ -96,6 +101,9 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     }
     if (storage !== "postgres") {
       throw new Error("Staging and production-like runtimes require PostgreSQL storage.");
+    }
+    if (persistenceMode !== "relational-v2") {
+      throw new Error("Staging and production-like runtimes require BANKING_PERSISTENCE_MODE=relational-v2; legacy full-state writes are forbidden.");
     }
     if (env.DATABASE_SSL_MODE?.trim().toLowerCase() !== "verify-full") {
       throw new Error("Staging and production-like runtimes require DATABASE_SSL_MODE=verify-full.");
@@ -132,6 +140,7 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
       bankingEnvironment,
       moneyMode: "virtual",
       storage,
+      persistenceMode,
       isProductionLike,
       commitSha,
       releaseId: required(env.RELEASE_ID, "RELEASE_ID"),
@@ -148,6 +157,7 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     bankingEnvironment,
     moneyMode: "virtual",
     storage,
+    persistenceMode,
     isProductionLike: false,
     commitSha: env.BUILD_COMMIT_SHA?.trim() || "local",
     releaseId: env.RELEASE_ID?.trim() || "local",

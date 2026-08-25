@@ -12,6 +12,7 @@ const productionEnv = (): NodeJS.ProcessEnv => ({
   BANKING_ENV: "staging",
   BANKING_MONEY_MODE: "virtual",
   BANKING_STORAGE: "postgres",
+  BANKING_PERSISTENCE_MODE: "relational-v2",
   DATABASE_URL: "postgresql://banking:secret@db.example.test/banking",
   DATABASE_SSL_MODE: "verify-full",
   DATABASE_SERVER_NAME: "db.example.test",
@@ -32,6 +33,7 @@ test("production-like runtime contract is strict and virtual-money only", () => 
   assert.equal(config.nodeEnv, "production");
   assert.equal(config.moneyMode, "virtual");
   assert.equal(config.isProductionLike, true);
+  assert.equal(config.persistenceMode, "relational-v2");
 
   assert.throws(
     () => readRuntimeConfig({ ...productionEnv(), BANKING_MONEY_MODE: "real" }),
@@ -44,6 +46,10 @@ test("production-like runtime contract is strict and virtual-money only", () => 
   assert.throws(
     () => readRuntimeConfig({ ...productionEnv(), DATABASE_SERVER_NAME: "" }),
     /DATABASE_SERVER_NAME/,
+  );
+  assert.throws(
+    () => readRuntimeConfig({ ...productionEnv(), BANKING_PERSISTENCE_MODE: "legacy-state" }),
+    /BANKING_PERSISTENCE_MODE=relational-v2/,
   );
   assert.throws(
     () => readRuntimeConfig({ ...productionEnv(), BUILD_COMMIT_SHA: "local" }),

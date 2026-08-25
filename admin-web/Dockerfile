@@ -11,6 +11,14 @@ ENV VITE_ADMIN_API_URL=${VITE_ADMIN_API_URL}
 RUN npm run build
 
 FROM nginx:1.27-alpine
+ARG COMMIT_SHA=local
+ARG RELEASE_ID=local
+ARG BUILD_CREATED_AT=unknown
+LABEL org.opencontainers.image.title="banking-admin-web" \
+      org.opencontainers.image.source="https://github.com/NguyenCaoKy1603/banking-system" \
+      org.opencontainers.image.revision="${COMMIT_SHA}" \
+      org.opencontainers.image.created="${BUILD_CREATED_AT}" \
+      org.opencontainers.image.version="${RELEASE_ID}"
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

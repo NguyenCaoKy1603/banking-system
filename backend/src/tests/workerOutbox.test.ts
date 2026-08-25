@@ -11,11 +11,19 @@ import {
 import { ProviderError } from "../outbox/errorClassifier.js";
 import { PostgresOutboxRepository } from "../outbox/postgresOutboxRepository.js";
 import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
-import { WorkerRuntime, type WorkerConfig } from "../workers/workerRuntime.js";
+import { assertWorkerCutoverConfirmed, WorkerRuntime, type WorkerConfig } from "../workers/workerRuntime.js";
 
 const databaseUrl =
   process.env.WORKER_DATABASE_URL?.trim();
 const workerEnvironment = process.env.BANKING_ENV?.trim() || "preview";
+
+test("worker startup requires explicit HTTP relational-v2 cutover confirmation", () => {
+  assert.throws(
+    () => assertWorkerCutoverConfirmed({ WORKER_CUTOVER_CONFIRMED: "0" }),
+    /cutover is explicitly confirmed/,
+  );
+  assert.doesNotThrow(() => assertWorkerCutoverConfirmed({ WORKER_CUTOVER_CONFIRMED: "1" }));
+});
 
 async function clearDatabase(database: DatabasePool): Promise<void> {
   // This helper owns a disposable worker test database. TRUNCATE avoids

@@ -120,3 +120,22 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 - Local PostgreSQL 16 rehearsal đạt: verify/tamper tests, restore database mới, 28 migration checksum, counts nghiệp vụ, ledger debit=credit và orphan reference `0`; actual RTO lần chạy là 3.509s, actual RPO chưa đo.
 - Đã thêm policy/runbook PITR, key rotation, provider infrastructure contract, alert/dashboard contract; các file này chưa được nối vào Prometheus/Grafana/KMS/object storage.
 - Còn mở: managed PostgreSQL, base backup + continuous WAL/PITR, KMS/object storage/retention audit, scheduler production, RPO ≤5 phút/RTO ≤60 phút drill, session/outbox recovery cutover và staging evidence. Trạng thái vẫn **UNTRUSTED LOCAL PREVIEW**.
+
+## Staging-readiness hardening local — 2026-08-25
+
+- Đã thêm runtime guard: staging/production-like bắt buộc
+  `BANKING_PERSISTENCE_MODE=relational-v2`; worker fail-closed khi thiếu
+  `WORKER_CUTOVER_CONFIRMED=1`, không cho lách bằng legacy writer.
+- Đã thêm `MountedSecretClient` provider-neutral cho secret manager mount có
+  version sidecar; staging không fallback về `.env`.
+- Đã mở rộng release manifest/verifier cho Admin Web digest và APK SHA-256;
+  workflow container release phải build/ký Admin Web riêng và verify Cosign
+  signature, provenance và SBOM attestation trước khi ghi cờ evidence; URL API
+  Admin staging phải được cấp qua repository variable, không bake placeholder
+  vào release.
+- Đã thêm EAS profile `staging`, OCI labels cho Admin Web và contract
+  `infrastructure/staging/`. Đây chỉ là cấu hình/preflight local.
+- Evidence local mới: `documents/05-testing/staging-readiness/`.
+- Chưa đóng: full HTTP relational-v2 cutover, provider/registry/HTTPS staging,
+  APK signing/device E2E, managed PostgreSQL/secret, backup/restore/rollback
+  staging và reviewer độc lập. Trạng thái vẫn **UNTRUSTED LOCAL PREVIEW**.

@@ -45,7 +45,7 @@ COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_m
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/database ./database
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
-COPY --chown=node:node scripts/apply-migration.cjs scripts/container-smoke.cjs scripts/outbox-inspect.cjs scripts/outbox-inventory.cjs scripts/validate-outbox-worker.cjs scripts/postgres-ssl.cjs scripts/backup-common.cjs scripts/backup-create.cjs scripts/backup-verify.cjs scripts/restore-rehearsal.cjs scripts/backup-retention.cjs scripts/validate-backup-surface.cjs scripts/pitr-drill.cjs scripts/backup-scheduler.cjs scripts/dr-recovery-marker.cjs scripts/encrypted-backup.cjs scripts/migration-fingerprint.cjs ./scripts/
+COPY --chown=node:node scripts/apply-migration.cjs scripts/container-smoke.cjs scripts/outbox-inspect.cjs scripts/outbox-inventory.cjs scripts/validate-outbox-worker.cjs scripts/postgres-ssl.cjs scripts/backup-common.cjs scripts/backup-create.cjs scripts/backup-verify.cjs scripts/restore-rehearsal.cjs scripts/backup-retention.cjs scripts/validate-backup-surface.cjs scripts/pitr-drill.cjs scripts/backup-scheduler.cjs scripts/dr-recovery-marker.cjs scripts/encrypted-backup.cjs scripts/migration-fingerprint.cjs scripts/verify-release-manifest.cjs ./scripts/
 
 USER node
 

@@ -19,6 +19,7 @@
     "release:gate": "node scripts/release-gate.cjs",
     "release:migration-fingerprint": "node scripts/migration-fingerprint.cjs",
     "release:manifest": "node scripts/create-release-manifest.cjs",
+    "release:verify-manifest": "node scripts/verify-release-manifest.cjs",
     "validate:secrets": "node scripts/validate-secret-surface.cjs",
     "validate:secret-registry": "node scripts/validate-secret-registry.cjs",
     "validate:image-surface": "node scripts/validate-image-surface.cjs",

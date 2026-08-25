@@ -71,7 +71,13 @@ npm run test:critical
 npm start
 ```
 
-EAS profile nằm trong [`eas.json`](./eas.json). Checklist pilot nằm trong [`documents/mobile-pilot-runbook.md`](../documents/mobile-pilot-runbook.md).
+EAS profile nằm trong [`eas.json`](./eas.json), gồm `preview`, `staging` và
+`production`. Profile `staging` chỉ là cấu hình build; nó không chứng minh đã
+có EAS project, signing key hoặc API HTTPS staging. Tài khoản EAS có thể cần
+quyền cho custom environment `staging`; nếu không có, dùng build APK release
+local với biến URL staging. Có thể thay EAS bằng
+Android release build local miễn là APK được ký, có SHA-256 và kết nối đúng
+staging URL. Checklist pilot nằm trong [`documents/mobile-pilot-runbook.md`](../documents/mobile-pilot-runbook.md).
 Native E2E flow dùng Maestro nằm trong [`e2e/maestro`](./e2e/maestro); cần preview/native build và thiết bị thật để chạy.
 Scope/threat model/data classification nằm trong [`documents/architecture/banking-mvp-scope-and-risk.md`](../documents/architecture/banking-mvp-scope-and-risk.md).
 

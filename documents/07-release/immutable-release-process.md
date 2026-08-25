@@ -10,6 +10,10 @@ Ngày cập nhật: 2026-08-25
 
 Một release được build đúng một lần từ commit sạch trong CI. Staging và Production-like chỉ nhận cùng một image manifest digest; không dùng `latest`, không build lại và không sửa code trên server.
 
+Backend API, migration, Admin API và worker dùng cùng backend digest; Admin Web
+được build/ký bằng digest riêng. URL API được bake vào Admin Web chỉ được lấy
+từ repository variable đã được owner cấu hình, không dùng placeholder.
+
 ```text
 clean commit
   → quality gates
@@ -34,6 +38,12 @@ npm run db:migrate -- --verify-only
 ```
 
 `release:gate` phải trả `promotionAllowed=true`; mọi migration từ `001` tới migration mới nhất phải được Git theo dõi và checksum phải nằm trong release manifest. Nếu worktree dirty, image digest là `unknown` hoặc chưa có chữ ký/provenance/staging evidence thì chỉ được ghi nhận là **UNTRUSTED LOCAL PREVIEW**, không được promote.
+
+Staging/production-like còn bắt buộc `BANKING_PERSISTENCE_MODE=relational-v2`.
+HTTP legacy full-state writer không được chạy cùng worker; worker entrypoint
+fail-closed nếu thiếu `WORKER_CUTOVER_CONFIRMED=1`. Secret provider managed có
+thể nhận secret từ provider mount qua `BANKING_MANAGED_SECRETS_DIR`, với version
+sidecar cho từng secret; không được fallback về `.env`.
 
 ## Runtime contract
 

@@ -1,5 +1,5 @@
 import { WorkerHealthServer } from "./workers/workerHealth.js";
-import { WorkerRuntime, createProviderSetFromSecretProvider, workerConfigFromEnv } from "./workers/workerRuntime.js";
+import { WorkerRuntime, assertWorkerCutoverConfirmed, createProviderSetFromSecretProvider, workerConfigFromEnv } from "./workers/workerRuntime.js";
 import { readRuntimeConfig } from "./runtimeConfig.js";
 import { createRuntimeSecretProvider, referenceFor } from "./secrets/runtimeSecrets.js";
 
@@ -7,6 +7,7 @@ async function main(): Promise<void> {
   if (process.env.WORKER_ENABLED !== "1") {
     throw new Error("WORKER_ENABLED must be 1 to start the worker process.");
   }
+  assertWorkerCutoverConfirmed();
   const runtimeConfig = readRuntimeConfig();
   const secretProvider = createRuntimeSecretProvider(runtimeConfig);
   const databaseSecret = await secretProvider.getSecret(referenceFor("databaseUrl", runtimeConfig.bankingEnvironment));
