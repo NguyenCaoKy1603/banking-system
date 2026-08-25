@@ -1,5 +1,8 @@
 # Local staging-readiness preflight — 2026-08-25
 
+> Historical pre-cutover evidence. The current local relational-v2 customer
+> cutover is recorded in [`relational-v2-cutover-2026-08-26.md`](relational-v2-cutover-2026-08-26.md).
+
 ## Kết luận
 
 Đây là bằng chứng kiểm tra local/provider-neutral, không phải staging

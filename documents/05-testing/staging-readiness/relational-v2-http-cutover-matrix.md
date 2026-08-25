@@ -1,6 +1,6 @@
 # Relational-v2 HTTP cutover matrix
 
-Ngày cập nhật: 2026-08-25  
+Ngày cập nhật: 2026-08-26
 Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — worker chưa bật; staging/production evidence chưa có**
 
 ## Phạm vi đã nối trực tiếp

@@ -182,9 +182,10 @@ services:
       - "127.0.0.1:${ADMIN_WEB_PORT:-5173}:80"
     restart: unless-stopped
 
-  # Opt-in only: the current HTTP server still has a legacy full-state writer.
-  # Do not enable this profile until BANKING_PERSISTENCE_MODE is cut over to
-  # direct relational-v2 writes and the boundary regression is accepted.
+  # Opt-in only: local customer HTTP routes are now direct relational-v2 when
+  # BANKING_PERSISTENCE_MODE=relational-v2, but registration and scheduled
+  # settlement/maturity remain out of scope. Do not enable this profile until
+  # those boundaries have their approved worker/core evidence.
   worker:
     profiles: ["worker"]
     build:

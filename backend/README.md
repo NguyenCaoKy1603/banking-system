@@ -4,13 +4,13 @@
 
 Đây là backend reference cho môi trường local của mobile app. Runtime mặc định dùng PostgreSQL persistent relational reference adapter; in-memory chỉ dành cho unit/reference test nhanh. PBKDF2 và core-banking adapter giả lập được dùng để kiểm chứng contract, state machine, refresh rotation, idempotency, audit/outbox và reconciliation.
 
-Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql), phần mở rộng reference runtime ở [`database/005_relational_reference_runtime.sql`](database/005_relational_reference_runtime.sql). Các migration P0 `006`–`011` bổ sung command idempotency, sequence account number, constraint/index transfer, normalized identity runtime, operation tables cho Savings/Credit và registration response recovery. HTTP preview hiện vẫn dùng adapter legacy để giữ tương thích trong lúc cutover; `reference_runtime_records` chưa được xóa và chưa được tuyên bố là relational-v2 source of truth.
+Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql), phần mở rộng reference runtime ở [`database/005_relational_reference_runtime.sql`](database/005_relational_reference_runtime.sql). Các migration P0 `006`–`011` và `029`–`031` bổ sung command idempotency, identity/MFA, transfer, Savings, Credit và remaining customer routes. Local Compose hiện dùng boundary relational-v2 trực tiếp cho các route customer đã duyệt; `reference_runtime_records` chỉ còn cho migration/regression và không phải source of truth của HTTP relational-v2.
 
 ## Persistent sandbox PostgreSQL
 
-Reference runtime có thêm chế độ `BANKING_STORAGE=postgres`. Preview hiện dùng `PostgresRelationalRepository` legacy để bảo toàn API trong giai đoạn rehearsal; relational-v2 foundation nằm ở `src/database/` và được kiểm thử độc lập trên disposable database. `reference_state_snapshots` chỉ còn được đọc một lần để nâng dữ liệu sandbox cũ sang relational; dữ liệu mới không ghi lại thành một JSON snapshot tổng. Đây vẫn là sandbox-only; không dùng cho tiền thật.
+Reference runtime có thêm chế độ `BANKING_STORAGE=postgres`. Local Compose với `BANKING_PERSISTENCE_MODE=relational-v2` dùng các repository transactional trực tiếp qua `UnitOfWork`; adapter `PostgresRelationalRepository` legacy và `reference_state_snapshots` chỉ còn cho migration/regression. Dữ liệu mới của HTTP relational-v2 không ghi lại thành một JSON snapshot tổng. Đây vẫn là sandbox-only; không dùng cho tiền thật.
 
-HTTP cutover được bật theo group, không bật mặc định: `BANKING_RELATIONAL_HTTP_ROUTES=auth,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud` nối session, persistent MFA lifecycle, account reads, beneficiary CRUD, transfer, Savings, Credit, recipient lookup, notification và fraud report trực tiếp qua UnitOfWork PostgreSQL, bỏ `withState` cho đúng các route đó. `registration` là group riêng vì cần email provider có evidence; các scheduled settlement/maturity chưa bật worker và KYC/profile customer chưa có public contract nên được ghi rõ out-of-scope. Bản đồ và gate nằm tại [`documents/05-testing/staging-readiness/relational-v2-http-cutover-matrix.md`](../documents/05-testing/staging-readiness/relational-v2-http-cutover-matrix.md). Không dùng group flag này để tuyên bố staging verified.
+HTTP cutover local dùng `BANKING_PERSISTENCE_MODE=relational-v2` và group `auth,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud` để nối session, persistent MFA lifecycle, account reads, beneficiary CRUD, transfer, Savings, Credit, recipient lookup, notification và fraud report trực tiếp qua UnitOfWork PostgreSQL, không gọi `withState`. `registration` là group riêng vì cần email provider có evidence; scheduled settlement/maturity chưa bật worker và KYC/profile customer chưa có public contract nên được ghi rõ out-of-scope. Bản đồ và gate nằm tại [`documents/05-testing/staging-readiness/relational-v2-http-cutover-matrix.md`](../documents/05-testing/staging-readiness/relational-v2-http-cutover-matrix.md). Local vẫn là `UNTRUSTED LOCAL PREVIEW` với `IMAGE_DIGEST=unknown`, không phải staging verified.
 
 ```powershell
 $env:DATABASE_URL = "postgresql://banking:banking@localhost:5432/banking_test"
@@ -62,11 +62,11 @@ Giai đoạn 1 bổ sung `/livez` cho liveness độc lập database, `/startupz
 
 Local server mặc định cho phép CORS `*`; production phải cấu hình `BANKING_ALLOWED_ORIGINS` bằng allowlist origin đã phê duyệt. Có thể giới hạn pilot bằng `BANKING_ALLOWLIST_ENABLED=1` và `BANKING_MAX_TRANSFER_AMOUNT_MINOR` (đơn vị minor-unit VND); các giới hạn này được áp ở server.
 
-## Cấu hình chạy hiện tại — 2026-08-17
+## Cấu hình chạy hiện tại — 2026-08-26
 
 - `npm start` mặc định dùng `BANKING_STORAGE=postgres` và tự đọc `.env` nếu file tồn tại. Database phải được migrate trước; lệnh chuẩn là `npm run start:persistent`.
 - `BANKING_STORAGE=in-memory` chỉ dành cho unit/reference test nhanh, không còn là chế độ runtime mặc định.
-- PostgreSQL persistent hiện dùng `PostgresRelationalRepository` legacy trong khi cutover P0 đang được rehearsal; test `npm run test:relational` kiểm tra restart/pending/reconciliation, còn `npm run test:database` kiểm tra UnitOfWork, direct transfer repository/use case và fault injection trên database disposable có `P0_RELATIONAL_DATABASE_URL`.
+- PostgreSQL local preview dùng boundary relational-v2 cho các nhóm customer đã duyệt; `npm run test:relational`, `test:savings:persistence`, `test:credit:persistence` và `test:remaining:persistence` kiểm tra restart/concurrency/rollback trên database disposable có `DATABASE_TEST_ADMIN_URL`. Worker không được bật; registration, scheduled settlement/maturity và profile/KYC customer vẫn explicit out-of-scope.
 - Chương trình mô phỏng nghiệp vụ ngân hàng bằng tiền ảo. Không có kết nối core banking, payment rail, tài khoản thật, KYC/AML thật hoặc xử lý tiền thật.
 
 ## Invariant được kiểm chứng
