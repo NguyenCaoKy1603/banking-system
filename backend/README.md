@@ -19,15 +19,21 @@ npm run db:migrate
 npm start
 ```
 
-`npm test` tự chạy đầy đủ test persistence khi có cả `DATABASE_URL` và `RELATIONAL_DATABASE_URL`; foundation test P0 dùng `P0_RELATIONAL_DATABASE_URL` disposable riêng. Nếu không có PostgreSQL local thì các test database được skip ở local và phải chạy trong workflow có PostgreSQL service. Workflow CI tương ứng nằm tại [`../.github/workflows/backend-quality.yml`](../.github/workflows/backend-quality.yml).
+Các suite PostgreSQL destructive không được trỏ vào preview. Guard bắt buộc
+`NODE_ENV=test`, `BANKING_ENV=test`, `ALLOW_DATABASE_TEST_RESET=1`, host local
+được allow và tên database `banking_test_<suffix>`. Lệnh `test:database`,
+`test:relational`, `test:persistence`, `test:admin:database` tự tạo database
+disposable từ `DATABASE_TEST_ADMIN_URL`, migrate, chạy suite và dọn database;
+không đọc `.env.compose`. Nếu không cấp maintenance URL thì lệnh dừng fail-closed,
+không skip im lặng. Workflow CI tương ứng nằm tại [`../.github/workflows/backend-quality.yml`](../.github/workflows/backend-quality.yml).
 Mẫu cấu hình không chứa credential thật nằm tại [`.env.example`](.env.example).
 
 Kiểm thử riêng repository relational phải dùng một database disposable đã migrate, không dùng database demo đang chạy:
 
 ```powershell
-$env:RELATIONAL_DATABASE_URL = "postgresql://banking:banking@localhost:5432/banking_relational_test"
-npm run db:migrate
+$env:DATABASE_TEST_ADMIN_URL = "postgresql://banking:<local-password>@localhost:5433/postgres"
 npm run test:relational
+Remove-Item Env:DATABASE_TEST_ADMIN_URL
 ```
 
 Không dùng component này cho tiền thật, production, KYC/AML hoặc thay thế core-banking partner. Trước pilot phải thay `InMemoryCoreBanking` bằng adapter được partner phê duyệt, dùng database/secret manager/observability thật và hoàn tất legal/compliance/security acceptance.

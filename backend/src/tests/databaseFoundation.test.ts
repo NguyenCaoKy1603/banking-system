@@ -4,12 +4,19 @@ import test from "node:test";
 
 import { DatabasePool, UnitOfWork, withTransactionRetry } from "../database/index.js";
 import { IdempotencyConflictError } from "../database/commandErrors.js";
+import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
 import { RelationalTransferService } from "../database/transferService.js";
 import { RelationalRegistrationService } from "../database/registrationService.js";
 
 const databaseUrl =
   process.env.P0_RELATIONAL_DATABASE_URL?.trim() ??
   process.env.RELATIONAL_DATABASE_URL?.trim();
+
+if (databaseUrl) {
+  assertDisposableDatabaseResetAllowed(databaseUrl, process.env, {
+    targetEnvName: process.env.P0_RELATIONAL_DATABASE_URL ? "P0_RELATIONAL_DATABASE_URL" : "RELATIONAL_DATABASE_URL",
+  });
+}
 
 async function clearDatabase(database: DatabasePool): Promise<void> {
   // This helper owns a disposable relational-v2 test database. TRUNCATE avoids

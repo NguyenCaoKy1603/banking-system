@@ -1519,8 +1519,8 @@ export class BankingSystem {
 
   /** Local test harness only; production-like HTTP never exposes this value. */
   readTestVerificationCode(challengeId: string): string {
-    if (this.bankingEnvironment !== "development") {
-      throw unauthorized("Reference test verification is disabled outside local development.");
+    if (!new Set(["development", "test"]).has(this.bankingEnvironment)) {
+      throw unauthorized("Reference test verification is disabled outside local development or disposable tests.");
     }
     const challengeHash = hashOpaqueToken(requireString(challengeId, "challengeId"));
     const challenge = this.authChallenges.get(challengeHash);
@@ -1736,10 +1736,10 @@ export class BankingSystem {
     idempotencyKey: string,
     input: ReferenceFundingRequest,
   ): FundingReceipt {
-    if (this.bankingEnvironment !== "development") {
+    if (!new Set(["development", "test"]).has(this.bankingEnvironment)) {
       throw conflictWithCode(
         "REFERENCE_FIXTURE_DISABLED",
-        "Reference fixture funding chỉ được phép trong local development.",
+        "Reference fixture funding chỉ được phép trong local development hoặc disposable test.",
       );
     }
     const normalizedKey = requireIdempotencyKey(idempotencyKey, 8);
@@ -1793,8 +1793,8 @@ export class BankingSystem {
   }
 
   seedReferenceCredit(userId: string): CreditCard[] {
-    if (this.bankingEnvironment !== "development") {
-      throw unauthorized("Reference fixture credit is disabled outside local development.");
+    if (!new Set(["development", "test"]).has(this.bankingEnvironment)) {
+      throw unauthorized("Reference fixture credit is disabled outside local development or disposable tests.");
     }
     if (!this.users.has(userId)) {
       throw notFound("Sandbox user not found.");
@@ -1977,7 +1977,7 @@ export class BankingSystem {
     reasonCode = "REFERENCE_REVIEW",
     approvedLimit?: Money,
   ): CreditApplication {
-    if (!this.allowUnsafeDirectSandboxStepUp || this.bankingEnvironment !== "development") {
+    if (!this.allowUnsafeDirectSandboxStepUp || !new Set(["development", "test"]).has(this.bankingEnvironment)) {
       throw unauthorized("Reference credit decisions are disabled outside test fixtures.");
     }
     const application = this.creditApplications.get(requireString(applicationId, "applicationId"));
@@ -3316,8 +3316,8 @@ export class BankingSystem {
     savingsMaturities: number;
     creditStatements: number;
   } {
-    if (this.bankingEnvironment !== "development") {
-      throw unauthorized("Reference scheduled work is disabled outside local development.");
+    if (!new Set(["development", "test"]).has(this.bankingEnvironment)) {
+      throw unauthorized("Reference scheduled work is disabled outside local development or disposable tests.");
     }
     const targetUserIds = userId
       ? [requireString(userId, "userId")]

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import test, { after, before } from "node:test";
 
 import { DatabasePool } from "../database/pool.js";
+import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
 import { EndpointCrypto } from "../notifications/endpointCrypto.js";
 import {
   FakeEmailProvider,
@@ -16,6 +17,10 @@ import { assertWorkerCutoverConfirmed, WorkerRuntime, type WorkerConfig } from "
 const databaseUrl =
   process.env.WORKER_DATABASE_URL?.trim();
 const workerEnvironment = process.env.BANKING_ENV?.trim() || "preview";
+
+if (databaseUrl) {
+  assertDisposableDatabaseResetAllowed(databaseUrl, process.env, { targetEnvName: "WORKER_DATABASE_URL" });
+}
 
 test("worker startup requires explicit HTTP relational-v2 cutover confirmation", () => {
   assert.throws(

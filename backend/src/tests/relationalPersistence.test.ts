@@ -3,9 +3,14 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 
 import { BankingSystem, type BankingSystemState } from "../bankingSystem.js";
+import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
 import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
 
 const databaseUrl = process.env.RELATIONAL_DATABASE_URL?.trim();
+
+if (databaseUrl) {
+  assertDisposableDatabaseResetAllowed(databaseUrl, process.env, { targetEnvName: "RELATIONAL_DATABASE_URL" });
+}
 
 function uniquePhone(): string {
   return `09${randomUUID().replaceAll("-", "").slice(0, 8)}`;

@@ -9,10 +9,15 @@ import {
   BankingSystem,
   type BankingSystemState,
 } from "../bankingSystem.js";
+import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
 import { createPersistentBankingServer } from "../http.js";
 import { PostgresSnapshotRepository } from "../postgresSnapshotRepository.js";
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
+
+if (databaseUrl) {
+  assertDisposableDatabaseResetAllowed(databaseUrl, process.env, { targetEnvName: "DATABASE_URL" });
+}
 
 function getAccountNumber(system: BankingSystem, userId: string): string {
   const account = system.listAccounts(userId)[0];

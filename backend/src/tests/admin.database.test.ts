@@ -5,6 +5,7 @@ import { Pool } from "pg";
 
 import { PostgresAdminRepository } from "../admin/repositories/adminRepository.js";
 import { DatabasePool } from "../database/pool.js";
+import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
 import { BankingSystem } from "../bankingSystem.js";
 import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
 import { buildEnvelope } from "../outbox/eventRegistry.js";
@@ -13,6 +14,12 @@ import { FakeEmailProvider, FakePushProvider } from "../notifications/providers/
 import { WorkerRuntime } from "../workers/workerRuntime.js";
 
 const databaseUrl = process.env.ADMIN_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim();
+
+if (databaseUrl) {
+  assertDisposableDatabaseResetAllowed(databaseUrl, process.env, {
+    targetEnvName: process.env.ADMIN_DATABASE_URL ? "ADMIN_DATABASE_URL" : "DATABASE_URL",
+  });
+}
 
 async function insertOpeningLedger(pool: Pool, accountId: string, amountMinor: string, aggregateId: string): Promise<void> {
   const client = await pool.connect();

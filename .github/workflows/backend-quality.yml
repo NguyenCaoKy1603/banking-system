@@ -18,12 +18,16 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
-      RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
-      P0_RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_p0_test
-      WORKER_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_worker_test
+      DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_core
+      RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_relational
+      P0_RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_p0
+      WORKER_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_worker
+      ADMIN_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_admin
+      DATABASE_TEST_ADMIN_URL: postgresql://banking:banking@localhost:5432/postgres
       NOTIFICATION_ENDPOINT_ENCRYPTION_KEY: ci-worker-only-key
-      BANKING_ENV: development
+      NODE_ENV: test
+      BANKING_ENV: test
+      ALLOW_DATABASE_TEST_RESET: "1"
       BANKING_MFA_REQUIRED: "0"
       BANKING_OTP_PEPPER: "base64:Y2ktb3RwLXBlcHBlci0wMTIzNDU2Nzg5MDEyMzQ1Njc="
       BANKING_MFA_ENCRYPTION_KEY: "base64:Y2ktbWZhLWVuY3J5cHRpb24ta2V5LTAxMjM0NTY3ODk="
@@ -34,11 +38,11 @@ jobs:
         env:
           POSTGRES_USER: banking
           POSTGRES_PASSWORD: banking
-          POSTGRES_DB: banking_test
+          POSTGRES_DB: banking_test_core
         ports:
           - 5432:5432
         options: >-
-          --health-cmd="pg_isready -U banking -d banking_test"
+          --health-cmd="pg_isready -U banking -d banking_test_core"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -68,8 +72,8 @@ jobs:
 
       - name: Create disposable P0 relational database
         run: |
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_p0_test"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_worker_test"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_test_p0"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_test_worker"
 
       - name: Apply PostgreSQL migration from empty database
         run: npm run db:migrate
@@ -84,12 +88,12 @@ jobs:
 
       - name: Apply P0 migrations to disposable database
         env:
-          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_p0_test
+          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_p0
         run: npm run db:migrate
 
       - name: Apply worker migrations to disposable database
         env:
-          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_worker_test
+          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_worker
         run: npm run db:migrate
 
       - name: Validate database boundary
@@ -115,6 +119,9 @@ jobs:
       - name: Dependency security audit
         run: npm audit --omit=dev --audit-level=high
 
+      - name: Verify disposable PostgreSQL guard rejects unsafe targets
+        run: npm run test:database:guard
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -122,6 +129,12 @@ jobs:
         run: npm run build
 
       - name: Unit, HTTP and PostgreSQL persistence tests
+        env:
+          DATABASE_URL: ""
+          RELATIONAL_DATABASE_URL: ""
+          P0_RELATIONAL_DATABASE_URL: ""
+          WORKER_DATABASE_URL: ""
+          ADMIN_DATABASE_URL: ""
         run: npm test
 
       - name: Critical API tests
@@ -139,9 +152,10 @@ jobs:
           npm run test:admin:concurrency
 
       - name: Relational persistence regression
-        env:
-          RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
         run: npm run test:relational
+
+      - name: Legacy snapshot persistence regression
+        run: npm run test:persistence
 
       - name: Relational-v2 foundation regression
         run: npm run test:database
