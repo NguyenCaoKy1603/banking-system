@@ -13,6 +13,7 @@ const {
   spawnResult,
   writeJsonExclusive,
 } = require("./backup-common.cjs");
+const { migrationChecksum, rawMigrationChecksum } = require("./migration-content.cjs");
 const { readManifest } = require("./backup-verify.cjs");
 
 function firstNonEmpty(...values) {
@@ -90,14 +91,20 @@ async function dropDatabase(driver, targetName, settings, composeEnvFile, servic
 function migrationChecksums() {
   const directory = path.join(repoRoot, "backend", "database");
   const files = fs.readdirSync(directory).filter((fileName) => /^\d+_.+\.sql$/i.test(fileName)).sort((left, right) => left.localeCompare(right, "en", { numeric: true }));
-  const { createHash } = require("node:crypto");
-  return files.map((fileName) => ({ migrationKey: fileName.replace(/\.sql$/i, ""), checksum: createHash("sha256").update(fs.readFileSync(path.join(directory, fileName))).digest("hex") }));
+  return files.map((fileName) => {
+    const sql = fs.readFileSync(path.join(directory, fileName), "utf8");
+    return {
+      migrationKey: fileName.replace(/\.sql$/i, ""),
+      checksum: migrationChecksum(sql),
+      legacyChecksum: rawMigrationChecksum(sql),
+    };
+  });
 }
 
 async function validateTarget(driver, targetName, settings, composeEnvFile, service, manifest) {
   const migrationRows = JSON.parse(await runSql(driver, "SELECT COALESCE(json_agg(json_build_object('migrationKey', migration_key, 'checksum', checksum, 'status', status) ORDER BY migration_key), '[]'::json)::text FROM reference_schema_migrations", settings, targetName, composeEnvFile, service));
   const expected = migrationChecksums();
-  if (migrationRows.length !== expected.length || migrationRows.some((row, index) => row.migrationKey !== expected[index].migrationKey || row.checksum !== expected[index].checksum || row.status !== "APPLIED")) {
+  if (migrationRows.length !== expected.length || migrationRows.some((row, index) => row.migrationKey !== expected[index].migrationKey || (row.checksum !== expected[index].checksum && row.checksum !== expected[index].legacyChecksum) || row.status !== "APPLIED")) {
     throw new Error("Restored migration checksums do not match the current source tree.");
   }
   const fingerprint = migrationFingerprint();

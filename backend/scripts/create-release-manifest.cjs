@@ -2,6 +2,7 @@ const { createHash } = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { readFileSync, readdirSync, writeFileSync } = require("node:fs");
 const path = require("node:path");
+const { migrationSetDigest } = require("./migration-content.cjs");
 
 function arg(name, fallback = undefined) {
   const prefix = `--${name}`;
@@ -53,8 +54,7 @@ const migrationDirectory = path.join(root, "backend", "database");
 const files = readdirSync(migrationDirectory)
   .filter((fileName) => /^\d+_.+\.sql$/i.test(fileName))
   .sort((left, right) => left.localeCompare(right, "en", { numeric: true }));
-const migrationHash = createHash("sha256");
-for (const fileName of files) migrationHash.update(`${fileName}\0${readFileSync(path.join(migrationDirectory, fileName))}\0`);
+const migrationEntries = files.map((fileName) => ({ fileName, sql: readFileSync(path.join(migrationDirectory, fileName), "utf8") }));
 const openApiPath = path.join(root, "documents", "api", "banking-mvp.openapi.yaml");
 const openApiDigest = createHash("sha256").update(readFileSync(openApiPath)).digest("hex");
 const firstMigration = files[0]?.replace(/\.sql$/i, "") ?? null;
@@ -90,7 +90,7 @@ const manifest = {
   database: {
     firstMigration,
     lastMigration,
-    migrationSetDigest: migrationHash.digest("hex"),
+    migrationSetDigest: migrationSetDigest(migrationEntries),
     minimumCompatibleSchema: Number(lastMigration?.match(/^(\d+)_/)?.[1] ?? 0),
     maximumCompatibleSchema: Number(lastMigration?.match(/^(\d+)_/)?.[1] ?? 0),
   },

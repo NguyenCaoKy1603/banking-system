@@ -1,8 +1,8 @@
 const { readdir, readFile } = require("node:fs/promises");
-const { createHash } = require("node:crypto");
 const path = require("node:path");
 const { Pool } = require("pg");
 const { resolvePostgresSsl } = require("./postgres-ssl.cjs");
+const { canonicalMigrationSql, migrationChecksum, rawMigrationChecksum, migrationSetDigest } = require("./migration-content.cjs");
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
 if (!databaseUrl) {
@@ -154,12 +154,17 @@ async function main() {
     migrationFiles.splice(targetIndex + 1);
   }
   const migrations = await Promise.all(migrationFiles.map(async (fileName) => {
-    const sql = await readFile(path.join(databaseDirectory, fileName), "utf8");
-    return { fileName, migrationKey: fileName.replace(/\.sql$/i, ""), sql, checksum: createHash("sha256").update(sql).digest("hex") };
+    const rawSql = await readFile(path.join(databaseDirectory, fileName), "utf8");
+    const sql = canonicalMigrationSql(rawSql);
+    return {
+      fileName,
+      migrationKey: fileName.replace(/\.sql$/i, ""),
+      sql,
+      checksum: migrationChecksum(rawSql),
+      legacyChecksum: rawMigrationChecksum(rawSql),
+    };
   }));
-  const migrationSetDigest = createHash("sha256");
-  for (const migration of migrations) migrationSetDigest.update(`${migration.fileName}\0${migration.sql}\0`);
-  const migrationSetFingerprint = migrationSetDigest.digest("hex");
+  const migrationSetFingerprint = migrationSetDigest(migrations);
   const pool = new Pool({ connectionString: databaseUrl, ssl: resolvePostgresSsl() });
 
   try {
@@ -217,7 +222,7 @@ async function main() {
       const pending = migrations.filter((migration) => !appliedByKey.has(migration.migrationKey)).map((migration) => migration.migrationKey);
       const checksumMismatches = migrations.filter((migration) => {
         const recorded = appliedByKey.get(migration.migrationKey)?.checksum;
-        return recorded && recorded !== migration.checksum;
+        return recorded && recorded !== migration.checksum && recorded !== migration.legacyChecksum;
       }).map((migration) => migration.migrationKey);
       const result = { mode, target: target ?? null, executionId, releaseId, commitSha, imageDigest, migrationSetDigest: migrationSetFingerprint, pending, checksumMismatches };
       console.log(JSON.stringify(result, null, 2));
@@ -240,9 +245,16 @@ async function main() {
         );
         if (applied.rowCount) {
           const recordedChecksum = applied.rows[0]?.checksum;
-          if (recordedChecksum && recordedChecksum !== checksum) {
+          const legacyLineEndingOnly = recordedChecksum && recordedChecksum !== checksum && recordedChecksum === migrationEntry.legacyChecksum;
+          if (recordedChecksum && recordedChecksum !== checksum && !legacyLineEndingOnly) {
             throw new Error(
               `Migration checksum mismatch for ${migrationKey}; refusing to run a modified applied migration.`,
+            );
+          }
+          if (legacyLineEndingOnly) {
+            await pool.query(
+              "UPDATE reference_schema_migrations SET checksum = $2 WHERE migration_key = $1",
+              [migrationKey, checksum],
             );
           }
           if (!recordedChecksum) {

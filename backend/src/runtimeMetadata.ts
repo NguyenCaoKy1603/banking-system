@@ -28,6 +28,10 @@ function migrationFiles(directory = process.env.MIGRATION_DIRECTORY ?? path.reso
   }
 }
 
+function canonicalMigrationSql(value: string): string {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 export function migrationSetDigest(directory?: string): { digest: string; schemaVersion: string } {
   const resolvedDirectory = directory ?? process.env.MIGRATION_DIRECTORY ?? path.resolve(process.cwd(), "database");
   const files = migrationFiles(resolvedDirectory);
@@ -35,7 +39,7 @@ export function migrationSetDigest(directory?: string): { digest: string; schema
   for (const fileName of files) {
     hash.update(fileName);
     hash.update("\0");
-    hash.update(readFileSync(path.join(resolvedDirectory, fileName)));
+    hash.update(canonicalMigrationSql(readFileSync(path.join(resolvedDirectory, fileName), "utf8")), "utf8");
     hash.update("\0");
   }
   const lastKey = files.at(-1)?.match(/^(\d+)_/)?.[1];
