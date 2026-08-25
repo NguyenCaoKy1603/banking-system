@@ -21,6 +21,7 @@ Trạng thái: **INCREMENTAL CUTOVER — chưa đủ điều kiện bật `BANKI
 | Transfer quote | `POST /api/v1/transfers/quote` | `transfer_quotes`, `beneficiaries`, `payment_accounts` | Direct khi `...=transfers` | quote expiry, recipient ownership, quote fingerprint |
 | Transfer submit | `POST /api/v1/transfers` | `transfers`, `payment_accounts`, `account_transactions`, `ledger_*`, `audit_events`, `outbox_events` | Direct khi `...=transfers` và persistent TOTP | idempotency, quote consume, lock ordering, balanced ledger, atomic outbox |
 | Transfer read | `GET /api/v1/transfers/:id` | `transfers` | Direct khi `...=transfers` | customer ownership + receipt mapping |
+| Internal recipient lookup | `POST /api/v1/internal-recipients/lookup` | `payment_accounts`, `customers`, `recipient_lookups`, `audit_events` | Direct khi `...=recipients` | ownership/self-transfer guard, expiry, hashed lookup token, transfer quote integration |
 | Savings products | `GET /api/v1/savings/products` | `savings_products`, `control_policy` | Direct khi `...=savings` | active catalogue, policy gate, no state mutation |
 | Savings quote | `POST /api/v1/savings/quotes` | `savings_quotes`, `savings_products`, `payment_accounts` | Direct khi `...=savings` | amount/product validation, quote expiry/fingerprint |
 | Savings opening | `POST /api/v1/savings/deposits` | `savings_idempotency`, `savings_quotes`, `savings_openings`, `savings_deposits`, `payment_accounts`, `account_transactions`, `ledger_*`, `audit_events`, `outbox_events` | Direct khi `...=savings` và persistent TOTP | one-time quote, concurrent idempotency, atomic debit/ledger/audit/outbox, rollback |
@@ -30,6 +31,8 @@ Trạng thái: **INCREMENTAL CUTOVER — chưa đủ điều kiện bật `BANKI
 | Credit application | `GET/POST /api/v1/credit/applications*`, `POST .../:id/activate` | `credit_applications`, `credit_idempotency`, `credit_accounts`, `credit_cards`, `credit_statements`, `audit_events`, `outbox_events` | Direct khi `...=credit` và persistent TOTP cho command | request idempotency, explicit admin decision state, activation atomicity and restart |
 | Credit account/statement reads | `GET /api/v1/credit/accounts*`, transactions, statements | `credit_accounts`, `credit_transactions`, `credit_statements`, `credit_statement_items`, `credit_payments` | Direct khi `...=credit` | ownership, keyset cursor, GET không mutate |
 | Credit payment | `POST /api/v1/credit/payment-quotes`, `/payments`, `GET /api/v1/credit/payments/:id` | `credit_payment_quotes`, `credit_idempotency`, `payment_accounts`, `credit_accounts`, `credit_statements`, `credit_payments`, `account_transactions`, `ledger_*`, `audit_events`, `outbox_events` | Direct khi `...=credit` và persistent TOTP | latest statement, no overpay, concurrent one-winner, idempotency, atomic payment/ledger/audit/outbox, rollback/restart |
+| Notifications | `GET /api/v1/notifications`, `POST /api/v1/notifications/:id/read` | `notifications`, `audit_events` | Direct khi `...=notifications` | customer ownership, read-only list, idempotent mark-as-read, no financial mutation |
+| Fraud report | `POST /api/v1/fraud-reports`, `GET /api/v1/fraud-reports/:id` | `fraud_reports`, `fraud_report_idempotency`, `account_transactions`, `audit_events`, `outbox_events` | Direct khi `...=fraud` | transaction ownership, one open report, idempotency, redacted event payload, audit/outbox atomically |
 
 Feature flag này chỉ là lát cắt rehearsal; preview mặc định không đặt flag nên vẫn dùng compatibility adapter legacy.
 
@@ -37,12 +40,11 @@ Feature flag này chỉ là lát cắt rehearsal; preview mặc định không �
 
 | Nhóm | Route/khối | Lý do chưa cutover |
 |---|---|---|
-| Registration | `/auth/register`, `/auth/register/verify` | Có service direct sau feature group `registration`, nhưng local compose dùng `NullEmailProvider`; chỉ rehearsal với provider test được kiểm soát và phải có delivery evidence. |
-| Beneficiary/recipient | `/internal-recipients/*` | Lookup token chưa có persistent direct boundary; beneficiary CRUD đã được nối ở group `beneficiaries`. |
-| Transfer | `/transfers/quote`, `/transfers`, `/transfers/:id` | Core transfer path đã nối; vẫn cần chạy disposable HTTP + TOTP/concurrency/restart evidence trước khi coi là cutover hoàn tất. |
-| Savings maturity/renewal | maturity command/worker chưa bật | Opening và read đã direct; maturity/renewal vẫn chờ worker cutover và evidence restart/idempotency. |
-| Credit settlement/maturity | statement close, overdue evaluation, pending/reversal settlement | Chưa bật durable worker/core callback; customer command/read cutover không tự chuyển trạng thái. |
-| Notifications/fraud | `/notifications/*`, `/fraud-reports/*` | Cần direct repository + outbox/audit ownership. |
+| Registration | `/auth/register`, `/auth/register/verify` | EXPLICITLY OUT OF SCOPE cho local cutover: cần email provider test có delivery evidence. |
+| Savings maturity/renewal | maturity command/worker chưa bật | EXPLICITLY OUT OF SCOPE ở bước này: opening/read đã relational; maturity/renewal chỉ chạy sau worker gate. |
+| Credit settlement/maturity | statement close, overdue evaluation, pending/reversal settlement | EXPLICITLY OUT OF SCOPE ở bước này: customer command/read đã relational; settlement cần worker/core callback. |
+| Profile/KYC customer read | chưa có public HTTP contract được phê duyệt | EXPLICITLY OUT OF SCOPE; KYC case là Admin-only và không tự mở customer route mới. |
+| Admin read/action | `/admin/*` | RELATIONAL-V2 qua `AdminRepository`/action engine; không đi qua public `withState`, vẫn cần admin evidence riêng. |
 
 ## Cổng chuyển giai đoạn kế tiếp
 
@@ -59,7 +61,7 @@ Không bật `BANKING_PERSISTENCE_MODE=relational-v2`, `WORKER_ENABLED=1` hoặc
 Chỉ dùng local/disposable database:
 
 ```powershell
-$env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,mfa,accounts,beneficiaries,transfers,savings"
+$env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud"
 npm run typecheck
 npm run build
 npm run test:critical

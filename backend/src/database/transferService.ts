@@ -7,7 +7,7 @@ import { AuditRepository } from "./repositories/auditRepository.js";
 import { LedgerRepository } from "./repositories/ledgerRepository.js";
 import { OutboxRepository } from "./repositories/outboxRepository.js";
 import { TransferRepository, type TransferRow } from "./repositories/transferRepository.js";
-import { fingerprint } from "../security.js";
+import { fingerprint, hashOpaqueToken } from "../security.js";
 import { parseMoney, toMoney } from "../money.js";
 import type { Beneficiary, TransferQuote, TransferReceipt } from "../types.js";
 import { conflict, invalidRequest, notFound } from "../errors.js";
@@ -44,7 +44,8 @@ export type TransferCommandInput = {
 export type TransferQuoteCommandInput = {
   customerId: string;
   sourceAccountId: string;
-  beneficiaryId: string;
+  beneficiaryId?: string;
+  lookupId?: string;
   amount: unknown;
   now?: string;
 };
@@ -86,7 +87,10 @@ export class RelationalTransferService {
 
   async createQuote(input: TransferQuoteCommandInput): Promise<TransferQuote> {
     assertUuid(input.sourceAccountId, "sourceAccountId");
-    assertUuid(input.beneficiaryId, "beneficiaryId");
+    const hasBeneficiary = typeof input.beneficiaryId === "string" && input.beneficiaryId.trim().length > 0;
+    const hasLookup = typeof input.lookupId === "string" && input.lookupId.trim().length > 0;
+    if (hasBeneficiary === hasLookup) throw invalidRequest("Exactly one recipient reference is required.");
+    if (hasBeneficiary) assertUuid(input.beneficiaryId!, "beneficiaryId");
     const amountMinor = parseMoney(input.amount, "amount");
     if (amountMinor <= 0n || amountMinor > 500_000_000n) throw conflict("Transfer amount is outside the sandbox limit.");
     const now = input.now ?? new Date().toISOString();
@@ -97,26 +101,38 @@ export class RelationalTransferService {
       const source = await accounts.findOwnedAccount(input.customerId, input.sourceAccountId);
       if (!source) throw notFound("Account not found.");
       if (source.status !== "ACTIVE") throw conflict("The source account is not active.");
-      const destination = await transfers.findActiveDestinationAccount(input.beneficiaryId, input.customerId);
+      const destination = hasBeneficiary
+        ? await transfers.findActiveDestinationAccount(input.beneficiaryId!, input.customerId)
+        : await transfers.findRecipientLookup(input.customerId, hashOpaqueToken(input.lookupId!));
       if (!destination) throw notFound("Beneficiary not found.");
       if (String(destination.status) !== "ACTIVE") throw conflict("Beneficiary is not active.");
-      if (String(destination.destination_status) !== "ACTIVE") throw conflict("The recipient account is not active.");
-      if (String(destination.destination_account_id) === source.id) throw conflict("A transfer cannot be sent to the source account.");
-      const beneficiary: Beneficiary = publicBeneficiary(destination);
+      if (hasBeneficiary && String(destination.destination_status) !== "ACTIVE") throw conflict("The recipient account is not active.");
+      const destinationAccountId = String(destination.destination_account_id ?? destination.destination_account_id);
+      if (destinationAccountId === source.id) throw conflict("A transfer cannot be sent to the source account.");
+      const beneficiary: Beneficiary = hasBeneficiary
+        ? publicBeneficiary(destination)
+        : {
+          id: input.lookupId!,
+          displayName: String(destination.account_holder_name),
+          accountHolderName: String(destination.account_holder_name),
+          maskedAccountNumber: String(destination.masked_account_number),
+          bankName: String(destination.bank_name),
+          status: String(destination.status) as Beneficiary["status"],
+        };
       const quoteId = randomUUID();
       const expiresAt = new Date(Date.parse(now) + 5 * 60 * 1000).toISOString();
       await transfers.createQuote({
         id: quoteId,
         customerId: input.customerId,
         sourceAccountId: source.id,
-        beneficiaryId: input.beneficiaryId,
+        beneficiaryId: hasBeneficiary ? input.beneficiaryId : null,
         amountMinor: amountMinor.toString(),
         feeMinor: feeMinor.toString(),
         expiresAt,
         requestFingerprint: fingerprint({ quoteId, amountMinor: amountMinor.toString() }),
         beneficiarySnapshot: beneficiary,
-        destinationAccountId: String(destination.destination_account_id),
-        destinationOwnerId: String(destination.destination_customer_id),
+        destinationAccountId,
+        destinationOwnerId: String(destination.destination_owner_id ?? destination.destination_customer_id),
       });
       await new AuditRepository(client).append({
         id: randomUUID(),

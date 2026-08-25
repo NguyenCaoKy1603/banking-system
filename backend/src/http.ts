@@ -1238,7 +1238,8 @@ export async function handleRequest(
         writeResponse(response, 200, traceId, await options.relationalHttp.createTransferQuote({
           customerId: userId,
           sourceAccountId: data.sourceAccountId as string,
-          beneficiaryId: data.beneficiaryId as string,
+          beneficiaryId: typeof data.beneficiaryId === "string" ? data.beneficiaryId : undefined,
+          lookupId: typeof data.lookupId === "string" ? data.lookupId : undefined,
           amount: data.amount,
         }));
         return;
@@ -1277,6 +1278,37 @@ export async function handleRequest(
       }
       if (request.method === "GET" && segments.length === 2 && segments[0] === "transfers") {
         writeResponse(response, 200, traceId, await options.relationalHttp.getTransfer(userId, segments[1]));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "internal-recipients" && segments[1] === "lookup") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, { recipient: await options.relationalHttp.lookupInternalRecipient(userId, data.accountNumber) });
+        return;
+      }
+      if (request.method === "GET" && segments.length === 1 && segments[0] === "notifications") {
+        writeResponse(response, 200, traceId, { items: await options.relationalHttp.listNotifications(userId) });
+        return;
+      }
+      if (request.method === "POST" && segments.length === 3 && segments[0] === "notifications" && segments[2] === "read") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.markNotificationRead(userId, segments[1]));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 1 && segments[0] === "fraud-reports") {
+        const data = requireObject(body);
+        const unsupportedField = Object.keys(data).find((key) => !["accountId", "transactionId", "reason"].includes(key));
+        if (unsupportedField) throw invalidRequest(`Unsupported fraud report field: ${unsupportedField}.`, { [unsupportedField]: "This field is not supported." });
+        writeResponse(response, 201, traceId, await options.relationalHttp.reportFraud({
+          customerId: userId,
+          accountId: typeof data.accountId === "string" ? data.accountId : "",
+          transactionId: typeof data.transactionId === "string" ? data.transactionId : "",
+          reason: typeof data.reason === "string" ? data.reason : "",
+          idempotencyKey: header(request, "idempotency-key") ?? "",
+          traceId,
+        }));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "fraud-reports") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getFraudReport(userId, segments[1]));
         return;
       }
     }

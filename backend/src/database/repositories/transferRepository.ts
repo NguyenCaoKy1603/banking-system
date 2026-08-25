@@ -198,11 +198,21 @@ export class TransferRepository {
     return result.rows[0] ? result.rows[0] as Record<string, unknown> : null;
   }
 
+  async findRecipientLookup(customerId: string, tokenHash: string): Promise<Record<string, unknown> | null> {
+    const result = await this.client.query(
+      `SELECT * FROM recipient_lookups
+       WHERE customer_id = $1 AND token_hash = $2 AND expires_at > NOW()
+       FOR UPDATE`,
+      [requireUuid(customerId, "customerId"), tokenHash],
+    );
+    return result.rows[0] ? result.rows[0] as Record<string, unknown> : null;
+  }
+
   async createQuote(input: {
     id: string;
     customerId: string;
     sourceAccountId: string;
-    beneficiaryId: string;
+    beneficiaryId?: string | null;
     amountMinor: string;
     feeMinor: string;
     expiresAt: string;
@@ -222,7 +232,7 @@ export class TransferRepository {
         requireUuid(input.id),
         requireUuid(input.customerId, "customerId"),
         requireUuid(input.sourceAccountId, "sourceAccountId"),
-        requireUuid(input.beneficiaryId, "beneficiaryId"),
+        input.beneficiaryId ? requireUuid(input.beneficiaryId, "beneficiaryId") : null,
         asBigIntString(input.amountMinor, "amountMinor"),
         asBigIntString(input.feeMinor, "feeMinor"),
         input.expiresAt,

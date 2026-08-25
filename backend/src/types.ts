@@ -165,6 +165,6 @@ export type Notification = {
 
 export type FraudReportResponse = {
   reportId: string;
-  status: "RECEIVED";
+  status: "RECEIVED" | "IN_REVIEW" | "RESOLVED";
   createdAt: string;
 };

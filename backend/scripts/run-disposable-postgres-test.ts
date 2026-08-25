@@ -93,6 +93,8 @@ async function main(): Promise<void> {
                 ? "RELATIONAL_DATABASE_URL"
                 : testFiles.some((file) => file.includes("creditRelational"))
                   ? "RELATIONAL_DATABASE_URL"
+                : testFiles.some((file) => file.includes("remainingRelational"))
+                  ? "RELATIONAL_DATABASE_URL"
               : undefined;
   if (!targetEnvironmentVariable) {
     throw new Error(`Cannot infer the disposable database environment variable for: ${testFiles.join(", ")}`);

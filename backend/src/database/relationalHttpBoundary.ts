@@ -9,15 +9,17 @@ import type { SavingsListResult, SavingsQuoteRequest, SubmitSavingsOpeningReques
 import type { SavingsDeposit, SavingsOpening, SavingsProduct, SavingsQuote } from "../savings.js";
 import { RelationalCreditService } from "./creditService.js";
 import type { CreditApplication, CreditApplicationRequest, CreditCard, CreditPayment, CreditPaymentQuote, CreditPaymentQuoteRequest, CreditStatement, CreditTransaction, CreditAccount } from "../credit.js";
+import { RelationalRemainingService } from "./remainingService.js";
+import type { FraudReportResponse, InternalRecipientLookup, Notification } from "../types.js";
 import type { MfaChallengeResponse, PersistentMfaService } from "../mfa/persistentMfaService.js";
 import { UnitOfWork } from "./unitOfWork.js";
 
-export type RelationalHttpRoute = "auth" | "registration" | "mfa" | "accounts" | "beneficiaries" | "transfers" | "savings" | "credit";
+export type RelationalHttpRoute = "auth" | "registration" | "mfa" | "accounts" | "beneficiaries" | "transfers" | "savings" | "credit" | "recipients" | "notifications" | "fraud";
 
 function configuredRoutes(value = process.env.BANKING_RELATIONAL_HTTP_ROUTES): Set<RelationalHttpRoute> {
   const routes = new Set<RelationalHttpRoute>();
   for (const item of (value ?? "").split(",").map((part) => part.trim().toLowerCase()).filter(Boolean)) {
-    if (item === "auth" || item === "registration" || item === "mfa" || item === "accounts" || item === "beneficiaries" || item === "transfers" || item === "savings" || item === "credit") routes.add(item);
+    if (item === "auth" || item === "registration" || item === "mfa" || item === "accounts" || item === "beneficiaries" || item === "transfers" || item === "savings" || item === "credit" || item === "recipients" || item === "notifications" || item === "fraud") routes.add(item);
     else throw new Error(`BANKING_RELATIONAL_HTTP_ROUTES contains unsupported route group: ${item}.`);
   }
   return routes;
@@ -32,10 +34,11 @@ export class RelationalHttpBoundary {
   private readonly transfers: RelationalTransferService;
   private readonly savings: RelationalSavingsService;
   private readonly credit: RelationalCreditService;
+  private readonly remaining: RelationalRemainingService;
 
   constructor(unitOfWork: UnitOfWork, routeConfig?: string) {
     this.routes = configuredRoutes(routeConfig);
-    if (["accounts", "beneficiaries", "transfers", "savings", "credit", "mfa"].some((route) => this.routes.has(route as RelationalHttpRoute)) && !this.routes.has("auth")) {
+    if (["accounts", "beneficiaries", "transfers", "savings", "credit", "mfa", "recipients", "notifications", "fraud"].some((route) => this.routes.has(route as RelationalHttpRoute)) && !this.routes.has("auth")) {
       throw new Error("BANKING_RELATIONAL_HTTP_ROUTES account and command groups require auth so they have a direct session boundary.");
     }
     this.auth = new RelationalAuthService(unitOfWork);
@@ -45,6 +48,7 @@ export class RelationalHttpBoundary {
     this.transfers = new RelationalTransferService(unitOfWork);
     this.savings = new RelationalSavingsService(unitOfWork);
     this.credit = new RelationalCreditService(unitOfWork);
+    this.remaining = new RelationalRemainingService(unitOfWork);
   }
 
   get enabled(): boolean { return this.routes.size > 0; }
@@ -104,6 +108,15 @@ export class RelationalHttpBoundary {
           (verb === "GET" && segments.length === 4 && segments[1] === "accounts" && ["transactions", "statements"].includes(segments[3] ?? "")) ||
           (verb === "GET" && segments.length === 5 && segments[1] === "accounts" && segments[3] === "statements");
       }
+    }
+    if (this.routes.has("recipients") && verb === "POST" && segments.length === 2 && segments[0] === "internal-recipients" && segments[1] === "lookup") return true;
+    if (this.routes.has("notifications")) {
+      if (verb === "GET" && segments.length === 1 && segments[0] === "notifications") return true;
+      if (verb === "POST" && segments.length === 3 && segments[0] === "notifications" && segments[2] === "read") return true;
+    }
+    if (this.routes.has("fraud")) {
+      if (verb === "POST" && segments.length === 1 && segments[0] === "fraud-reports") return true;
+      if (verb === "GET" && segments.length === 2 && segments[0] === "fraud-reports") return true;
     }
     if (!this.routes.has("accounts")) return false;
     if (verb === "GET" && segments.length === 1 && segments[0] === "accounts") return true;
@@ -185,6 +198,26 @@ export class RelationalHttpBoundary {
 
   createTransferQuote(input: TransferQuoteCommandInput): Promise<TransferQuote> {
     return this.transfers.createQuote(input);
+  }
+
+  lookupInternalRecipient(customerId: string, accountNumber: unknown): Promise<InternalRecipientLookup> {
+    return this.remaining.lookupRecipient(customerId, accountNumber);
+  }
+
+  listNotifications(customerId: string): Promise<Notification[]> {
+    return this.remaining.listNotifications(customerId);
+  }
+
+  markNotificationRead(customerId: string, notificationId: string): Promise<Notification> {
+    return this.remaining.markNotificationRead(customerId, notificationId);
+  }
+
+  reportFraud(input: { customerId: string; accountId: string; transactionId: string; reason: string; idempotencyKey: string; traceId?: string }): Promise<FraudReportResponse> {
+    return this.remaining.reportFraud(input);
+  }
+
+  getFraudReport(customerId: string, reportId: string): Promise<FraudReportResponse> {
+    return this.remaining.getFraudReport(customerId, reportId);
   }
 
   async submitTransfer(input: {

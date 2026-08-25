@@ -169,5 +169,8 @@ jobs:
       - name: Relational Credit payment and lifecycle regression
         run: npm run test:credit:persistence
 
+      - name: Remaining relational recipient, notification and fraud regression
+        run: npm run test:remaining:persistence
+
       - name: Worker concurrency, lease and dead-letter regression
         run: npm run test:worker
