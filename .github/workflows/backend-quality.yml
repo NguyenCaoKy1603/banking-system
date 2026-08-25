@@ -163,5 +163,8 @@ jobs:
       - name: Persistent MFA lifecycle regression
         run: npm run test:mfa:persistence
 
+      - name: Relational Savings opening regression
+        run: npm run test:savings:persistence
+
       - name: Worker concurrency, lease and dead-letter regression
         run: npm run test:worker

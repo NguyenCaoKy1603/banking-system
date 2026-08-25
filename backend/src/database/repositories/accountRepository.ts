@@ -213,6 +213,8 @@ export class AccountRepository {
     id: string;
     accountId: string;
     transferId?: string | null;
+    savingsOpeningId?: string | null;
+    savingsDepositId?: string | null;
     direction: AccountTransactionRow["direction"];
     amountMinor: string;
     feeMinor?: string;
@@ -226,16 +228,19 @@ export class AccountRepository {
   }): Promise<AccountTransactionRow> {
     const result = await this.client.query(
       `INSERT INTO account_transactions
-        (id, account_id, transfer_id, direction, amount_minor, fee_minor,
+        (id, account_id, transfer_id, savings_opening_id, savings_deposit_id,
+         direction, amount_minor, fee_minor,
          currency, status, description, counterparty_name, reference,
          occurred_at, created_at, completed_at, kind)
-       VALUES ($1, $2, $3, $4, $5, $6, 'VND', $7, $8, $9, $10,
-               COALESCE($11::timestamptz, NOW()), NOW(), $12::timestamptz, $13)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'VND', $9, $10, $11,
+               $12, COALESCE($13::timestamptz, NOW()), NOW(), $14::timestamptz, $15)
        RETURNING *`,
       [
         requireUuid(input.id),
         requireUuid(input.accountId, "accountId"),
         input.transferId ? requireUuid(input.transferId, "transferId") : null,
+        input.savingsOpeningId ? requireUuid(input.savingsOpeningId, "savingsOpeningId") : null,
+        input.savingsDepositId ? requireUuid(input.savingsDepositId, "savingsDepositId") : null,
         input.direction,
         asBigIntString(input.amountMinor, "amountMinor"),
         asBigIntString(input.feeMinor ?? "0", "feeMinor"),

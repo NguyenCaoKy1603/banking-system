@@ -1061,6 +1061,57 @@ export async function handleRequest(
     const relationalAuth = relationalRoute ? options.relationalHttp : undefined;
 
     if (relationalRoute && options.relationalHttp) {
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "savings" && segments[1] === "products") {
+        writeResponse(response, 200, traceId, { items: await options.relationalHttp.listSavingsProducts(userId) });
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "savings" && segments[1] === "quotes") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, await options.relationalHttp.createSavingsQuote(userId, data as never));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "savings" && segments[1] === "deposits") {
+        const data = requireObject(body);
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp)
+          ? data.stepUp as Record<string, unknown>
+          : null;
+        if (!options.mfaService || !stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") {
+          throw invalidRequest("TOTP step-up challenge is required for relational savings opening.");
+        }
+        const quoteId = typeof data.quoteId === "string" ? data.quoteId : "";
+        const savingsRequestFingerprint = await options.relationalHttp.getSavingsStepUpRequestFingerprint(quoteId);
+        if (!savingsRequestFingerprint) throw notFound("Savings quote not found.");
+        const verified = await options.mfaService.verifyChallenge({
+          challengeId: stepUp.challengeId,
+          customerId: userId,
+          deviceId: requireDeviceId(request),
+          proof: stepUp.proof,
+          purpose: "SAVINGS_OPENING",
+          resourceId: quoteId,
+          requestFingerprint: savingsRequestFingerprint,
+        });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        const opening = await options.relationalHttp.submitSavingsOpening({
+          customerId: userId,
+          idempotencyKey: header(request, "idempotency-key") ?? "",
+          request: data as never,
+          traceId,
+        });
+        writeResponse(response, opening.status === "PENDING" ? 202 : 200, traceId, opening);
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3 && segments[0] === "savings" && segments[1] === "openings") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getSavingsOpening(userId, segments[2]));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "savings" && segments[1] === "deposits") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.listSavingsDeposits(userId));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3 && segments[0] === "savings" && segments[1] === "deposits") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getSavingsDeposit(userId, segments[2]));
+        return;
+      }
       if (request.method === "GET" && segments.length === 1 && segments[0] === "beneficiaries") {
         writeResponse(response, 200, traceId, { items: await options.relationalHttp.listBeneficiaries(userId) });
         return;

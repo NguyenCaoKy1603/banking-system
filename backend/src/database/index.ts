@@ -5,6 +5,7 @@ export * from "./postgresErrors.js";
 export * from "./rowMappers.js";
 export * from "./commandErrors.js";
 export * from "./transferService.js";
+export * from "./savingsService.js";
 export * from "./relationalBeneficiaryService.js";
 export * from "./registrationService.js";
 export * from "./repositories/index.js";
