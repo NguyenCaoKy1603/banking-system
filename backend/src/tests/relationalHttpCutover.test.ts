@@ -85,6 +85,36 @@ test("direct relational command routes bypass the legacy state boundary", async 
   assert.equal(legacyBoundaryCalls, 0);
 });
 
+test("relational-v2 rejects an uncategorized route without invoking withState", async (t) => {
+  const previousMode = process.env.BANKING_PERSISTENCE_MODE;
+  process.env.BANKING_PERSISTENCE_MODE = "relational-v2";
+  t.after(() => {
+    if (previousMode === undefined) delete process.env.BANKING_PERSISTENCE_MODE;
+    else process.env.BANKING_PERSISTENCE_MODE = previousMode;
+  });
+  let legacyBoundaryCalls = 0;
+  const repository = {
+    withState: async (): Promise<never> => {
+      legacyBoundaryCalls += 1;
+      throw new Error("legacy boundary must not run in relational-v2");
+    },
+  };
+  const relationalHttp = {
+    isRouteEnabled: () => false,
+  } as unknown as RelationalHttpBoundary;
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/profile`, {
+    headers: { Authorization: "Bearer blocked-route-token", "X-Device-ID": "blocked-route-device" },
+  });
+  assert.equal(response.status, 503);
+  assert.equal((await response.json() as { code: string }).code, "RELATIONAL_ROUTE_NOT_CUTOVER");
+  assert.equal(legacyBoundaryCalls, 0);
+});
+
 test("persistent MFA lifecycle routes bypass the legacy state boundary", async (t) => {
   let legacyBoundaryCalls = 0;
   const relationalCalls: string[] = [];

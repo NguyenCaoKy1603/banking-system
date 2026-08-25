@@ -62,7 +62,7 @@ Credit settlement/overdue/reversal scheduler và profile/KYC customer.
 | `npm run test:remaining:persistence` disposable | 2 PASS |
 | `npm run test:admin:database` disposable | 8 PASS |
 | `npm run test:persistence` disposable regression | 11 PASS |
-| `relationalHttpCutover.test.ts` | 4 PASS |
+| `relationalHttpCutover.test.ts` | 5 PASS |
 | `npm run validate:database` | 49 tables/constraints PASS |
 | `npm run validate:relational-v2` | PASS; migration/checksum/invariant/orphan checks đều 0 |
 | `npm run validate:outbox` | PASS; secret-like errors/orphan/invalid records 0 |
