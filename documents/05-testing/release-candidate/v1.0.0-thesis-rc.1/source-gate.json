@@ -1,0 +1,30 @@
+{
+  "artifact": "v1.0.0-thesis-rc.1",
+  "status": "BLOCKED_LOCAL_RC",
+  "testedSourceCommit": "f85ce0788223429ff9c6a560749107819cfef6f9",
+  "branch": "codex/p0-postgres-foundation",
+  "sourceTreeBeforeEvidenceCommit": "clean",
+  "migrationCount": 32,
+  "releaseGateBeforeEvidenceCommit": {
+    "promotionAllowed": true,
+    "gitCommitIsFullSha": true,
+    "worktreeClean": true,
+    "migrationsTracked": true,
+    "secretsNotRead": true
+  },
+  "toolchain": {
+    "node": "v24.19.0",
+    "npm": "11.17.0",
+    "docker": "28.4.0",
+    "compose": "v2.39.4-desktop.1",
+    "java": "17.0.12"
+  },
+  "imageDigest": "unknown",
+  "disposableOnly": true,
+  "externalPromotion": {
+    "push": "not-run",
+    "pullRequest": "not-created",
+    "remoteCi": "not-run",
+    "registry": "not-used"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "status": "BLOCKED_REPRODUCIBILITY_MISMATCH",
+  "schemaVersion": "032",
+  "migrationCount": 32,
+  "workingTreeDigest": "4a50076d5ee5ce2ee1f72ace3816d49c5c8ea63a3454e544978d7815a9ce0b94",
+  "cleanCloneDigest": "1a768560de0b3a9f95c3909335b7aa6e04912b4dbd5c3152153aaa4aa9aa438a",
+  "planBaselineDigest": "4a50076d5ee5ce2ee1f72ace3816d49c5c8ea63a3454e544978d7815a9ce0b94",
+  "firstMigration": "001_banking_mvp",
+  "lastMigration": "032_relational_scheduled_lifecycle",
+  "cause": {
+    "file": "002_savings_sandbox.sql",
+    "trackedBlobIsSame": true,
+    "workingTreeCheckout": "contains CRLF at EOF",
+    "cleanCloneCheckout": "LF at EOF",
+    "impact": "migration-fingerprint.cjs hashes raw working-tree bytes, so Windows and clean CI-style checkout produce different set digests"
+  },
+  "requiredDecision": "Choose and document a line-ending-normalized/Git-blob fingerprint policy, then rerun migration, database and release gates. No migration content was changed in this run."
+}
