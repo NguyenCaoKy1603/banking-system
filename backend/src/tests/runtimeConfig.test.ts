@@ -13,6 +13,8 @@ const productionEnv = (): NodeJS.ProcessEnv => ({
   BANKING_MONEY_MODE: "virtual",
   BANKING_STORAGE: "postgres",
   DATABASE_URL: "postgresql://banking:secret@db.example.test/banking",
+  DATABASE_SSL_MODE: "verify-full",
+  DATABASE_SERVER_NAME: "db.example.test",
   BANKING_MFA_REQUIRED: "1",
   BANKING_MFA_METHODS: "TOTP",
   BANKING_OTP_PEPPER: "base64:pepper",
@@ -33,6 +35,14 @@ test("production-like runtime contract is strict and virtual-money only", () => 
   assert.throws(
     () => readRuntimeConfig({ ...productionEnv(), BANKING_MONEY_MODE: "real" }),
     /BANKING_MONEY_MODE must be virtual/,
+  );
+  assert.throws(
+    () => readRuntimeConfig({ ...productionEnv(), DATABASE_SSL_MODE: "require" }),
+    /DATABASE_SSL_MODE=verify-full/,
+  );
+  assert.throws(
+    () => readRuntimeConfig({ ...productionEnv(), DATABASE_SERVER_NAME: "" }),
+    /DATABASE_SERVER_NAME/,
   );
   assert.throws(
     () => readRuntimeConfig({ ...productionEnv(), BUILD_COMMIT_SHA: "local" }),

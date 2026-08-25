@@ -19,6 +19,7 @@
     "release:gate": "node scripts/release-gate.cjs",
     "release:migration-fingerprint": "node scripts/migration-fingerprint.cjs",
     "release:manifest": "node scripts/create-release-manifest.cjs",
+    "validate:secrets": "node scripts/validate-secret-surface.cjs",
     "validate:openapi": "node scripts/validate-openapi.cjs",
     "validate:admin-schema": "node --env-file-if-exists=.env scripts/validate-admin-schema.cjs",
     "validate:admin-authz": "node --env-file-if-exists=.env --import=tsx scripts/validate-admin-authz.ts",

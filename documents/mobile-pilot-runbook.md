@@ -21,6 +21,7 @@ Snapshot hiện hành ngày 2026-08-17: mobile lint/typecheck đạt, 37 suites 
 - Khi chạy `npm run export:web` ở máy local, override `EXPO_PUBLIC_API_URL` bằng URL HTTPS của preview/staging (hoặc placeholder HTTPS chỉ để kiểm tra static export); không đổi production guard và không dùng HTTP sandbox làm cấu hình production.
 - Backend reference local nằm tại [`../backend/README.md`](../backend/README.md); chỉ dùng để kiểm thử contract/idempotency, không dùng cho tiền thật.
 - Auth có thể bật challenge MFA server-driven (`BANKING_MFA_REQUIRED=1` chỉ cho sandbox); OTP/assertion production phải đến từ Identity/risk provider, không dùng giá trị sandbox.
+- Public Mobile env có allowlist CI; không khai báo `EXPO_PUBLIC_DEVICE_ASSERTION` hoặc bất kỳ secret/token/key nào. Biometric native hiện chỉ mở gate UX local và fail closed khi cần backend proof; attestation/passkey provider phải được phê duyệt trước pilot.
 - Không đưa access token, refresh token, password, OTP hoặc dữ liệu tài chính vào log, analytics hay crash report.
 
 ## Quality gate trước khi build

@@ -16,7 +16,6 @@ const mockedLocalAuthentication = jest.mocked(LocalAuthentication);
 describe("biometricAuth", () => {
   beforeEach(() => {
     jest.resetAllMocks();
-    delete process.env.EXPO_PUBLIC_DEVICE_ASSERTION;
   });
 
   it("từ chối khi thiết bị không có phần cứng sinh trắc học", async () => {
@@ -67,20 +66,7 @@ describe("biometricAuth", () => {
     ).rejects.toThrow("Xác thực sinh trắc học chưa thành công");
   });
 
-  it("đọc device assertion từ biến môi trường khi được cấu hình", () => {
-    process.env.EXPO_PUBLIC_DEVICE_ASSERTION = "provider-assertion";
-
-    expect(getDeviceBoundAssertion()).toBe("provider-assertion");
-  });
-
-  it("không tự tạo proof tĩnh trong bản production", () => {
-    const previousNodeEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
-    delete process.env.EXPO_PUBLIC_DEVICE_ASSERTION;
-    try {
-      expect(getDeviceBoundAssertion()).toBe("");
-    } finally {
-      process.env.NODE_ENV = previousNodeEnv;
-    }
+  it("không lấy hoặc tự tạo device proof từ public bundle", () => {
+    expect(getDeviceBoundAssertion()).toBe("");
   });
 });

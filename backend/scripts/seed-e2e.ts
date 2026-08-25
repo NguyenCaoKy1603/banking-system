@@ -1,6 +1,10 @@
 import { randomUUID, createHash } from "node:crypto";
-import { Pool } from "pg";
+import { createRequire } from "node:module";
+import { Pool, type PoolConfig } from "pg";
 import { generateTotp } from "../src/mfa/crypto.js";
+
+const require = createRequire(import.meta.url);
+const { resolvePostgresSsl } = require("./postgres-ssl.cjs") as { resolvePostgresSsl: () => PoolConfig["ssl"] };
 
 type JsonRecord = Record<string, unknown>;
 
@@ -65,7 +69,7 @@ async function seedReferenceFunding(accountId: string, amountMinor: string, seed
   }
   const amount = BigInt(amountMinor);
   if (amount <= 0n) throw new Error("E2E_FUNDING_AMOUNT_MINOR must be positive.");
-  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const pool = new Pool({ connectionString: databaseUrl, max: 1, ssl: resolvePostgresSsl() });
   const transactionId = randomUUID();
   const journalId = randomUUID();
   const outboxId = randomUUID();

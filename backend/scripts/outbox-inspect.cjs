@@ -1,4 +1,5 @@
 const { Pool } = require("pg");
+const { resolvePostgresSsl } = require("./postgres-ssl.cjs");
 
 const limit = Number(process.argv[2] ?? 100);
 if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
@@ -6,7 +7,7 @@ if (!Number.isInteger(limit) || limit < 1 || limit > 1000) {
 }
 const databaseUrl = process.env.DATABASE_URL?.trim();
 if (!databaseUrl) throw new Error("DATABASE_URL is required.");
-const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+const pool = new Pool({ connectionString: databaseUrl, max: 1, ssl: resolvePostgresSsl() });
 async function main() {
   try {
     const result = await pool.query(

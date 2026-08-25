@@ -23,10 +23,12 @@ export async function requestBiometricAuthentication(
 }
 
 /**
- * Returns a cryptographic device assertion only when a future server/provider
- * supplies one. A local biometric prompt by itself is deliberately not sent
- * as an authentication proof.
+ * A local biometric prompt is not an authentication proof for the backend.
+ *
+ * Until a real device-attestation/passkey provider is integrated, return no
+ * proof so callers fail closed instead of reading a shared value from the
+ * public JavaScript bundle.
  */
 export function getDeviceBoundAssertion(): string {
-  return process.env.EXPO_PUBLIC_DEVICE_ASSERTION?.trim() ?? "";
+  return "";
 }

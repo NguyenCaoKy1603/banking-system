@@ -51,6 +51,9 @@ jobs:
       - name: Validate release configuration
         run: npm run validate:release
 
+      - name: Validate public mobile environment surface
+        run: npm run validate:public-env
+
       - name: Generate Expo Router types
         run: npm run generate:routes
 
@@ -70,6 +73,9 @@ jobs:
         env:
           EXPO_PUBLIC_API_URL: https://ci.example.invalid/api/v1
         run: npm run export:web
+
+      - name: Scan exported web bundle for forbidden public environment variables
+        run: npm run validate:public-env -- dist
 
       - name: Upload mobile quality evidence
         if: always()

@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { resolvePostgresSsl } = require("./postgres-ssl.cjs");
 
 const schemaPath = path.resolve(__dirname, "../database/019_admin_control_plane.sql");
 const schema = fs.readFileSync(schemaPath, "utf8");
@@ -110,7 +111,7 @@ async function validateLiveDatabase() {
     return;
   }
   const { Pool } = require("pg");
-  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const pool = new Pool({ connectionString: databaseUrl, max: 1, ssl: resolvePostgresSsl() });
   try {
     const result = await pool.query(
       `SELECT table_name FROM information_schema.tables

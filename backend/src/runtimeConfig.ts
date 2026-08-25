@@ -98,6 +98,12 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
       throw new Error("Staging and production-like runtimes require PostgreSQL storage.");
     }
     required(env.DATABASE_URL, "DATABASE_URL");
+    if (env.DATABASE_SSL_MODE?.trim().toLowerCase() !== "verify-full") {
+      throw new Error("Staging and production-like runtimes require DATABASE_SSL_MODE=verify-full.");
+    }
+    if (!env.DATABASE_SERVER_NAME?.trim()) {
+      throw new Error("Staging and production-like runtimes require DATABASE_SERVER_NAME.");
+    }
     if (env.BANKING_MFA_REQUIRED !== "1") {
       throw new Error("BANKING_MFA_REQUIRED=1 is required in staging and production-like runtimes.");
     }

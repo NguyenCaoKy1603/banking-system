@@ -1,5 +1,7 @@
 import { Pool, type PoolClient } from "pg";
 
+import { resolveDatabaseSslConfig } from "./database/pool.js";
+
 export type SnapshotOperation<T> = (state: unknown) => Promise<{
   result: T;
   nextState: unknown;
@@ -25,6 +27,7 @@ export class PostgresSnapshotRepository {
     this.pool = new Pool({
       connectionString,
       max: options.maxConnections ?? 4,
+      ssl: resolveDatabaseSslConfig(),
     });
   }
 

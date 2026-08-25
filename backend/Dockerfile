@@ -45,7 +45,7 @@ COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_m
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/database ./database
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
-COPY --chown=node:node scripts/apply-migration.cjs scripts/container-smoke.cjs scripts/outbox-inspect.cjs scripts/outbox-inventory.cjs scripts/validate-outbox-worker.cjs ./scripts/
+COPY --chown=node:node scripts/apply-migration.cjs scripts/container-smoke.cjs scripts/outbox-inspect.cjs scripts/outbox-inventory.cjs scripts/validate-outbox-worker.cjs scripts/postgres-ssl.cjs ./scripts/
 
 USER node
 

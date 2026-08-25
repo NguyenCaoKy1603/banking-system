@@ -1,5 +1,7 @@
 import { Pool, type PoolClient, type PoolConfig, type QueryResult, type QueryResultRow } from "pg";
 
+export type DatabaseSslMode = "disable" | "require" | "verify-ca" | "verify-full";
+
 export type DatabasePoolOptions = {
   connectionString?: string;
   max?: number;
@@ -7,6 +9,10 @@ export type DatabasePoolOptions = {
   statementTimeoutMs?: number;
   lockTimeoutMs?: number;
   idleTransactionTimeoutMs?: number;
+  ssl?: PoolConfig["ssl"];
+  sslMode?: DatabaseSslMode;
+  ca?: string;
+  serverName?: string;
 };
 
 export type DatabasePoolMetrics = {
@@ -23,6 +29,63 @@ function positiveInt(value: string | undefined, fallback: number, name: string):
     throw new Error(`${name} must be a positive integer.`);
   }
   return parsed;
+}
+
+function parseSslMode(value: string | undefined, fallback: DatabaseSslMode): DatabaseSslMode {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (normalized === "disable" || normalized === "require" || normalized === "verify-ca" || normalized === "verify-full") {
+    return normalized;
+  }
+  throw new Error("DATABASE_SSL_MODE must be disable, require, verify-ca or verify-full.");
+}
+
+function normalizeCertificate(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized.replace(/\\n/g, "\n") : undefined;
+}
+
+/** Resolve node-postgres TLS options without falling back to plaintext. */
+export function resolveDatabaseSslConfig(input: {
+  env?: NodeJS.ProcessEnv;
+  ssl?: PoolConfig["ssl"];
+  sslMode?: DatabaseSslMode;
+  ca?: string;
+  serverName?: string;
+} = {}): PoolConfig["ssl"] | undefined {
+  const env = input.env ?? process.env;
+  const productionLike = ["staging", "production-like"].includes(env.BANKING_ENV?.trim().toLowerCase() ?? "");
+  if (input.ssl !== undefined) {
+    if (productionLike) {
+      const explicitSsl = input.ssl;
+      if (!explicitSsl || typeof explicitSsl !== "object" || explicitSsl.rejectUnauthorized !== true) {
+        throw new Error("Production-like PostgreSQL connections require an explicit TLS config with rejectUnauthorized=true.");
+      }
+    }
+    return input.ssl;
+  }
+  const mode = input.sslMode ?? parseSslMode(env.DATABASE_SSL_MODE, productionLike ? "verify-full" : "disable");
+  if (mode === "disable") {
+    if (productionLike) {
+      throw new Error("Production-like PostgreSQL connections require DATABASE_SSL_MODE=verify-full.");
+    }
+    return undefined;
+  }
+
+  const ca = normalizeCertificate(input.ca ?? env.DATABASE_CA_CERT);
+  const servername = input.serverName?.trim() || env.DATABASE_SERVER_NAME?.trim();
+  if ((mode === "verify-ca" || mode === "verify-full") && !ca) {
+    throw new Error(`${mode} PostgreSQL mode requires a CA certificate from the trust store or SecretProvider.`);
+  }
+  if (mode === "verify-full" && !servername) {
+    throw new Error("verify-full PostgreSQL mode requires DATABASE_SERVER_NAME.");
+  }
+
+  return {
+    rejectUnauthorized: true,
+    ...(ca ? { ca } : {}),
+    ...(servername ? { servername } : {}),
+  };
 }
 
 function poolConfig(options: DatabasePoolOptions): PoolConfig {
@@ -57,6 +120,12 @@ function poolConfig(options: DatabasePoolOptions): PoolConfig {
     lock_timeout: lockTimeout,
     idle_in_transaction_session_timeout: idleInTransactionSessionTimeout,
     application_name: process.env.DB_APPLICATION_NAME ?? "banking-reference-backend",
+    ssl: resolveDatabaseSslConfig({
+      ssl: options.ssl,
+      sslMode: options.sslMode,
+      ca: options.ca,
+      serverName: options.serverName,
+    }),
   };
 }
 

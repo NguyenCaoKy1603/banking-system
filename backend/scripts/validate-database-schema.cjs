@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { resolvePostgresSsl } = require("./postgres-ssl.cjs");
 
 const schemaPath = path.resolve(__dirname, "../database/001_banking_mvp.sql");
 const schema = fs.readFileSync(schemaPath, "utf8");
@@ -503,7 +504,7 @@ async function validateLiveDatabase() {
   }
 
   const { Pool } = require("pg");
-  const pool = new Pool({ connectionString: databaseUrl, max: 1 });
+  const pool = new Pool({ connectionString: databaseUrl, max: 1, ssl: resolvePostgresSsl() });
   try {
     const tableResult = await pool.query(
       `

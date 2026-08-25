@@ -2,6 +2,7 @@ const { readdir, readFile } = require("node:fs/promises");
 const { createHash } = require("node:crypto");
 const path = require("node:path");
 const { Pool } = require("pg");
+const { resolvePostgresSsl } = require("./postgres-ssl.cjs");
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
 if (!databaseUrl) {
@@ -155,7 +156,7 @@ async function main() {
   const migrationSetDigest = createHash("sha256");
   for (const migration of migrations) migrationSetDigest.update(`${migration.fileName}\0${migration.sql}\0`);
   const migrationSetFingerprint = migrationSetDigest.digest("hex");
-  const pool = new Pool({ connectionString: databaseUrl });
+  const pool = new Pool({ connectionString: databaseUrl, ssl: resolvePostgresSsl() });
 
   try {
     await pool.query("SELECT set_config('statement_timeout', $1, false), set_config('lock_timeout', $2, false)", [`${statementTimeoutMs}ms`, `${lockTimeoutMs}ms`]);

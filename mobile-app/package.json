@@ -53,6 +53,7 @@
     "generate:routes": "node scripts/generate-router-types.cjs",
     "validate:openapi": "node scripts/validate-openapi.cjs",
     "validate:e2e": "node scripts/validate-maestro.cjs",
+    "validate:public-env": "node scripts/validate-public-env.cjs",
     "validate:release": "node scripts/validate-release.cjs",
     "device:preflight": "node scripts/device-preflight.cjs",
     "e2e:maestro": "node scripts/run-maestro.cjs",
