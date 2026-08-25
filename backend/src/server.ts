@@ -2,8 +2,8 @@ import { createBankingServer, createPersistentBankingServer } from "./http.js";
 import { BankingSystem } from "./bankingSystem.js";
 import { PostgresRelationalRepository } from "./postgresRelationalRepository.js";
 import { KeyEncryptionKeyringAdapter, OtpDigestKeyring } from "./mfa/crypto.js";
-import { NullEmailProvider } from "./mfa/delivery.js";
 import { PersistentMfaService } from "./mfa/persistentMfaService.js";
+import { createRuntimeEmailProvider } from "./mfa/runtimeEmailProvider.js";
 import { RelationalHttpBoundary } from "./database/relationalHttpBoundary.js";
 import { readRuntimeConfig } from "./runtimeConfig.js";
 import { runtimeMetadata } from "./runtimeMetadata.js";
@@ -79,6 +79,11 @@ async function start(): Promise<void> {
     const databaseSecret = await secretProvider.getSecret(referenceFor("databaseUrl", bankingEnvironment));
     repository = new PostgresRelationalRepository({ connectionString: databaseSecret.value });
     await repository.initialize();
+    const emailDelivery = await createRuntimeEmailProvider({
+      environment: bankingEnvironment,
+      isProductionLike: runtimeConfig.isProductionLike,
+      secretProvider,
+    });
     const encryption = await KeyEncryptionKeyringAdapter.fromSecretProvider(
       secretProvider,
       {
@@ -108,13 +113,14 @@ async function start(): Promise<void> {
       encryption,
       otpDigestKeyring,
       environmentScope: bankingEnvironment,
-      delivery: new NullEmailProvider(),
+      delivery: emailDelivery,
     });
     const relationalHttp = new RelationalHttpBoundary(repository.unitOfWork);
     if (runtimeConfig.persistenceMode === "relational-v2") relationalHttp.assertRelationalV2Complete();
     server = createPersistentBankingServer(repository, system, {
       ...httpOptions,
       mfaService,
+      emailProviderHealth: () => emailDelivery.health(),
       relationalHttp: relationalHttp.enabled ? relationalHttp : undefined,
     });
   } else if (storage === "in-memory") {

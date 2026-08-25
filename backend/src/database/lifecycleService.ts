@@ -72,7 +72,8 @@ export class RelationalLifecycleService {
       const result = await client.query<{ id: string }>(
         `SELECT id FROM savings_deposits
          WHERE status = 'ACTIVE' AND maturity_at <= $1
-         ORDER BY maturity_at, id LIMIT $2`,
+         ORDER BY maturity_at, id LIMIT $2
+         FOR UPDATE SKIP LOCKED`,
         [asOf, limit],
       );
       return result.rows.map((row) => row.id);
@@ -263,7 +264,7 @@ export class RelationalLifecycleService {
     let paymentsSettled = 0;
     const accountIds = await this.unitOfWork.transaction(async ({ client }) => {
       const result = await client.query<{ id: string }>(
-        `SELECT id FROM credit_accounts WHERE status = 'ACTIVE' AND next_statement_at <= $1 ORDER BY next_statement_at, id LIMIT $2`,
+        `SELECT id FROM credit_accounts WHERE status = 'ACTIVE' AND next_statement_at <= $1 ORDER BY next_statement_at, id LIMIT $2 FOR UPDATE SKIP LOCKED`,
         [asOf, limit],
       );
       return result.rows.map((row) => row.id);
@@ -276,7 +277,8 @@ export class RelationalLifecycleService {
         `SELECT id FROM credit_statements
          WHERE due_at <= $1 AND remaining_amount_due_minor > 0
            AND status IN ('ISSUED', 'PARTIALLY_PAID')
-         ORDER BY due_at, id LIMIT $2`,
+         ORDER BY due_at, id LIMIT $2
+         FOR UPDATE SKIP LOCKED`,
         [asOf, limit],
       );
       return result.rows.map((row) => row.id);
@@ -286,7 +288,7 @@ export class RelationalLifecycleService {
     }
     const paymentIds = await this.unitOfWork.transaction(async ({ client }) => {
       const result = await client.query<{ id: string }>(
-        `SELECT id FROM credit_payments WHERE status = 'PENDING' ORDER BY created_at, id LIMIT $1`,
+        `SELECT id FROM credit_payments WHERE status = 'PENDING' ORDER BY created_at, id LIMIT $1 FOR UPDATE SKIP LOCKED`,
         [limit],
       );
       return result.rows.map((row) => row.id);

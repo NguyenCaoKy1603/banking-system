@@ -22,6 +22,7 @@ const requiredIds = new Set([
   "database-credential",
   "otp-pepper",
   "mfa-encryption-key",
+  "email-provider-token",
   "notification-endpoint-key",
   "backup-encryption-key",
   "mobile-signing-key",

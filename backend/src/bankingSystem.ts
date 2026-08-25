@@ -245,6 +245,13 @@ export type ServiceHealth = {
   reconciliation: "ok" | "mismatch";
   outbox: "ok" | "degraded";
   pendingOutboxEvents: number;
+  emailProvider?: {
+    provider: "fake" | "disabled" | "http";
+    status: "ok" | "disabled" | "degraded";
+    configured: boolean;
+    credentialConfigured: boolean;
+    lastErrorCode?: string;
+  };
 };
 
 export type QuoteRequest = {

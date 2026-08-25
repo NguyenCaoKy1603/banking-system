@@ -11,6 +11,7 @@ export const RUNTIME_SECRET_REFERENCES = Object.freeze({
   otpPepperPrevious: { secretId: "otp-pepper-previous", service: "backend-api", purpose: "otp-digest-previous", envVar: "BANKING_OTP_PEPPER_PREVIOUS" },
   mfaEncryptionKey: { secretId: "mfa-encryption-key", service: "backend-api", purpose: "mfa-totp", envVar: "BANKING_MFA_ENCRYPTION_KEY" },
   mfaEncryptionKeyPrevious: { secretId: "mfa-encryption-key-previous", service: "backend-api", purpose: "mfa-totp-previous", envVar: "BANKING_MFA_ENCRYPTION_KEY_PREVIOUS" },
+  emailProviderToken: { secretId: "email-provider-token", service: "backend-api", purpose: "email-delivery", envVar: "EMAIL_PROVIDER_TOKEN" },
   notificationEndpointKey: { secretId: "notification-endpoint-key", service: "outbox-worker", purpose: "notification-endpoint", envVar: "NOTIFICATION_ENDPOINT_ENCRYPTION_KEY" },
   notificationEndpointKeyPrevious: { secretId: "notification-endpoint-key-previous", service: "outbox-worker", purpose: "notification-endpoint-previous", envVar: "NOTIFICATION_ENDPOINT_ENCRYPTION_KEY_PREVIOUS" },
 } as const);

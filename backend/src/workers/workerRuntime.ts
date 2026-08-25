@@ -21,6 +21,8 @@ import {
 import { emailTemplate, pushPayload } from "../notifications/templateRegistry.js";
 import { referenceFor } from "../secrets/runtimeSecrets.js";
 import type { SecretProvider } from "../secrets/SecretProvider.js";
+import { UnitOfWork } from "../database/unitOfWork.js";
+import { RelationalLifecycleScheduler, scheduledLifecycleConfigFromEnv, type ScheduledLifecycleConfig } from "./lifecycleScheduler.js";
 
 export type WorkerConfig = {
   workerId: string;
@@ -36,6 +38,7 @@ export type WorkerConfig = {
   persistenceMode: string;
   allowLegacyWriter: boolean;
   environment?: "development" | "test" | "preview" | "staging" | "production-like";
+  scheduledLifecycle?: ScheduledLifecycleConfig;
 };
 
 export function assertWorkerCutoverConfirmed(env: NodeJS.ProcessEnv = process.env): void {
@@ -70,12 +73,16 @@ export function workerConfigFromEnv(databaseUrlOverride?: string): WorkerConfig 
     environment: (process.env.BANKING_ENV?.trim().toLowerCase() || "development") as WorkerConfig["environment"],
     persistenceMode: process.env.BANKING_PERSISTENCE_MODE?.trim() || "legacy-state",
     allowLegacyWriter: process.env.WORKER_ALLOW_LEGACY_WRITER === "1",
+    scheduledLifecycle: scheduledLifecycleConfigFromEnv(),
   };
 }
 
 export async function createProviderSetFromSecretProvider(provider: SecretProvider, environment: "development" | "test" | "preview" | "staging" | "production-like", required: boolean): Promise<ProviderSet> {
   const pushMode = (process.env.PUSH_PROVIDER?.trim() || "disabled").toLowerCase();
-  const emailMode = (process.env.EMAIL_PROVIDER?.trim() || "disabled").toLowerCase();
+  const configuredEmailMode = (process.env.OUTBOX_EMAIL_PROVIDER?.trim() || process.env.EMAIL_PROVIDER?.trim() || "disabled").toLowerCase();
+  // EMAIL_PROVIDER is also used by the API's OTP adapter. An HTTP OTP mode
+  // must not be mistaken for the separate notification outbox adapter.
+  const emailMode = configuredEmailMode === "http" ? "disabled" : configuredEmailMode;
   if (!new Set(["fake", "disabled"]).has(pushMode)) {
     throw new Error("PUSH_PROVIDER supports only fake or disabled until a real provider adapter is configured.");
   }
@@ -105,7 +112,8 @@ export async function createProviderSetFromSecretProvider(provider: SecretProvid
 
 function providerSetFromEnv(): ProviderSet {
   const pushMode = (process.env.PUSH_PROVIDER?.trim() || "disabled").toLowerCase();
-  const emailMode = (process.env.EMAIL_PROVIDER?.trim() || "disabled").toLowerCase();
+  const configuredEmailMode = (process.env.OUTBOX_EMAIL_PROVIDER?.trim() || process.env.EMAIL_PROVIDER?.trim() || "disabled").toLowerCase();
+  const emailMode = configuredEmailMode === "http" ? "disabled" : configuredEmailMode;
   if (!new Set(["fake", "disabled"]).has(pushMode)) throw new Error("PUSH_PROVIDER supports only fake or disabled until a real provider adapter is configured.");
   if (!new Set(["fake", "disabled"]).has(emailMode)) throw new Error("EMAIL_PROVIDER supports only fake or disabled until a real provider adapter is configured.");
   return {
@@ -124,6 +132,8 @@ export type WorkerRunResult = {
   failures: number;
 };
 
+export type ScheduledLifecycleRun = Awaited<ReturnType<RelationalLifecycleScheduler["runOnce"]>>;
+
 export class WorkerRuntime {
   readonly metrics = new WorkerMetrics();
   readonly repository: PostgresOutboxRepository;
@@ -134,6 +144,7 @@ export class WorkerRuntime {
   private activeRuns = 0;
   private lifecycleStatus: WorkerStatus = "STARTING";
   private lastLoopErrorAt: string | null = null;
+  private readonly lifecycleScheduler?: RelationalLifecycleScheduler;
 
   constructor(
     readonly config: WorkerConfig,
@@ -149,6 +160,9 @@ export class WorkerRuntime {
       throw new Error("OUTBOX_LEASE_SECONDS must exceed OUTBOX_POLL_INTERVAL_MS.");
     }
     this.repository = new PostgresOutboxRepository(database);
+    if (config.scheduledLifecycle?.enabled) {
+      this.lifecycleScheduler = new RelationalLifecycleScheduler(new UnitOfWork(database), config.scheduledLifecycle, this.metrics);
+    }
   }
 
   async initialize(): Promise<void> {
@@ -223,10 +237,19 @@ export class WorkerRuntime {
     }
   }
 
+  /** Test/rehearsal hook for one durable scheduler tick; production uses start(). */
+  async runScheduledLifecycleOnce(asOf?: string): Promise<ScheduledLifecycleRun> {
+    if (!this.lifecycleScheduler) {
+      return { savingsMaturities: 0, statementsClosed: 0, statementsOverdue: 0, paymentsSettled: 0 };
+    }
+    return this.lifecycleScheduler.runOnce(asOf);
+  }
+
   async start(): Promise<void> {
     await this.initialize();
     this.running = true;
     await this.setStatus("READY");
+    if (this.lifecycleScheduler) await this.lifecycleScheduler.start();
     this.heartbeatTimer = setInterval(() => {
       void this.setStatus("READY").catch(() => undefined);
     }, this.config.heartbeatIntervalMs);
@@ -248,6 +271,7 @@ export class WorkerRuntime {
   }
 
   async stop(): Promise<void> {
+    await this.lifecycleScheduler?.stop();
     if (!this.running) {
       await this.setStatus("STOPPED").catch(() => undefined);
       await this.database.close();
@@ -270,7 +294,8 @@ export class WorkerRuntime {
     const poolMetrics = this.database.metrics();
     const heartbeatAge = Number(metrics.worker_heartbeat_age_seconds ?? 0);
     const lifecycleHealthy = this.initialized && this.lifecycleStatus === "READY";
-    const status = lifecycleHealthy && heartbeatAge < 60 ? "ok" : "degraded";
+    const scheduledLifecycle = this.lifecycleScheduler?.health();
+    const status = lifecycleHealthy && heartbeatAge < 60 && (!scheduledLifecycle || scheduledLifecycle.status !== "degraded") ? "ok" : "degraded";
     return {
       status,
       lifecycle: this.lifecycleStatus,
@@ -279,6 +304,7 @@ export class WorkerRuntime {
       lastLoopErrorAt: this.lastLoopErrorAt,
       workerId: this.config.workerId,
       workerVersion: this.config.workerVersion,
+      scheduledLifecycle,
       ...metrics,
       database_pool_waiting: poolMetrics.waiting,
       database_pool_total: poolMetrics.total,

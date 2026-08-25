@@ -95,6 +95,8 @@ async function main(): Promise<void> {
     "remainingRelational",
     "registrationRelational",
     "lifecycleRelational",
+    "lifecycleScheduler",
+    "integratedDisposable",
   ].some((name) => file.includes(name)))) {
     targetEnvironmentVariable = "RELATIONAL_DATABASE_URL";
   }

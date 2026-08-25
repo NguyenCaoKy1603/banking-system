@@ -15,6 +15,7 @@ import type {
   MfaChallengePurpose,
   PersistentMfaService,
 } from "./mfa/persistentMfaService.js";
+import type { EmailProviderHealth } from "./mfa/delivery.js";
 import type { OtpPurpose } from "./types.js";
 import type { RuntimeMetadata } from "./runtimeMetadata.js";
 import { createRequestContext, normalizeRequestId, requestContextHeaders, type RequestContext } from "./observability/requestContext.js";
@@ -43,6 +44,8 @@ export type HttpOptions = {
     outbox: "ok" | "degraded";
     pendingOutboxEvents: number;
   }>;
+  /** Redacted OTP provider readiness; credentials are never returned. */
+  emailProviderHealth?: () => EmailProviderHealth | Promise<EmailProviderHealth>;
   metrics?: PrometheusRegistry;
   logger?: StructuredLogger;
   serviceName?: string;
@@ -725,6 +728,23 @@ export async function handleRequest(
         } catch {
           health.status = "degraded";
           health.outbox = "degraded";
+        }
+      }
+      if (options.emailProviderHealth) {
+        try {
+          const emailProvider = await options.emailProviderHealth();
+          health.emailProvider = emailProvider;
+          // A deliberately disabled provider is allowed for local preview.
+          if (emailProvider.status === "degraded") health.status = "degraded";
+        } catch {
+          health.status = "degraded";
+          health.emailProvider = {
+            provider: "http",
+            status: "degraded",
+            configured: false,
+            credentialConfigured: false,
+            lastErrorCode: "email-provider-health-failed",
+          };
         }
       }
       recordBusinessHealth(options, health);
