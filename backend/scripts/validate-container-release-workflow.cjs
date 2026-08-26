@@ -39,6 +39,11 @@ requireMatch(release, /git rev-parse origin\/main/, "publish job must compare th
 requireMatch(release, /git show -s --format=%cI HEAD/, "publish job must derive build time from the source commit");
 requireMatch(release, /SOURCE_COMMIT=%s/, "normalized source commit must be exported to later steps");
 requireMatch(release, /BUILD_CREATED_AT=%s/, "normalized build time must be exported to later steps");
+requireMatch(
+  release,
+  /Set up Node\.js[\s\S]*Install release dependencies[\s\S]*run: npm ci[\s\S]*Scan repository and Git history for high-confidence secrets/,
+  "publish job must install backend dev dependencies before secret-registry validation",
+);
 requireAbsent(release, /github\.event\.head_commit\.timestamp/, "publish metadata must not use push-event timestamps");
 requireMatch(release, /:sha-\$\{\{\s*steps\.release_meta\.outputs\.source_commit\s*\}\}/g, "backend image must use the normalized source SHA tag");
 requireMatch(release, /ADMIN_IMAGE_NAME }}:sha-\$\{\{\s*steps\.release_meta\.outputs\.source_commit\s*\}\}/g, "Admin image must use the normalized source SHA tag");

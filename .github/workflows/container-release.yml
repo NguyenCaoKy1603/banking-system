@@ -193,6 +193,17 @@ jobs:
           printf 'SOURCE_COMMIT=%s\n' "${source_commit}" >> "${GITHUB_ENV}"
           printf 'BUILD_CREATED_AT=%s\n' "${build_created_at}" >> "${GITHUB_ENV}"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install release dependencies
+        working-directory: backend
+        run: npm ci
+
       - name: Verify clean source and tracked migrations
         working-directory: backend
         run: node scripts/release-gate.cjs
@@ -203,17 +214,9 @@ jobs:
           npm run validate:secrets -- --history
           npm run validate:secret-registry
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-
       - name: Run release quality gates
         working-directory: backend
         run: |
-          npm ci
           npm run typecheck
           npm run build
           npm audit --omit=dev --audit-level=high
