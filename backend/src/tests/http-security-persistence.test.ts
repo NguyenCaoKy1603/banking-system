@@ -5,11 +5,9 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 
 import { BankingSystem, type BankingSystemState } from "../bankingSystem.js";
-import { conflict } from "../errors.js";
 import { createPersistentBankingServer } from "../http.js";
 import type { RelationalStateOperation } from "../postgresRelationalRepository.js";
 
-const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
 
 class MemoryStateRepository {
   private state: unknown;
@@ -26,15 +24,6 @@ class MemoryStateRepository {
 
   snapshot(): BankingSystemState {
     return structuredClone(this.state) as BankingSystemState;
-  }
-}
-
-class RejectingFundingSystem extends BankingSystem {
-  override fundSandbox(
-    ...args: Parameters<BankingSystem["fundSandbox"]>
-  ): ReturnType<BankingSystem["fundSandbox"]> {
-    super.fundSandbox(...args);
-    throw conflict("Forced rejection after a business mutation.");
   }
 }
 
@@ -239,6 +228,34 @@ test("persistent HTTP keeps challenge attempts and lockout across a restart", as
   assert.equal(replayResponse.status, 401);
 });
 
+test("persistent HTTP does not expose a fixture OTP route after a state boundary", async (t) => {
+  const repository = new MemoryStateRepository();
+  const deviceId = `registration-device-${randomUUID()}`;
+  const suffix = randomUUID().replaceAll("-", "").slice(0, 8);
+  const system = new BankingSystem({ sandboxOtp: "123456", mfaRequired: false });
+  const running = await startServer(repository, system);
+  t.after(() => closeServer(running.server));
+
+  const registrationResponse = await request(running.baseUrl, "/auth/register", {
+    method: "POST",
+    headers: { "X-Device-ID": deviceId },
+    body: JSON.stringify({
+      fullName: "Persistent OTP User",
+      email: `persistent-otp-${suffix}@example.com`,
+      phoneNumber: `09${suffix}`,
+      password: "Password1",
+    }),
+  });
+  assert.equal(registrationResponse.status, 202);
+  const registration = (await registrationResponse.json()) as { challengeId: string };
+
+  const otpResponse = await request(
+    running.baseUrl,
+    `/sandbox/otp/${registration.challengeId}`,
+  );
+  assert.equal(otpResponse.status, 404);
+});
+
 test("persistent HTTP keeps whitelisted step-up failure audits", async (t) => {
   const repository = new MemoryStateRepository();
   const deviceId = `audit-device-${randomUUID()}`;
@@ -317,10 +334,7 @@ test("persistent HTTP rolls business mutations back when a domain request is rej
   const suffix = randomUUID().replaceAll("-", "").slice(0, 8);
   const email = `business-rollback-${suffix}@example.com`;
   const deviceId = `business-rollback-device-${suffix}`;
-  const system = new RejectingFundingSystem({
-    mfaRequired: false,
-    sandboxOperatorKey: SANDBOX_OPERATOR_KEY,
-  });
+  const system = new BankingSystem({ mfaRequired: false });
   const user = system.register({
     fullName: "Business Rollback User",
     email,
@@ -329,7 +343,6 @@ test("persistent HTTP rolls business mutations back when a domain request is rej
   }).user;
   const account = system.listAccounts(user.id)[0];
   assert.ok(account);
-  const accountNumber = system.getAccountNumber(user.id, account.id);
   const runningServers: Server[] = [];
   t.after(async () => {
     for (const server of runningServers) {
@@ -339,24 +352,17 @@ test("persistent HTTP rolls business mutations back when a domain request is rej
 
   const first = await startServer(repository, system);
   runningServers.push(first.server);
-  const rejectedFunding = await request(first.baseUrl, "/sandbox/fundings", {
+  const removedFundingRoute = await request(first.baseUrl, "/sandbox/fundings", {
     method: "POST",
-    headers: {
-      "Idempotency-Key": `rejected-funding-${suffix}`,
-      "X-Sandbox-Operator-Key": SANDBOX_OPERATOR_KEY,
-    },
-    body: JSON.stringify({
-      recipientAccountNumber: accountNumber,
-      amount: { currency: "VND", amountMinor: "1000000" },
-      reason: "forced rollback regression",
-    }),
+    headers: { "Idempotency-Key": `removed-fixture-${suffix}` },
+    body: JSON.stringify({ amount: { currency: "VND", amountMinor: "1000000" } }),
   });
-  assert.equal(rejectedFunding.status, 409);
+  assert.equal(removedFundingRoute.status, 404);
   assert.equal(
     repository
       .snapshot()
       .auditEventStore.some(
-        (event) => event.eventType === "SANDBOX_FUNDING_SUCCEEDED",
+        (event) => event.eventType === "REFERENCE_FUNDING_SUCCEEDED",
       ),
     false,
   );
@@ -366,7 +372,6 @@ test("persistent HTTP rolls business mutations back when a domain request is rej
     repository,
     new BankingSystem({
       mfaRequired: false,
-      sandboxOperatorKey: SANDBOX_OPERATOR_KEY,
     }),
   );
   runningServers.push(second.server);

@@ -101,78 +101,173 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '429':
           $ref: '#/components/responses/RateLimited'
-  /sandbox/fundings:
+  /auth/mfa/methods:
+    get:
+      tags: [Auth]
+      operationId: listMfaMethods
+      responses:
+        '200':
+          description: Active and pending MFA credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaMethodsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/mfa/totp/enroll:
     post:
-      tags: [Sandbox]
-      operationId: createSandboxFunding
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/SandboxOperatorKey'
+      tags: [Auth]
+      operationId: beginTotpEnrollment
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SandboxFundingRequest'
+              $ref: '#/components/schemas/TotpEnrollRequest'
       responses:
-        '200':
-          description: Sandbox funding journal posted exactly once.
+        '201':
+          description: Pending TOTP credential and one-time setup material.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FundingReceipt'
+                $ref: '#/components/schemas/TotpEnrollmentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/mfa/totp/confirm:
+    post:
+      tags: [Auth]
+      operationId: confirmTotpEnrollment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpConfirmRequest'
+      responses:
+        '200':
+          description: Active TOTP credential and one-time recovery codes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpConfirmationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/mfa/methods/{credentialId}:
+    delete:
+      tags: [Auth]
+      operationId: revokeMfaMethod
+      parameters:
+        - $ref: '#/components/parameters/CredentialId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CurrentPasswordRequest'
+      responses:
+        '204':
+          description: MFA credential revoked.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '409':
           $ref: '#/components/responses/Conflict'
-        '422':
-          $ref: '#/components/responses/ValidationError'
-  /sandbox/otp/{challengeId}:
-    get:
-      tags: [Sandbox]
-      operationId: readSandboxOtp
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/ChallengeId'
-        - $ref: '#/components/parameters/SandboxOperatorKey'
-      responses:
-        '200':
-          description: Test-only OTP lookup for an authorized sandbox operator.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SandboxOtpResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /sandbox/process-scheduled:
+  /auth/mfa/recover:
     post:
-      tags: [Sandbox]
-      operationId: processSandboxScheduledWork
+      tags: [Auth]
+      operationId: startMfaRecovery
       security: []
-      parameters:
-        - $ref: '#/components/parameters/SandboxOperatorKey'
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SandboxScheduledWorkRequest'
+              $ref: '#/components/schemas/RecoveryCodeRequest'
       responses:
-        '200':
-          description: Pending sandbox transfers, savings openings and credit payments are settled before due savings maturities and credit statements are processed explicitly.
+        '202':
+          description: Recovery code accepted; the account is placed in recovery state.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SandboxScheduledWorkResponse'
+                $ref: '#/components/schemas/RecoveryStartedResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /auth/mfa/recover/verify:
+    post:
+      tags: [Auth]
+      operationId: verifyMfaRecovery
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCodeRequest'
+      responses:
+        '202':
+          description: Recovery code accepted; the account is placed in recovery state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryStartedResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/mfa/recover/complete:
+    post:
+      tags: [Auth]
+      operationId: completeMfaRecovery
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCompletionRequest'
+      responses:
+        '202':
+          description: Recovery completion is accepted by the reference recovery state machine.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCompletionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/mfa/recover/enroll:
+    post:
+      tags: [Auth]
+      operationId: beginRecoveryTotpEnrollment
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryEnrollmentRequest'
+      responses:
+        '201':
+          description: Replacement TOTP setup material after recovery cooldown.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpEnrollmentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/challenges/{challengeId}/resend:
+    post:
+      tags: [Auth]
+      operationId: resendVerificationChallenge
+      parameters:
+        - $ref: '#/components/parameters/ChallengeId'
+      responses:
+        '200':
+          description: New challenge and code delivery metadata. The old challenge is cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MfaChallengeResponse'
         '404':
           $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /auth/login:
     post:
       tags: [Auth]
@@ -1230,13 +1325,13 @@ components:
       schema:
         type: string
         minLength: 1
-    SandboxOperatorKey:
-      name: X-Sandbox-Operator-Key
-      in: header
+    CredentialId:
+      name: credentialId
+      in: path
       required: true
       schema:
         type: string
-        minLength: 1
+        format: uuid
   responses:
     Unauthorized:
       description: Access token missing, expired or revoked.
@@ -1349,11 +1444,121 @@ components:
       properties:
         challengeId: { type: string, minLength: 1 }
         expiresAt: { type: string, format: date-time }
-        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK] }
+        purpose: { type: string, enum: [LOGIN, TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
         methods:
           type: array
           minItems: 1
-          items: { type: string, enum: [OTP, BIOMETRIC] }
+          items: { type: string, enum: [OTP, EMAIL_OTP, TOTP] }
+        method: { type: string, enum: [EMAIL_OTP, TOTP] }
+        resendAfter: { type: string, format: date-time }
+        maskedDestination: { type: string }
+    MfaChallengeResponse:
+      type: object
+      required: [challengeId, method, purpose, expiresAt]
+      properties:
+        challengeId: { type: string, minLength: 1 }
+        method: { type: string, enum: [EMAIL_OTP, TOTP] }
+        purpose: { type: string }
+        expiresAt: { type: string, format: date-time }
+        resendAfter: { type: string, format: date-time }
+        maskedDestination: { type: string }
+    MfaCredential:
+      type: object
+      required: [id, customerId, credentialType, displayName, status]
+      properties:
+        id: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        credentialType: { type: string, enum: [TOTP, PASSKEY, OOB_SMS] }
+        displayName: { type: string }
+        status: { type: string, enum: [PENDING, ACTIVE, SUSPENDED, REVOKED] }
+        algorithm: { type: string }
+        digits: { type: integer }
+        periodSeconds: { type: integer }
+    MfaMethodsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MfaCredential' }
+    TotpEnrollRequest:
+      type: object
+      required: [password]
+      example:
+        password: <provided-by-test-secret>
+        displayName: Personal authenticator
+      properties:
+        password: { type: string, minLength: 8, writeOnly: true }
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        challengeId: { type: string, minLength: 1 }
+        code: { type: string, pattern: '^\d{6}$', writeOnly: true }
+    TotpEnrollmentResponse:
+      type: object
+      required: [credentialId, status, expiresAt, manualSetupKey, otpauthUri]
+      properties:
+        credentialId: { type: string, format: uuid }
+        status: { type: string, enum: [PENDING] }
+        expiresAt: { type: string, format: date-time }
+        manualSetupKey: { type: string, writeOnly: true }
+        otpauthUri: { type: string, writeOnly: true }
+    TotpConfirmRequest:
+      type: object
+      required: [credentialId, code]
+      properties:
+        credentialId: { type: string, format: uuid }
+        code: { type: string, pattern: '^\d{6}$', writeOnly: true }
+        recoveryToken: { type: string, minLength: 1, writeOnly: true }
+    TotpConfirmationResponse:
+      type: object
+      required: [credentialId, status, recoveryCodes]
+      properties:
+        credentialId: { type: string, format: uuid }
+        status: { type: string, enum: [ACTIVE] }
+        recoveryCodes:
+          type: array
+          minItems: 8
+          maxItems: 10
+          writeOnly: true
+          items: { type: string, writeOnly: true }
+    RecoveryCodeRequest:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string, minLength: 16, writeOnly: true }
+        recoveryToken: { type: string, minLength: 1, writeOnly: true }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8, writeOnly: true }
+    RecoveryCompletionRequest:
+      type: object
+      required: [recoveryToken]
+      properties:
+        recoveryToken: { type: string, minLength: 1, writeOnly: true }
+    RecoveryCompletionResponse:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [RECOVERY_COMPLETED] }
+    RecoveryEnrollmentRequest:
+      type: object
+      required: [recoveryToken]
+      properties:
+        recoveryToken: { type: string, minLength: 1, writeOnly: true }
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+    RecoveryStartedResponse:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [RECOVERY_STARTED] }
+        recoveryRequestId: { type: string, format: uuid }
+        recoveryToken: { type: string, writeOnly: true }
+        cooldownUntil: { type: string, format: date-time }
+    CurrentPasswordRequest:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string, minLength: 8, writeOnly: true }
+        challengeId: { type: string, minLength: 1 }
+        code: { type: string, pattern: '^\d{6}$', writeOnly: true }
     CreateOtpChallengeRequest:
       type: object
       required: [purpose]
@@ -1362,7 +1567,7 @@ components:
         resourceId: quote-example
         requestFingerprint: fingerprint-example
       properties:
-        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK] }
+        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
         resourceId:
           oneOf:
             - { type: string }
@@ -1371,13 +1576,6 @@ components:
           oneOf:
             - { type: string }
             - { type: 'null' }
-    SandboxFundingRequest:
-      type: object
-      required: [recipientAccountNumber, amount, reason]
-      properties:
-        recipientAccountNumber: { type: string, pattern: '^\d{6,34}$' }
-        amount: { $ref: '#/components/schemas/Money' }
-        reason: { type: string, minLength: 1, maxLength: 160 }
     FundingReceipt:
       type: object
       required: [fundingId, reference, status, amount, transactionId, recipientMaskedAccountNumber, createdAt]
@@ -1389,27 +1587,6 @@ components:
         transactionId: { type: string }
         recipientMaskedAccountNumber: { type: string }
         createdAt: { type: string, format: date-time }
-    SandboxOtpResponse:
-      type: object
-      required: [otp]
-      properties:
-        otp: { type: string, pattern: '^\d{6}$', writeOnly: true }
-    SandboxScheduledWorkRequest:
-      type: object
-      additionalProperties: false
-      properties:
-        userId: { type: string, minLength: 1 }
-    SandboxScheduledWorkResponse:
-      type: object
-      additionalProperties: false
-      required: [usersProcessed, transfersSettled, savingsOpeningsSettled, creditPaymentsSettled, savingsMaturities, creditStatements]
-      properties:
-        usersProcessed: { type: integer, minimum: 0 }
-        transfersSettled: { type: integer, minimum: 0 }
-        savingsOpeningsSettled: { type: integer, minimum: 0 }
-        creditPaymentsSettled: { type: integer, minimum: 0 }
-        savingsMaturities: { type: integer, minimum: 0 }
-        creditStatements: { type: integer, minimum: 0 }
     InternalRecipientLookupRequest:
       type: object
       required: [accountNumber]
@@ -1439,7 +1616,7 @@ components:
         proof: <provided-by-test-factor>
       properties:
         challengeId: { type: string, minLength: 1, writeOnly: true }
-        method: { type: string, enum: [OTP, BIOMETRIC] }
+        method: { type: string, enum: [OTP, TOTP] }
         proof: { type: string, minLength: 1, writeOnly: true }
     LogoutRequest:
       type: object
@@ -1458,14 +1635,14 @@ components:
         stepUpMethods:
           type: array
           minItems: 1
-          items: { type: string, enum: [OTP, BIOMETRIC] }
+          items: { type: string, enum: [OTP, TOTP] }
         savingsEnabled: { type: boolean }
         savingsAllowlisted: { type: boolean }
         maxSavingsAmountMinor: { type: string, pattern: '^(0|[1-9][0-9]*)$' }
         savingsStepUpMethods:
           type: array
           minItems: 1
-          items: { type: string, enum: [OTP, BIOMETRIC] }
+          items: { type: string, enum: [OTP, TOTP] }
         creditEnabled: { type: boolean }
         creditAllowlisted: { type: boolean }
         creditPaymentsEnabled: { type: boolean }
@@ -1474,11 +1651,11 @@ components:
         creditPaymentStepUpMethods:
           type: array
           minItems: 1
-          items: { type: string, enum: [OTP, BIOMETRIC] }
+          items: { type: string, enum: [OTP, TOTP] }
         cardUnlockStepUpMethods:
           type: array
           minItems: 1
-          items: { type: string, enum: [OTP, BIOMETRIC] }
+          items: { type: string, enum: [OTP, TOTP] }
         updatedAt: { type: string, format: date-time }
     Notification:
       type: object
@@ -1675,7 +1852,7 @@ components:
           type: object
           required: [method, proof, challengeId]
           properties:
-            method: { type: string, enum: [OTP, BIOMETRIC] }
+            method: { type: string, enum: [OTP, TOTP] }
             proof: { type: string, minLength: 1, writeOnly: true }
             challengeId: { type: string, minLength: 1, writeOnly: true }
     TransferReceipt:
@@ -1756,7 +1933,7 @@ components:
           type: object
           required: [method, proof, challengeId]
           properties:
-            method: { type: string, enum: [OTP, BIOMETRIC] }
+            method: { type: string, enum: [OTP, TOTP] }
             proof: { type: string, minLength: 1, writeOnly: true }
             challengeId: { type: string, minLength: 1, writeOnly: true }
     SavingsOpening:
@@ -1822,7 +1999,7 @@ components:
         proof: <provided-by-test-factor>
         challengeId: challenge-example
       properties:
-        method: { type: string, enum: [OTP, BIOMETRIC] }
+        method: { type: string, enum: [OTP, TOTP] }
         proof: { type: string, minLength: 1, writeOnly: true }
         challengeId: { type: string, minLength: 1, writeOnly: true }
     CreditCard:

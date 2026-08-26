@@ -37,9 +37,12 @@ export function createOpaqueToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-export function createSandboxOtp(): string {
+export function generateVerificationCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, "0");
 }
+
+/** @deprecated Use generateVerificationCode; retained for old test fixtures only. */
+export const createSandboxOtp = generateVerificationCode;
 
 export function hashOpaqueToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");

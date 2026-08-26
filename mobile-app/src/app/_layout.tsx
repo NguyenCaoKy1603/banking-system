@@ -92,6 +92,7 @@ function RootNavigator() {
           <Stack.Screen name="fraud-report" />
           <Stack.Screen name="kyc" />
           <Stack.Screen name="qr" />
+          <Stack.Screen name="mfa" />
           <Stack.Screen name="savings" />
           <Stack.Screen name="savings/open" />
           <Stack.Screen name="savings/[depositId]" />

@@ -1,0 +1,226 @@
+name: Preview container smoke
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - "compose.yaml"
+      - ".env.compose.example"
+      - "performance/**"
+      - "admin-web/**"
+      - ".github/workflows/preview-container-smoke.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "compose.yaml"
+      - ".env.compose.example"
+      - "performance/**"
+      - "admin-web/**"
+      - ".github/workflows/preview-container-smoke.yml"
+
+jobs:
+  container-smoke:
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: banking
+      POSTGRES_PASSWORD: banking-ci-only
+      POSTGRES_DB: banking_preview
+      DATABASE_URL: postgresql://banking:banking-ci-only@postgres:5432/banking_preview
+      POSTGRES_PORT: 55432
+      BACKEND_PORT: 55000
+      ADMIN_API_PORT: 55001
+      ADMIN_WEB_PORT: 55173
+      ADMIN_WEB_ENV: preview
+      ADMIN_API_UPSTREAM: http://admin-api:5001
+      ADMIN_ALLOWED_ORIGINS: http://127.0.0.1:55173
+      COMMIT_SHA: ${{ github.sha }}
+      BANKING_MFA_REQUIRED: "1"
+      BANKING_MFA_METHODS: TOTP
+      BANKING_OTP_PEPPER: base64:Y2ktb3RwLXBlcHBlci0wMTIzNDU2Nzg5MDEyMzQ1Njc=
+      BANKING_MFA_ENCRYPTION_KEY: base64:Y2ktbWZhLWVuY3J5cHRpb24ta2V5LTAxMjM0NTY3ODk=
+      BANKING_OTP_PEPPER_KEY_ID: otp-ci-v1
+      BANKING_MFA_ENCRYPTION_KEY_ID: mfa-ci-v1
+      BANKING_SETTLE_IMMEDIATELY: "1"
+      BANKING_ALLOWED_ORIGINS: https://preview.example.invalid
+      BANKING_SANDBOX_CREDIT_OVERDUE: "0"
+      # The persistent smoke uses a pre-enrolled fixture.  Registration/email
+      # delivery is intentionally not faked in CI; provide these from the
+      # repository secret store when a preview fixture exists.
+      SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
+      SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+      SMOKE_DEVICE_ID: ${{ secrets.SMOKE_DEVICE_ID }}
+      SMOKE_TOTP_SECRET: ${{ secrets.SMOKE_TOTP_SECRET }}
+      SMOKE_EXPECT_EXISTING: "1"
+      PERF_BASE_URL: http://127.0.0.1:55000/api/v1
+      PERF_OWNER_EMAIL: ${{ secrets.PERF_OWNER_EMAIL }}
+      PERF_RECIPIENT_EMAIL: ${{ secrets.PERF_RECIPIENT_EMAIL }}
+      PERF_PASSWORD: ${{ secrets.PERF_PASSWORD }}
+      PERF_OWNER_TOTP_SECRET: ${{ secrets.PERF_OWNER_TOTP_SECRET }}
+      PERF_RECIPIENT_TOTP_SECRET: ${{ secrets.PERF_RECIPIENT_TOTP_SECRET }}
+      PERF_OWNER_DEVICE_ID: ${{ secrets.PERF_OWNER_DEVICE_ID }}
+      PERF_RECIPIENT_DEVICE_ID: ${{ secrets.PERF_RECIPIENT_DEVICE_ID }}
+      PERF_OWNER_PRESEEDED: ${{ secrets.PERF_OWNER_PRESEEDED }}
+      PERF_READ_ITERATIONS: "20"
+      PERF_TRANSFER_CONCURRENCY: "20"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate immutable release workflow contract
+        run: node backend/scripts/validate-container-release-workflow.cjs
+
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+      - name: Build runtime image
+        run: docker compose build --pull=false backend admin-api admin-web migrate worker
+
+      - name: Scan runtime images for secret artifacts
+        run: |
+          for image in banking-reference-preview-backend banking-reference-preview-admin-api banking-reference-preview-migrate banking-reference-preview-worker; do
+            node backend/scripts/validate-image-surface.cjs --image="$image:latest"
+          done
+
+      - name: Start PostgreSQL
+        run: docker compose up -d postgres
+
+      - name: Apply migrations from an empty database
+        run: docker compose run --rm migrate
+
+      - name: Re-run migrations idempotently
+        run: docker compose run --rm migrate
+
+      - name: Start backend container
+        run: docker compose up -d backend
+
+      - name: Start Admin API and Web containers
+        run: docker compose up -d admin-api admin-web
+
+      - name: Verify Admin Web Host forwarding with disposable fixtures
+        env:
+          ADMIN_WEB_IMAGE: banking-reference-preview-admin-web:latest
+          RUNTIME_PROXY_FIXTURE_IMAGE: banking-reference-preview-backend:latest
+        run: node admin-web/scripts/verify-runtime-proxy.cjs
+
+      - name: Verify Admin API and Web health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:${ADMIN_API_PORT}/livez >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${ADMIN_WEB_PORT}/livez >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${ADMIN_WEB_PORT}/readyz >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker compose ps
+              docker compose logs --no-color admin-api admin-web
+              exit 1
+            fi
+            sleep 2
+          done
+          status=$(curl --silent --output /tmp/admin-me-response.txt --write-out '%{http_code}' http://127.0.0.1:${ADMIN_WEB_PORT}/api/v1/admin/me)
+          test "$status" = 401
+
+      - name: OWASP ZAP baseline for Admin Web and API
+        run: |
+          docker run --rm --network host zaproxy/zap-stable \
+            zap-baseline.py -t http://127.0.0.1:${ADMIN_WEB_PORT} -I -m 3
+          docker run --rm --network host zaproxy/zap-stable \
+            zap-baseline.py -t http://127.0.0.1:${ADMIN_API_PORT} -I -m 3
+
+      - name: Verify runtime image is non-root and has no tsx compiler
+        run: >-
+          docker compose exec -T backend sh -c
+          'test "$(id -u)" != "0" && test ! -d node_modules/tsx'
+
+      - name: Wait for liveness and readiness
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/livez >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/startupz >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/readyz >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/versionz >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps
+          docker compose logs backend
+          exit 1
+
+      - name: Run API smoke flow through the container
+        if: ${{ env.SMOKE_EMAIL != '' && env.SMOKE_PASSWORD != '' && env.SMOKE_TOTP_SECRET != '' }}
+        run: >-
+          docker compose exec -T
+          -e SMOKE_EMAIL="$SMOKE_EMAIL"
+          -e SMOKE_PASSWORD="$SMOKE_PASSWORD"
+          -e SMOKE_DEVICE_ID="$SMOKE_DEVICE_ID"
+          -e SMOKE_TOTP_SECRET="$SMOKE_TOTP_SECRET"
+          -e SMOKE_EXPECT_EXISTING=1
+          backend node scripts/container-smoke.cjs
+
+      - name: Run performance and transfer-integrity smoke
+        if: ${{ env.PERF_OWNER_PRESEEDED == '1' && env.PERF_OWNER_EMAIL != '' && env.PERF_RECIPIENT_EMAIL != '' && env.PERF_OWNER_TOTP_SECRET != '' && env.PERF_RECIPIENT_TOTP_SECRET != '' }}
+        run: |
+          set -o pipefail
+          node performance/node/stage2-smoke.cjs | tee stage2-performance-ci.json
+
+      - name: Scan preview logs for secret canaries
+        run: |
+          if docker compose logs --no-color | grep -E 'stage2-(password|otp|access|device|account)-canary'; then
+            echo "Secret canary found in preview logs"
+            exit 1
+          fi
+
+      - name: Restart backend and verify persistent login
+        if: ${{ env.SMOKE_EMAIL != '' && env.SMOKE_PASSWORD != '' && env.SMOKE_TOTP_SECRET != '' }}
+        run: |
+          docker compose restart backend
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/healthz >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          docker compose exec -T \
+            -e SMOKE_EMAIL="$SMOKE_EMAIL" \
+            -e SMOKE_PASSWORD="$SMOKE_PASSWORD" \
+            -e SMOKE_DEVICE_ID="$SMOKE_DEVICE_ID" \
+            -e SMOKE_TOTP_SECRET="$SMOKE_TOTP_SECRET" \
+            -e SMOKE_EXPECT_EXISTING=1 \
+            backend node scripts/container-smoke.cjs
+
+      - name: Restart the full Compose stack and keep the volume
+        if: ${{ env.SMOKE_EMAIL != '' && env.SMOKE_PASSWORD != '' && env.SMOKE_TOTP_SECRET != '' }}
+        run: |
+          docker compose down --remove-orphans
+          docker compose up -d backend
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/healthz >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          docker compose exec -T \
+            -e SMOKE_EMAIL="$SMOKE_EMAIL" \
+            -e SMOKE_PASSWORD="$SMOKE_PASSWORD" \
+            -e SMOKE_DEVICE_ID="$SMOKE_DEVICE_ID" \
+            -e SMOKE_TOTP_SECRET="$SMOKE_TOTP_SECRET" \
+            -e SMOKE_EXPECT_EXISTING=1 \
+            backend node scripts/container-smoke.cjs
+
+      - name: Show service diagnostics
+        if: always()
+        run: docker compose ps && docker compose logs --no-color
+
+      - name: Upload sanitized Stage 2 performance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage2-performance-${{ github.run_id }}
+          path: stage2-performance-ci.json
+          if-no-files-found: ignore
+
+      - name: Tear down disposable preview
+        if: always()
+        run: docker compose down --volumes --remove-orphans

@@ -14,8 +14,23 @@ const deviceId = process.env.MAESTRO_DEVICE ?? "emulator-5554";
 const apiBaseUrl = (
   process.env.E2E_BASE_URL ?? "http://127.0.0.1:5000/api/v1"
 ).replace(/\/+$/, "");
-const sandboxMfaOtp = process.env.E2E_MFA_OTP?.trim();
-const sandboxTransferOtp = process.env.E2E_TRANSFER_OTP?.trim();
+const totpSecret = process.env.E2E_TOTP_SECRET?.trim();
+const { Secret, TOTP } = require(path.join(backendRoot, "node_modules", "otpauth"));
+let lastTotpStep = -1;
+
+async function currentTotpCode() {
+  if (!totpSecret) fail("E2E_TOTP_SECRET is required; the runner never reads a backend code endpoint.");
+  let now = Date.now();
+  let step = Math.floor(now / 30000);
+  if (step <= lastTotpStep) {
+    await new Promise((resolve) => setTimeout(resolve, ((lastTotpStep + 1) * 30000) - now + 250));
+    now = Date.now();
+    step = Math.floor(now / 30000);
+  }
+  lastTotpStep = step;
+  const totp = new TOTP({ issuer: "Banking Reference", label: "mobile-e2e", algorithm: "SHA1", digits: 6, period: 30, secret: Secret.fromBase32(totpSecret) });
+  return totp.generate({ timestamp: now });
+}
 
 function fail(message) {
   throw new Error(message);
@@ -50,8 +65,7 @@ function runSeed(environment) {
       environment.E2E_EMAIL,
       environment.E2E_PASSWORD,
       environment.E2E_PHONE,
-      environment.E2E_MFA_OTP,
-      environment.E2E_TRANSFER_OTP,
+      environment.E2E_TOTP_SECRET,
       environment.E2E_RECIPIENT_EMAIL,
       environment.E2E_RECIPIENT_PASSWORD,
     ].filter(Boolean);
@@ -104,8 +118,8 @@ async function resolveAccountNumber(environment) {
       method: "POST",
       body: JSON.stringify({
         challengeId: session.challengeId,
-        method: "OTP",
-        proof: sandboxMfaOtp,
+        method: "TOTP",
+        proof: await currentTotpCode(),
       }),
     });
   }
@@ -131,7 +145,7 @@ async function resolveAccountNumber(environment) {
   return accountNumber.accountNumber;
 }
 
-function runMaestro(environment, accountNumber, artifactDirectory) {
+async function runMaestro(environment, accountNumber, artifactDirectory) {
   const wrapper = path.join(mobileRoot, "scripts", "run-maestro.cjs");
   const result = spawnSync(
     process.execPath,
@@ -150,11 +164,11 @@ function runMaestro(environment, accountNumber, artifactDirectory) {
       "--env",
       `TEST_PASSWORD=${environment.E2E_PASSWORD}`,
       "--env",
-      `MFA_OTP=${sandboxMfaOtp}`,
+      `MFA_TOTP=${await currentTotpCode()}`,
       "--env",
       `ACCOUNT_NUMBER=${accountNumber}`,
       "--env",
-      `TRANSFER_OTP=${sandboxTransferOtp}`,
+      `TRANSFER_TOTP=${await currentTotpCode()}`,
       flowPath,
     ],
     {
@@ -169,10 +183,8 @@ function runMaestro(environment, accountNumber, artifactDirectory) {
 
 async function main() {
   ensureFlowPath();
-  if (!sandboxMfaOtp || !sandboxTransferOtp) {
-    fail(
-      "Set E2E_MFA_OTP and E2E_TRANSFER_OTP to the fixed OTP values configured by the running sandbox backend.",
-    );
+  if (!totpSecret) {
+    fail("Set E2E_TOTP_SECRET to the test fixture secret; do not configure fixed OTP values.");
   }
   const suffix = randomSuffix();
   const environment = {
@@ -181,8 +193,7 @@ async function main() {
     E2E_EMAIL: `e2e-${suffix}@example.test`,
     E2E_PASSWORD: `Sandbox-${suffix}!Aa1`,
     E2E_PHONE: `090${String(Number.parseInt(suffix.slice(0, 7), 16) % 10_000_000).padStart(7, "0")}`,
-    E2E_MFA_OTP: sandboxMfaOtp,
-    E2E_TRANSFER_OTP: sandboxTransferOtp,
+    E2E_TOTP_SECRET: totpSecret,
     E2E_RECIPIENT_EMAIL: `recipient-${suffix}@example.test`,
     E2E_RECIPIENT_PASSWORD: `Recipient-${suffix}!Aa1`,
     APP_ID: process.env.APP_ID ?? "com.example.digitalbanking.mobile",
@@ -192,7 +203,7 @@ async function main() {
   try {
     runSeed(environment);
     const accountNumber = await resolveAccountNumber(environment);
-    const status = runMaestro(environment, accountNumber, artifactDirectory);
+    const status = await runMaestro(environment, accountNumber, artifactDirectory);
     if (status !== 0) {
       fail(`Maestro E2E failed with exit code ${status}.`);
     }

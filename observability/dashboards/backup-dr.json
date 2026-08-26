@@ -1,0 +1,15 @@
+{
+  "title": "Banking backup and DR (contract)",
+  "uid": "banking-backup-dr-contract",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "tags": ["banking", "backup", "dr", "contract-only"],
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "time": { "from": "now-7d", "to": "now" },
+  "panels": [
+    { "type": "timeseries", "title": "Backup age", "datasource": { "type": "prometheus", "uid": "__NOT_CONNECTED__" }, "targets": [{ "expr": "time() - banking_backup_last_success_timestamp_seconds", "refId": "A" }], "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 } },
+    { "type": "timeseries", "title": "WAL archive lag", "datasource": { "type": "prometheus", "uid": "__NOT_CONNECTED__" }, "targets": [{ "expr": "banking_wal_archive_lag_seconds", "refId": "A" }], "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 } }
+  ]
+}

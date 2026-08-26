@@ -7,7 +7,7 @@ Implementation evidence checkpoint hiện hành: `edbc9bb`; safety checkpoint: `
 Các thay đổi hardening ngày 2026-08-24 đã được tách thành commit logic trên working tree sạch; implementation branch đã push và có upstream, nhưng chưa có `main`/PR/branch protection. Bằng chứng checkpoint 2026-08-17 bên dưới vẫn là lịch sử tái hiện gần nhất; không được dùng số liệu cũ để tuyên bố các thay đổi mới đã qua device/staging gate.
 
 - Worktree Mobile lint, type-check, 46 suite/260 test, coverage 85,53% statement/86,57% branch, OpenAPI, Maestro syntax và web export đạt.
-- Worktree Backend type-check/build, 88 definition (82 pass, 6 PostgreSQL skip), 8 critical HTTP flow và static database contract 28 bảng đạt. Mốc PostgreSQL 70/70 + relational 1/1 bên dưới là bằng chứng lịch sử 2026-08-17, chưa được rerun cho hardening mới.
+- Worktree Backend type-check/build, PostgreSQL + relational 91/91 test pass, 10 critical HTTP flow và static/live database contract 28 bảng đạt. Bằng chứng mới chạy trên disposable PostgreSQL của Compose local.
 
 ## Cập nhật mới nhất — relational reference adapter
 
@@ -30,7 +30,7 @@ Các thay đổi hardening ngày 2026-08-24 đã được tách thành commit lo
 - M2: eKYC thật/API KYC và test data staging chưa có; phần hiện tại là mock có chủ đích.
 - M4: transfer, beneficiary CRUD, QR manual fallback và pending/restart/resume đã có bằng chứng Maestro trên emulator; QR camera/permission và lifecycle native trên thiết bị thật vẫn chưa có.
 - M6 và M7: đã có reference sandbox; M6 quote/review/step-up/mở khoản → danh sách, M7 payment pending → stop/launch → resume, card lock → stop/launch → OTP unlock và overdue notification → card detail đã có flow pass trên emulator. M5 vẫn là mock/fixture, chưa phải API/production card integration; M9 chưa triển khai.
-- M10: usability, accessibility, performance và native device regression chưa hoàn tất; audit Mobile local hiện 0 vulnerability sau khi khóa Metro `0.84.5`, nhưng remote CI chưa có log trong workspace và Docker daemon hiện không khả dụng cho live PostgreSQL.
+- M10: usability, accessibility, performance và native device regression chưa hoàn tất; audit Mobile local hiện 0 vulnerability sau khi khóa Metro `0.84.5`. Docker/PostgreSQL local đã có evidence, nhưng remote CI và device thật còn chờ.
 - M11: đã build APK release local và lưu checksum/evidence; chưa có signing, cài đặt ngoài máy phát triển, staging, monitoring và hồ sơ bảo vệ đầy đủ.
 
 ## Quyết định persistence reference
@@ -95,12 +95,47 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 
 ### Bằng chứng local hiện có cho worktree
 
-- Backend `npm run typecheck`, `npm run build`, static database contract, OpenAPI và `npm test` đã đạt: 88 test definition, 82 pass, 6 PostgreSQL test skip; `test:critical` 8/8 pass.
+- Backend `npm run typecheck`, `npm run build`, live database contract, OpenAPI và `npm test` đã đạt: 91 test definition, 91 pass, 0 PostgreSQL/relational skip; `test:critical` 10/10 pass.
 - Mobile full gate đã đạt: lint, typecheck, 46 suite/260 unit test, coverage 85,53% statement/86,57% branch, OpenAPI 43 path, 10 Maestro flow syntax và web export 33 route với build-time HTTPS URL.
 
 ### Chưa đóng
 
 - Chưa có durable worker/scheduler chạy các command đã tách: job lease/idempotency, retry/backoff, crash recovery, core callback và monitoring vẫn là target DRAFT, chưa triển khai đầy đủ.
-- PostgreSQL live validator không đạt trong môi trường hiện tại; static schema contract đạt khi bỏ `DATABASE_URL`. Fraud restart/idempotency và credit concurrency live vẫn chưa có bằng chứng mới; sáu test database bị skip.
+- PostgreSQL live validator và relational concurrency đã đạt trên database disposable local; fraud/device cloud evidence, registry scan và managed backup/restore vẫn chưa có.
 - Chưa có device E2E cho timeout sau server commit, force-stop sau quote TTL, logout rồi re-login cùng user để resume, cross-user isolation, logout-all remote revoke hoặc fraud retry/status.
 - Mọi API/behavior mới vẫn là DRAFT; chưa có core/fraud/identity/credit product/legal approval, staging, physical-device evidence, monitoring hoặc signing. Không thay đổi kết luận: **chưa pilot/production-ready**.
+
+## Giai đoạn 1 — Docker và Preview Persistent — 2026-08-24
+
+- Đã thêm Dockerfile multi-stage cho Backend: build TypeScript ở builder, runtime JavaScript `dist/server.js`, production dependencies, user non-root, healthcheck và commit SHA metadata.
+- Đã thêm migration runner Node-native, `compose.yaml` với PostgreSQL 16 volume → migrate one-shot → Backend, `.env.compose.example` và CI container smoke workflow.
+- Đã thêm `/livez` độc lập database, `/healthz`/`/readyz` readiness, CORS deny ngoài allow-list và `container-smoke.cjs`; Docker Compose local đã build/run và smoke qua đăng ký, restart backend, restart toàn stack giữ volume.
+- Đã kiểm chứng migration rỗng/lặp, runtime non-root/no-`tsx`, live PostgreSQL test 91/91, backup/restore local và health JSON tại `documents/05-testing/`.
+- Còn mở ngoài workspace: provider/registry/GHCR, PostgreSQL managed, domain HTTPS, EAS environment, APK staging, registry digest và rollback cloud. Không tuyên bố cloud/device/production readiness khi chưa có các evidence đó.
+
+## P1 — Backup và phục hồi thảm họa — 2026-08-25
+
+- Đã khóa migration `028_dr_recovery_markers` và cập nhật baseline theo 28 migration; evidence Stage 1 chỉ có 5 migration được đánh dấu historical.
+- Đã triển khai logical backup custom-format qua AES-256-GCM, authenticated metadata, manifest SHA-256 plaintext/ciphertext, lock chống chạy trùng, verify, restore DB mới, retention dry-run, surface validator và marker synthetic.
+- Local PostgreSQL 16 rehearsal đạt: verify/tamper tests, restore database mới, 28 migration checksum, counts nghiệp vụ, ledger debit=credit và orphan reference `0`; actual RTO lần chạy là 3.509s, actual RPO chưa đo.
+- Đã thêm policy/runbook PITR, key rotation, provider infrastructure contract, alert/dashboard contract; các file này chưa được nối vào Prometheus/Grafana/KMS/object storage.
+- Còn mở: managed PostgreSQL, base backup + continuous WAL/PITR, KMS/object storage/retention audit, scheduler production, RPO ≤5 phút/RTO ≤60 phút drill, session/outbox recovery cutover và staging evidence. Trạng thái vẫn **UNTRUSTED LOCAL PREVIEW**.
+
+## Staging-readiness hardening local — 2026-08-25
+
+- Đã thêm runtime guard: staging/production-like bắt buộc
+  `BANKING_PERSISTENCE_MODE=relational-v2`; worker fail-closed khi thiếu
+  `WORKER_CUTOVER_CONFIRMED=1`, không cho lách bằng legacy writer.
+- Đã thêm `MountedSecretClient` provider-neutral cho secret manager mount có
+  version sidecar; staging không fallback về `.env`.
+- Đã mở rộng release manifest/verifier cho Admin Web digest và APK SHA-256;
+  workflow container release phải build/ký Admin Web riêng và verify Cosign
+  signature, provenance và SBOM attestation trước khi ghi cờ evidence; URL API
+  Admin staging phải được cấp qua repository variable, không bake placeholder
+  vào release.
+- Đã thêm EAS profile `staging`, OCI labels cho Admin Web và contract
+  `infrastructure/staging/`. Đây chỉ là cấu hình/preflight local.
+- Evidence local mới: `documents/05-testing/staging-readiness/`.
+- Chưa đóng: full HTTP relational-v2 cutover, provider/registry/HTTPS staging,
+  APK signing/device E2E, managed PostgreSQL/secret, backup/restore/rollback
+  staging và reviewer độc lập. Trạng thái vẫn **UNTRUSTED LOCAL PREVIEW**.

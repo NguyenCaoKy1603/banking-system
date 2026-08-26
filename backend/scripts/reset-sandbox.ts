@@ -1,4 +1,8 @@
-import { Pool } from "pg";
+import { createRequire } from "node:module";
+import { Pool, type PoolConfig } from "pg";
+
+const require = createRequire(import.meta.url);
+const { resolvePostgresSsl } = require("./postgres-ssl.cjs") as { resolvePostgresSsl: () => PoolConfig["ssl"] };
 
 const databaseUrl = process.env.DATABASE_URL?.trim();
 const bankingEnvironment = (process.env.BANKING_ENV ?? "development").trim().toLowerCase();
@@ -81,7 +85,7 @@ function validateResetTarget(): URL {
 }
 
 const target = validateResetTarget();
-const pool = new Pool({ connectionString: databaseUrl });
+const pool = new Pool({ connectionString: databaseUrl, ssl: resolvePostgresSsl() });
 
 try {
   await pool.query("BEGIN");

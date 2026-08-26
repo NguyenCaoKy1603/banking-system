@@ -15,6 +15,7 @@ import {
   listCreditApplications,
   submitCreditApplication,
 } from "@/features/credit/services/creditApi";
+import { getCreditApplicationStatusLabel } from "@/features/credit/presentation/creditPresentation";
 import type { CreditApplication } from "@/features/credit/types/credit";
 import { ApiError } from "@/services/api/ApiError";
 import { colors, spacing } from "@/theme";
@@ -109,12 +110,12 @@ export function CreditApplicationScreen() {
 
   const verify = useCallback(async () => {
     if (!challengeId || !/^\d{6}$/.test(otp.trim())) {
-      setError("Mã OTP phải gồm 6 chữ số.");
+      setError("Mã TOTP phải gồm 6 chữ số.");
       return;
     }
     const idempotencyKey = idempotencyKeyRef.current;
     if (!idempotencyKey) {
-      setError("Ý định gửi hồ sơ không còn hợp lệ. Vui lòng tạo lại OTP.");
+      setError("Ý định gửi hồ sơ không còn hợp lệ. Vui lòng tạo lại challenge TOTP.");
       return;
     }
     setIsSubmitting(true);
@@ -124,7 +125,7 @@ export function CreditApplicationScreen() {
         const result = await submitCreditApplication(
           {
             requestedLimit: { currency: "VND", amountMinor: requestedLimit },
-            stepUp: { method: "OTP", proof: otp.trim(), challengeId },
+            stepUp: { method: "TOTP", proof: otp.trim(), challengeId },
           },
           { auth, idempotencyKey },
         );
@@ -136,7 +137,7 @@ export function CreditApplicationScreen() {
       } else if (application) {
         const result = await activateCreditApplication(
           application.applicationId,
-          { method: "OTP", proof: otp.trim(), challengeId },
+          { method: "TOTP", proof: otp.trim(), challengeId },
           { auth, idempotencyKey },
         );
         setApplication(result);
@@ -159,7 +160,9 @@ export function CreditApplicationScreen() {
           const isRecovered =
             (mode === "verify-application" &&
               recovered !== null &&
-              (recovered.status === "PENDING_ACTIVATION" ||
+              (recovered.status === "SUBMITTED" ||
+                recovered.status === "UNDER_REVIEW" ||
+                recovered.status === "PENDING_ACTIVATION" ||
                 recovered.status === "ACTIVE")) ||
             (mode === "verify-activation" && recovered?.status === "ACTIVE");
           if (isRecovered && recovered) {
@@ -200,9 +203,13 @@ export function CreditApplicationScreen() {
         {application ? (
           <View style={styles.card} testID="credit-application-status">
             <Text style={styles.sectionTitle}>Trạng thái hồ sơ</Text>
-            <Text style={styles.value}>{application.status}</Text>
+            <Text style={styles.value}>{getCreditApplicationStatusLabel(application.status)}</Text>
             <Text style={styles.description}>{application.decisionReason ?? "Chưa có quyết định"}</Text>
-            {application.status === "PENDING_ACTIVATION" ? (
+            {application.status === "SUBMITTED" || application.status === "UNDER_REVIEW" ? (
+              <Text style={styles.description}>
+                Hồ sơ đang chờ nhân viên ngân hàng thẩm định. Bạn sẽ chỉ có thể kích hoạt sau khi được phê duyệt.
+              </Text>
+            ) : application.status === "PENDING_ACTIVATION" ? (
               <PrimaryButton
                 disabled={isSubmitting || mode !== "idle"}
                 label="Xác nhận và kích hoạt thẻ sandbox"
@@ -226,7 +233,7 @@ export function CreditApplicationScreen() {
             />
             <PrimaryButton
               disabled={isSubmitting || mode !== "idle"}
-              label={isSubmitting ? "Đang tạo OTP..." : "Gửi hồ sơ sandbox"}
+              label={isSubmitting ? "Đang tạo challenge TOTP..." : "Gửi hồ sơ sandbox"}
               onPress={() => void requestApplicationOtp()}
               testID="credit-application-submit"
             />
@@ -234,10 +241,10 @@ export function CreditApplicationScreen() {
         )}
         {mode !== "idle" ? (
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Nhập OTP xác nhận</Text>
+            <Text style={styles.sectionTitle}>Nhập mã TOTP xác nhận</Text>
             <TextField
               keyboardType="number-pad"
-              label="OTP 6 chữ số"
+              label="TOTP 6 chữ số"
               onChangeText={(value) => setOtp(value.replace(/\D/g, "").slice(0, 6))}
               testID="credit-application-otp"
               value={otp}
@@ -245,7 +252,7 @@ export function CreditApplicationScreen() {
             />
             <PrimaryButton
               disabled={isSubmitting}
-              label={isSubmitting ? "Đang xác minh..." : "Xác minh OTP"}
+              label={isSubmitting ? "Đang xác minh..." : "Xác minh TOTP"}
               onPress={() => void verify()}
               testID="credit-application-verify"
             />

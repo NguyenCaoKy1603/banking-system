@@ -1,0 +1,457 @@
+name: Container release (immutable)
+
+on:
+  push:
+    tags:
+      - "v1.0.0-thesis-rc.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-release
+  cancel-in-progress: false
+
+jobs:
+  mobile-quality:
+    name: Mobile release quality
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile-app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile-app/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Audit release dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Lint and contract checks
+        run: |
+          npm run lint
+          npm run validate:openapi
+          npm run validate:e2e
+          npm run validate:release
+          npm run validate:public-env
+      - name: Typecheck and unit coverage
+        run: |
+          npm run typecheck
+          npm test -- --runInBand
+          npm run test:coverage -- --runInBand
+      - name: Export web with an HTTPS-only CI endpoint
+        env:
+          EXPO_PUBLIC_API_URL: https://ci.example.invalid/api/v1
+        run: |
+          npm run export:web
+          npm run validate:public-env -- dist
+
+  admin-quality:
+    name: Admin Web release quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: admin-web/package-lock.json
+      - name: Install Admin Web dependencies
+        working-directory: admin-web
+        run: npm ci
+      - name: Admin Web static quality and audit
+        working-directory: admin-web
+        run: |
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run build
+          npm run audit
+      - name: Install backend dependencies for browser fixture
+        working-directory: backend
+        run: npm ci
+      - name: Build backend for browser fixture
+        working-directory: backend
+        run: npm run build
+      - name: Install Playwright Chromium
+        working-directory: admin-web
+        run: npx playwright install --with-deps chromium
+      - name: Admin Web browser E2E
+        working-directory: admin-web
+        run: npm run test:e2e
+
+  container-smoke:
+    name: Container release smoke
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_USER: banking
+      POSTGRES_PASSWORD: ci-only-container-password
+      POSTGRES_DB: banking_preview
+      DATABASE_URL: postgresql://banking:ci-only-container-password@postgres:5432/banking_preview
+      POSTGRES_PORT: 55432
+      BACKEND_PORT: 55000
+      ADMIN_API_PORT: 55001
+      ADMIN_WEB_PORT: 55173
+      ADMIN_WEB_ENV: preview
+      ADMIN_API_UPSTREAM: http://admin-api:5001
+      ADMIN_ALLOWED_ORIGINS: http://127.0.0.1:55173
+      BANKING_ENV: preview
+      NODE_ENV: preview
+      BANKING_MONEY_MODE: virtual
+      BANKING_STORAGE: postgres
+      BANKING_SECRET_PROVIDER: local
+      BANKING_PERSISTENCE_MODE: legacy-state
+      WORKER_ENABLED: "0"
+      BANKING_MFA_REQUIRED: "1"
+      BANKING_MFA_METHODS: TOTP
+      BANKING_OTP_PEPPER: base64:Y2ktb3RwLXBlcHBlci0wMTIzNDU2Nzg5MDEyMzQ1Njc=
+      BANKING_MFA_ENCRYPTION_KEY: base64:Y2ktbWZhLWVuY3J5cHRpb24ta2V5LTAxMjM0NTY3ODk=
+      BANKING_ALLOWED_ORIGINS: https://preview.example.invalid
+      ADMIN_SECURE_COOKIES: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate Compose contract
+        run: docker compose config --quiet
+      - name: Build exact runtime surfaces
+        run: docker compose build --pull=false backend admin-api admin-web migrate worker
+      - name: Start PostgreSQL and apply migrations
+        run: |
+          docker compose up -d postgres
+          docker compose run --rm migrate
+          docker compose run --rm migrate
+      - name: Start API and Admin surfaces
+        run: docker compose up -d backend admin-api admin-web
+      - name: Verify health and version probes
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/livez >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/readyz >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${BACKEND_PORT}/versionz >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${ADMIN_API_PORT}/livez >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${ADMIN_WEB_PORT}/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose ps
+          docker compose logs --no-color
+          exit 1
+      - name: Tear down disposable stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.0.0-thesis-rc.')
+    needs: [mobile-quality, admin-quality, container-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      # Docker repository names are lowercase; the GitHub owner is mixed-case.
+      IMAGE_NAME: ghcr.io/nguyencaoky1603/banking-backend
+      ADMIN_IMAGE_NAME: ghcr.io/nguyencaoky1603/banking-admin-web
+      RELEASE_ID: ${{ github.ref_name }}
+    steps:
+      - name: Checkout the exact merge commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate immutable release workflow contract
+        run: node backend/scripts/validate-container-release-workflow.cjs
+
+      - name: Verify the tag points to the current main commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+
+      - name: Normalize release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_commit="$(git rev-parse HEAD)"
+          release_id="${GITHUB_REF_NAME}"
+          build_created_at="$(git show -s --format=%cI HEAD)"
+          test "${release_id}" = "${RELEASE_ID}"
+          printf 'source_commit=%s\n' "${source_commit}" >> "${GITHUB_OUTPUT}"
+          printf 'release_id=%s\n' "${release_id}" >> "${GITHUB_OUTPUT}"
+          printf 'build_created_at=%s\n' "${build_created_at}" >> "${GITHUB_OUTPUT}"
+          printf 'SOURCE_COMMIT=%s\n' "${source_commit}" >> "${GITHUB_ENV}"
+          printf 'BUILD_CREATED_AT=%s\n' "${build_created_at}" >> "${GITHUB_ENV}"
+
+      - name: Verify clean source and tracked migrations
+        working-directory: backend
+        run: node scripts/release-gate.cjs
+
+      - name: Scan repository and Git history for high-confidence secrets
+        working-directory: backend
+        run: |
+          npm run validate:secrets -- --history
+          npm run validate:secret-registry
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Run release quality gates
+        working-directory: backend
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          npm audit --omit=dev --audit-level=high
+          npm run release:migration-fingerprint
+
+      - name: Compute API contract digest
+        id: contract
+        shell: bash
+        run: echo "digest=sha256:$(sha256sum documents/api/banking-mvp.openapi.yaml | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reject an existing release tag before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in "${IMAGE_NAME}:${RELEASE_ID}" "${ADMIN_IMAGE_NAME}:${RELEASE_ID}"; do
+            if docker manifest inspect "${image}" >/dev/null 2>&1; then
+              echo "Release image tag already exists and must not be overwritten: ${image}"
+              exit 1
+            fi
+          done
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push one immutable image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:sha-${{ steps.release_meta.outputs.source_commit }}
+            ${{ env.IMAGE_NAME }}:${{ env.RELEASE_ID }}
+          build-args: |
+            COMMIT_SHA=${{ steps.release_meta.outputs.source_commit }}
+            RELEASE_ID=${{ env.RELEASE_ID }}
+            BUILD_CREATED_AT=${{ steps.release_meta.outputs.build_created_at }}
+            API_CONTRACT_DIGEST=${{ steps.contract.outputs.digest }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.release_meta.outputs.source_commit }}
+            org.opencontainers.image.version=${{ env.RELEASE_ID }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push one immutable Admin Web image
+        id: admin-image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./admin-web
+          file: ./admin-web/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ADMIN_IMAGE_NAME }}:sha-${{ steps.release_meta.outputs.source_commit }}
+            ${{ env.ADMIN_IMAGE_NAME }}:${{ env.RELEASE_ID }}
+          build-args: |
+            COMMIT_SHA=${{ steps.release_meta.outputs.source_commit }}
+            RELEASE_ID=${{ env.RELEASE_ID }}
+            BUILD_CREATED_AT=${{ steps.release_meta.outputs.build_created_at }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.release_meta.outputs.source_commit }}
+            org.opencontainers.image.version=${{ env.RELEASE_ID }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign the pushed manifest digest with GitHub OIDC
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: cosign sign --yes "${IMAGE_NAME}@${IMAGE_DIGEST}"
+
+      - name: Sign the Admin Web manifest digest with GitHub OIDC
+        env:
+          ADMIN_IMAGE_DIGEST: ${{ steps.admin-image.outputs.digest }}
+        run: cosign sign --yes "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}"
+
+      - name: Verify the signed manifest digest
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
+          COSIGN_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "${COSIGN_IDENTITY}" \
+            --certificate-oidc-issuer "${COSIGN_ISSUER}" \
+            "${IMAGE_NAME}@${IMAGE_DIGEST}" > cosign-signature-verification.json
+
+      - name: Verify the signed Admin Web digest
+        env:
+          ADMIN_IMAGE_DIGEST: ${{ steps.admin-image.outputs.digest }}
+          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
+          COSIGN_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "${COSIGN_IDENTITY}" \
+            --certificate-oidc-issuer "${COSIGN_ISSUER}" \
+            "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" > admin-web-signature-verification.json
+
+      - name: Verify provenance attestation
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
+          COSIGN_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          cosign verify-attestation \
+            --type slsaprovenance \
+            --certificate-identity-regexp "${COSIGN_IDENTITY}" \
+            --certificate-oidc-issuer "${COSIGN_ISSUER}" \
+            "${IMAGE_NAME}@${IMAGE_DIGEST}" > provenance-attestation-verification.json
+
+      - name: Verify SBOM attestation
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
+          COSIGN_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          cosign verify-attestation \
+            --type spdxjson \
+            --certificate-identity-regexp "${COSIGN_IDENTITY}" \
+            --certificate-oidc-issuer "${COSIGN_ISSUER}" \
+            "${IMAGE_NAME}@${IMAGE_DIGEST}" > sbom-attestation-verification.json
+
+      - name: Verify Admin Web provenance and SBOM attestations
+        env:
+          ADMIN_IMAGE_DIGEST: ${{ steps.admin-image.outputs.digest }}
+          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
+          COSIGN_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          cosign verify-attestation \
+            --type slsaprovenance \
+            --certificate-identity-regexp "${COSIGN_IDENTITY}" \
+            --certificate-oidc-issuer "${COSIGN_ISSUER}" \
+            "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" > admin-web-provenance-attestation-verification.json
+          cosign verify-attestation \
+            --type spdxjson \
+            --certificate-identity-regexp "${COSIGN_IDENTITY}" \
+            --certificate-oidc-issuer "${COSIGN_ISSUER}" \
+            "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" > admin-web-sbom-attestation-verification.json
+
+      - name: Pull and smoke the exact pushed digest
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          ADMIN_IMAGE_DIGEST: ${{ steps.admin-image.outputs.digest }}
+        run: |
+          docker pull "${IMAGE_NAME}@${IMAGE_DIGEST}"
+          docker pull "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}"
+          test "$(docker image inspect "${IMAGE_NAME}@${IMAGE_DIGEST}" --format '{{.Config.User}}')" = "node"
+          docker run --rm "${IMAGE_NAME}@${IMAGE_DIGEST}" node -e "const fs=require('fs'); if (fs.existsSync('/app/node_modules/tsx')) process.exit(1)"
+
+      - name: Verify Admin Web runtime configuration and same-origin proxy
+        env:
+          ADMIN_WEB_IMAGE: ${{ env.ADMIN_IMAGE_NAME }}@${{ steps.admin-image.outputs.digest }}
+          RUNTIME_PROXY_FIXTURE_IMAGE: ${{ env.IMAGE_NAME }}@${{ steps.image.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          admin_image="${ADMIN_WEB_IMAGE}"
+          if docker run --rm -e ADMIN_WEB_ENV=preview "$admin_image" >/tmp/admin-web-no-upstream.log 2>&1; then
+            echo "Admin Web started without ADMIN_API_UPSTREAM"
+            exit 1
+          fi
+          if docker run --rm -e ADMIN_WEB_ENV=staging -e ADMIN_API_UPSTREAM=http://fixture:8081 "$admin_image" >/tmp/admin-web-http-staging.log 2>&1; then
+            echo "Admin Web accepted an HTTP staging upstream"
+            exit 1
+          fi
+          for invalid_upstream in \
+            'http://fixture:8081/path' \
+            'http://user:pass@fixture:8081' \
+            'http://fixture:8081?query=1' \
+            'http://fixture:8081#fragment'; do
+            if docker run --rm -e ADMIN_WEB_ENV=preview -e "ADMIN_API_UPSTREAM=${invalid_upstream}" "$admin_image" >/tmp/admin-web-invalid-upstream.log 2>&1; then
+              echo "Admin Web accepted an invalid upstream shape"
+              exit 1
+            fi
+          done
+
+          if docker run --rm --entrypoint sh "$admin_image" -c "grep -R -n -E 'ADMIN_API_URL|127\.0\.0\.1:5001|localhost:5001|staging\.example' /usr/share/nginx/html"; then
+            echo "Admin Web image contains a baked environment-specific URL"
+            exit 1
+          fi
+          node admin-web/scripts/verify-runtime-proxy.cjs
+
+      - name: Scan pushed image layers for secret artifacts
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          ADMIN_IMAGE_DIGEST: ${{ steps.admin-image.outputs.digest }}
+        run: node backend/scripts/validate-image-surface.cjs --image="${IMAGE_NAME}@${IMAGE_DIGEST}"
+
+      - name: Scan Admin Web image layers for secret artifacts
+        env:
+          ADMIN_IMAGE_DIGEST: ${{ steps.admin-image.outputs.digest }}
+        run: node backend/scripts/validate-image-surface.cjs --image="${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}"
+
+      - name: Create release manifest artifact
+        working-directory: backend
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          npm run release:manifest -- \
+            --output ../release-manifest.json \
+            --source-commit "${SOURCE_COMMIT}" \
+            --image "${IMAGE_NAME}" \
+            --image-digest "${IMAGE_DIGEST}" \
+            --admin-image "${ADMIN_IMAGE_NAME}" \
+            --admin-image-digest "${{ steps.admin-image.outputs.digest }}" \
+            --admin-signature-verified true \
+            --admin-sbom-present true \
+            --admin-provenance-present true \
+            --release-id "${RELEASE_ID}" \
+            --workflow-run-id "${GITHUB_RUN_ID}" \
+            --signature-verified true \
+            --sbom-present true \
+            --provenance-present true
+          npm run release:verify-manifest -- --manifest ../release-manifest.json --check-source
+
+      - name: Upload release manifest and build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_ID }}-release-evidence
+          path: |
+            release-manifest.json
+            cosign-signature-verification.json
+            admin-web-signature-verification.json
+            provenance-attestation-verification.json
+            sbom-attestation-verification.json
+            admin-web-provenance-attestation-verification.json
+            admin-web-sbom-attestation-verification.json
+          if-no-files-found: error

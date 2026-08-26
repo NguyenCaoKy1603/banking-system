@@ -19,7 +19,7 @@
 - Có QR nhận tiền, QR code renderer, camera scanner, payload validation và manual fallback khi camera không dùng được.
 - Notification có list/detail, mark-read và deep link tới transaction detail/profile theo resource của server.
 
-Client đã có refresh rotation single-flight, server-side revoke best-effort, logout mọi thiết bị, native biometric gate, transfer intent resume sau crash và server-driven control policy. OTP/MFA assertion provider, core adapter, audit/outbox/reconciliation production vẫn phải được nối với backend/partner contract trước khi pilot dùng tiền thật.
+Client đã có refresh rotation single-flight, server-side revoke best-effort, logout mọi thiết bị, native biometric gate, transfer intent resume sau crash và server-driven control policy. `EXPO_PUBLIC_DEVICE_ASSERTION` đã bị loại bỏ: native biometric prompt chỉ là local user presence, không phải bằng chứng backend; cho tới khi nối provider attestation/passkey được phê duyệt, client fail closed và không tự tạo device proof trong public bundle. OTP/MFA assertion provider, core adapter, audit/outbox/reconciliation production vẫn phải được nối với backend/partner contract trước khi pilot dùng tiền thật.
 
 Contract accounts/transfers và control-policy hiện ở trạng thái DRAFT trong [`documents/api/banking-mvp-api-contract.md`](../documents/api/banking-mvp-api-contract.md). Backend reference sandbox nằm tại [`backend/README.md`](../backend/README.md), chỉ dùng để kiểm chứng end-to-end và không được dùng cho tiền thật.
 
@@ -71,7 +71,13 @@ npm run test:critical
 npm start
 ```
 
-EAS profile nằm trong [`eas.json`](./eas.json). Checklist pilot nằm trong [`documents/mobile-pilot-runbook.md`](../documents/mobile-pilot-runbook.md).
+EAS profile nằm trong [`eas.json`](./eas.json), gồm `preview`, `staging` và
+`production`. Profile `staging` chỉ là cấu hình build; nó không chứng minh đã
+có EAS project, signing key hoặc API HTTPS staging. Tài khoản EAS có thể cần
+quyền cho custom environment `staging`; nếu không có, dùng build APK release
+local với biến URL staging. Có thể thay EAS bằng
+Android release build local miễn là APK được ký, có SHA-256 và kết nối đúng
+staging URL. Checklist pilot nằm trong [`documents/mobile-pilot-runbook.md`](../documents/mobile-pilot-runbook.md).
 Native E2E flow dùng Maestro nằm trong [`e2e/maestro`](./e2e/maestro); cần preview/native build và thiết bị thật để chạy.
 Scope/threat model/data classification nằm trong [`documents/architecture/banking-mvp-scope-and-risk.md`](../documents/architecture/banking-mvp-scope-and-risk.md).
 

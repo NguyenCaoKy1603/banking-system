@@ -51,6 +51,9 @@ jobs:
       - name: Validate release configuration
         run: npm run validate:release
 
+      - name: Validate public mobile environment surface
+        run: npm run validate:public-env
+
       - name: Generate Expo Router types
         run: npm run generate:routes
 
@@ -71,27 +74,45 @@ jobs:
           EXPO_PUBLIC_API_URL: https://ci.example.invalid/api/v1
         run: npm run export:web
 
+      - name: Scan exported web bundle for forbidden public environment variables
+        run: npm run validate:public-env -- dist
+
+      - name: Upload mobile quality evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-quality-${{ github.run_id }}
+          path: mobile-app/coverage
+          if-no-files-found: ignore
+
   backend-quality:
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
-      RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test
-      BANKING_ENV: development
+      DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_core
+      RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_relational
+      P0_RELATIONAL_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_worker
+      WORKER_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_worker
+      ADMIN_DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_admin
+      DATABASE_TEST_ADMIN_URL: postgresql://banking:banking@localhost:5432/postgres
+      NOTIFICATION_ENDPOINT_ENCRYPTION_KEY: ci-worker-only-key
+      NODE_ENV: test
+      BANKING_ENV: test
+      ALLOW_DATABASE_TEST_RESET: "1"
       BANKING_MFA_REQUIRED: "0"
-      BANKING_SANDBOX_MFA_OTP: "654321"
-      BANKING_SANDBOX_OTP: "123456"
+      BANKING_OTP_PEPPER: "base64:Y2ktb3RwLXBlcHBlci0wMTIzNDU2Nzg5MDEyMzQ1Njc="
+      BANKING_MFA_ENCRYPTION_KEY: "base64:Y2ktbWZhLWVuY3J5cHRpb24ta2V5LTAxMjM0NTY3ODk="
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:c1b3783309b6499c795eed7c20135a1a4d25cae1b575c3d52c6f536129a1b109
         env:
           POSTGRES_USER: banking
           POSTGRES_PASSWORD: banking
-          POSTGRES_DB: banking_test
+          POSTGRES_DB: banking_test_core
         ports:
           - 5432:5432
         options: >-
-          --health-cmd="pg_isready -U banking -d banking_test"
+          --health-cmd="pg_isready -U banking -d banking_test_core"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
@@ -117,11 +138,22 @@ jobs:
       - name: Apply PostgreSQL migration
         run: npm run db:migrate
 
+      - name: Create and migrate worker database
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_test_worker"
+          DATABASE_URL="$WORKER_DATABASE_URL" npm run db:migrate
+
+      - name: Re-run PostgreSQL migration idempotently
+        run: npm run db:migrate
+
       - name: Validate database boundary schema
         run: npm run validate:database
 
       - name: Dependency security audit (release gate)
         run: npm audit --omit=dev --audit-level=high
+
+      - name: Verify disposable PostgreSQL guard rejects unsafe targets
+        run: npm run test:database:guard
 
       - name: Typecheck
         run: npm run typecheck
@@ -130,7 +162,16 @@ jobs:
         run: npm run build
 
       - name: Unit and HTTP contract tests
+        env:
+          DATABASE_URL: ""
+          RELATIONAL_DATABASE_URL: ""
+          P0_RELATIONAL_DATABASE_URL: ""
+          WORKER_DATABASE_URL: ""
+          ADMIN_DATABASE_URL: ""
         run: npm test
 
       - name: Critical API integration flow
         run: npm run test:critical
+
+      - name: Worker concurrency, lease and dead-letter regression
+        run: npm run test:worker

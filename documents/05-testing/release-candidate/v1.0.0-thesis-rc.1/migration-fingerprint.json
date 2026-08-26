@@ -1,0 +1,29 @@
+{
+  "status": "PASS_CANONICALIZED",
+  "testedSourceCommit": null,
+  "sourceCommitBinding": "release-manifest.sourceCommit must equal the peeled commit of tag v1.0.0-thesis-rc.1",
+  "branch": "codex/p0-postgres-foundation",
+  "evidenceRecordedAt": "2026-08-26T04:09:03+07:00",
+  "toolchain": {
+    "node": "v24.19.0",
+    "npm": "11.17.0",
+    "docker": "28.4.0",
+    "compose": "v2.39.4-desktop.1"
+  },
+  "schemaVersion": "032",
+  "migrationCount": 32,
+  "workingTreeDigest": "1a768560de0b3a9f95c3909335b7aa6e04912b4dbd5c3152153aaa4aa9aa438a",
+  "cleanCloneDigest": "1a768560de0b3a9f95c3909335b7aa6e04912b4dbd5c3152153aaa4aa9aa438a",
+  "planBaselineDigest": "1a768560de0b3a9f95c3909335b7aa6e04912b4dbd5c3152153aaa4aa9aa438a",
+  "legacyRawPlanBaselineDigest": "4a50076d5ee5ce2ee1f72ace3816d49c5c8ea63a3454e544978d7815a9ce0b94",
+  "firstMigration": "001_banking_mvp",
+  "lastMigration": "032_relational_scheduled_lifecycle",
+  "legacyRawCompatibility": {
+    "file": "002_savings_sandbox.sql",
+    "legacyRawChecksum": "5ec06ea4fda5b1e265b344d0dd1b01ce4a2769d192abadd2b7507b2aeed579a6",
+    "canonicalChecksum": "fde0071d313c851be4eeffd4685f316f07d85afd0cb71195fc331bbc7b958c2a",
+    "trackedBlobIsSame": true,
+    "policy": "Normalize CRLF/CR to LF before hashing; accept the legacy raw checksum only to upgrade an already-applied row."
+  },
+  "decision": "Canonical LF content identity is used for migration checksums and set digest. No migration SQL content was changed."
+}

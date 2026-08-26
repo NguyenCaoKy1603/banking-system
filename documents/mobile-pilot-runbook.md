@@ -1,6 +1,6 @@
 # Mobile banking pilot runbook
 
-> Cập nhật hiện hành 2026-08-17: branch `codex/mini-core-banking-sandbox` giữ M0–M4/M8 và bổ sung clean registration, operator Funding, recipient lookup, dynamic step-up và opt-in Savings/Credit. Sau khi đổi code phải restart backend và reload/rebuild Mobile trước khi test; nút `Hiện đầy đủ`/`Sao chép` lấy số đầy đủ qua endpoint riêng, không lấy từ 4 số cuối. Xem [`mini-core-sandbox-status.md`](01-planning/mini-core-sandbox-status.md).
+> Cập nhật hiện hành 2026-08-25: reference giữ M0–M4/M8 và bổ sung clean registration, Admin four-eyes funding fixture, recipient lookup, dynamic step-up và opt-in Savings/Credit. Sau khi đổi code phải restart backend và reload/rebuild Mobile trước khi test; nút `Hiện đầy đủ`/`Sao chép` lấy số đầy đủ qua endpoint riêng, không lấy từ 4 số cuối. Xem [`mini-core-sandbox-status.md`](01-planning/mini-core-sandbox-status.md).
 
 Tài liệu này là checklist tối thiểu cho bản preview/pilot của mobile app. Nó không thay thế runbook vận hành của ngân hàng/BaaS partner.
 
@@ -21,6 +21,7 @@ Snapshot hiện hành ngày 2026-08-17: mobile lint/typecheck đạt, 37 suites 
 - Khi chạy `npm run export:web` ở máy local, override `EXPO_PUBLIC_API_URL` bằng URL HTTPS của preview/staging (hoặc placeholder HTTPS chỉ để kiểm tra static export); không đổi production guard và không dùng HTTP sandbox làm cấu hình production.
 - Backend reference local nằm tại [`../backend/README.md`](../backend/README.md); chỉ dùng để kiểm thử contract/idempotency, không dùng cho tiền thật.
 - Auth có thể bật challenge MFA server-driven (`BANKING_MFA_REQUIRED=1` chỉ cho sandbox); OTP/assertion production phải đến từ Identity/risk provider, không dùng giá trị sandbox.
+- Public Mobile env có allowlist CI; không khai báo `EXPO_PUBLIC_DEVICE_ASSERTION` hoặc bất kỳ secret/token/key nào. Biometric native hiện chỉ mở gate UX local và fail closed khi cần backend proof; attestation/passkey provider phải được phê duyệt trước pilot.
 - Không đưa access token, refresh token, password, OTP hoặc dữ liệu tài chính vào log, analytics hay crash report.
 
 ## Quality gate trước khi build

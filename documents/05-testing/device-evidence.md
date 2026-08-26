@@ -26,7 +26,7 @@ Dùng bản ghi này cho smoke test local ngày 2026-08-16. Không ghi password,
 - [x] Transfer pending: quote → review → step-up → submit → stop app → launch app → refresh trạng thái `PENDING` trên emulator; idempotency/double-submit được kiểm chứng riêng ở critical API.
 - [ ] QR camera permission/camera scanning, pending/restart/resume and manual fallback after a native lifecycle interruption.
 - [ ] Real biometric prompt and negative/cancel path.
-- [x] Credit sandbox card lock/unlock: khóa thẻ, stop/launch giữ trạng thái khóa và mở khóa bằng OTP sandbox trên emulator.
+- [x] Credit sandbox card lock/unlock: khóa thẻ, stop/launch giữ trạng thái khóa và mở khóa bằng TOTP trên emulator.
 - [x] Credit overdue notification: seed statement quá hạn, mở notification CREDIT và deep-link tới đúng chi tiết thẻ trên emulator.
 - [x] M6 savings: Home → Tiền gửi → quote/review → step-up OTP → mở khoản → danh sách tiền gửi trên emulator.
 - [x] Offline banner and retry behavior: `critical-offline-retry.yaml` đã chạy pass trên emulator với API URL cố ý không reachable; artifact raw đã xóa vì command metadata chứa dữ liệu test nhạy cảm, report chỉ giữ kết quả không chứa secret.
@@ -58,3 +58,10 @@ Từ thư mục `mobile-app`, chạy `npm run device:preflight`. Lệnh này ki�
 - Đóng gate thiết bị thật: `npm run device:preflight -- --require-physical`.
 - Nếu chỉ có emulator, kết quả local có thể đạt nhưng lệnh `--require-physical` cố ý trả lỗi để không nhầm bằng chứng emulator với thiết bị thật.
 - Kết quả preflight đã lưu tại [`device-preflight-2026-08-17.json`](device-preflight-2026-08-17.json).
+
+## Preflight và offline retry xác nhận lại — 2026-08-25
+
+- `npm run device:preflight` đạt: ADB hoạt động, `emulator-5554` ở trạng thái `device`, Android API 35, package `com.example.digitalbanking.mobile` đã cài, backend local `/healthz` trả HTTP 200 và Maestro 2.8.0 được phát hiện với Java hợp lệ.
+- `critical-offline-retry.yaml` chạy pass trên emulator hiện tại: mở màn hình đăng nhập, mô phỏng API không reachable, hiển thị banner mất kết nối và retry vẫn giữ đúng trạng thái lỗi. Credential fixture chỉ truyền qua biến môi trường của phiên chạy, không ghi vào repository hoặc báo cáo.
+- Artifact raw của phiên xác nhận được tạo dưới thư mục tạm ngoài repository và đã xóa nội dung sau khi kiểm tra; không dùng phiên này để tuyên bố staging HTTPS, thiết bị thật, camera hoặc biometric đã đạt.
+- Bản ghi chẩn đoán đã lọc được lưu tại [`device-preflight-2026-08-25.json`](device-preflight-2026-08-25.json).

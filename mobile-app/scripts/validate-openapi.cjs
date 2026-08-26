@@ -203,16 +203,17 @@ if (
 }
 
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete"]);
-const PUBLIC_OR_OPERATOR_OPERATIONS = new Set([
+const PUBLIC_OPERATIONS = new Set([
   "POST /auth/register",
   "POST /auth/register/verify",
   "POST /auth/login",
   "POST /auth/refresh",
   "POST /auth/verify",
   "POST /auth/logout",
-  "POST /sandbox/fundings",
-  "GET /sandbox/otp/{challengeId}",
-  "POST /sandbox/process-scheduled",
+  "POST /auth/mfa/recover",
+  "POST /auth/mfa/recover/verify",
+  "POST /auth/mfa/recover/complete",
+  "POST /auth/mfa/recover/enroll",
 ]);
 for (const [routePath, pathItem] of Object.entries(document.paths ?? {})) {
   for (const [method, operation] of Object.entries(pathItem ?? {})) {
@@ -221,9 +222,9 @@ for (const [routePath, pathItem] of Object.entries(document.paths ?? {})) {
     }
     const effectiveSecurity = operation.security ?? document.security ?? [];
     const operationKey = `${method.toUpperCase()} ${routePath}`;
-    if (PUBLIC_OR_OPERATOR_OPERATIONS.has(operationKey)) {
+    if (PUBLIC_OPERATIONS.has(operationKey)) {
       if (effectiveSecurity.length !== 0) {
-        throw new Error(`${operationKey} must use its documented public/operator boundary.`);
+        throw new Error(`${operationKey} must use its documented public unauthenticated boundary.`);
       }
       continue;
     }

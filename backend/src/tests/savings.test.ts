@@ -7,7 +7,6 @@ import {
   calculateSavingsInterest,
 } from "../savings.js";
 
-const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
 
 function createSystem(options: ConstructorParameters<typeof BankingSystem>[0] = {}) {
   let now = Date.parse("2026-08-14T00:00:00.000Z");
@@ -35,7 +34,7 @@ function register(system: BankingSystem, email = "savings@example.com") {
   const account = system.listAccounts(user.id)[0];
   assert.ok(account);
   const accountNumber = system.getAccountNumber(user.id, account.id);
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, `savings-funding-${email}`, {
+  system.seedReferenceFunding(`savings-funding-${email}`, {
     recipientAccountNumber: accountNumber,
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "test fixture funding",
@@ -341,7 +340,7 @@ test("pending savings opening resumes from an exported snapshot without creating
   const readOnly = restored.getSavingsOpening(user.id, pending.openingId);
   assert.equal(readOnly.status, "PENDING");
   assert.deepEqual(restored.exportState(), stateBeforeRead);
-  const processing = restored.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  const processing = restored.runReferenceScheduledWork(user.id);
   assert.equal(processing.savingsOpeningsSettled, 1);
   const resumed = restored.getSavingsOpening(user.id, pending.openingId);
   assert.equal(resumed.status, "SUCCEEDED");

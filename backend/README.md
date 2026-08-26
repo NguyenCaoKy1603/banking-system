@@ -1,14 +1,16 @@
 # Banking reference backend
 
-> Cập nhật 2026-08-17: branch `codex/mini-core-banking-sandbox` dùng registration hai bước, Sandbox Funding operator, người nhận thật, OTP step-up theo context và Savings/Credit opt-in. User mới chỉ có một payment account 0 VND; không còn beneficiary/card/savings tự sinh. `npm run seed:e2e` đã được cập nhật để tự cấp Funding, tạo recipient thật khi có `E2E_RECIPIENT_PASSWORD`, và đi qua credit application/activation.
+> Cập nhật 2026-08-25: reference sandbox dùng registration hai bước, TOTP-based MFA persistent cho login/transaction step-up, Admin four-eyes funding fixture, người nhận thật và Savings/Credit opt-in. User mới chỉ có một payment account 0 VND; không còn beneficiary/card/savings tự sinh. `npm run seed:e2e` yêu cầu email-code từ provider test và TOTP fixture, không đọc OTP từ backend.
 
 Đây là backend reference cho môi trường local của mobile app. Runtime mặc định dùng PostgreSQL persistent relational reference adapter; in-memory chỉ dành cho unit/reference test nhanh. PBKDF2 và core-banking adapter giả lập được dùng để kiểm chứng contract, state machine, refresh rotation, idempotency, audit/outbox và reconciliation.
 
-Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql), phần mở rộng reference runtime ở [`database/005_relational_reference_runtime.sql`](database/005_relational_reference_runtime.sql). Persistent sandbox hiện chiếu dữ liệu nghiệp vụ M0–M4/M8 vào bảng relational; state auth tạm thời và Savings/Credit bonus được lưu theo từng record trong `reference_runtime_records` để giữ khả năng tương thích của reference service.
+Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql), phần mở rộng reference runtime ở [`database/005_relational_reference_runtime.sql`](database/005_relational_reference_runtime.sql). Các migration P0 `006`–`011` và `029`–`032` bổ sung command idempotency, identity/MFA, transfer, Savings, Credit, remaining customer routes và scheduled lifecycle. Local Compose hiện dùng boundary relational-v2 trực tiếp cho các route customer đã duyệt; `reference_runtime_records` chỉ còn cho migration/regression và không phải source of truth của HTTP relational-v2.
 
 ## Persistent sandbox PostgreSQL
 
-Reference runtime có thêm chế độ `BANKING_STORAGE=postgres`. Chế độ này dùng `PostgresRelationalRepository`, advisory transaction lock và transaction boundary bao quanh mỗi request để kiểm thử restart/concurrency. `reference_state_snapshots` chỉ còn được đọc một lần để nâng dữ liệu sandbox cũ sang relational; dữ liệu mới không ghi lại thành một JSON snapshot tổng. Đây vẫn là sandbox-only; không dùng cho tiền thật.
+Reference runtime có thêm chế độ `BANKING_STORAGE=postgres`. Local Compose với `BANKING_PERSISTENCE_MODE=relational-v2` dùng các repository transactional trực tiếp qua `UnitOfWork`; adapter `PostgresRelationalRepository` legacy và `reference_state_snapshots` chỉ còn cho migration/regression. Dữ liệu mới của HTTP relational-v2 không ghi lại thành một JSON snapshot tổng. Đây vẫn là sandbox-only; không dùng cho tiền thật.
+
+HTTP cutover local dùng `BANKING_PERSISTENCE_MODE=relational-v2` và group `auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud` để nối registration (provider boundary), session, persistent MFA lifecycle, account reads, beneficiary CRUD, transfer, Savings, Credit, recipient lookup, notification và fraud report trực tiếp qua UnitOfWork PostgreSQL, không gọi `withState`. Mã xác nhận registration chỉ được provider test giữ trong bộ nhớ; PostgreSQL chỉ giữ digest và outbox intent không chứa mã. Scheduled settlement/maturity chưa bật worker và KYC/profile customer chưa có public contract nên được ghi rõ out-of-scope. Bản đồ và gate nằm tại [`documents/05-testing/staging-readiness/relational-v2-http-cutover-matrix.md`](../documents/05-testing/staging-readiness/relational-v2-http-cutover-matrix.md). Local vẫn là `UNTRUSTED LOCAL PREVIEW` với `IMAGE_DIGEST=unknown`, không phải staging verified.
 
 ```powershell
 $env:DATABASE_URL = "postgresql://banking:banking@localhost:5432/banking_test"
@@ -17,20 +19,26 @@ npm run db:migrate
 npm start
 ```
 
-`npm test` tự chạy đầy đủ test persistence khi có cả `DATABASE_URL` và `RELATIONAL_DATABASE_URL`; nếu không có PostgreSQL local thì các test này được skip và phải chạy trong workflow có PostgreSQL service. Workflow CI tương ứng nằm tại [`../.github/workflows/backend-quality.yml`](../.github/workflows/backend-quality.yml).
+Các suite PostgreSQL destructive không được trỏ vào preview. Guard bắt buộc
+`NODE_ENV=test`, `BANKING_ENV=test`, `ALLOW_DATABASE_TEST_RESET=1`, host local
+được allow và tên database `banking_test_<suffix>`. Lệnh `test:database`,
+`test:relational`, `test:persistence`, `test:admin:database` tự tạo database
+disposable từ `DATABASE_TEST_ADMIN_URL`, migrate, chạy suite và dọn database;
+không đọc `.env.compose`. Nếu không cấp maintenance URL thì lệnh dừng fail-closed,
+không skip im lặng. Workflow CI tương ứng nằm tại [`../.github/workflows/backend-quality.yml`](../.github/workflows/backend-quality.yml).
 Mẫu cấu hình không chứa credential thật nằm tại [`.env.example`](.env.example).
 
 Kiểm thử riêng repository relational phải dùng một database disposable đã migrate, không dùng database demo đang chạy:
 
 ```powershell
-$env:RELATIONAL_DATABASE_URL = "postgresql://banking:banking@localhost:5432/banking_relational_test"
-npm run db:migrate
+$env:DATABASE_TEST_ADMIN_URL = "postgresql://banking:<local-password>@localhost:5433/postgres"
 npm run test:relational
+Remove-Item Env:DATABASE_TEST_ADMIN_URL
 ```
 
 Không dùng component này cho tiền thật, production, KYC/AML hoặc thay thế core-banking partner. Trước pilot phải thay `InMemoryCoreBanking` bằng adapter được partner phê duyệt, dùng database/secret manager/observability thật và hoàn tất legal/compliance/security acceptance.
 
-Process này chủ động từ chối khởi động khi `NODE_ENV=production` hoặc `BANKING_ENV=production` để tránh triển khai nhầm reference backend vào môi trường tiền thật.
+Runtime contract hiện cho phép `NODE_ENV=production` chỉ khi `BANKING_ENV=staging` hoặc `production-like`, nhưng luôn bắt buộc `BANKING_MONEY_MODE=virtual`, PostgreSQL, TOTP/MFA, key hợp lệ, full commit SHA và image digest. `BANKING_ENV=production` và mọi chế độ tiền thật đều bị từ chối; thiếu metadata hoặc secret thì fail closed.
 
 ## Chạy local
 
@@ -44,19 +52,21 @@ npm run test:critical
 npm start
 ```
 
-Để chuẩn bị dữ liệu cho Maestro mà không lấy ID thủ công, khởi động server sandbox rồi chạy `npm run seed:e2e` ở terminal khác. Lệnh này đăng ký/đăng nhập user E2E, tạo beneficiary nếu thiếu, tạo transfer notification và chỉ in các biến không nhạy cảm như `TEST_EMAIL`, `BENEFICIARY_ID`, `QR_PAYLOAD` cùng transfer seed. Password/OTP phải được cấp sẵn trong environment và không được in ra. Hướng dẫn đầy đủ nằm tại [`../documents/05-testing/e2e-sandbox-seed.md`](../documents/05-testing/e2e-sandbox-seed.md).
+Để chuẩn bị dữ liệu cho Maestro mà không lấy ID thủ công, khởi động server sandbox rồi chạy `npm run seed:e2e` ở terminal khác. Lệnh này đăng ký/đăng nhập user E2E, tạo beneficiary nếu thiếu, tạo transfer notification và chỉ in các biến không nhạy cảm như `TEST_EMAIL`, `BENEFICIARY_ID`, `QR_PAYLOAD` cùng transfer seed. Password, email confirmation code và TOTP secret/code phải được cấp sẵn trong environment của test provider và không được in ra. Hướng dẫn đầy đủ nằm tại [`../documents/05-testing/e2e-sandbox-seed.md`](../documents/05-testing/e2e-sandbox-seed.md).
 
-Server mặc định lắng nghe `http://localhost:5000/api/v1`; health/readiness tối giản ở `http://localhost:5000/healthz`. OTP transfer sandbox mặc định là `123456`; nếu bật `BANKING_MFA_REQUIRED=1` hoặc `BANKING_ENV=preview`, OTP login sandbox mặc định là `654321`. Có thể cấu hình challenge login server-driven bằng `BANKING_MFA_METHODS=OTP,BIOMETRIC`. Chỉ dùng các giá trị này trong local test.
+Server mặc định lắng nghe `http://localhost:5000/api/v1`; health/readiness tối giản ở `http://localhost:5000/healthz`. Persistent runtime yêu cầu `BANKING_MFA_METHODS=TOTP`, pepper và encryption key; thiếu key sẽ fail closed. Email provider thật chưa được nối trong reference sandbox.
 
-Để kiểm thử crash/restart, có thể tắt immediate settlement bằng `BANKING_SETTLE_IMMEDIATELY=0`, `BANKING_SETTLE_SAVINGS_IMMEDIATELY=0` hoặc `BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY=0`. Operator sandbox gọi `POST /api/v1/sandbox/process-scheduled` với `X-Sandbox-Operator-Key` để đưa transfer, savings opening và credit payment đang `PENDING` sang terminal trước khi xử lý đáo hạn/sao kê. Endpoint này chỉ là processor reference tuần tự; worker/core-banking adapter thật vẫn phải chịu trách nhiệm lease, retry, callback, concurrency và reconciliation ở môi trường production.
+Giai đoạn 1 bổ sung `/livez` cho liveness độc lập database, `/startupz` cho config/key/repository startup và `/readyz` là readiness có database. `/healthz` dành cho monitoring sâu hơn; `/versionz` trả release ID, commit SHA, image digest, schema/migration fingerprint và money mode, không chứa credential hoặc dữ liệu tài chính nhạy cảm. Khi `BANKING_ALLOWED_ORIGINS` là allow-list, Origin ngoài danh sách bị từ chối bằng `403 CORS_ORIGIN_DENIED`.
+
+Để kiểm thử crash/restart, có thể tắt immediate settlement bằng `BANKING_SETTLE_IMMEDIATELY=0`, `BANKING_SETTLE_SAVINGS_IMMEDIATELY=0` hoặc `BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY=0`. Scheduled lifecycle hiện chỉ có service nội bộ và disposable rehearsal; worker preview chưa được bật. Admin API chỉ tạo action retry/cancel qua quy trình bốn mắt. Public API không có operator key hoặc endpoint bypass.
 
 Local server mặc định cho phép CORS `*`; production phải cấu hình `BANKING_ALLOWED_ORIGINS` bằng allowlist origin đã phê duyệt. Có thể giới hạn pilot bằng `BANKING_ALLOWLIST_ENABLED=1` và `BANKING_MAX_TRANSFER_AMOUNT_MINOR` (đơn vị minor-unit VND); các giới hạn này được áp ở server.
 
-## Cấu hình chạy hiện tại — 2026-08-17
+## Cấu hình chạy hiện tại — 2026-08-26
 
 - `npm start` mặc định dùng `BANKING_STORAGE=postgres` và tự đọc `.env` nếu file tồn tại. Database phải được migrate trước; lệnh chuẩn là `npm run start:persistent`.
 - `BANKING_STORAGE=in-memory` chỉ dành cho unit/reference test nhanh, không còn là chế độ runtime mặc định.
-- PostgreSQL persistent hiện dùng `PostgresRelationalRepository`; test riêng `npm run test:relational` kiểm tra restart, pending transfer, reconciliation và concurrency trên database disposable có `RELATIONAL_DATABASE_URL`.
+- PostgreSQL local preview dùng boundary relational-v2 cho các nhóm customer đã duyệt; `npm run test:relational`, `test:mfa:persistence`, `test:registration:persistence`, `test:savings:persistence`, `test:credit:persistence`, `test:remaining:persistence` và `test:lifecycle:persistence` kiểm tra restart/concurrency/rollback trên database disposable có `DATABASE_TEST_ADMIN_URL`. Worker chỉ được rehearsal trên disposable bằng `test:worker`; không bật worker runtime trên preview. Profile/KYC customer vẫn explicit out-of-scope.
 - Chương trình mô phỏng nghiệp vụ ngân hàng bằng tiền ảo. Không có kết nối core banking, payment rail, tài khoản thật, KYC/AML thật hoặc xử lý tiền thật.
 
 ## Invariant được kiểm chứng
@@ -79,3 +89,16 @@ Local server mặc định cho phép CORS `*`; production phải cấu hình `BA
 - Registration và transfer step-up có rate-limit; outbox có retry backoff, attempts và health threshold.
 - Persistent HTTP đọc và validate toàn bộ request body trước khi mở relational transaction, tránh giữ advisory lock trong lúc chờ client gửi dữ liệu.
 - Persistent HTTP fail-closed với `503 PERSISTENCE_UNAVAILABLE` khi PostgreSQL không truy cập được; health không báo xanh khi storage lỗi.
+
+## Docker preview persistent
+
+`backend/Dockerfile` là multi-stage image dùng Node 22, build TypeScript ở builder nhưng runtime chỉ copy JavaScript đã build, production dependencies, SQL migration và chạy dưới user `node`. Runtime command là `node dist/server.js`; migration one-shot dùng Node-native `scripts/apply-migration.cjs`, không cần `tsx`.
+
+Compose đầy đủ nằm tại [`../compose.yaml`](../compose.yaml). Tạo `.env.compose` từ [`../.env.compose.example`](../.env.compose.example), thay các giá trị placeholder rồi chạy:
+
+```powershell
+docker compose --env-file .env.compose up -d --build
+docker compose --env-file .env.compose exec backend node scripts/container-smoke.cjs
+```
+
+`.env.compose` chỉ dành cho preview local và bị ignore. Database chỉ bind loopback local; cloud preview phải dùng PostgreSQL private/secret manager. Workflow [`../.github/workflows/preview-container-smoke.yml`](../.github/workflows/preview-container-smoke.yml) tái hiện build, migration database rỗng, health, smoke flow và restart-login trên GitHub Actions.

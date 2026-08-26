@@ -4,7 +4,6 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { addMonthsClamped, calculateMinimumPayment, nextStatementCloseAt } from "../credit.js";
 
-const SANDBOX_OPERATOR_KEY = "sandbox-operator-local";
 
 function createSystem(options: ConstructorParameters<typeof BankingSystem>[0] = {}) {
   let now = Date.parse("2026-08-14T00:00:00.000Z");
@@ -26,12 +25,12 @@ function register(system: BankingSystem, suffix: string) {
   }).user;
   const paymentAccount = system.listAccounts(user.id)[0];
   assert.ok(paymentAccount);
-  system.fundSandbox(SANDBOX_OPERATOR_KEY, `credit-funding-${suffix}`, {
+  system.seedReferenceFunding(`credit-funding-${suffix}`, {
     recipientAccountNumber: system.getAccountNumber(user.id, paymentAccount.id),
     amount: { currency: "VND", amountMinor: "10000000" },
     reason: "test fixture funding",
   });
-  system.seedCreditSandbox(SANDBOX_OPERATOR_KEY, user.id);
+  system.seedReferenceCredit(user.id);
   return user;
 }
 
@@ -82,11 +81,11 @@ test("statement close is idempotent and emits one credit notification", () => {
   assert.equal(system.listCreditStatements(user.id, account.creditAccountId).items.length, 1);
 
   advance(10 * 24 * 60 * 60 * 1000 + 17 * 60 * 60 * 1000);
-  const firstProcessing = system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  const firstProcessing = system.runReferenceScheduledWork(user.id);
   const firstRun = system.listCreditStatements(user.id, account.creditAccountId).items;
   const stateAfterFirstRead = system.exportState();
   const secondRun = system.listCreditStatements(user.id, account.creditAccountId).items;
-  const secondProcessing = system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  const secondProcessing = system.runReferenceScheduledWork(user.id);
   assert.equal(firstProcessing.creditStatements, 1);
   assert.equal(secondProcessing.creditStatements, 0);
   assert.equal(firstRun.length, 2);
@@ -107,7 +106,7 @@ test("credit statement cursor does not duplicate rows when a newer cycle closes"
   const user = register(system, "712");
   const account = system.listCreditAccounts(user.id)[0]!;
   advance(11 * 24 * 60 * 60 * 1000);
-  system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  system.runReferenceScheduledWork(user.id);
   const first = system.listCreditStatements(
     user.id,
     account.creditAccountId,
@@ -118,7 +117,7 @@ test("credit statement cursor does not duplicate rows when a newer cycle closes"
   assert.ok(first.nextCursor);
 
   advance(31 * 24 * 60 * 60 * 1000);
-  system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  system.runReferenceScheduledWork(user.id);
   const second = system.listCreditStatements(
     user.id,
     account.creditAccountId,
@@ -135,7 +134,7 @@ test("overdue credit seed emits one notification that targets the card", () => {
   const user = register(system, "708");
   const card = system.listCards(user.id)[0]!;
   const account = system.listCreditAccounts(user.id)[0]!;
-  system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  system.runReferenceScheduledWork(user.id);
   const statement = system.listCreditStatements(user.id, account.creditAccountId).items[0]!;
 
   assert.equal(statement.status, "OVERDUE");
@@ -244,7 +243,7 @@ test("credit payment cannot target a superseded statement or make outstanding ne
   const original = system.listCreditStatements(user.id, account.creditAccountId).items[0]!;
 
   advance(11 * 24 * 60 * 60 * 1000);
-  system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  system.runReferenceScheduledWork(user.id);
   const statements = system.listCreditStatements(user.id, account.creditAccountId).items;
   const current = statements[0]!;
   assert.notEqual(current.statementId, original.statementId);
@@ -280,7 +279,7 @@ test("paying the minimum before or after due date clears delinquency", () => {
   const user = register(system, "710");
   const source = system.listAccounts(user.id)[0]!;
   const account = system.listCreditAccounts(user.id)[0]!;
-  system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  system.runReferenceScheduledWork(user.id);
   const statement = system.listCreditStatements(user.id, account.creditAccountId).items[0]!;
   assert.equal(statement.status, "OVERDUE");
   const quote = system.createCreditPaymentQuote(user.id, {
@@ -362,7 +361,7 @@ test("pending credit payment resumes without a second source debit", () => {
   const readOnly = system.getCreditPayment(user.id, pending.paymentId);
   assert.equal(readOnly.status, "PENDING");
   assert.deepEqual(system.exportState(), stateBeforeRead);
-  const processing = system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  const processing = system.runReferenceScheduledWork(user.id);
   assert.equal(processing.creditPaymentsSettled, 1);
   const resumed = system.getCreditPayment(user.id, pending.paymentId);
   assert.equal(resumed.status, "SUCCEEDED");
@@ -396,7 +395,7 @@ test("pending payment settles before rollover and late reversal requires review"
   assert.equal(pending.status, "PENDING");
 
   advance(11 * 24 * 60 * 60 * 1000);
-  const processing = system.processScheduledWork(SANDBOX_OPERATOR_KEY, user.id);
+  const processing = system.runReferenceScheduledWork(user.id);
   assert.equal(processing.creditPaymentsSettled, 1);
   assert.equal(processing.creditStatements, 1);
   const latest = system.listCreditStatements(

@@ -1,7 +1,7 @@
 import * as LocalAuthentication from "expo-local-authentication";
 
 import {
-  getSandboxBiometricProof,
+  getDeviceBoundAssertion,
   requestBiometricAuthentication,
 } from "@/services/security/biometricAuth";
 
@@ -16,7 +16,6 @@ const mockedLocalAuthentication = jest.mocked(LocalAuthentication);
 describe("biometricAuth", () => {
   beforeEach(() => {
     jest.resetAllMocks();
-    delete process.env.EXPO_PUBLIC_SANDBOX_BIOMETRIC_PROOF;
   });
 
   it("từ chối khi thiết bị không có phần cứng sinh trắc học", async () => {
@@ -67,20 +66,7 @@ describe("biometricAuth", () => {
     ).rejects.toThrow("Xác thực sinh trắc học chưa thành công");
   });
 
-  it("đọc sandbox proof từ biến môi trường khi được cấu hình", () => {
-    process.env.EXPO_PUBLIC_SANDBOX_BIOMETRIC_PROOF = "provider-assertion";
-
-    expect(getSandboxBiometricProof()).toBe("provider-assertion");
-  });
-
-  it("không đóng gói proof tĩnh vào bản production", () => {
-    const previousNodeEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
-    process.env.EXPO_PUBLIC_SANDBOX_BIOMETRIC_PROOF = "must-not-leak";
-    try {
-      expect(getSandboxBiometricProof()).toBe("");
-    } finally {
-      process.env.NODE_ENV = previousNodeEnv;
-    }
+  it("không lấy hoặc tự tạo device proof từ public bundle", () => {
+    expect(getDeviceBoundAssertion()).toBe("");
   });
 });

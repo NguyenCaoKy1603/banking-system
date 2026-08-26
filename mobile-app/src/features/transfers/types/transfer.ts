@@ -46,7 +46,7 @@ export type TransferQuote = {
   expiresAt: string;
 };
 
-export type StepUpMethod = "OTP" | "BIOMETRIC";
+export type StepUpMethod = "OTP" | "TOTP" | "BIOMETRIC";
 
 export type SubmitTransferRequest = {
   quoteId: string;

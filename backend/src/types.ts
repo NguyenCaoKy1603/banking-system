@@ -33,7 +33,10 @@ export type LoginResponse = {
 export type AuthChallengeResponse = {
   challengeId: string;
   expiresAt: string;
-  methods: Array<"OTP" | "BIOMETRIC">;
+  methods: Array<"OTP" | "EMAIL_OTP" | "TOTP" | "BIOMETRIC">;
+  method?: "EMAIL_OTP" | "TOTP";
+  resendAfter?: string;
+  maskedDestination?: string;
   purpose?: OtpPurpose;
 };
 
@@ -134,18 +137,18 @@ export type ControlPolicy = {
   transfersEnabled: boolean;
   allowlisted: boolean;
   maxTransferAmountMinor: string;
-  stepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  stepUpMethods: Array<"OTP" | "TOTP" | "BIOMETRIC">;
   savingsEnabled: boolean;
   savingsAllowlisted: boolean;
   maxSavingsAmountMinor: string;
-  savingsStepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  savingsStepUpMethods: Array<"OTP" | "TOTP" | "BIOMETRIC">;
   creditEnabled: boolean;
   creditAllowlisted: boolean;
   creditPaymentsEnabled: boolean;
   cardControlsEnabled: boolean;
   maxCreditPaymentAmountMinor: string;
-  creditPaymentStepUpMethods: Array<"OTP" | "BIOMETRIC">;
-  cardUnlockStepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  creditPaymentStepUpMethods: Array<"OTP" | "TOTP" | "BIOMETRIC">;
+  cardUnlockStepUpMethods: Array<"OTP" | "TOTP" | "BIOMETRIC">;
   updatedAt: string;
 };
 
@@ -162,6 +165,6 @@ export type Notification = {
 
 export type FraudReportResponse = {
   reportId: string;
-  status: "RECEIVED";
+  status: "RECEIVED" | "IN_REVIEW" | "RESOLVED";
   createdAt: string;
 };

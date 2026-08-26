@@ -1,6 +1,6 @@
 # Test report — Mobile banking reference preview
 
-> Cập nhật hiện hành 2026-08-24: Stage 0 đã tạo safety checkpoint, tách working tree thành chuỗi commit logic và xác minh clone sạch; Mobile lint/typecheck, 46 suite/260 test, coverage, OpenAPI, 10 Maestro flow syntax và web export 33 route đạt; Backend đạt 88 definition/82 pass/6 PostgreSQL skip cùng critical 8/8. Bằng chứng PostgreSQL/emulator ngày 2026-08-17 bên dưới là lịch sử và chưa được chạy lại cho worktree mới.
+> Cập nhật hiện hành 2026-08-24: Stage 1 worktree giữ Mobile lint/typecheck, 46 suite/260 test, coverage, OpenAPI, 10 Maestro flow syntax và web export 33 route đạt; Backend đạt 90 definition/84 pass/6 PostgreSQL skip cùng critical 10/10. Bằng chứng PostgreSQL/emulator ngày 2026-08-17 bên dưới là lịch sử.
 
 > Handoff manifest không chứa credential/token/OTP: [`handoff-manifest-2026-08-17.json`](handoff-manifest-2026-08-17.json).
 
@@ -22,7 +22,7 @@ Backend verification checkpoint hiện hành: implementation tip `edbc9bb`; safe
 | OpenAPI required paths | Đạt, 43 path bắt buộc phía Mobile; Backend kiểm tra 46 path và 51 exact route guard |
 | Native E2E | Android emulator `Pixel_7_API_35`: M0–M4, M6, M8 và Credit sandbox flow đạt; gồm hiện/sao chép đầy đủ số tài khoản, eKYC mô phỏng, beneficiary, QR manual fallback, savings quote/review/OTP và notification deep link |
 | Maestro | 10 flow hợp lệ; M0–M4/M8, M6 savings, credit payment, pending-resume, Credit card lock/restart/unlock, Credit overdue notification và offline login retry chạy thành công trên Android emulator bằng Maestro 2.8.0 |
-| Backend reference | Worktree không DB: 88 definition, 82 pass, 6 PostgreSQL skip; critical API 8/8; static schema 28 bảng đạt. PostgreSQL live và seed E2E là bằng chứng lịch sử 2026-08-17 |
+| Backend reference | Worktree không DB: 90 definition, 84 pass, 6 PostgreSQL skip; critical API 10/10; static schema 28 bảng đạt. PostgreSQL live và seed E2E là bằng chứng lịch sử 2026-08-17 |
 | Backend dependency audit | Đạt, 0 vulnerability |
 | Expo web export | Đạt, 33 static route; dùng URL HTTPS placeholder cho static export vì `.env` local là HTTP sandbox và bị production guard từ chối |
 | Mobile dependency audit | Đạt cục bộ: sau `npm audit fix` không dùng `--force`, `@expo/metro` lên `56.0.2` và toàn bộ Metro khóa ở `0.84.5`; `npm audit --omit=dev --audit-level=high` trả 0 vulnerability. Chờ remote CI xác nhận |
@@ -97,7 +97,7 @@ Backend gate đã chạy trên worktree không cấu hình database:
 
 - `npm run typecheck`: đạt.
 - `npm run build`: đạt.
-- Backend `npm test`: 88 definition, 82 pass, 6 PostgreSQL test skip, 0 fail; `test:critical` 8/8 pass.
+- Backend `npm test`: 90 definition, 84 pass, 6 PostgreSQL test skip, 0 fail; `test:critical` 10/10 pass.
 - Mobile `npm test -- --runInBand`: 46 suite, 260/260 test pass.
 - Mobile coverage: 85,53% statement, 86,57% branch, 93,39% function, 85,97% line; lint/typecheck/OpenAPI/10 Maestro flow syntax đạt.
 - Web export: 33 route đạt với `EXPO_PUBLIC_API_URL` HTTPS tạm thời; `.env` local HTTP vẫn bị production guard chặn đúng policy.

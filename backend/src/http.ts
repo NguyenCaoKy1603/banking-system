@@ -4,17 +4,60 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
-import { randomUUID } from "node:crypto";
 
 import { BankingSystem, type BankingSystemState } from "./bankingSystem.js";
-import { DomainError, invalidRequest, notFound, unauthorized } from "./errors.js";
-import type { RelationalStateOperation } from "./postgresRelationalRepository.js";
+import { DomainError, conflictWithCode, invalidRequest, notFound, unauthorized } from "./errors.js";
+import type {
+  RelationalStateBoundaryOptions,
+  RelationalStateOperation,
+} from "./postgresRelationalRepository.js";
+import type {
+  MfaChallengePurpose,
+  PersistentMfaService,
+} from "./mfa/persistentMfaService.js";
+import type { EmailProviderHealth } from "./mfa/delivery.js";
+import type { OtpPurpose } from "./types.js";
+import type { RuntimeMetadata } from "./runtimeMetadata.js";
+import { createRequestContext, normalizeRequestId, requestContextHeaders, type RequestContext } from "./observability/requestContext.js";
+import { createStructuredLogger, type StructuredLogger } from "./observability/logger.js";
+import { collectDatabaseMetrics, PrometheusRegistry, registerBusinessMetrics, registerHttpMetrics, type DatabasePoolMetricSnapshot } from "./observability/metrics.js";
+import type { RelationalHttpBoundary } from "./database/relationalHttpBoundary.js";
+import { DatabaseCommandError } from "./database/commandErrors.js";
+import { fingerprint } from "./security.js";
 
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 1_000_000;
 
 export type HttpOptions = {
   allowedOrigins?: string[];
+  environment?: string;
+  storage?: string;
+  commitSha?: string;
+  runtimeMetadata?: RuntimeMetadata;
+  startupReady?: boolean | (() => boolean);
+  /** Direct persistence/schema check used by readiness, never by liveness. */
+  readinessCheck?: () => Promise<void>;
+  /** Database-backed business health snapshot; kept separate from liveness. */
+  businessHealthCheck?: () => Promise<{
+    status: "ok" | "degraded";
+    reconciliation: "ok" | "mismatch";
+    outbox: "ok" | "degraded";
+    pendingOutboxEvents: number;
+  }>;
+  /** Redacted OTP provider readiness; credentials are never returned. */
+  emailProviderHealth?: () => EmailProviderHealth | Promise<EmailProviderHealth>;
+  metrics?: PrometheusRegistry;
+  logger?: StructuredLogger;
+  serviceName?: string;
+  databaseMetrics?: () => DatabasePoolMetricSnapshot;
+  /** Internal marker: persistent server instruments the real response before buffering. */
+  instrumented?: boolean;
+  /** PostgreSQL-backed MFA boundary. Omitted only for legacy unit-test servers. */
+  mfaService?: PersistentMfaService;
+  /** Optional persistent customer-access gate owned by the Admin control plane. */
+  customerAccessStatus?: (customerId: string) => Promise<"ACTIVE" | "LOCKED" | null>;
+  /** Optional route-scoped direct relational boundary used during cutover. */
+  relationalHttp?: RelationalHttpBoundary;
 };
 
 type RequestStateDisposition =
@@ -74,7 +117,71 @@ function header(request: IncomingMessage, name: string): string | undefined {
 }
 
 function getRequestId(request: IncomingMessage): string {
-  return header(request, "x-request-id")?.trim() || `backend-${randomUUID()}`;
+  return normalizeRequestId(header(request, "x-request-id"));
+}
+
+function metricRoute(request: IncomingMessage): string {
+  const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+  if (["/livez", "/startupz", "/readyz", "/healthz", "/versionz", "/metrics"].includes(pathname)) return pathname;
+  const parts = pathname.split("/").filter(Boolean).slice(0, 6).map((part) =>
+    /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(part) || /^\d{8,}$/.test(part) || part.length > 48 ? ":id" : part,
+  );
+  return `/${parts.join("/")}`.slice(0, 64) || "/";
+}
+
+function outcomeForStatus(status: number): string {
+  if (status >= 500) return "platform_failure";
+  if (status === 401 || status === 403 || status === 429) return "security_rejection";
+  if (status >= 400) return "domain_rejection";
+  return "success";
+}
+
+function instrumentResponse(request: IncomingMessage, response: ServerResponse, options: HttpOptions, context: RequestContext): void {
+  const registry = options.metrics;
+  if (!registry || typeof (response as unknown as { once?: unknown }).once !== "function") return;
+  const startedAt = performance.now();
+  const route = metricRoute(request);
+  const method = (request.method ?? "GET").toUpperCase();
+  registry.add("http_requests_active", 1, { service: options.serviceName ?? "banking-reference-backend" });
+  let completed = false;
+  const complete = (): void => {
+    if (completed) return;
+    completed = true;
+    const status = response.statusCode || 500;
+    const statusClass = `${Math.floor(status / 100)}xx`;
+    const outcome = outcomeForStatus(status);
+    registry.increment("http_requests_total", 1, { method, route, status_class: statusClass, outcome });
+    registry.observe("http_request_duration_seconds", (performance.now() - startedAt) / 1000, { method, route });
+    if (route.includes("/transfers")) {
+      const operation = route.includes("/quote") ? "quote" : route.endsWith("/transfers") ? "submit" : "read";
+      registry.increment("banking_transfer_requests_total", 1, { operation, outcome });
+    }
+    registry.add("http_requests_active", -1, { service: options.serviceName ?? "banking-reference-backend" });
+    options.logger?.log(status >= 500 ? "error" : status >= 400 ? "info" : "info", "http_request_completed", {
+      requestId: context.requestId,
+      traceId: context.traceId,
+      spanId: context.spanId,
+      method,
+      route,
+      statusClass,
+      outcome,
+      durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+    });
+  };
+  response.once("finish", complete);
+  response.once("close", complete);
+}
+
+function collectRuntimeMetrics(options: HttpOptions): void {
+  if (!options.metrics) return;
+  collectDatabaseMetrics(options.metrics, options.databaseMetrics?.());
+}
+
+function recordBusinessHealth(options: HttpOptions, health: { status: string; reconciliation?: string; pendingOutboxEvents?: number }): void {
+  if (!options.metrics) return;
+  options.metrics.increment("banking_health_checks_total", 1, { status: health.status });
+  options.metrics.set("banking_reconciliation_mismatch", health.reconciliation === "mismatch" ? 1 : 0);
+  options.metrics.set("banking_outbox_pending_events", Number(health.pendingOutboxEvents ?? 0));
 }
 
 function writeResponse(
@@ -93,18 +200,64 @@ function writeResponse(
   response.end(JSON.stringify(payload));
 }
 
+function writeTextResponse(
+  response: ServerResponse,
+  status: number,
+  traceId: string,
+  body: string,
+): void {
+  response.statusCode = status;
+  response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
+  response.setHeader("Cache-Control", "no-store");
+  response.setHeader("X-Request-ID", traceId);
+  response.end(body);
+}
+
 function writeError(
   response: ServerResponse,
   status: number,
   traceId: string,
   error: DomainError,
 ): void {
+  if (error.retryAfterSeconds !== null) {
+    response.setHeader("Retry-After", String(Math.max(1, Math.ceil(error.retryAfterSeconds))));
+  }
   writeResponse(response, status, traceId, {
     code: error.code,
     message: error.message,
     fieldErrors: error.fieldErrors,
     traceId,
   });
+}
+
+function runtimeMetadataFor(options: HttpOptions = {}): RuntimeMetadata & { storage: string } {
+  if (options.runtimeMetadata) {
+    return {
+      ...options.runtimeMetadata,
+      storage: options.storage?.trim() || process.env.BANKING_STORAGE?.trim() || "in-memory",
+    };
+  }
+  return {
+    service: "banking-reference-backend",
+    releaseId: process.env.RELEASE_ID?.trim() || "local",
+    imageDigest: process.env.IMAGE_DIGEST?.trim() || "unknown",
+    environment:
+      options.environment?.trim() || process.env.BANKING_ENV?.trim() || "development",
+    moneyMode: process.env.BANKING_MONEY_MODE?.trim() || "virtual",
+    schemaVersion: process.env.SCHEMA_VERSION?.trim() || "unknown",
+    migrationSetDigest: process.env.MIGRATION_SET_DIGEST?.trim() || "unknown",
+    apiContractDigest: process.env.API_CONTRACT_DIGEST?.trim() || "unknown",
+    builtAt: process.env.BUILD_CREATED_AT?.trim() || null,
+    startedAt: new Date().toISOString(),
+    storage: options.storage?.trim() || process.env.BANKING_STORAGE?.trim() || "in-memory",
+    commitSha: options.commitSha?.trim() || process.env.BUILD_COMMIT_SHA?.trim() || "local",
+  };
+}
+
+function isStartupReady(options: HttpOptions): boolean {
+  return typeof options.startupReady === "function"
+    ? options.startupReady()
+    : options.startupReady !== false;
 }
 
 class BufferedResponse {
@@ -183,7 +336,12 @@ function requireObject(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
-function requireBearer(request: IncomingMessage, system: BankingSystem): string {
+async function requireBearer(
+  request: IncomingMessage,
+  system: BankingSystem,
+  options: HttpOptions,
+  relationalAuth?: RelationalHttpBoundary,
+): Promise<string> {
   const authorization = header(request, "authorization");
   if (!authorization?.startsWith("Bearer ")) {
     throw unauthorized("Access token is required.");
@@ -192,7 +350,13 @@ function requireBearer(request: IncomingMessage, system: BankingSystem): string 
   if (!deviceId?.trim()) {
     throw unauthorized("Device binding is required.");
   }
-  return system.authenticate(authorization.slice("Bearer ".length), deviceId).id;
+  const userId = (relationalAuth
+    ? await relationalAuth.authenticate(authorization.slice("Bearer ".length), deviceId)
+    : system.authenticate(authorization.slice("Bearer ".length), deviceId)).id;
+  if (options.customerAccessStatus && (await options.customerAccessStatus(userId)) === "LOCKED") {
+    throw unauthorized("Customer access is locked by the control plane.");
+  }
+  return userId;
 }
 
 function requireDeviceId(request: IncomingMessage): string {
@@ -206,6 +370,88 @@ function requireDeviceId(request: IncomingMessage): string {
 function getRateLimitKey(request: IncomingMessage): string {
   const forwardedFor = header(request, "x-forwarded-for")?.split(",")[0]?.trim();
   return forwardedFor || request.socket.remoteAddress || "unknown-client";
+}
+
+type PersistentStepUpPurpose = Extract<
+  MfaChallengePurpose,
+  "TRANSFER" | "SAVINGS_OPENING" | "CREDIT_APPLICATION" | "CARD_ACTIVATION" | "CREDIT_PAYMENT" | "CARD_UNLOCK" | "RECOVERY_CODE_ROTATION" | "MFA_FACTOR_CHANGE" | "MFA_FACTOR_REMOVAL"
+>;
+
+async function verifyMfaLifecycleChallenge(
+  mfaService: PersistentMfaService,
+  request: IncomingMessage,
+  customerId: string,
+  data: Record<string, unknown>,
+  purpose: "MFA_FACTOR_CHANGE" | "MFA_FACTOR_REMOVAL",
+): Promise<void> {
+  if (typeof data.challengeId !== "string" || typeof data.code !== "string") {
+    throw conflictWithCode("MFA_CURRENT_FACTOR_REQUIRED", "Current TOTP verification is required for this MFA change.");
+  }
+  const result = await mfaService.verifyChallenge({
+    challengeId: data.challengeId,
+    customerId,
+    deviceId: requireDeviceId(request),
+    proof: data.code,
+    purpose,
+    resourceId: null,
+    requestFingerprint: null,
+  });
+  if (result.customerId !== customerId) {
+    throw unauthorized("MFA user binding is invalid.");
+  }
+}
+
+async function verifyPersistentStepUp(
+  mfaService: PersistentMfaService,
+  system: BankingSystem,
+  request: IncomingMessage,
+  userId: string,
+  data: Record<string, unknown>,
+  purpose: PersistentStepUpPurpose,
+  resourceId: string | null,
+  suppliedFingerprint?: string | null,
+): Promise<void> {
+  const rawStepUp = data.stepUp;
+  if (typeof rawStepUp !== "object" || rawStepUp === null || Array.isArray(rawStepUp)) {
+    throw invalidRequest("stepUp is required for this command.");
+  }
+  const stepUp = rawStepUp as Record<string, unknown>;
+  if (stepUp.method !== "TOTP") {
+    throw conflictWithCode("STEP_UP_INVALID", "Production-like runtime chỉ chấp nhận TOTP cho step-up.");
+  }
+  if (typeof stepUp.challengeId !== "string" || !stepUp.challengeId.trim()) {
+    throw invalidRequest("stepUp.challengeId is required.");
+  }
+  if (typeof stepUp.proof !== "string" || !stepUp.proof.trim()) {
+    throw invalidRequest("stepUp.proof is required.");
+  }
+  const deviceId = requireDeviceId(request);
+  const requestFingerprint = system.getStepUpRequestFingerprint(
+    purpose as OtpPurpose,
+    resourceId,
+    suppliedFingerprint,
+  );
+  const result = await mfaService.verifyChallenge({
+    challengeId: stepUp.challengeId,
+    customerId: userId,
+    deviceId,
+    proof: stepUp.proof,
+    purpose,
+    resourceId,
+    requestFingerprint,
+  });
+  if (result.customerId !== userId) {
+    throw unauthorized("MFA user binding is invalid.");
+  }
+  system.registerExternalStepUpVerification({
+    userId,
+    challengeId: stepUp.challengeId,
+    deviceId,
+    method: "TOTP",
+    purpose: purpose as OtpPurpose,
+    resourceId,
+    requestFingerprint,
+  });
 }
 
 function pathSegments(pathname: string): string[] {
@@ -234,6 +480,17 @@ function isAuthenticatedRoute(
     segments.length === 3 &&
     segments[0] === "notifications" &&
     segments[2] === "read"
+  ) {
+    return true;
+  }
+  if (
+    (method === "GET" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") ||
+    (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "totp" && (segments[3] === "enroll" || segments[3] === "confirm")) ||
+    (method === "DELETE" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") ||
+    (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recovery-codes" && segments[3] === "rotate") ||
+    (method === "POST" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover") ||
+    (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover" && (segments[3] === "verify" || segments[3] === "complete")) ||
+    (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "challenges" && segments[3] === "resend")
   ) {
     return true;
   }
@@ -385,17 +642,34 @@ export async function handleRequest(
   parsedBody?: unknown,
   bodyAlreadyRead = false,
   stateBoundary?: RequestStateBoundary,
+  requestContext?: RequestContext,
 ): Promise<void> {
-  const traceId = getRequestId(request);
+  const context = requestContext ?? createRequestContext(request);
+  const traceId = context.requestId;
+  for (const [name, value] of Object.entries(requestContextHeaders(context))) response.setHeader(name, value);
+  if (!options.instrumented) instrumentResponse(request, response, options, context);
   const configuredOrigins = options.allowedOrigins ?? ["*"];
   const origin = header(request, "origin");
+  if (
+    origin &&
+    !configuredOrigins.includes("*") &&
+    !configuredOrigins.includes(origin)
+  ) {
+    writeError(
+      response,
+      403,
+      traceId,
+      new DomainError(403, "CORS_ORIGIN_DENIED", "Origin is not allowed."),
+    );
+    return;
+  }
   if (configuredOrigins.includes("*")) {
     response.setHeader("Access-Control-Allow-Origin", "*");
   } else if (origin && configuredOrigins.includes(origin)) {
     response.setHeader("Access-Control-Allow-Origin", origin);
   }
   response.setHeader("Vary", "Origin");
-  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID, X-Sandbox-Operator-Key");
+  response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID, traceparent, tracestate");
   response.setHeader("Access-Control-Allow-Methods", "DELETE,GET,PATCH,POST,OPTIONS");
 
   if (request.method === "OPTIONS") {
@@ -405,9 +679,85 @@ export async function handleRequest(
 
   try {
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
-    if (request.method === "GET" && requestUrl.pathname === "/healthz") {
+    if (request.method === "GET" && requestUrl.pathname === "/livez") {
+      writeResponse(response, 200, traceId, {
+        ...runtimeMetadataFor(options),
+        status: "ok",
+        checkedAt: new Date().toISOString(),
+      });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/startupz") {
+      const ready = isStartupReady(options);
+      writeResponse(response, ready ? 200 : 503, traceId, {
+        ...runtimeMetadataFor(options),
+        status: ready ? "ok" : "starting",
+        checkedAt: new Date().toISOString(),
+      });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/versionz") {
+      writeResponse(response, 200, traceId, runtimeMetadataFor(options));
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      (requestUrl.pathname === "/healthz" || requestUrl.pathname === "/readyz")
+    ) {
+      if (options.readinessCheck && !options.instrumented) {
+        try {
+          await options.readinessCheck();
+        } catch {
+          writeError(
+            response,
+            503,
+            traceId,
+            new DomainError(503, "PERSISTENCE_UNAVAILABLE", "Persistent sandbox is temporarily unavailable."),
+          );
+          return;
+        }
+      }
       const health = system.getHealth();
-      writeResponse(response, health.status === "ok" ? 200 : 503, traceId, health);
+      if (options.businessHealthCheck) {
+        try {
+          const databaseHealth = await options.businessHealthCheck();
+          health.status = health.status === "ok" && databaseHealth.status === "ok" ? "ok" : "degraded";
+          health.reconciliation = health.reconciliation === "ok" && databaseHealth.reconciliation === "ok" ? "ok" : "mismatch";
+          health.outbox = databaseHealth.outbox;
+          health.pendingOutboxEvents = databaseHealth.pendingOutboxEvents;
+        } catch {
+          health.status = "degraded";
+          health.outbox = "degraded";
+        }
+      }
+      if (options.emailProviderHealth) {
+        try {
+          const emailProvider = await options.emailProviderHealth();
+          health.emailProvider = emailProvider;
+          // A deliberately disabled provider is allowed for local preview.
+          if (emailProvider.status === "degraded") health.status = "degraded";
+        } catch {
+          health.status = "degraded";
+          health.emailProvider = {
+            provider: "http",
+            status: "degraded",
+            configured: false,
+            credentialConfigured: false,
+            lastErrorCode: "email-provider-health-failed",
+          };
+        }
+      }
+      recordBusinessHealth(options, health);
+      writeResponse(response, health.status === "ok" ? 200 : 503, traceId, {
+        ...runtimeMetadataFor(options),
+        ...health,
+      });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/metrics" && (options.mfaService || options.metrics)) {
+      collectRuntimeMetrics(options);
+      const sections = [options.metrics?.prometheus(), options.mfaService?.metrics.prometheus()].filter(Boolean);
+      writeTextResponse(response, 200, traceId, `${sections.join("\n")}`);
       return;
     }
 
@@ -417,68 +767,10 @@ export async function handleRequest(
     const routePath = requestUrl.pathname.slice(API_PREFIX.length) || "/";
     const segments = pathSegments(routePath);
     const body = bodyAlreadyRead ? parsedBody : await readJson(request);
-
-    if (
-      request.method === "POST" &&
-      segments.length === 2 &&
-      segments[0] === "sandbox" &&
-      segments[1] === "fundings"
-    ) {
-      const data = requireObject(body);
-      writeResponse(
-        response,
-        200,
-        traceId,
-        system.fundSandbox(
-          header(request, "x-sandbox-operator-key") ?? "",
-          header(request, "idempotency-key") ?? "",
-          data as never,
-        ),
-      );
-      return;
-    }
-
-    if (
-      request.method === "GET" &&
-      segments.length === 3 &&
-      segments[0] === "sandbox" &&
-      segments[1] === "otp"
-    ) {
-      writeResponse(
-        response,
-        200,
-        traceId,
-        { otp: system.getSandboxOtp(header(request, "x-sandbox-operator-key") ?? "", segments[2]) },
-      );
-      return;
-    }
-
-    if (
-      request.method === "POST" &&
-      segments.length === 2 &&
-      segments[0] === "sandbox" &&
-      segments[1] === "process-scheduled"
-    ) {
-      const data = body === undefined ? {} : requireObject(body);
-      const unsupportedField = Object.keys(data).find((key) => key !== "userId");
-      if (unsupportedField) {
-        throw invalidRequest(`Unsupported scheduled-work field: ${unsupportedField}.`);
-      }
-      if (
-        Object.prototype.hasOwnProperty.call(data, "userId") &&
-        (typeof data.userId !== "string" || !data.userId.trim())
-      ) {
-        throw invalidRequest("userId must be a non-empty string when provided.");
-      }
-      writeResponse(
-        response,
-        200,
-        traceId,
-        system.processScheduledWork(
-          header(request, "x-sandbox-operator-key") ?? "",
-          typeof data.userId === "string" ? data.userId.trim() : undefined,
-        ),
-      );
+    const relationalV2 = process.env.BANKING_PERSISTENCE_MODE?.trim() === "relational-v2";
+    const registrationRoute = (request.method === "POST" && segments[0] === "auth" && segments[1] === "register");
+    if (relationalV2 && registrationRoute && !(options.relationalHttp?.isRouteEnabled(request.method, segments) ?? false)) {
+      writeError(response, 503, traceId, new DomainError(503, "RELATIONAL_ROUTE_OUT_OF_SCOPE", "Registration requires an approved relational email-provider boundary and is disabled in this local relational-v2 cutover."));
       return;
     }
 
@@ -489,15 +781,21 @@ export async function handleRequest(
       segments[1] === "register"
     ) {
       const data = requireObject(body);
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
       writeResponse(
         response,
         202,
         traceId,
-        await system.beginRegistrationAsync(
-          data as never,
-          getRateLimitKey(request),
-          requireDeviceId(request),
-        ),
+        relationalAuth && options.mfaService
+          ? await relationalAuth.beginRegistration(
+            data as never,
+            requireDeviceId(request),
+            options.mfaService,
+            getRateLimitKey(request),
+          )
+          : await system.beginRegistrationAsync(data as never, getRateLimitKey(request), requireDeviceId(request)),
       );
       return;
     }
@@ -510,17 +808,21 @@ export async function handleRequest(
       segments[2] === "verify"
     ) {
       const data = requireObject(body);
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
       writeResponse(
         response,
         201,
         traceId,
-        await Promise.resolve(
-          system.verifyRegistrationChallenge(
+        relationalAuth && options.mfaService
+          ? await relationalAuth.verifyRegistration(
             data.challengeId as string,
             data.proof as string,
             requireDeviceId(request),
-          ),
-        ),
+            options.mfaService,
+          )
+          : await Promise.resolve(system.verifyRegistrationChallenge(data.challengeId as string, data.proof as string, requireDeviceId(request))),
       );
       return;
     }
@@ -532,16 +834,49 @@ export async function handleRequest(
       segments[1] === "login"
     ) {
       const data = requireObject(body);
-      const result = await system.loginAsync(
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+      if (options.mfaService) {
+        const user = relationalAuth
+          ? await relationalAuth.loginPasswordOnly(data.email as string, data.password as string, requireDeviceId(request))
+          : await system.loginPasswordOnly(data.email as string, data.password as string, requireDeviceId(request));
+        if (options.customerAccessStatus && (await options.customerAccessStatus(user.id)) === "LOCKED") {
+          throw unauthorized("Customer access is locked by the control plane.");
+        }
+        const challenge = await options.mfaService.beginLoginChallenge({
+          customerId: user.id,
+          deviceId: requireDeviceId(request),
+          networkFingerprint: getRateLimitKey(request),
+        });
+        writeResponse(response, 202, traceId, {
+          challengeId: challenge.challengeId,
+          expiresAt: challenge.expiresAt,
+          methods: ["TOTP"],
+          method: "TOTP",
+          purpose: "LOGIN",
+        });
+        return;
+      }
+      if (relationalAuth) {
+        const user = await relationalAuth.loginPasswordOnly(
+          data.email as string,
+          data.password as string,
+          requireDeviceId(request),
+        );
+        writeResponse(response, 200, traceId, await relationalAuth.issueMfaSession(user.id, requireDeviceId(request)));
+        return;
+      }
+      const session = await system.loginAsync(
         data.email as string,
         data.password as string,
         requireDeviceId(request),
       );
       writeResponse(
         response,
-        "accessToken" in result ? 200 : 202,
+        "accessToken" in session ? 200 : 202,
         traceId,
-        result,
+        session,
       );
       return;
     }
@@ -553,13 +888,34 @@ export async function handleRequest(
       segments[1] === "verify"
     ) {
       const data = requireObject(body);
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+      if (options.mfaService) {
+        const result = await options.mfaService.verifyChallenge({
+          challengeId: data.challengeId as string,
+          deviceId: requireDeviceId(request),
+          proof: data.proof as string,
+          purpose: "LOGIN",
+        });
+        if (!result.customerId) {
+          throw unauthorized("MFA user binding is invalid.");
+        }
+        if (options.customerAccessStatus && (await options.customerAccessStatus(result.customerId)) === "LOCKED") {
+          throw unauthorized("Customer access is locked by the control plane.");
+        }
+        writeResponse(response, 200, traceId, relationalAuth
+          ? await relationalAuth.issueMfaSession(result.customerId, requireDeviceId(request))
+          : system.issueMfaSession(result.customerId, requireDeviceId(request)));
+        return;
+      }
       writeResponse(
         response,
         200,
         traceId,
         system.verifyLoginChallenge(
           data.challengeId as string,
-          data.method as "OTP" | "BIOMETRIC",
+          data.method as "OTP" | "TOTP" | "BIOMETRIC",
           data.proof as string,
           requireDeviceId(request),
         ),
@@ -574,12 +930,12 @@ export async function handleRequest(
       segments[1] === "refresh"
     ) {
       const data = requireObject(body);
-      writeResponse(
-        response,
-        200,
-        traceId,
-        system.refresh(data.refreshToken as string, requireDeviceId(request)),
-      );
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+      writeResponse(response, 200, traceId, relationalAuth
+        ? await relationalAuth.refresh(data.refreshToken as string, requireDeviceId(request))
+        : system.refresh(data.refreshToken as string, requireDeviceId(request)));
       return;
     }
 
@@ -590,7 +946,13 @@ export async function handleRequest(
       segments[1] === "logout"
     ) {
       const data = requireObject(body);
-      if (!system.revoke(data.refreshToken as string, requireDeviceId(request))) {
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+      const revoked = relationalAuth
+        ? await relationalAuth.revoke(data.refreshToken as string, requireDeviceId(request))
+        : system.revoke(data.refreshToken as string, requireDeviceId(request));
+      if (!revoked) {
         throw unauthorized("Refresh token is invalid.");
       }
       writeResponse(response, 204, traceId);
@@ -603,10 +965,101 @@ export async function handleRequest(
       segments[0] === "auth" &&
       segments[1] === "logout-all"
     ) {
-      const userId = requireBearer(request, system);
-      system.revokeAllSessions(userId);
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+      const userId = await requireBearer(request, system, options, relationalAuth);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
       writeResponse(response, 204, traceId);
       return;
+    }
+
+    // Recovery may start after the normal session has been revoked.  Accept a
+    // password + recovery code (or a one-time recovery token for completion)
+    // before the bearer-authenticated route gate; never issue a banking session
+    // from this endpoint.
+    if (
+      options.mfaService &&
+      request.method === "POST" &&
+      segments[0] === "auth" &&
+      segments[1] === "mfa" &&
+      ((segments.length === 3 && segments[2] === "recover") ||
+        (segments.length === 4 && segments[2] === "recover" && (segments[3] === "verify" || segments[3] === "complete"))) &&
+      !header(request, "authorization")
+    ) {
+      const data = requireObject(body);
+      if (segments[3] === "complete") {
+        if (typeof data.recoveryToken !== "string" || !data.recoveryToken.trim()) {
+          throw invalidRequest("recoveryToken is required.");
+        }
+        await options.mfaService.completeRecovery({ recoveryToken: data.recoveryToken });
+        writeResponse(response, 202, traceId, { status: "RECOVERY_COMPLETED" });
+        return;
+      }
+      if (typeof data.email !== "string" || typeof data.password !== "string" || typeof data.code !== "string") {
+        throw invalidRequest("email, password and code are required to start MFA recovery.");
+      }
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+      const user = relationalAuth
+        ? await relationalAuth.loginPasswordOnly(data.email, data.password, requireDeviceId(request))
+        : await system.loginPasswordOnly(data.email, data.password, requireDeviceId(request));
+      const recovery = await options.mfaService.verifyRecoveryCode(user.id, data.code);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(user.id);
+      else system.revokeAllSessions(user.id);
+      writeResponse(response, 202, traceId, { ...recovery, status: "RECOVERY_STARTED" });
+      return;
+    }
+
+    // A completed recovery request yields only a short-lived enrollment
+    // capability. It cannot read banking data or mint a session; it exists
+    // solely to replace the revoked TOTP factor.
+    if (
+      options.mfaService &&
+      request.method === "POST" &&
+      segments.length === 4 &&
+      segments[0] === "auth" &&
+      segments[1] === "mfa" &&
+      segments[2] === "recover" &&
+      segments[3] === "enroll" &&
+      !header(request, "authorization")
+    ) {
+      const data = requireObject(body);
+      if (typeof data.recoveryToken !== "string" || !data.recoveryToken.trim()) {
+        throw invalidRequest("recoveryToken is required.");
+      }
+      writeResponse(response, 201, traceId, await options.mfaService.beginRecoveryTotpEnrollment({
+        recoveryToken: data.recoveryToken,
+        displayName: typeof data.displayName === "string" ? data.displayName : undefined,
+      }));
+      return;
+    }
+
+    if (
+      options.mfaService &&
+      request.method === "POST" &&
+      segments.length === 4 &&
+      segments[0] === "auth" &&
+      segments[1] === "mfa" &&
+      segments[2] === "totp" &&
+      segments[3] === "confirm" &&
+      !header(request, "authorization")
+    ) {
+      const data = requireObject(body);
+      if (
+        typeof data.recoveryToken === "string" &&
+        typeof data.credentialId === "string" &&
+        typeof data.code === "string"
+      ) {
+        writeResponse(response, 200, traceId, await options.mfaService.confirmTotpEnrollment({
+          recoveryToken: data.recoveryToken,
+          credentialId: data.credentialId,
+          code: data.code,
+        }));
+        return;
+      }
     }
 
     if (
@@ -615,8 +1068,11 @@ export async function handleRequest(
       segments[0] === "mobile" &&
       segments[1] === "control-policy"
     ) {
-      const userId = requireBearer(request, system);
-      writeResponse(response, 200, traceId, system.getControlPolicy(userId));
+      const directPolicyRoute = options.relationalHttp?.isRouteEnabled(request.method, ["mobile", "control-policy"]) ?? false;
+      const userId = await requireBearer(request, system, options, directPolicyRoute ? options.relationalHttp : undefined);
+      writeResponse(response, 200, traceId, directPolicyRoute && options.relationalHttp
+        ? await options.relationalHttp.getControlPolicy()
+        : system.getControlPolicy(userId));
       return;
     }
 
@@ -624,7 +1080,403 @@ export async function handleRequest(
       throw notFound("API route not found.");
     }
 
-    const userId = requireBearer(request, system);
+    const relationalRoute = options.relationalHttp?.isRouteEnabled(request.method, segments) ?? false;
+    const userId = await requireBearer(
+      request,
+      system,
+      options,
+      relationalRoute ? options.relationalHttp : undefined,
+    );
+    const relationalAuth = relationalRoute ? options.relationalHttp : undefined;
+
+    if (relationalRoute && options.relationalHttp) {
+      if (request.method === "GET" && segments.length === 1 && segments[0] === "cards") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.listCards(userId));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "cards") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getCard(userId, segments[1]));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.listCreditApplications(userId));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") {
+        const data = requireObject(body);
+        if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational credit application.");
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
+        if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational credit application.");
+        const requestFingerprint = await options.relationalHttp.getCreditApplicationRequestFingerprint(data.requestedLimit);
+        const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CREDIT_APPLICATION", resourceId: null, requestFingerprint });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        writeResponse(response, 201, traceId, await options.relationalHttp.submitCreditApplication({ customerId: userId, idempotencyKey: header(request, "idempotency-key") ?? "", request: data as never, traceId }));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "applications") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getCreditApplication(userId, segments[2]));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 4 && segments[0] === "credit" && segments[1] === "applications" && segments[3] === "activate") {
+        const data = requireObject(body);
+        if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational credit activation.");
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
+        if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational credit activation.");
+        const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CARD_ACTIVATION", resourceId: segments[2], requestFingerprint: fingerprint({ applicationId: segments[2] }) });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        writeResponse(response, 200, traceId, await options.relationalHttp.activateCreditApplication({ customerId: userId, applicationId: segments[2], idempotencyKey: header(request, "idempotency-key") ?? "", traceId }));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 3 && segments[0] === "cards" && (segments[2] === "lock" || segments[2] === "unlock")) {
+        const data = requireObject(body);
+        if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational card control.");
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
+        if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational card control.");
+        const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CARD_UNLOCK", resourceId: segments[1], requestFingerprint: fingerprint({ cardId: segments[1] }) });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        const card = segments[2] === "lock" ? await options.relationalHttp.lockCard(userId, segments[1]) : await options.relationalHttp.unlockCard(userId, segments[1]);
+        writeResponse(response, 200, traceId, { card });
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "credit" && segments[1] === "accounts") {
+        writeResponse(response, 200, traceId, { items: await options.relationalHttp.listCreditAccounts(userId) });
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "accounts") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getCreditAccount(userId, segments[2]));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 4 && segments[0] === "credit" && segments[1] === "accounts" && segments[3] === "transactions") {
+        const limit = requestUrl.searchParams.get("limit");
+        writeResponse(response, 200, traceId, await options.relationalHttp.listCreditTransactions(userId, segments[2], requestUrl.searchParams.get("cursor") ?? undefined, limit === null ? undefined : Number(limit)));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 4 && segments[0] === "credit" && segments[1] === "accounts" && segments[3] === "statements") {
+        const limit = requestUrl.searchParams.get("limit");
+        writeResponse(response, 200, traceId, await options.relationalHttp.listCreditStatements(userId, segments[2], requestUrl.searchParams.get("cursor") ?? undefined, limit === null ? undefined : Number(limit)));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 5 && segments[0] === "credit" && segments[1] === "accounts" && segments[3] === "statements") {
+        writeResponse(response, 200, traceId, { statement: await options.relationalHttp.getCreditStatement(userId, segments[2], segments[4]) });
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "payment-quotes") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, await options.relationalHttp.createCreditPaymentQuote(userId, data as never));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "payments") {
+        const data = requireObject(body);
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
+        if (!options.mfaService || !stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational credit payment.");
+        const quoteId = typeof data.quoteId === "string" ? data.quoteId : "";
+        const requestFingerprint = await options.relationalHttp.getCreditPaymentStepUpRequestFingerprint(quoteId);
+        if (!requestFingerprint) throw notFound("Credit payment quote not found.");
+        const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CREDIT_PAYMENT", resourceId: quoteId, requestFingerprint });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        writeResponse(response, 200, traceId, await options.relationalHttp.submitCreditPayment({ customerId: userId, idempotencyKey: header(request, "idempotency-key") ?? "", quoteId, requestFingerprint, traceId }));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3 && segments[0] === "credit" && segments[1] === "payments") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getCreditPayment(userId, segments[2]));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "savings" && segments[1] === "products") {
+        writeResponse(response, 200, traceId, { items: await options.relationalHttp.listSavingsProducts(userId) });
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "savings" && segments[1] === "quotes") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, await options.relationalHttp.createSavingsQuote(userId, data as never));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "savings" && segments[1] === "deposits") {
+        const data = requireObject(body);
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp)
+          ? data.stepUp as Record<string, unknown>
+          : null;
+        if (!options.mfaService || !stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") {
+          throw invalidRequest("TOTP step-up challenge is required for relational savings opening.");
+        }
+        const quoteId = typeof data.quoteId === "string" ? data.quoteId : "";
+        const savingsRequestFingerprint = await options.relationalHttp.getSavingsStepUpRequestFingerprint(quoteId);
+        if (!savingsRequestFingerprint) throw notFound("Savings quote not found.");
+        const verified = await options.mfaService.verifyChallenge({
+          challengeId: stepUp.challengeId,
+          customerId: userId,
+          deviceId: requireDeviceId(request),
+          proof: stepUp.proof,
+          purpose: "SAVINGS_OPENING",
+          resourceId: quoteId,
+          requestFingerprint: savingsRequestFingerprint,
+        });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        const opening = await options.relationalHttp.submitSavingsOpening({
+          customerId: userId,
+          idempotencyKey: header(request, "idempotency-key") ?? "",
+          request: data as never,
+          traceId,
+        });
+        writeResponse(response, opening.status === "PENDING" ? 202 : 200, traceId, opening);
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3 && segments[0] === "savings" && segments[1] === "openings") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getSavingsOpening(userId, segments[2]));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "savings" && segments[1] === "deposits") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.listSavingsDeposits(userId));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 3 && segments[0] === "savings" && segments[1] === "deposits") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getSavingsDeposit(userId, segments[2]));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 1 && segments[0] === "beneficiaries") {
+        writeResponse(response, 200, traceId, { items: await options.relationalHttp.listBeneficiaries(userId) });
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "beneficiaries") {
+        writeResponse(response, 200, traceId, { beneficiary: await options.relationalHttp.getBeneficiary(userId, segments[1]) });
+        return;
+      }
+      if (request.method === "POST" && segments.length === 1 && segments[0] === "beneficiaries") {
+        const data = requireObject(body);
+        writeResponse(response, 201, traceId, {
+          beneficiary: await options.relationalHttp.createBeneficiary(userId, {
+            displayName: data.displayName,
+            accountNumber: data.accountNumber,
+          }),
+        });
+        return;
+      }
+      if (request.method === "PATCH" && segments.length === 2 && segments[0] === "beneficiaries") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, {
+          beneficiary: await options.relationalHttp.renameBeneficiary(userId, segments[1], data.displayName),
+        });
+        return;
+      }
+      if (request.method === "DELETE" && segments.length === 2 && segments[0] === "beneficiaries") {
+        await options.relationalHttp.removeBeneficiary(userId, segments[1]);
+        writeResponse(response, 204, traceId);
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "transfers" && segments[1] === "quote") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, await options.relationalHttp.createTransferQuote({
+          customerId: userId,
+          sourceAccountId: data.sourceAccountId as string,
+          beneficiaryId: typeof data.beneficiaryId === "string" ? data.beneficiaryId : undefined,
+          lookupId: typeof data.lookupId === "string" ? data.lookupId : undefined,
+          amount: data.amount,
+        }));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 1 && segments[0] === "transfers") {
+        const data = requireObject(body);
+        const quoteId = typeof data.quoteId === "string" ? data.quoteId : "";
+        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp)
+          ? data.stepUp as Record<string, unknown>
+          : null;
+        if (!options.mfaService || !stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") {
+          throw invalidRequest("TOTP step-up challenge is required for relational transfer submission.");
+        }
+        const transferRequestFingerprint = await options.relationalHttp.getTransferStepUpRequestFingerprint(quoteId);
+        if (!transferRequestFingerprint) throw notFound("Transfer quote not found.");
+        const verified = await options.mfaService.verifyChallenge({
+          challengeId: stepUp.challengeId,
+          customerId: userId,
+          deviceId: requireDeviceId(request),
+          proof: stepUp.proof,
+          purpose: "TRANSFER",
+          resourceId: quoteId,
+          requestFingerprint: transferRequestFingerprint,
+        });
+        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+        const idempotencyKey = header(request, "idempotency-key")?.trim() ?? "";
+        if (idempotencyKey.length < 16) throw invalidRequest("Idempotency-Key must contain at least 16 characters.");
+        writeResponse(response, 200, traceId, await options.relationalHttp.submitTransfer({
+          customerId: userId,
+          idempotencyKey,
+          quoteId,
+          requestFingerprint: transferRequestFingerprint,
+          traceId,
+        }));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "transfers") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getTransfer(userId, segments[1]));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "internal-recipients" && segments[1] === "lookup") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, { recipient: await options.relationalHttp.lookupInternalRecipient(userId, data.accountNumber) });
+        return;
+      }
+      if (request.method === "GET" && segments.length === 1 && segments[0] === "notifications") {
+        writeResponse(response, 200, traceId, { items: await options.relationalHttp.listNotifications(userId) });
+        return;
+      }
+      if (request.method === "POST" && segments.length === 3 && segments[0] === "notifications" && segments[2] === "read") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.markNotificationRead(userId, segments[1]));
+        return;
+      }
+      if (request.method === "POST" && segments.length === 1 && segments[0] === "fraud-reports") {
+        const data = requireObject(body);
+        const unsupportedField = Object.keys(data).find((key) => !["accountId", "transactionId", "reason"].includes(key));
+        if (unsupportedField) throw invalidRequest(`Unsupported fraud report field: ${unsupportedField}.`, { [unsupportedField]: "This field is not supported." });
+        writeResponse(response, 201, traceId, await options.relationalHttp.reportFraud({
+          customerId: userId,
+          accountId: typeof data.accountId === "string" ? data.accountId : "",
+          transactionId: typeof data.transactionId === "string" ? data.transactionId : "",
+          reason: typeof data.reason === "string" ? data.reason : "",
+          idempotencyKey: header(request, "idempotency-key") ?? "",
+          traceId,
+        }));
+        return;
+      }
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "fraud-reports") {
+        writeResponse(response, 200, traceId, await options.relationalHttp.getFraudReport(userId, segments[1]));
+        return;
+      }
+    }
+
+    if (options.mfaService && request.method === "GET" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") {
+      writeResponse(response, 200, traceId, { items: await options.mfaService.listCredentials(userId) });
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "totp" && segments[3] === "enroll") {
+      const data = requireObject(body);
+      const passwordValid = relationalAuth
+        ? await relationalAuth.verifyCurrentPassword(userId, typeof data.password === "string" ? data.password : "")
+        : typeof data.password === "string" && system.verifyCurrentPassword(userId, data.password);
+      if (!passwordValid) {
+        throw unauthorized("Current password is invalid.");
+      }
+      const credentials = await options.mfaService.listCredentials(userId);
+      if (credentials.some((credential) => credential.status === "ACTIVE")) {
+        await verifyMfaLifecycleChallenge(options.mfaService, request, userId, data, "MFA_FACTOR_CHANGE");
+      }
+      const user = relationalAuth
+        ? await relationalAuth.getUser(userId)
+        : system.getUser(userId);
+      writeResponse(response, 201, traceId, await options.mfaService.beginTotpEnrollment({
+        customerId: userId,
+        email: user.email,
+        displayName: typeof data.displayName === "string" ? data.displayName : undefined,
+      }));
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "totp" && segments[3] === "confirm") {
+      const data = requireObject(body);
+      const confirmation = await options.mfaService.confirmTotpEnrollment({
+        customerId: userId,
+        credentialId: data.credentialId as string,
+        code: data.code as string,
+      });
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
+      writeResponse(response, 200, traceId, confirmation);
+      return;
+    }
+
+    if (options.mfaService && request.method === "DELETE" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") {
+      const data = body === undefined ? {} : requireObject(body);
+      const passwordValid = relationalAuth
+        ? await relationalAuth.verifyCurrentPassword(userId, typeof data.password === "string" ? data.password : "")
+        : typeof data.password === "string" && system.verifyCurrentPassword(userId, data.password);
+      if (!passwordValid) {
+        throw unauthorized("Current password is invalid.");
+      }
+      const credentials = await options.mfaService.listCredentials(userId);
+      if (credentials.some((credential) => credential.status === "ACTIVE")) {
+        await verifyMfaLifecycleChallenge(options.mfaService, request, userId, data, "MFA_FACTOR_REMOVAL");
+      }
+      await options.mfaService.revokeCredential(userId, segments[3]);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
+      writeResponse(response, 204, traceId);
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover") {
+      const data = requireObject(body);
+      const recovery = await options.mfaService.verifyRecoveryCode(userId, data.code as string);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
+      writeResponse(response, 202, traceId, { ...recovery, status: "RECOVERY_STARTED" });
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover" && segments[3] === "verify") {
+      const data = requireObject(body);
+      const recovery = await options.mfaService.verifyRecoveryCode(userId, data.code as string);
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
+      writeResponse(response, 202, traceId, { ...recovery, status: "RECOVERY_STARTED" });
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recover" && segments[3] === "complete") {
+      const data = requireObject(body);
+      if (typeof data.recoveryToken !== "string" || !data.recoveryToken.trim()) {
+        throw invalidRequest("recoveryToken is required.");
+      }
+      await options.mfaService.completeRecovery({
+        customerId: userId,
+        recoveryToken: data.recoveryToken,
+      });
+      writeResponse(response, 202, traceId, { status: "RECOVERY_COMPLETED" });
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recovery-codes" && segments[3] === "rotate") {
+      const data = requireObject(body);
+      const passwordValid = relationalAuth
+        ? await relationalAuth.verifyCurrentPassword(userId, typeof data.password === "string" ? data.password : "")
+        : typeof data.password === "string" && system.verifyCurrentPassword(userId, data.password);
+      if (typeof data.password === "string" && !passwordValid) {
+        throw unauthorized("Current password is invalid.");
+      }
+      if (typeof data.challengeId !== "string" || typeof data.code !== "string") {
+        throw invalidRequest("challengeId and code are required for recovery-code rotation.");
+      }
+      const result = await options.mfaService.verifyChallenge({
+        challengeId: data.challengeId,
+        customerId: userId,
+        deviceId: requireDeviceId(request),
+        proof: data.code,
+        purpose: "RECOVERY_CODE_ROTATION",
+      });
+      if (result.customerId !== userId) {
+        throw unauthorized("MFA user binding is invalid.");
+      }
+      if (relationalAuth) await relationalAuth.revokeAllSessions(userId);
+      else system.revokeAllSessions(userId);
+      writeResponse(response, 200, traceId, {
+        status: "ROTATED",
+        recoveryCodes: await options.mfaService.rotateRecoveryCodes(userId),
+      });
+      return;
+    }
+
+    if (options.mfaService && request.method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "challenges" && segments[3] === "resend") {
+      const data = requireObject(body);
+      const user = relationalAuth
+        ? await relationalAuth.getUser(userId)
+        : system.getUser(userId);
+      writeResponse(response, 200, traceId, await options.mfaService.resendChallenge({
+        challengeId: segments[2],
+        customerId: userId,
+        deviceId: requireDeviceId(request),
+        destination: user.email,
+        networkFingerprint: getRateLimitKey(request),
+      }));
+      return;
+    }
 
     if (
       request.method === "POST" &&
@@ -634,6 +1486,67 @@ export async function handleRequest(
       segments[2] === "challenges"
     ) {
       const data = requireObject(body);
+      if (options.mfaService) {
+        const supportedPurposes = new Set<PersistentStepUpPurpose>([
+          "TRANSFER",
+          "SAVINGS_OPENING",
+          "CREDIT_APPLICATION",
+          "CARD_ACTIVATION",
+          "CREDIT_PAYMENT",
+          "CARD_UNLOCK",
+          "RECOVERY_CODE_ROTATION",
+          "MFA_FACTOR_CHANGE",
+          "MFA_FACTOR_REMOVAL",
+        ]);
+        if (typeof data.purpose !== "string" || !supportedPurposes.has(data.purpose as PersistentStepUpPurpose)) {
+          throw invalidRequest("purpose is not supported for persistent TOTP step-up.");
+        }
+        const purpose = data.purpose as PersistentStepUpPurpose;
+        const resourceId = typeof data.resourceId === "string" ? data.resourceId : null;
+        const directTransferCutover = purpose === "TRANSFER" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["transfers"]);
+        const directSavingsCutover = purpose === "SAVINGS_OPENING" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["savings", "deposits"]);
+        const directCreditPaymentCutover = purpose === "CREDIT_PAYMENT" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["credit", "payments"]);
+        const directCreditCardCutover = purpose === "CARD_UNLOCK" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["cards", resourceId, "unlock"]);
+        const directCreditApplicationCutover = purpose === "CREDIT_APPLICATION" && options.relationalHttp?.isRouteEnabled("POST", ["credit", "applications"]);
+        const directCreditActivationCutover = purpose === "CARD_ACTIVATION" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["credit", "applications", resourceId, "activate"]);
+        const directMfaLifecycle = options.relationalHttp?.isRouteEnabled("POST", ["auth", "otp", "challenges"]) &&
+          ["MFA_FACTOR_CHANGE", "MFA_FACTOR_REMOVAL", "RECOVERY_CODE_ROTATION"].includes(purpose);
+        const requestFingerprint = directTransferCutover && options.relationalHttp
+          ? await options.relationalHttp.getTransferStepUpRequestFingerprint(resourceId)
+          : directSavingsCutover && options.relationalHttp
+            ? await options.relationalHttp.getSavingsStepUpRequestFingerprint(resourceId)
+            : directCreditPaymentCutover && options.relationalHttp
+              ? await options.relationalHttp.getCreditPaymentStepUpRequestFingerprint(resourceId)
+              : directCreditCardCutover
+                ? fingerprint({ cardId: resourceId })
+              : directCreditApplicationCutover
+                  ? (typeof data.requestFingerprint === "string" ? data.requestFingerprint : null)
+                  : directCreditActivationCutover
+                    ? fingerprint({ applicationId: resourceId })
+          : directMfaLifecycle
+            ? (typeof data.requestFingerprint === "string" ? data.requestFingerprint : null)
+            : system.getStepUpRequestFingerprint(
+              purpose as OtpPurpose,
+              resourceId,
+              typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
+            );
+        const challenge = await options.mfaService.beginTotpChallenge({
+          customerId: userId,
+          deviceId: requireDeviceId(request),
+          purpose,
+          resourceId,
+          requestFingerprint,
+          networkFingerprint: getRateLimitKey(request),
+        });
+        writeResponse(response, 201, traceId, {
+          challengeId: challenge.challengeId,
+          expiresAt: challenge.expiresAt,
+          methods: ["TOTP"],
+          method: "TOTP",
+          purpose,
+        });
+        return;
+      }
       writeResponse(
         response,
         201,
@@ -717,7 +1630,11 @@ export async function handleRequest(
     }
 
     if (request.method === "GET" && segments.length === 1 && segments[0] === "accounts") {
-      writeResponse(response, 200, traceId, { accounts: system.listAccounts(userId) });
+      writeResponse(response, 200, traceId, {
+        accounts: relationalRoute && options.relationalHttp
+          ? await options.relationalHttp.listAccounts(userId)
+          : system.listAccounts(userId),
+      });
       return;
     }
 
@@ -733,6 +1650,18 @@ export async function handleRequest(
 
     if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "applications") {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "CREDIT_APPLICATION",
+          null,
+          system.getCreditApplicationRequestFingerprint(data.requestedLimit),
+        );
+      }
       writeResponse(
         response,
         201,
@@ -760,6 +1689,17 @@ export async function handleRequest(
       segments[3] === "activate"
     ) {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "CARD_ACTIVATION",
+          segments[2],
+        );
+      }
       writeResponse(
         response,
         200,
@@ -797,6 +1737,17 @@ export async function handleRequest(
       segments[2] === "unlock"
     ) {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "CARD_UNLOCK",
+          segments[1],
+        );
+      }
       writeResponse(response, 200, traceId, {
         card: system.unlockCard(userId, segments[1], data as never, requireDeviceId(request)),
       });
@@ -880,6 +1831,17 @@ export async function handleRequest(
 
     if (request.method === "POST" && segments.length === 2 && segments[0] === "credit" && segments[1] === "payments") {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "CREDIT_PAYMENT",
+          typeof data.quoteId === "string" ? data.quoteId : null,
+        );
+      }
       const payment = system.submitCreditPayment(
         userId,
         header(request, "idempotency-key") ?? "",
@@ -902,7 +1864,9 @@ export async function handleRequest(
       segments[2] === "number"
     ) {
       writeResponse(response, 200, traceId, {
-        accountNumber: system.getAccountNumber(userId, segments[1]),
+        accountNumber: relationalRoute && options.relationalHttp
+          ? await options.relationalHttp.getAccountNumber(userId, segments[1])
+          : system.getAccountNumber(userId, segments[1]),
       });
       return;
     }
@@ -915,12 +1879,19 @@ export async function handleRequest(
     ) {
       const limitValue = requestUrl.searchParams.get("limit");
       const limit = limitValue === null ? undefined : Number(limitValue);
-      const result = system.listTransactions(
-        userId,
-        segments[1],
-        requestUrl.searchParams.get("cursor") ?? undefined,
-        limit,
-      );
+      const result = relationalRoute && options.relationalHttp
+        ? await options.relationalHttp.listTransactions(
+          userId,
+          segments[1],
+          requestUrl.searchParams.get("cursor") ?? undefined,
+          limit,
+        )
+        : system.listTransactions(
+          userId,
+          segments[1],
+          requestUrl.searchParams.get("cursor") ?? undefined,
+          limit,
+        );
       writeResponse(response, 200, traceId, result);
       return;
     }
@@ -935,7 +1906,9 @@ export async function handleRequest(
         response,
         200,
         traceId,
-        system.getTransaction(userId, segments[1], segments[3]),
+        relationalRoute && options.relationalHttp
+          ? await options.relationalHttp.getTransaction(userId, segments[1], segments[3])
+          : system.getTransaction(userId, segments[1], segments[3]),
       );
       return;
     }
@@ -970,6 +1943,17 @@ export async function handleRequest(
       segments[1] === "deposits"
     ) {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "SAVINGS_OPENING",
+          typeof data.quoteId === "string" ? data.quoteId : null,
+        );
+      }
       const opening = system.submitSavingsOpening(
         userId,
         header(request, "idempotency-key") ?? "",
@@ -1083,6 +2067,17 @@ export async function handleRequest(
 
     if (request.method === "POST" && segments.length === 1 && segments[0] === "transfers") {
       const data = requireObject(body);
+      if (options.mfaService) {
+        await verifyPersistentStepUp(
+          options.mfaService,
+          system,
+          request,
+          userId,
+          data,
+          "TRANSFER",
+          typeof data.quoteId === "string" ? data.quoteId : null,
+        );
+      }
       const receipt = system.submitTransfer(
         userId,
         header(request, "idempotency-key") ?? "",
@@ -1114,6 +2109,11 @@ export async function handleRequest(
       writeError(response, error.status, traceId, error);
       return;
     }
+    if (error instanceof DatabaseCommandError) {
+      stateBoundary?.rejectDomainRequest();
+      writeError(response, error.status, traceId, new DomainError(error.status, error.code, error.message));
+      return;
+    }
 
     stateBoundary?.rejectUnexpectedFailure();
     writeError(
@@ -1129,24 +2129,106 @@ export function createBankingServer(
   system = new BankingSystem(),
   options: HttpOptions = {},
 ): Server {
+  const metrics = options.metrics ?? new PrometheusRegistry();
+  registerHttpMetrics(metrics);
+  registerBusinessMetrics(metrics);
+  const resolvedOptions: HttpOptions = {
+    ...options,
+    metrics,
+    logger: options.logger ?? createStructuredLogger({ service: options.serviceName ?? "banking-reference-backend" }),
+    serviceName: options.serviceName ?? "banking-reference-backend",
+  };
   return createServer((request, response) => {
-    void handleRequest(request, response, system, options);
+    void handleRequest(request, response, system, resolvedOptions, undefined, false, undefined, createRequestContext(request));
   });
 }
 
 export function createPersistentBankingServer(
   repository: {
-    withState<T>(initialState: unknown, operation: RelationalStateOperation<T>): Promise<T>;
+    withState<T>(
+      initialState: unknown,
+      operation: RelationalStateOperation<T>,
+      boundaryOptions?: RelationalStateBoundaryOptions,
+    ): Promise<T>;
+    healthCheck?: () => Promise<void>;
+    poolMetrics?: () => DatabasePoolMetricSnapshot;
+    businessHealthCheck?: () => Promise<{
+      status: "ok" | "degraded";
+      reconciliation: "ok" | "mismatch";
+      outbox: "ok" | "degraded";
+      pendingOutboxEvents: number;
+    }>;
+    customerAccessStatus?: (customerId: string) => Promise<"ACTIVE" | "LOCKED" | null>;
   },
   system = new BankingSystem(),
   options: HttpOptions = {},
 ): Server {
+  const resolvedOptions: HttpOptions = {
+    ...options,
+    customerAccessStatus: options.customerAccessStatus ?? repository.customerAccessStatus?.bind(repository),
+    readinessCheck: options.readinessCheck ?? repository.healthCheck?.bind(repository),
+    businessHealthCheck: options.businessHealthCheck ?? repository.businessHealthCheck?.bind(repository),
+    databaseMetrics: options.databaseMetrics ?? repository.poolMetrics?.bind(repository),
+  };
+  const metrics = resolvedOptions.metrics ?? new PrometheusRegistry();
+  registerHttpMetrics(metrics);
+  registerBusinessMetrics(metrics);
+  resolvedOptions.metrics = metrics;
+  resolvedOptions.logger = resolvedOptions.logger ?? createStructuredLogger({ service: resolvedOptions.serviceName ?? "banking-reference-backend" });
+  resolvedOptions.serviceName = resolvedOptions.serviceName ?? "banking-reference-backend";
+  resolvedOptions.instrumented = true;
   return createServer((request, response) => {
+    const requestContext = createRequestContext(request);
+    for (const [name, value] of Object.entries(requestContextHeaders(requestContext))) response.setHeader(name, value);
+    instrumentResponse(request, response, resolvedOptions, requestContext);
+    const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (request.method === "GET" && ["/livez", "/startupz", "/versionz", "/metrics"].includes(pathname)) {
+      void handleRequest(request, response, system, resolvedOptions, undefined, false, undefined, requestContext);
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      (pathname === "/healthz" || pathname === "/readyz") &&
+      repository.healthCheck
+    ) {
+      void repository
+        .healthCheck()
+        .then(() => handleRequest(request, response, system, resolvedOptions, undefined, false, undefined, requestContext))
+        .catch(() => {
+          const traceId = requestContext.requestId;
+          writeError(
+            response,
+            503,
+            traceId,
+            new DomainError(503, "PERSISTENCE_UNAVAILABLE", "Persistent sandbox is temporarily unavailable."),
+          );
+        });
+      return;
+    }
     const traceId = getRequestId(request);
     const bufferedResponse = new BufferedResponse(response);
     void readJson(request)
-      .then((parsedBody) =>
-        repository.withState(system.exportState(), async (state) => {
+      .then(async (parsedBody) => {
+        const routeSegments = pathSegments(new URL(request.url ?? "/", "http://localhost").pathname.slice(API_PREFIX.length) || "/");
+        const directRelationalRoute = resolvedOptions.relationalHttp?.isRouteEnabled(request.method, routeSegments) ?? false;
+        if (directRelationalRoute) {
+          await handleRequest(
+            request,
+            bufferedResponse as unknown as ServerResponse,
+            system,
+            resolvedOptions,
+            parsedBody,
+            true,
+            undefined,
+            requestContext,
+          );
+          return;
+        }
+        if (process.env.BANKING_PERSISTENCE_MODE?.trim() === "relational-v2") {
+          writeError(bufferedResponse as unknown as ServerResponse, 503, requestContext.requestId, new DomainError(503, "RELATIONAL_ROUTE_NOT_CUTOVER", "This HTTP route is not part of the approved relational-v2 boundary."));
+          return;
+        }
+        await repository.withState(system.exportState(), async (state) => {
           system.importState(state as never);
           const transactionStartState = system.exportState();
           const requestState = {
@@ -1156,7 +2238,7 @@ export function createPersistentBankingServer(
             request,
             bufferedResponse as unknown as ServerResponse,
             system,
-            options,
+            resolvedOptions,
             parsedBody,
             true,
             {
@@ -1167,6 +2249,7 @@ export function createPersistentBankingServer(
                 requestState.disposition = "ROLLBACK_ALL";
               },
             },
+            requestContext,
           );
           const requestEndState = system.exportState();
           const nextState =
@@ -1179,8 +2262,8 @@ export function createPersistentBankingServer(
             result: undefined,
             nextState,
           };
-        }),
-      )
+        }, { preservePersistentAuthState: Boolean(options.mfaService) });
+      })
       .then(() => bufferedResponse.flush())
       .catch((error: unknown) => {
         if (!response.headersSent) {

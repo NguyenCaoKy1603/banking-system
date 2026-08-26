@@ -15,6 +15,7 @@ Lượt CI trước báo các cảnh báo High liên quan đến `image-size`, �
 - Giữ `npm audit --omit=dev --audit-level=high` là release gate trong CI.
 - Chỉ cho phép build nội bộ/reference để kiểm thử, với URL/API và dữ liệu sandbox.
 - Cần Engineering + Security review bản override và kết quả remote CI; trước khi phát hành APK vẫn cần device matrix, staging, monitoring, risk owner/expiry và phê duyệt upstream compatibility.
+- Stage 2 local verification được tổng hợp tại [`stage2-security-verification.md`](stage2-security-verification.md); tài liệu này không thay thế remote scan hoặc security reviewer sign-off.
 
 ## Mitigation và điều kiện đóng
 

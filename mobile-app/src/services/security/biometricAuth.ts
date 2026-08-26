@@ -22,12 +22,13 @@ export async function requestBiometricAuthentication(
   }
 }
 
-export function getSandboxBiometricProof(): string {
-  if (process.env.NODE_ENV === "production") {
-    return "";
-  }
-  return (
-    process.env.EXPO_PUBLIC_SANDBOX_BIOMETRIC_PROOF ??
-    (process.env.NODE_ENV === "development" ? "sandbox-biometric" : "")
-  );
+/**
+ * A local biometric prompt is not an authentication proof for the backend.
+ *
+ * Until a real device-attestation/passkey provider is integrated, return no
+ * proof so callers fail closed instead of reading a shared value from the
+ * public JavaScript bundle.
+ */
+export function getDeviceBoundAssertion(): string {
+  return "";
 }

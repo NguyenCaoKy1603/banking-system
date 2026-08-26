@@ -28,6 +28,8 @@ export type CreditStatementStatus = "ISSUED" | "PARTIALLY_PAID" | "PAID" | "OVER
 export type CreditPaymentStatus = "PENDING" | "SUCCEEDED" | "FAILED" | "REVERSED";
 export type CreditPaymentOption = "MINIMUM" | "FULL_STATEMENT" | "CUSTOM";
 export type CreditApplicationStatus =
+  | "SUBMITTED"
+  | "UNDER_REVIEW"
   | "PENDING_ACTIVATION"
   | "ACTIVE"
   | "REJECTED";
@@ -45,7 +47,7 @@ export type CreditApplication = {
 
 export type CreditApplicationRequest = {
   requestedLimit?: Money;
-  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string };
+  stepUp: { method: "OTP" | "TOTP" | "BIOMETRIC"; proof: string; challengeId?: string };
 };
 
 export type CreditApplicationRecord = CreditApplication & {
@@ -170,7 +172,7 @@ export type CreditStatementsResponse = { items: CreditStatement[]; nextCursor: s
 
 export type CreditPaymentRequest = {
   quoteId: string;
-  stepUp: { method: "OTP" | "BIOMETRIC"; proof: string; challengeId?: string };
+  stepUp: { method: "OTP" | "TOTP" | "BIOMETRIC"; proof: string; challengeId?: string };
 };
 
 export type CreditPaymentQuoteRequest = {

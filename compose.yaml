@@ -1,0 +1,272 @@
+name: banking-reference-preview
+
+services:
+  postgres:
+    image: postgres:16@sha256:c1b3783309b6499c795eed7c20135a1a4d25cae1b575c3d52c6f536129a1b109
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+    volumes:
+      - banking_preview_pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+        RELEASE_ID: ${RELEASE_ID:-local}
+        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
+    environment:
+      BANKING_ENV: ${BANKING_ENV:-preview}
+      NODE_ENV: ${NODE_ENV:-preview}
+      BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
+      BANKING_STORAGE: postgres
+      BANKING_SECRET_PROVIDER: ${BANKING_SECRET_PROVIDER:-local}
+      BANKING_PERSISTENCE_MODE: ${BANKING_PERSISTENCE_MODE:-legacy-state}
+      BANKING_MANAGED_SECRETS_DIR: ${BANKING_MANAGED_SECRETS_DIR:-}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-disable}
+      DATABASE_SERVER_NAME: ${DATABASE_SERVER_NAME:-}
+      DATABASE_CA_CERT: ${DATABASE_CA_CERT:-}
+      BUILD_COMMIT_SHA: ${COMMIT_SHA:-local}
+      RELEASE_ID: ${RELEASE_ID:-local}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-unknown}
+      MIGRATION_SET_DIGEST: ${MIGRATION_SET_DIGEST:-unknown}
+      API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["node", "scripts/apply-migration.cjs"]
+    restart: "no"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+        RELEASE_ID: ${RELEASE_ID:-local}
+        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
+    environment:
+      BANKING_ENV: ${BANKING_ENV:-preview}
+      NODE_ENV: ${NODE_ENV:-preview}
+      BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
+      BANKING_STORAGE: postgres
+      BANKING_SECRET_PROVIDER: ${BANKING_SECRET_PROVIDER:-local}
+      BANKING_PERSISTENCE_MODE: ${BANKING_PERSISTENCE_MODE:-legacy-state}
+      BANKING_RELATIONAL_HTTP_ROUTES: ${BANKING_RELATIONAL_HTTP_ROUTES:-}
+      BANKING_MANAGED_SECRETS_DIR: ${BANKING_MANAGED_SECRETS_DIR:-}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-disable}
+      DATABASE_SERVER_NAME: ${DATABASE_SERVER_NAME:-}
+      DATABASE_CA_CERT: ${DATABASE_CA_CERT:-}
+      PORT: 5000
+      BUILD_COMMIT_SHA: ${COMMIT_SHA:-local}
+      RELEASE_ID: ${RELEASE_ID:-local}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-unknown}
+      MIGRATION_SET_DIGEST: ${MIGRATION_SET_DIGEST:-unknown}
+      API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
+      BANKING_MFA_REQUIRED: ${BANKING_MFA_REQUIRED:-1}
+      BANKING_MFA_METHODS: ${BANKING_MFA_METHODS:-TOTP}
+      BANKING_OTP_PEPPER: ${BANKING_OTP_PEPPER:?BANKING_OTP_PEPPER is required}
+      BANKING_OTP_PEPPER_KEY_ID: ${BANKING_OTP_PEPPER_KEY_ID:-otp-v1}
+      BANKING_OTP_PEPPER_PREVIOUS: ${BANKING_OTP_PEPPER_PREVIOUS:-}
+      BANKING_OTP_PEPPER_PREVIOUS_KEY_ID: ${BANKING_OTP_PEPPER_PREVIOUS_KEY_ID:-}
+      BANKING_MFA_ENCRYPTION_KEY: ${BANKING_MFA_ENCRYPTION_KEY:?BANKING_MFA_ENCRYPTION_KEY is required}
+      BANKING_MFA_ENCRYPTION_KEY_ID: ${BANKING_MFA_ENCRYPTION_KEY_ID:-mfa-v1}
+      BANKING_MFA_ENCRYPTION_KEY_PREVIOUS: ${BANKING_MFA_ENCRYPTION_KEY_PREVIOUS:-}
+      BANKING_MFA_ENCRYPTION_KEY_PREVIOUS_ID: ${BANKING_MFA_ENCRYPTION_KEY_PREVIOUS_ID:-}
+      BANKING_MFA_RECOVERY_COOLDOWN_MS: ${BANKING_MFA_RECOVERY_COOLDOWN_MS:-86400000}
+      BANKING_SETTLE_IMMEDIATELY: ${BANKING_SETTLE_IMMEDIATELY:-1}
+      BANKING_ALLOWED_ORIGINS: ${BANKING_ALLOWED_ORIGINS:?BANKING_ALLOWED_ORIGINS is required}
+      BANKING_SANDBOX_CREDIT_OVERDUE: ${BANKING_SANDBOX_CREDIT_OVERDUE:-0}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-disabled}
+      EMAIL_PROVIDER_URL: ${EMAIL_PROVIDER_URL:-}
+      EMAIL_PROVIDER_TIMEOUT_MS: ${EMAIL_PROVIDER_TIMEOUT_MS:-5000}
+      EMAIL_PROVIDER_MAX_ATTEMPTS: ${EMAIL_PROVIDER_MAX_ATTEMPTS:-3}
+      EMAIL_PROVIDER_RETRY_DELAY_MS: ${EMAIL_PROVIDER_RETRY_DELAY_MS:-100}
+      DB_POOL_MAX: ${DB_POOL_MAX:-4}
+      DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-5000}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
+      DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-3000}
+      DB_IDLE_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_TRANSACTION_TIMEOUT_MS:-15000}
+      DB_APPLICATION_NAME: ${DB_APPLICATION_NAME:-banking-reference-backend}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-5000}:5000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/readyz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  admin-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+        RELEASE_ID: ${RELEASE_ID:-local}
+        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
+    environment:
+      BANKING_ENV: ${BANKING_ENV:-preview}
+      NODE_ENV: ${NODE_ENV:-preview}
+      BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
+      ADMIN_STORAGE: postgres
+      BANKING_SECRET_PROVIDER: ${BANKING_SECRET_PROVIDER:-local}
+      ADMIN_PORT: 5001
+      ADMIN_BIND: 0.0.0.0
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-disable}
+      DATABASE_SERVER_NAME: ${DATABASE_SERVER_NAME:-}
+      DATABASE_CA_CERT: ${DATABASE_CA_CERT:-}
+      BUILD_COMMIT_SHA: ${COMMIT_SHA:-local}
+      RELEASE_ID: ${RELEASE_ID:-local}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-unknown}
+      MIGRATION_SET_DIGEST: ${MIGRATION_SET_DIGEST:-unknown}
+      API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
+      BANKING_MFA_ENCRYPTION_KEY: ${BANKING_MFA_ENCRYPTION_KEY:?BANKING_MFA_ENCRYPTION_KEY is required}
+      BANKING_MFA_ENCRYPTION_KEY_ID: ${BANKING_MFA_ENCRYPTION_KEY_ID:-mfa-v1}
+      BANKING_MFA_ENCRYPTION_KEY_PREVIOUS: ${BANKING_MFA_ENCRYPTION_KEY_PREVIOUS:-}
+      BANKING_MFA_ENCRYPTION_KEY_PREVIOUS_ID: ${BANKING_MFA_ENCRYPTION_KEY_PREVIOUS_ID:-}
+      ADMIN_ALLOWED_ORIGINS: ${ADMIN_ALLOWED_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173}
+      ADMIN_SECURE_COOKIES: ${ADMIN_SECURE_COOKIES:-0}
+      DB_POOL_MAX: ${DB_POOL_MAX:-4}
+      DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-5000}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
+      DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-3000}
+      DB_IDLE_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_TRANSACTION_TIMEOUT_MS:-15000}
+      DB_APPLICATION_NAME: ${DB_APPLICATION_NAME:-banking-reference-admin-api}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${ADMIN_API_PORT:-5001}:5001"
+    command: ["node", "dist/adminServer.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5001/livez').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  admin-web:
+    build:
+      context: ./admin-web
+      dockerfile: Dockerfile
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+        RELEASE_ID: ${RELEASE_ID:-local}
+        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+    environment:
+      ADMIN_WEB_ENV: ${ADMIN_WEB_ENV:-preview}
+      ADMIN_API_UPSTREAM: ${ADMIN_API_UPSTREAM:-http://admin-api:5001}
+    depends_on:
+      admin-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ADMIN_WEB_PORT:-5173}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/readyz >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  # Opt-in only: local customer HTTP routes are now direct relational-v2 when
+  # BANKING_PERSISTENCE_MODE=relational-v2, but registration and scheduled
+  # settlement/maturity remain out of scope. Do not enable this profile until
+  # those boundaries have their approved worker/core evidence.
+  worker:
+    profiles: ["worker"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+        RELEASE_ID: ${RELEASE_ID:-local}
+        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
+    environment:
+      BANKING_ENV: ${BANKING_ENV:-preview}
+      NODE_ENV: ${NODE_ENV:-preview}
+      BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
+      BANKING_STORAGE: postgres
+      BANKING_SECRET_PROVIDER: ${BANKING_SECRET_PROVIDER:-local}
+      BANKING_MANAGED_SECRETS_DIR: ${BANKING_MANAGED_SECRETS_DIR:-}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-disable}
+      DATABASE_SERVER_NAME: ${DATABASE_SERVER_NAME:-}
+      DATABASE_CA_CERT: ${DATABASE_CA_CERT:-}
+      BUILD_COMMIT_SHA: ${COMMIT_SHA:-local}
+      RELEASE_ID: ${RELEASE_ID:-local}
+      IMAGE_DIGEST: ${IMAGE_DIGEST:-unknown}
+      MIGRATION_SET_DIGEST: ${MIGRATION_SET_DIGEST:-unknown}
+      API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
+      BANKING_PERSISTENCE_MODE: ${WORKER_PERSISTENCE_MODE:-relational-v2}
+      WORKER_ENABLED: ${WORKER_ENABLED:-1}
+      WORKER_CUTOVER_CONFIRMED: ${WORKER_CUTOVER_CONFIRMED:-0}
+      WORKER_ALLOW_LEGACY_WRITER: ${WORKER_ALLOW_LEGACY_WRITER:-0}
+      WORKER_VERSION: ${COMMIT_SHA:-local}
+      WORKER_HEALTH_PORT: 9091
+      OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
+      OUTBOX_CONCURRENCY: ${OUTBOX_CONCURRENCY:-10}
+      OUTBOX_LEASE_SECONDS: ${OUTBOX_LEASE_SECONDS:-60}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-8}
+      WORKER_HEARTBEAT_INTERVAL_MS: ${WORKER_HEARTBEAT_INTERVAL_MS:-10000}
+      WORKER_SHUTDOWN_TIMEOUT_MS: ${WORKER_SHUTDOWN_TIMEOUT_MS:-25000}
+      SCHEDULED_LIFECYCLE_ENABLED: ${SCHEDULED_LIFECYCLE_ENABLED:-0}
+      SCHEDULED_LIFECYCLE_POLL_INTERVAL_MS: ${SCHEDULED_LIFECYCLE_POLL_INTERVAL_MS:-30000}
+      SCHEDULED_LIFECYCLE_BATCH_SIZE: ${SCHEDULED_LIFECYCLE_BATCH_SIZE:-50}
+      SCHEDULED_LIFECYCLE_STALL_THRESHOLD_MS: ${SCHEDULED_LIFECYCLE_STALL_THRESHOLD_MS:-90000}
+      NOTIFICATION_ENDPOINT_ENCRYPTION_KEY: ${NOTIFICATION_ENDPOINT_ENCRYPTION_KEY:-local-only-change-me}
+      NOTIFICATION_ENDPOINT_ENCRYPTION_KEY_ID: ${NOTIFICATION_ENDPOINT_ENCRYPTION_KEY_ID:-endpoint-v1}
+      NOTIFICATION_ENDPOINT_ENCRYPTION_KEY_PREVIOUS: ${NOTIFICATION_ENDPOINT_ENCRYPTION_KEY_PREVIOUS:-}
+      NOTIFICATION_ENDPOINT_ENCRYPTION_KEY_PREVIOUS_ID: ${NOTIFICATION_ENDPOINT_ENCRYPTION_KEY_PREVIOUS_ID:-}
+      PUSH_PROVIDER: ${PUSH_PROVIDER:-disabled}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-disabled}
+      OUTBOX_EMAIL_PROVIDER: ${OUTBOX_EMAIL_PROVIDER:-disabled}
+      DB_POOL_MAX: ${DB_POOL_MAX:-4}
+      DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-5000}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
+      DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-3000}
+      DB_IDLE_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_TRANSACTION_TIMEOUT_MS:-15000}
+      DB_APPLICATION_NAME: ${DB_APPLICATION_NAME:-banking-reference-worker}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["node", "dist/worker.js"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9091/readyz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  banking_preview_pgdata:
