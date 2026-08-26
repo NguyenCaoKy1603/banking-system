@@ -72,8 +72,10 @@ jobs:
 
       - name: Create disposable P0 relational database
         run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_test_relational"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_test_p0"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_test_worker"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE banking_test_admin"
 
       - name: Apply PostgreSQL migration from empty database
         run: npm run db:migrate
@@ -89,6 +91,11 @@ jobs:
       - name: Apply P0 migrations to disposable database
         env:
           DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_p0
+        run: npm run db:migrate
+
+      - name: Apply relational migrations to disposable database
+        env:
+          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_relational
         run: npm run db:migrate
 
       - name: Apply worker migrations to disposable database
