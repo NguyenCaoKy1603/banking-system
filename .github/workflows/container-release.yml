@@ -162,11 +162,18 @@ jobs:
       IMAGE_NAME: ghcr.io/nguyencaoky1603/banking-backend
       ADMIN_IMAGE_NAME: ghcr.io/nguyencaoky1603/banking-admin-web
       RELEASE_ID: ${{ github.ref_name }}
+      RELEASE_EVIDENCE_DIR: ${{ runner.temp }}/banking-system-release-evidence
     steps:
       - name: Checkout the exact merge commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Prepare release evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RELEASE_EVIDENCE_DIR}"
 
       - name: Validate immutable release workflow contract
         run: node backend/scripts/validate-container-release-workflow.cjs
@@ -315,7 +322,7 @@ jobs:
           cosign verify \
             --certificate-identity-regexp "${COSIGN_IDENTITY}" \
             --certificate-oidc-issuer "${COSIGN_ISSUER}" \
-            "${IMAGE_NAME}@${IMAGE_DIGEST}" > cosign-signature-verification.json
+            "${IMAGE_NAME}@${IMAGE_DIGEST}" > "${RELEASE_EVIDENCE_DIR}/cosign-signature-verification.json"
 
       - name: Verify the signed Admin Web digest
         env:
@@ -326,7 +333,7 @@ jobs:
           cosign verify \
             --certificate-identity-regexp "${COSIGN_IDENTITY}" \
             --certificate-oidc-issuer "${COSIGN_ISSUER}" \
-            "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" > admin-web-signature-verification.json
+            "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" > "${RELEASE_EVIDENCE_DIR}/admin-web-signature-verification.json"
 
       - name: Inspect and verify Backend BuildKit attestations
         env:
@@ -336,21 +343,21 @@ jobs:
           set -euo pipefail
           docker buildx imagetools inspect \
             "${IMAGE_NAME}@${IMAGE_DIGEST}" \
-            --format '{{json .Manifest}}' > backend-image-manifest.json
+            --format '{{json .Manifest}}' > "${RELEASE_EVIDENCE_DIR}/backend-image-manifest.json"
           docker buildx imagetools inspect \
             "${IMAGE_NAME}@${IMAGE_DIGEST}" \
-            --format '{{json .Provenance}}' > backend-image-provenance.json
+            --format '{{json .Provenance}}' > "${RELEASE_EVIDENCE_DIR}/backend-image-provenance.json"
           docker buildx imagetools inspect \
             "${IMAGE_NAME}@${IMAGE_DIGEST}" \
-            --format '{{json .SBOM}}' > backend-image-sbom.json
+            --format '{{json .SBOM}}' > "${RELEASE_EVIDENCE_DIR}/backend-image-sbom.json"
           node backend/scripts/verify-buildkit-attestations.cjs \
             --image "${IMAGE_NAME}" \
-            --manifest backend-image-manifest.json \
-            --provenance backend-image-provenance.json \
-            --sbom backend-image-sbom.json \
+            --manifest "${RELEASE_EVIDENCE_DIR}/backend-image-manifest.json" \
+            --provenance "${RELEASE_EVIDENCE_DIR}/backend-image-provenance.json" \
+            --sbom "${RELEASE_EVIDENCE_DIR}/backend-image-sbom.json" \
             --digest "${IMAGE_DIGEST}" \
-            --provenance-output provenance-attestation-verification.json \
-            --sbom-output sbom-attestation-verification.json
+            --provenance-output "${RELEASE_EVIDENCE_DIR}/provenance-attestation-verification.json" \
+            --sbom-output "${RELEASE_EVIDENCE_DIR}/sbom-attestation-verification.json"
 
       - name: Inspect and verify Admin Web BuildKit attestations
         env:
@@ -360,21 +367,21 @@ jobs:
           set -euo pipefail
           docker buildx imagetools inspect \
             "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" \
-            --format '{{json .Manifest}}' > admin-web-image-manifest.json
+            --format '{{json .Manifest}}' > "${RELEASE_EVIDENCE_DIR}/admin-web-image-manifest.json"
           docker buildx imagetools inspect \
             "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" \
-            --format '{{json .Provenance}}' > admin-web-image-provenance.json
+            --format '{{json .Provenance}}' > "${RELEASE_EVIDENCE_DIR}/admin-web-image-provenance.json"
           docker buildx imagetools inspect \
             "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" \
-            --format '{{json .SBOM}}' > admin-web-image-sbom.json
+            --format '{{json .SBOM}}' > "${RELEASE_EVIDENCE_DIR}/admin-web-image-sbom.json"
           node backend/scripts/verify-buildkit-attestations.cjs \
             --image "${ADMIN_IMAGE_NAME}" \
-            --manifest admin-web-image-manifest.json \
-            --provenance admin-web-image-provenance.json \
-            --sbom admin-web-image-sbom.json \
+            --manifest "${RELEASE_EVIDENCE_DIR}/admin-web-image-manifest.json" \
+            --provenance "${RELEASE_EVIDENCE_DIR}/admin-web-image-provenance.json" \
+            --sbom "${RELEASE_EVIDENCE_DIR}/admin-web-image-sbom.json" \
             --digest "${ADMIN_IMAGE_DIGEST}" \
-            --provenance-output admin-web-provenance-attestation-verification.json \
-            --sbom-output admin-web-sbom-attestation-verification.json
+            --provenance-output "${RELEASE_EVIDENCE_DIR}/admin-web-provenance-attestation-verification.json" \
+            --sbom-output "${RELEASE_EVIDENCE_DIR}/admin-web-sbom-attestation-verification.json"
 
       - name: Pull and smoke the exact pushed digest
         env:
@@ -436,7 +443,7 @@ jobs:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           npm run release:manifest -- \
-            --output ../release-manifest.json \
+            --output "${RELEASE_EVIDENCE_DIR}/release-manifest.json" \
             --source-commit "${SOURCE_COMMIT}" \
             --image "${IMAGE_NAME}" \
             --image-digest "${IMAGE_DIGEST}" \
@@ -450,24 +457,24 @@ jobs:
             --signature-verified true \
             --sbom-present true \
             --provenance-present true
-          npm run release:verify-manifest -- --manifest ../release-manifest.json --check-source
+          npm run release:verify-manifest -- --manifest "${RELEASE_EVIDENCE_DIR}/release-manifest.json" --check-source
 
       - name: Upload release manifest and build evidence
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.RELEASE_ID }}-release-evidence
           path: |
-            release-manifest.json
-            backend-image-manifest.json
-            backend-image-provenance.json
-            backend-image-sbom.json
-            admin-web-image-manifest.json
-            admin-web-image-provenance.json
-            admin-web-image-sbom.json
-            cosign-signature-verification.json
-            admin-web-signature-verification.json
-            provenance-attestation-verification.json
-            sbom-attestation-verification.json
-            admin-web-provenance-attestation-verification.json
-            admin-web-sbom-attestation-verification.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/release-manifest.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/backend-image-manifest.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/backend-image-provenance.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/backend-image-sbom.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-image-manifest.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-image-provenance.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-image-sbom.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/cosign-signature-verification.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-signature-verification.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/provenance-attestation-verification.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/sbom-attestation-verification.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-provenance-attestation-verification.json
+            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-sbom-attestation-verification.json
           if-no-files-found: error
