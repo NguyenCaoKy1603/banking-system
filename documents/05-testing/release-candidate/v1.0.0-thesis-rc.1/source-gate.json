@@ -1,7 +1,8 @@
 {
   "artifact": "v1.0.0-thesis-rc.1",
-  "status": "LOCAL_RC_READY_EXTERNAL_PENDING",
-  "testedSourceCommit": "9399604be95bb4c578eca1f4421c1702a5384193",
+  "status": "FINAL_PR_CHECKS_REQUIRED_TAG_PENDING",
+  "testedSourceCommit": null,
+  "sourceCommitBinding": "release-manifest.sourceCommit must equal the peeled commit of tag v1.0.0-thesis-rc.1",
   "branch": "codex/p0-postgres-foundation",
   "evidenceRecordedAt": "2026-08-26T04:09:03+07:00",
   "sourceTreeBeforeEvidenceCommit": "clean",
@@ -24,9 +25,9 @@
   "migrationSetDigest": "1a768560de0b3a9f95c3909335b7aa6e04912b4dbd5c3152153aaa4aa9aa438a",
   "disposableOnly": true,
   "externalPromotion": {
-    "push": "not-run",
-    "pullRequest": "not-created",
-    "remoteCi": "not-run",
+    "push": "branch-pushed",
+    "pullRequest": "#2",
+    "remoteCi": "final PR checks required before tag workflow",
     "registry": "not-used"
   }
 }

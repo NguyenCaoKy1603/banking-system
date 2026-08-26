@@ -32,7 +32,7 @@ server {
   location = /readyz {
     proxy_pass __ADMIN_API_UPSTREAM__/readyz;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host $proxy_host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-Host $host;
     proxy_set_header X-Request-ID $admin_request_id;
@@ -52,7 +52,7 @@ server {
     proxy_pass __ADMIN_API_UPSTREAM__;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
-    proxy_set_header Host $host;
+    proxy_set_header Host $proxy_host;
     proxy_set_header Cookie $http_cookie;
     proxy_set_header Authorization $http_authorization;
     proxy_set_header X-CSRF-Token $http_x_csrf_token;

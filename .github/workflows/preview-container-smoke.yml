@@ -67,6 +67,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate immutable release workflow contract
+        run: node backend/scripts/validate-container-release-workflow.cjs
+
       - name: Validate Compose configuration
         run: docker compose config --quiet
 
@@ -93,6 +96,12 @@ jobs:
 
       - name: Start Admin API and Web containers
         run: docker compose up -d admin-api admin-web
+
+      - name: Verify Admin Web Host forwarding with disposable fixtures
+        env:
+          ADMIN_WEB_IMAGE: banking-reference-preview-admin-web:latest
+          RUNTIME_PROXY_FIXTURE_IMAGE: banking-reference-preview-backend:latest
+        run: node admin-web/scripts/verify-runtime-proxy.cjs
 
       - name: Verify Admin API and Web health
         run: |

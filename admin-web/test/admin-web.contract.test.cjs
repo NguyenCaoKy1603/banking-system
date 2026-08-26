@@ -46,3 +46,22 @@ test("Admin Web uses a same-origin API and runtime-only upstream", () => {
   assert.match(runtimeScript, /staging:http\|production-like:http/);
   assert.match(runtimeScript, /nginx -t/);
 });
+
+test("Nginx forwards the upstream Host and preserves the browser host", () => {
+  assert.equal((nginxTemplate.match(/proxy_set_header Host \$proxy_host;/g) ?? []).length, 2);
+  assert.equal((nginxTemplate.match(/proxy_set_header X-Forwarded-Host \$host;/g) ?? []).length, 2);
+  assert.doesNotMatch(nginxTemplate, /proxy_set_header Host \$host;/);
+  assert.equal((nginxTemplate.match(/proxy_ssl_server_name on;/g) ?? []).length, 2);
+
+  for (const location of ["location = /readyz", "location /api/"]) {
+    const start = nginxTemplate.indexOf(location);
+    assert.notEqual(start, -1, `${location} must exist`);
+    const end = nginxTemplate.indexOf("\n  }", start);
+    const block = nginxTemplate.slice(start, end === -1 ? undefined : end);
+    assert.match(block, /proxy_set_header Host \$proxy_host;/);
+    assert.match(block, /proxy_set_header X-Forwarded-Host \$host;/);
+    assert.match(block, /proxy_ssl_server_name on;/);
+  }
+
+  assert.match(nginxTemplate, /connect-src 'self'/);
+});

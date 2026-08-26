@@ -2,13 +2,13 @@
 
 ## Run metadata
 
-- Tested source commit: `9399604be95bb4c578eca1f4421c1702a5384193`.
 - Branch: `codex/p0-postgres-foundation`.
 - Evidence recorded: `2026-08-26` (Asia/Bangkok).
+- Source binding: the final RC source is the commit in the signed `release-manifest.json` and the peeled commit of tag `v1.0.0-thesis-rc.1`.
 - Toolchain: Node `v24.19.0`, npm `11.17.0`, PostgreSQL `16.15` disposable image.
 - Command: `npm run test:release` with disposable PostgreSQL credentials injected only for the test process.
 
-The final clean-clone `npm run test:release` matrix completed 17/17 PASS on source `9399604be95bb4c578eca1f4421c1702a5384193`:
+The disposable `npm run test:release` matrix was rerun on the patch working tree and completed all 17/17 commands with PASS. The historical clean-clone matrix below is retained as the detailed baseline; the final PR head must remain green before the RC tag is created:
 
 | Group | Result |
 | --- | --- |

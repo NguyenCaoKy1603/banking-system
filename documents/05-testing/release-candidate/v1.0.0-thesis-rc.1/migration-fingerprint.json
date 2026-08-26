@@ -1,6 +1,7 @@
 {
   "status": "PASS_CANONICALIZED",
-  "testedSourceCommit": "9399604be95bb4c578eca1f4421c1702a5384193",
+  "testedSourceCommit": null,
+  "sourceCommitBinding": "release-manifest.sourceCommit must equal the peeled commit of tag v1.0.0-thesis-rc.1",
   "branch": "codex/p0-postgres-foundation",
   "evidenceRecordedAt": "2026-08-26T04:09:03+07:00",
   "toolchain": {

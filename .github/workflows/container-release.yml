@@ -2,15 +2,12 @@ name: Container release (immutable)
 
 on:
   push:
-    branches: [main]
     tags:
       - "v1.0.0-thesis-rc.*"
   workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
 
 concurrency:
   group: container-release
@@ -153,19 +150,48 @@ jobs:
         run: docker compose down --volumes --remove-orphans
 
   release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v1.0.0-thesis-rc.')
     needs: [mobile-quality, admin-quality, container-smoke]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     env:
       # Docker repository names are lowercase; the GitHub owner is mixed-case.
       IMAGE_NAME: ghcr.io/nguyencaoky1603/banking-backend
       ADMIN_IMAGE_NAME: ghcr.io/nguyencaoky1603/banking-admin-web
-      RELEASE_ID: ${{ startsWith(github.ref, 'refs/tags/v1.0.0-thesis-rc.') && github.ref_name || format('release-{0}-{1}', github.run_number, github.sha) }}
-      COMMIT_SHA: ${{ github.sha }}
+      RELEASE_ID: ${{ github.ref_name }}
     steps:
       - name: Checkout the exact merge commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Validate immutable release workflow contract
+        run: node backend/scripts/validate-container-release-workflow.cjs
+
+      - name: Verify the tag points to the current main commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+
+      - name: Normalize release metadata
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_commit="$(git rev-parse HEAD)"
+          release_id="${GITHUB_REF_NAME}"
+          build_created_at="$(git show -s --format=%cI HEAD)"
+          test "${release_id}" = "${RELEASE_ID}"
+          printf 'source_commit=%s\n' "${source_commit}" >> "${GITHUB_OUTPUT}"
+          printf 'release_id=%s\n' "${release_id}" >> "${GITHUB_OUTPUT}"
+          printf 'build_created_at=%s\n' "${build_created_at}" >> "${GITHUB_OUTPUT}"
+          printf 'SOURCE_COMMIT=%s\n' "${source_commit}" >> "${GITHUB_ENV}"
+          printf 'BUILD_CREATED_AT=%s\n' "${build_created_at}" >> "${GITHUB_ENV}"
 
       - name: Verify clean source and tracked migrations
         working-directory: backend
@@ -205,6 +231,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Reject an existing release tag before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in "${IMAGE_NAME}:${RELEASE_ID}" "${ADMIN_IMAGE_NAME}:${RELEASE_ID}"; do
+            if docker manifest inspect "${image}" >/dev/null 2>&1; then
+              echo "Release image tag already exists and must not be overwritten: ${image}"
+              exit 1
+            fi
+          done
+
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -216,15 +253,15 @@ jobs:
           file: ./backend/Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:sha-${{ steps.release_meta.outputs.source_commit }}
             ${{ env.IMAGE_NAME }}:${{ env.RELEASE_ID }}
           build-args: |
-            COMMIT_SHA=${{ env.COMMIT_SHA }}
+            COMMIT_SHA=${{ steps.release_meta.outputs.source_commit }}
             RELEASE_ID=${{ env.RELEASE_ID }}
-            BUILD_CREATED_AT=${{ github.event.head_commit.timestamp || github.run_started_at }}
+            BUILD_CREATED_AT=${{ steps.release_meta.outputs.build_created_at }}
             API_CONTRACT_DIGEST=${{ steps.contract.outputs.digest }}
           labels: |
-            org.opencontainers.image.revision=${{ env.COMMIT_SHA }}
+            org.opencontainers.image.revision=${{ steps.release_meta.outputs.source_commit }}
             org.opencontainers.image.version=${{ env.RELEASE_ID }}
           provenance: mode=max
           sbom: true
@@ -239,14 +276,14 @@ jobs:
           file: ./admin-web/Dockerfile
           push: true
           tags: |
-            ${{ env.ADMIN_IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.ADMIN_IMAGE_NAME }}:sha-${{ steps.release_meta.outputs.source_commit }}
             ${{ env.ADMIN_IMAGE_NAME }}:${{ env.RELEASE_ID }}
           build-args: |
-            COMMIT_SHA=${{ env.COMMIT_SHA }}
+            COMMIT_SHA=${{ steps.release_meta.outputs.source_commit }}
             RELEASE_ID=${{ env.RELEASE_ID }}
-            BUILD_CREATED_AT=${{ github.event.head_commit.timestamp || github.run_started_at }}
+            BUILD_CREATED_AT=${{ steps.release_meta.outputs.build_created_at }}
           labels: |
-            org.opencontainers.image.revision=${{ env.COMMIT_SHA }}
+            org.opencontainers.image.revision=${{ steps.release_meta.outputs.source_commit }}
             org.opencontainers.image.version=${{ env.RELEASE_ID }}
           provenance: mode=max
           sbom: true
@@ -269,7 +306,7 @@ jobs:
       - name: Verify the signed manifest digest
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/(heads/main|tags/v1\.0\.0-thesis-rc\..+)$
+          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
           COSIGN_ISSUER: https://token.actions.githubusercontent.com
         run: |
           cosign verify \
@@ -280,7 +317,7 @@ jobs:
       - name: Verify the signed Admin Web digest
         env:
           ADMIN_IMAGE_DIGEST: ${{ steps.admin-image.outputs.digest }}
-          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/(heads/main|tags/v1\.0\.0-thesis-rc\..+)$
+          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
           COSIGN_ISSUER: https://token.actions.githubusercontent.com
         run: |
           cosign verify \
@@ -291,7 +328,7 @@ jobs:
       - name: Verify provenance attestation
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/(heads/main|tags/v1\.0\.0-thesis-rc\..+)$
+          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
           COSIGN_ISSUER: https://token.actions.githubusercontent.com
         run: |
           cosign verify-attestation \
@@ -303,7 +340,7 @@ jobs:
       - name: Verify SBOM attestation
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/(heads/main|tags/v1\.0\.0-thesis-rc\..+)$
+          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
           COSIGN_ISSUER: https://token.actions.githubusercontent.com
         run: |
           cosign verify-attestation \
@@ -315,7 +352,7 @@ jobs:
       - name: Verify Admin Web provenance and SBOM attestations
         env:
           ADMIN_IMAGE_DIGEST: ${{ steps.admin-image.outputs.digest }}
-          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/(heads/main|tags/v1\.0\.0-thesis-rc\..+)$
+          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
           COSIGN_ISSUER: https://token.actions.githubusercontent.com
         run: |
           cosign verify-attestation \
@@ -341,26 +378,12 @@ jobs:
 
       - name: Verify Admin Web runtime configuration and same-origin proxy
         env:
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-          ADMIN_IMAGE_DIGEST: ${{ steps.admin-image.outputs.digest }}
+          ADMIN_WEB_IMAGE: ${{ env.ADMIN_IMAGE_NAME }}@${{ steps.admin-image.outputs.digest }}
+          RUNTIME_PROXY_FIXTURE_IMAGE: ${{ env.IMAGE_NAME }}@${{ steps.image.outputs.digest }}
         shell: bash
         run: |
           set -euo pipefail
-          network="admin-web-release-${GITHUB_RUN_ID}"
-          fixture_a="admin-web-fixture-a-${GITHUB_RUN_ID}"
-          fixture_b="admin-web-fixture-b-${GITHUB_RUN_ID}"
-          web_a="admin-web-proxy-a-${GITHUB_RUN_ID}"
-          web_b="admin-web-proxy-b-${GITHUB_RUN_ID}"
-          cleanup() {
-            docker rm -f "$web_a" "$web_b" "$fixture_a" "$fixture_b" >/dev/null 2>&1 || true
-            docker network rm "$network" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-
-          admin_image="${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}"
-          backend_image="${IMAGE_NAME}@${IMAGE_DIGEST}"
-          image_id=$(docker image inspect "$admin_image" --format '{{.Id}}')
-
+          admin_image="${ADMIN_WEB_IMAGE}"
           if docker run --rm -e ADMIN_WEB_ENV=preview "$admin_image" >/tmp/admin-web-no-upstream.log 2>&1; then
             echo "Admin Web started without ADMIN_API_UPSTREAM"
             exit 1
@@ -384,27 +407,7 @@ jobs:
             echo "Admin Web image contains a baked environment-specific URL"
             exit 1
           fi
-
-          docker network create "$network" >/dev/null
-          fixture_script='const http=require("http"); const id=process.env.FIXTURE_ID; http.createServer((req,res)=>{res.writeHead(200,{"content-type":"application/json","x-fixture-id":id}); res.end(JSON.stringify({status:"ok",fixture:id,path:req.url}));}).listen(8081,"0.0.0.0");'
-          docker run -d --name "$fixture_a" --network "$network" -e FIXTURE_ID=A --entrypoint node "$backend_image" -e "$fixture_script" >/dev/null
-          docker run -d --name "$fixture_b" --network "$network" -e FIXTURE_ID=B --entrypoint node "$backend_image" -e "$fixture_script" >/dev/null
-          sleep 2
-          docker run -d --name "$web_a" --network "$network" -e ADMIN_WEB_ENV=preview -e ADMIN_API_UPSTREAM=http://$fixture_a:8081 "$admin_image" >/dev/null
-          docker run -d --name "$web_b" --network "$network" -e ADMIN_WEB_ENV=preview -e ADMIN_API_UPSTREAM=http://$fixture_b:8081 "$admin_image" >/dev/null
-
-          for web in "$web_a" "$web_b"; do
-            for attempt in $(seq 1 30); do
-              if docker exec "$web" wget -qO- http://127.0.0.1:8080/readyz >/tmp/admin-web-readyz.json; then break; fi
-              sleep 1
-            done
-            test -s /tmp/admin-web-readyz.json
-          done
-          response_a=$(docker exec "$web_a" wget -qO- http://127.0.0.1:8080/api/v1/admin/me)
-          response_b=$(docker exec "$web_b" wget -qO- http://127.0.0.1:8080/api/v1/admin/me)
-          echo "$response_a" | grep -q '"fixture":"A"'
-          echo "$response_b" | grep -q '"fixture":"B"'
-          test "$image_id" = "$(docker image inspect "$admin_image" --format '{{.Id}}')"
+          node admin-web/scripts/verify-runtime-proxy.cjs
 
       - name: Scan pushed image layers for secret artifacts
         env:
@@ -424,7 +427,7 @@ jobs:
         run: |
           npm run release:manifest -- \
             --output ../release-manifest.json \
-            --source-commit "${COMMIT_SHA}" \
+            --source-commit "${SOURCE_COMMIT}" \
             --image "${IMAGE_NAME}" \
             --image-digest "${IMAGE_DIGEST}" \
             --admin-image "${ADMIN_IMAGE_NAME}" \

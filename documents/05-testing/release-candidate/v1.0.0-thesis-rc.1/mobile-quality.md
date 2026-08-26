@@ -2,13 +2,13 @@
 
 ## Run metadata
 
-- Tested source commit: `9399604be95bb4c578eca1f4421c1702a5384193`.
 - Branch: `codex/p0-postgres-foundation`.
 - Evidence recorded: `2026-08-26` (Asia/Bangkok).
+- Source binding: the final RC source is the commit in the signed `release-manifest.json` and the peeled commit of tag `v1.0.0-thesis-rc.1`.
 - Toolchain: Node `v24.19.0`, npm `11.17.0`, Java `17.0.12`.
 - Commands: `npm ci --ignore-scripts`, lint, typecheck, Jest/test coverage, OpenAPI/Maestro/public-env/release validators, audit and HTTPS-placeholder web export.
 
-- Tested source: `9399604be95bb4c578eca1f4421c1702a5384193` clean clone.
+- Historical pre-patch clean-clone evidence is retained below; it is not the final RC source binding.
 - `npm ci --ignore-scripts`: PASS, 0 vulnerabilities.
 - `npm run lint`: PASS.
 - `npm run typecheck`: PASS.

@@ -2,21 +2,21 @@
 
 ## Run metadata
 
-- Tested source commit: `9399604be95bb4c578eca1f4421c1702a5384193`.
 - Branch: `codex/p0-postgres-foundation`.
 - Evidence recorded: `2026-08-26` (Asia/Bangkok).
+- Source binding: the final RC source is the commit in the signed `release-manifest.json` and the peeled commit of tag `v1.0.0-thesis-rc.1`.
 - Toolchain: Node `v24.19.0`, npm `11.17.0`, Docker `28.4.0`, Compose `v2.39.4-desktop.1`.
 - Commands: `npm ci --ignore-scripts`, secret scans, `release:gate`, `release:migration-fingerprint`, `typecheck`, `build`, `npm audit --omit=dev --audit-level=high`, `test:release`, disposable validators.
 
-- Tested source: `9399604be95bb4c578eca1f4421c1702a5384193` in a clean clone.
+- Historical pre-patch clean-clone evidence is retained below; it is not the final RC source binding.
 - `npm ci --ignore-scripts`: PASS, 0 vulnerabilities.
-- `npm run release:gate`: PASS before evidence commit; 32 tracked migrations and clean tree.
+- `npm run release:gate`: PASS on the final committed patch; 32 tracked migrations and clean tree.
 - `npm run validate:secrets -- --history`: PASS (592 tracked files).
 - `npm run validate:secret-registry`: PASS (7 metadata-only entries).
 - `npm run typecheck`: PASS.
 - `npm run build`: PASS.
 - `npm audit --omit=dev --audit-level=high`: PASS, 0 vulnerabilities.
-- `npm run test:release`: PASS, all 17/17 commands.
+- `npm run test:release`: PASS, all 17/17 commands on a disposable PostgreSQL container.
 - `npm run validate:database`: PASS (49 tables).
 - `npm run validate:relational-v2`: PASS (all relational invariants zero).
 - `npm run validate:outbox`: PASS (all outbox invariants zero; legacy pending requiring review: 0).

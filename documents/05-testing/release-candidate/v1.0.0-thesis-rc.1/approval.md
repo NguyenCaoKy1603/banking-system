@@ -2,16 +2,21 @@
 
 ## Evidence metadata
 
-- Reviewed source commit: `9399604be95bb4c578eca1f4421c1702a5384193`.
 - Branch: `codex/p0-postgres-foundation`.
 - Evidence recorded: `2026-08-26` (Asia/Bangkok).
-- Local status: `PASS`; external status: `NOT RUN` pending owner authorization.
+- Pull Request: [#2](https://github.com/NguyenCaoKy1603/banking-system/pull/2).
+- Release binding: the exact approved source is the `sourceCommit` recorded in the signed `release-manifest.json` and the peeled commit of tag `v1.0.0-thesis-rc.1`.
 
-Status: **PENDING OWNER APPROVAL**
+Status: **OWNER APPROVED WITH INDEPENDENT REVIEW WAIVER**
 
-The local gates are recorded for review, but no tag, push, Pull Request, registry publication, Cosign signing, or staging deployment was performed. Owner decisions still required:
+Independent review: **WAIVED**
 
-- approve any subsequent external GitHub/registry/staging actions;
-- provide staging secret-manager, HTTPS, remote-CI and rollback evidence.
+Reason: Solo academic thesis project; no independent collaborator is available.
 
-The migration fingerprint policy is now canonicalized and the local gates were rerun successfully on the tested source commit.
+Approved by: `NguyenCaoKy1603` — repository owner
+
+Scope: Release Candidate only; this is not production approval.
+
+Money mode: virtual/synthetic only.
+
+The waiver does not assert that an independent review passed. Remote registry publication, Cosign verification, SBOM/provenance artifacts and staging evidence are separate gates and must be recorded by their tag workflow artifacts. An owner comment on the final PR HEAD may bind the human approval to the exact SHA without changing this source file.
