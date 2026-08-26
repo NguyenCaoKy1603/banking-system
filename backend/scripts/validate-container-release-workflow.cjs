@@ -32,8 +32,8 @@ requireAbsent(workflow, /branches:\s*\[main\]/, "container-release must not trig
 requireMatch(workflow, /workflow_dispatch:/, "manual workflow dispatch must remain available");
 requireMatch(release, /if:\s*github\.event_name\s*==\s*['"]push['"]\s*&&\s*startsWith\(github\.ref,\s*['"]refs\/tags\/v1\.0\.0-thesis-rc\./, "publish job must be limited to pushed RC tags");
 requireMatch(release, /RELEASE_ID:\s*\$\{\{\s*github\.ref_name\s*\}\}/, "release ID must be the tag name");
-requireMatch(release, /RELEASE_EVIDENCE_DIR:\s*\$\{\{\s*runner\.temp\s*\}\}\/banking-system-release-evidence/, "release evidence must be written outside the checked-out source tree");
-requireMatch(release, /Prepare release evidence directory[\s\S]*mkdir -p \"\$\{RELEASE_EVIDENCE_DIR\}\"/, "release evidence directory must be prepared before generated evidence is written");
+requireMatch(release, /evidence_dir=\"\$\{RUNNER_TEMP\}\/banking-system-release-evidence\"/, "release evidence must be written outside the checked-out source tree");
+requireMatch(release, /Prepare release evidence directory[\s\S]*printf 'RELEASE_EVIDENCE_DIR=%s\\n'/, "release evidence directory must be exported before generated evidence is written");
 requireAbsent(release, /format\(\s*['"]release-/, "temporary release ID fallback must be removed");
 requireMatch(release, /git fetch --no-tags origin main/, "publish job must fetch main before building");
 requireMatch(release, /git rev-parse HEAD/, "publish job must normalize the checked-out source commit");
