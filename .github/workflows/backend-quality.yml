@@ -98,6 +98,11 @@ jobs:
           DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_relational
         run: npm run db:migrate
 
+      - name: Apply Admin migrations to disposable database
+        env:
+          DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_admin
+        run: npm run db:migrate
+
       - name: Apply worker migrations to disposable database
         env:
           DATABASE_URL: postgresql://banking:banking@localhost:5432/banking_test_worker
