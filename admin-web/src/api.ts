@@ -1,5 +1,8 @@
 export type ApiError = Error & { code?: string; status?: number; traceId?: string };
-const API_BASE = (import.meta.env.VITE_ADMIN_API_URL as string | undefined)?.replace(/\/$/, "") ?? "http://127.0.0.1:5001/api/v1";
+// The browser always talks to the same origin.  Development Vite and the
+// production Nginx container proxy `/api` to the configured Admin API
+// upstream, so no environment-specific URL is embedded in this bundle.
+const API_BASE = "/api/v1";
 let csrfTokenValue = "";
 
 export function setCsrfToken(value: unknown): void { if (typeof value === "string" && value.length > 0) csrfTokenValue = value; }

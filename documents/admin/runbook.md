@@ -30,7 +30,18 @@ npm run admin:dev
 
 Admin API bind `127.0.0.1`. Health: `GET http://127.0.0.1:5001/livez` và `/readyz`. Admin Web dùng `http://127.0.0.1:5173` và `credentials: include`.
 
-Với Docker Compose, Admin API bind `0.0.0.0` bên trong container để nhận traffic từ reverse proxy, nhưng chỉ publish ra `127.0.0.1:5001`; Admin Web publish ở `127.0.0.1:5173`:
+Khi chạy Admin Web trực tiếp bằng Vite, cấu hình proxy ở development:
+
+```powershell
+cd C:\Projects\banking-system\admin-web
+$env:ADMIN_API_UPSTREAM = "http://127.0.0.1:5001"
+npm run dev
+```
+
+Browser luôn gọi `/api/v1`; không đặt `VITE_ADMIN_API_URL` và không gọi trực
+tiếp Admin API từ JavaScript.
+
+Với Docker Compose, Admin API bind `0.0.0.0` bên trong container để nhận traffic từ reverse proxy, nhưng chỉ publish ra `127.0.0.1:5001`; Admin Web publish ở `127.0.0.1:5173`. Compose cấp `ADMIN_WEB_ENV=preview` và `ADMIN_API_UPSTREAM=http://admin-api:5001` lúc runtime:
 
 ```powershell
 docker compose --env-file .env.compose up -d admin-api admin-web

@@ -40,6 +40,13 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Verify environment-independent browser bundle
+        shell: bash
+        run: |
+          if grep -R -n -E 'ADMIN_API_URL|127\.0\.0\.1:5001|localhost:5001|admin-api-staging|staging\.example' dist; then
+            echo "Admin Web bundle contains an environment-specific API URL"
+            exit 1
+          fi
       - run: npm audit --omit=dev --audit-level=high
       - name: Install backend dependencies for browser fixture
         run: npm ci

@@ -176,15 +176,23 @@ services:
       context: ./admin-web
       dockerfile: Dockerfile
       args:
-        VITE_ADMIN_API_URL: ${VITE_ADMIN_API_URL:-http://127.0.0.1:5001/api/v1}
         COMMIT_SHA: ${COMMIT_SHA:-local}
         RELEASE_ID: ${RELEASE_ID:-local}
         BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+    environment:
+      ADMIN_WEB_ENV: ${ADMIN_WEB_ENV:-preview}
+      ADMIN_API_UPSTREAM: ${ADMIN_API_UPSTREAM:-http://admin-api:5001}
     depends_on:
       admin-api:
         condition: service_healthy
     ports:
       - "127.0.0.1:${ADMIN_WEB_PORT:-5173}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/readyz >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
     restart: unless-stopped
 
   # Opt-in only: local customer HTTP routes are now direct relational-v2 when

@@ -5,9 +5,15 @@ React + TypeScript + Vite desktop-first control plane cho reference sandbox. Ses
 ```powershell
 cd C:\Projects\banking-system\admin-web
 npm install
-$env:VITE_ADMIN_API_URL = "http://127.0.0.1:5001/api/v1"
+$env:ADMIN_API_UPSTREAM = "http://127.0.0.1:5001"
 npm run dev
 ```
+
+The browser always calls the same-origin `/api/v1` path. Vite proxies that
+path to `ADMIN_API_UPSTREAM` during development; the production Nginx image
+receives the same origin at container startup through `ADMIN_WEB_ENV` and
+`ADMIN_API_UPSTREAM`. The upstream is runtime configuration, not a secret and
+is never baked into the JavaScript bundle or image build.
 
 Các màn hình P0 gồm Login/MFA, dashboard, Approval Inbox (maker/fingerprint/approve/reject/step-up), customer/account masked read và yêu cầu lock/block/funding/reversal, KYC/Credit review, pending transfer operations, fraud triage/resolution, Outbox/job retry, Staff/Roles và Audit explorer. UI chỉ tạo typed four-eyes request; server mới quyết định quyền, version, trạng thái và mutation.
 

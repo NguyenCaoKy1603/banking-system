@@ -36,6 +36,8 @@ BANKING_MFA_REQUIRED=1
 BANKING_MFA_METHODS=TOTP
 DATABASE_SSL_MODE=verify-full
 DATABASE_SERVER_NAME=<managed-postgres-hostname>
+ADMIN_WEB_ENV=staging
+ADMIN_API_UPSTREAM=https://<admin-api-staging-hostname>
 BUILD_COMMIT_SHA=<40-char commit SHA>
 RELEASE_ID=<immutable release id>
 IMAGE_DIGEST=sha256:<64-char registry manifest digest>
@@ -48,9 +50,11 @@ không được commit hoặc đưa vào release evidence.
 
 ## Thành phần hạ tầng tối thiểu
 
-- API HTTPS ổn định và Admin HTTPS riêng, CORS exact-origin.
-- `STAGING_ADMIN_API_URL` phải là URL HTTPS của Admin API và được cấp qua CI
-  variable trước khi build Admin Web; không dùng `.invalid` hoặc localhost.
+- API HTTPS ổn định và Admin Web HTTPS riêng, CORS exact-origin.
+- Admin Web dùng image digest độc lập môi trường; deployment/IaC cấp
+  `ADMIN_WEB_ENV=staging` và `ADMIN_API_UPSTREAM` là origin HTTPS thật của
+  Admin API lúc container khởi động. Không cần URL staging để build image hoặc
+  tạo Release Candidate; không dùng `.invalid`, localhost hay endpoint bake sẵn.
 - Managed PostgreSQL riêng, private/allowlisted, TLS `verify-full`.
 - Secret namespace riêng, workload identity hoặc cơ chế mount được provider
   phê duyệt.

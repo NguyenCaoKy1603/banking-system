@@ -2,11 +2,19 @@
 
 ## Trạng thái
 
-Đây là control plane tách process với Public Banking API. Admin API mặc định chạy `127.0.0.1:5001`, dùng realm phiên staff riêng, cookie HttpOnly/SameSite=Strict và CSRF token cho request thay đổi dữ liệu. Dữ liệu chỉ là tiền mô phỏng; không dùng cho tiền thật, core banking, payment rail hoặc KYC thật.
+Đây là control plane tách process với Public Banking API. Browser chỉ gọi
+đường dẫn cùng origin `/api/v1`; Admin Web Nginx chuyển tiếp tới Admin API qua
+`ADMIN_API_UPSTREAM` được cấp lúc container khởi động. Admin API mặc định chạy
+`127.0.0.1:5001` ở local, dùng realm phiên staff riêng, cookie
+HttpOnly/SameSite=Strict và CSRF token cho request thay đổi dữ liệu. Dữ liệu
+chỉ là tiền mô phỏng; không dùng cho tiền thật, core banking, payment rail
+hoặc KYC thật.
 
 ```text
-Admin Web :5173
+Browser → Admin Web :5173 (same-origin `/api/v1`)
     │ cookie staff + CSRF
+    ▼
+Nginx trong Admin Web → `ADMIN_API_UPSTREAM`
     ▼
 Admin API :5001 (localhost/private network)
     ├─ StaffAuthService (password + TOTP, session rotation)
@@ -19,6 +27,11 @@ Admin API :5001 (localhost/private network)
 
 Customer Mobile → Public API :5000 → customer realm
 ```
+
+Trong Docker Compose, upstream là `http://admin-api:5001`, không phải
+`127.0.0.1` (địa chỉ đó trỏ vào chính container Admin Web). Staging và
+production-like bắt buộc upstream HTTPS; thiếu hoặc sai origin làm container
+fail-closed trước khi Nginx chạy. Image/bundle không chứa URL môi trường.
 
 Public API không mount route `/admin`. Admin API không chấp nhận customer bearer token; staff session có bảng và hash riêng. UI chỉ hiển thị policy/result; mọi authorization, freshness, version và fingerprint được kiểm tra lại ở server.
 

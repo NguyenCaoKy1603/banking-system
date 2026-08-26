@@ -80,7 +80,10 @@ const apiServer = createAdminServer({
 });
 await new Promise((resolve) => apiServer.listen(0, apiHost, resolve));
 const apiPort = apiServer.address().port;
-process.env.VITE_ADMIN_API_URL = `http://${apiHost}:${apiPort}/api/v1`;
+// Exercise the same-origin Vite proxy used by the deployed Nginx image.  The
+// upstream is process configuration only; it is never exposed as a VITE_*
+// browser variable or embedded in the built bundle.
+process.env.ADMIN_API_UPSTREAM = `http://${apiHost}:${apiPort}`;
 
 const vite = await createViteServer({
   root: fileURLToPath(new URL("..", import.meta.url)),

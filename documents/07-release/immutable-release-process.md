@@ -1,6 +1,6 @@
 # Quy trình release bất biến — Staging và Production-like
 
-Ngày cập nhật: 2026-08-25
+Ngày cập nhật: 2026-08-26
 
 ## Trạng thái
 
@@ -11,8 +11,10 @@ Ngày cập nhật: 2026-08-25
 Một release được build đúng một lần từ commit sạch trong CI. Staging và Production-like chỉ nhận cùng một image manifest digest; không dùng `latest`, không build lại và không sửa code trên server.
 
 Backend API, migration, Admin API và worker dùng cùng backend digest; Admin Web
-được build/ký bằng digest riêng. URL API được bake vào Admin Web chỉ được lấy
-từ repository variable đã được owner cấu hình, không dùng placeholder.
+được build/ký bằng digest riêng. Bundle Admin Web chỉ gọi đường dẫn tương đối
+`/api/v1`; Nginx nhận origin Admin API qua `ADMIN_API_UPSTREAM` khi container
+khởi động. Không bake URL môi trường vào JavaScript hoặc image, vì vậy cùng một
+Admin Web digest có thể chạy ở preview, staging và production-like.
 
 ```text
 clean commit
@@ -20,6 +22,7 @@ clean commit
   → buildx image + SBOM + provenance
   → registry manifest digest
   → Cosign keyless signature
+  → Admin Web runtime proxy (same-origin /api/v1)
   → release-manifest.json
   → migration job cùng digest
   → /startupz + /readyz + /versionz
@@ -44,6 +47,27 @@ HTTP legacy full-state writer không được chạy cùng worker; worker entryp
 fail-closed nếu thiếu `WORKER_CUTOVER_CONFIRMED=1`. Secret provider managed có
 thể nhận secret từ provider mount qua `BANKING_MANAGED_SECRETS_DIR`, với version
 sidecar cho từng secret; không được fallback về `.env`.
+
+## Admin Web runtime proxy
+
+Admin Web không còn nhận `VITE_ADMIN_API_URL` hoặc `STAGING_ADMIN_API_URL` ở
+giai đoạn build. Deployment phải cấp hai biến runtime:
+
+```text
+ADMIN_WEB_ENV=preview|staging|production-like
+ADMIN_API_UPSTREAM=<HTTP(S) origin, không có path/query/fragment/credential>
+```
+
+Preview cho phép HTTP trên localhost hoặc mạng container; staging và
+production-like bắt buộc HTTPS. Container dừng trước khi Nginx chạy nếu thiếu
+hoặc sai cấu hình. Trình duyệt luôn gọi cùng origin `/api/v1/...`; Nginx chuyển
+tiếp URI đó tới upstream, giữ cookie HttpOnly, CSRF và request ID, không cache
+API và không ghi cookie/Authorization/request body vào log. CSP dùng
+`connect-src 'self'`.
+
+`ADMIN_API_UPSTREAM` là cấu hình triển khai, không phải secret. URL staging
+thật chỉ xuất hiện trong deployment/IaC hoặc runtime secret/config, không cần
+repository variable để tạo Release Candidate và không được đưa vào artifact.
 
 ## Runtime contract
 
