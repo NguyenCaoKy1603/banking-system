@@ -1,0 +1,154 @@
+apiVersion: banking.reference/v1alpha1
+kind: AcademicStagingContract
+
+# This is a provider-neutral, non-deployable contract. A selected provider
+# must render it into its native deployment definition without adding values.
+metadata:
+  name: banking-academic-staging
+  status: NOT_PROVISIONED
+  scope: academic-synthetic-virtual-money
+  moneyMode: virtual
+
+release:
+  sourceCommit: required-full-40-char-sha
+  releaseId: required-immutable-release-id
+  backendImage: required-ghcr-backend-manifest-digest
+  adminWebImage: required-ghcr-admin-web-manifest-digest
+  rollbackRevision: previous-verified-release
+
+network:
+  customerApiHttpsOrigin: provider-assigned-https-origin
+  adminApiHttpsOrigin: provider-assigned-https-origin
+  adminWebHttpsOrigin: provider-assigned-https-origin
+  databaseNetwork: private-or-explicitly-allowlisted
+
+secrets:
+  provider: managed
+  mountDirectory: /run/secrets/banking
+  references:
+    - database-credential
+    - otp-pepper
+    - mfa-encryption-key
+    - email-provider-token
+    - notification-endpoint-key
+    - backup-encryption-key
+  valuesInGit: forbidden
+
+database:
+  engine: postgresql
+  majorVersion: 16
+  databaseName: dedicated-staging-database
+  tlsMode: verify-full
+  serverName: provider-postgres-hostname
+  migrationJob:
+    image: release.backendImage
+    command: node scripts/apply-migration.cjs
+    migrations: 001-032
+    idempotent: true
+
+services:
+  backend-api:
+    image: release.backendImage
+    replicas: 2
+    command: node dist/server.js
+    readiness: /readyz
+    liveness: /livez
+    startup: /startupz
+    version: /versionz
+    resources:
+      cpu: 0.5
+      memoryMiB: 512
+    environment:
+      NODE_ENV: production
+      BANKING_ENV: staging
+      BANKING_MONEY_MODE: virtual
+      BANKING_STORAGE: postgres
+      BANKING_PERSISTENCE_MODE: relational-v2
+      BANKING_SECRET_PROVIDER: managed
+      BANKING_MANAGED_SECRETS_DIR: /run/secrets/banking
+      BANKING_MFA_REQUIRED: "1"
+      BANKING_MFA_METHODS: TOTP
+      DATABASE_SSL_MODE: verify-full
+      DATABASE_SERVER_NAME: database.serverName
+      BUILD_COMMIT_SHA: release.sourceCommit
+      RELEASE_ID: release.releaseId
+      IMAGE_DIGEST: release.backendImage
+      WORKER_ENABLED: "0"
+      EMAIL_PROVIDER: http
+      EMAIL_PROVIDER_URL: required-https-email-gateway-origin
+      SCHEDULED_LIFECYCLE_ENABLED: "0"
+
+  admin-api:
+    image: release.backendImage
+    replicas: 1
+    command: node dist/adminServer.js
+    readiness: /readyz
+    liveness: /livez
+    startup: /startupz
+    resources:
+      cpu: 0.25
+      memoryMiB: 256
+    environment:
+      ADMIN_STORAGE: postgres
+      ADMIN_BIND: 0.0.0.0
+      ADMIN_ALLOWED_ORIGINS: network.adminWebHttpsOrigin
+      ADMIN_SECURE_COOKIES: "1"
+      DATABASE_SSL_MODE: verify-full
+      DATABASE_SERVER_NAME: database.serverName
+      BANKING_SECRET_PROVIDER: managed
+      BANKING_MANAGED_SECRETS_DIR: /run/secrets/banking
+
+  admin-web:
+    image: release.adminWebImage
+    replicas: 1
+    readiness: /
+    liveness: /
+    resources:
+      cpu: 0.1
+      memoryMiB: 128
+    environment:
+      ADMIN_WEB_ENV: staging
+      ADMIN_API_UPSTREAM: network.adminApiHttpsOrigin
+
+  outbox-worker:
+    image: release.backendImage
+    replicas: 2
+    command: node dist/worker.js
+    readiness: /readyz
+    liveness: /livez
+    resources:
+      cpu: 0.25
+      memoryMiB: 256
+    environment:
+      NODE_ENV: production
+      BANKING_ENV: staging
+      BANKING_STORAGE: postgres
+      BANKING_PERSISTENCE_MODE: relational-v2
+      BANKING_SECRET_PROVIDER: managed
+      BANKING_MANAGED_SECRETS_DIR: /run/secrets/banking
+      DATABASE_SSL_MODE: verify-full
+      DATABASE_SERVER_NAME: database.serverName
+      BUILD_COMMIT_SHA: release.sourceCommit
+      RELEASE_ID: release.releaseId
+      IMAGE_DIGEST: release.backendImage
+      WORKER_ENABLED: "1"
+      WORKER_CUTOVER_CONFIRMED: "1"
+      WORKER_ALLOW_LEGACY_WRITER: "0"
+      SCHEDULED_LIFECYCLE_ENABLED: "1"
+      SCHEDULED_LIFECYCLE_POLL_INTERVAL_MS: "30000"
+      SCHEDULED_LIFECYCLE_BATCH_SIZE: "50"
+
+verification:
+  firstDeploymentStatus: STAGING_DEPLOYED_UNVERIFIED
+  requiredEvidence:
+    - migration-fingerprint
+    - redacted-health-and-version
+    - signature-sbom-provenance
+    - https-e2e
+    - backup-restore
+    - rollback
+  soloAcademic:
+    verificationMode: SOLO_ACADEMIC_OWNER
+    verifiedBy: repository-owner
+    independentReview: false
+    scope: academic-synthetic-virtual-money

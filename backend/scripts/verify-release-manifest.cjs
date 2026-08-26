@@ -14,6 +14,8 @@ const manifestPath = value("manifest", path.resolve(process.cwd(), "../release-m
 const requireStaging = process.argv.includes("--require-staging");
 const checkSource = process.argv.includes("--check-source");
 const failures = [];
+const SOLO_ACADEMIC_SCOPE = "academic-synthetic-virtual-money";
+const VERIFICATION_MODES = new Set(["SOLO_ACADEMIC_OWNER", "INDEPENDENT_REVIEW"]);
 
 let manifest;
 try {
@@ -65,7 +67,23 @@ if (requireStaging) {
   requireField(typeof staging?.verifiedAt === "string" && staging.verifiedAt.length > 0, "staging verifiedAt is missing");
   requireField(typeof staging?.healthEvidence === "string" && staging.healthEvidence.length > 0, "staging health evidence is missing");
   requireField(typeof staging?.versionEvidence === "string" && staging.versionEvidence.length > 0, "staging version evidence is missing");
-  requireField(typeof staging?.reviewer === "string" && staging.reviewer.length > 0, "independent staging reviewer is missing");
+  requireField(typeof staging?.verificationMode === "string" && VERIFICATION_MODES.has(staging.verificationMode), "staging verificationMode must be SOLO_ACADEMIC_OWNER or INDEPENDENT_REVIEW");
+  requireField(typeof staging?.verifiedBy === "string" && staging.verifiedBy.length > 0, "staging verifiedBy is missing");
+  requireField(typeof staging?.independentReview === "boolean", "staging independentReview must be boolean");
+  requireField(typeof staging?.scope === "string" && staging.scope.length > 0, "staging scope is missing");
+
+  const productionLikePromotion = manifest.promotion?.productionLike !== null && manifest.promotion?.productionLike !== undefined;
+  const productionLikeStaging = staging?.environment === "production-like" || staging?.targetEnvironment === "production-like";
+  if (staging?.verificationMode === "SOLO_ACADEMIC_OWNER") {
+    requireField(!productionLikePromotion && !productionLikeStaging, "SOLO_ACADEMIC_OWNER cannot verify a production-like promotion");
+    requireField(staging.verifiedBy === "repository-owner", "SOLO_ACADEMIC_OWNER must be verifiedBy repository-owner");
+    requireField(staging.independentReview === false, "SOLO_ACADEMIC_OWNER must declare independentReview=false");
+    requireField(staging.scope === SOLO_ACADEMIC_SCOPE, `SOLO_ACADEMIC_OWNER requires scope=${SOLO_ACADEMIC_SCOPE}`);
+    requireField(staging.reviewer === undefined || staging.reviewer === null || staging.reviewer === "", "SOLO_ACADEMIC_OWNER must not declare an independent reviewer");
+  } else if (staging?.verificationMode === "INDEPENDENT_REVIEW") {
+    requireField(staging.independentReview === true, "INDEPENDENT_REVIEW must declare independentReview=true");
+    requireField(typeof staging.reviewer === "string" && staging.reviewer.length > 0, "independent staging reviewer is missing");
+  }
   requireField(manifest.artifacts?.adminWeb?.digest && manifest.artifacts?.mobileApk?.sha256, "Admin Web digest and mobile APK checksum are required for staging");
 }
 

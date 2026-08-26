@@ -64,7 +64,23 @@
     "promotion": {
       "type": "object",
       "properties": {
-        "staging": { "type": ["object", "null"] },
+        "staging": {
+          "type": ["object", "null"],
+          "required": ["status", "verifiedAt", "healthEvidence", "versionEvidence", "verificationMode", "verifiedBy", "independentReview", "scope"],
+          "properties": {
+            "status": { "const": "STAGING VERIFIED" },
+            "verifiedAt": { "type": "string", "minLength": 1 },
+            "healthEvidence": { "type": "string", "minLength": 1 },
+            "versionEvidence": { "type": "string", "minLength": 1 },
+            "verificationMode": { "enum": ["SOLO_ACADEMIC_OWNER", "INDEPENDENT_REVIEW"] },
+            "verifiedBy": { "type": "string", "minLength": 1 },
+            "independentReview": { "type": "boolean" },
+            "scope": { "type": "string", "minLength": 1 },
+            "reviewer": { "type": ["string", "null"] },
+            "environment": { "enum": ["academic", "production-like"] },
+            "targetEnvironment": { "enum": ["academic", "production-like"] }
+          }
+        },
         "productionLike": { "type": ["object", "null"] }
       }
     }

@@ -49,7 +49,7 @@ export class StaffAuthService {
     const token = createOpaqueToken();
     const inviteId = randomUUID();
     const expiresAt = new Date(this.clock() + 24 * 60 * 60 * 1000).toISOString();
-    await this.options.repository.createStaffInvite({ id: inviteId, emailNormalized: email, employeeCode: input.employeeCode.trim(), displayName: input.displayName.trim(), roleCode: input.role, tokenHash: hashOpaqueToken(token), expiresAt });
+    await this.options.repository.createStaffInvite({ id: inviteId, emailNormalized: email, employeeCode: input.employeeCode.trim(), displayName: input.displayName.trim(), roleCode: input.role, tokenHash: hashOpaqueToken(token), expiresAt, createdByStaffId: input.createdByStaffId ?? null });
     return { inviteId, token, expiresAt };
   }
 
@@ -65,6 +65,7 @@ export class StaffAuthService {
     const secretCiphertext = this.options.encryption.encrypt(secret, this.encryptionContext(credentialId, staff.id));
     const metadata = envelopeMetadata(secretCiphertext);
     await this.options.repository.createMfaCredential({ id: credentialId, staffId: staff.id, secretCiphertext, encryptionKeyId: this.options.encryption.keyId, secretCipherVersion: metadata.version, secretAadVersion: metadata.aadVersion, secretEncryptionAlgorithm: metadata.algorithm, secretEncryptedDataKey: metadata.encryptedDataKey, lastAcceptedTimeStep: null });
+    await this.options.repository.appendAudit({ id: randomUUID(), actorStaffId: staff.id, action: "STAFF_INVITE_ACTIVATED", targetType: "STAFF", targetId: staff.id, outcome: "SUCCEEDED", reasonCode: "INVITE_ACTIVATED", requestId: null, traceId: null, correlationId: null, beforeVersion: null, afterVersion: staff.authorizationVersion, metadata: { role: staff.roles[0]?.role ?? "UNKNOWN", environment: this.environmentScope } });
     return input.totpSecret ? { staffId: staff.id } : { staffId: staff.id, mfaSetup: { secret, otpauthUri: buildTotpUri(secret, staff.emailNormalized) } };
   }
 
