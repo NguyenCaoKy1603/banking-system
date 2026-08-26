@@ -96,9 +96,19 @@ jobs:
 
       - name: Verify Admin API and Web health
         run: |
-          curl --silent --fail http://127.0.0.1:${ADMIN_API_PORT}/livez
-          curl --silent --fail http://127.0.0.1:${ADMIN_WEB_PORT}/livez
-          curl --silent --fail http://127.0.0.1:${ADMIN_WEB_PORT}/readyz
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:${ADMIN_API_PORT}/livez >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${ADMIN_WEB_PORT}/livez >/dev/null && \
+               curl --silent --fail http://127.0.0.1:${ADMIN_WEB_PORT}/readyz >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker compose ps
+              docker compose logs --no-color admin-api admin-web
+              exit 1
+            fi
+            sleep 2
+          done
           status=$(curl --silent --output /tmp/admin-me-response.txt --write-out '%{http_code}' http://127.0.0.1:${ADMIN_WEB_PORT}/api/v1/admin/me)
           test "$status" = 401
 
