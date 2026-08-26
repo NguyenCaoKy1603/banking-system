@@ -328,46 +328,53 @@ jobs:
             --certificate-oidc-issuer "${COSIGN_ISSUER}" \
             "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" > admin-web-signature-verification.json
 
-      - name: Verify provenance attestation
+      - name: Inspect and verify Backend BuildKit attestations
         env:
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
-          COSIGN_ISSUER: https://token.actions.githubusercontent.com
+        shell: bash
         run: |
-          cosign verify-attestation \
-            --type slsaprovenance \
-            --certificate-identity-regexp "${COSIGN_IDENTITY}" \
-            --certificate-oidc-issuer "${COSIGN_ISSUER}" \
-            "${IMAGE_NAME}@${IMAGE_DIGEST}" > provenance-attestation-verification.json
+          set -euo pipefail
+          docker buildx imagetools inspect \
+            "${IMAGE_NAME}@${IMAGE_DIGEST}" \
+            --format '{{json .Manifest}}' > backend-image-manifest.json
+          docker buildx imagetools inspect \
+            "${IMAGE_NAME}@${IMAGE_DIGEST}" \
+            --format '{{json .Provenance}}' > backend-image-provenance.json
+          docker buildx imagetools inspect \
+            "${IMAGE_NAME}@${IMAGE_DIGEST}" \
+            --format '{{json .SBOM}}' > backend-image-sbom.json
+          node backend/scripts/verify-buildkit-attestations.cjs \
+            --image "${IMAGE_NAME}" \
+            --manifest backend-image-manifest.json \
+            --provenance backend-image-provenance.json \
+            --sbom backend-image-sbom.json \
+            --digest "${IMAGE_DIGEST}" \
+            --provenance-output provenance-attestation-verification.json \
+            --sbom-output sbom-attestation-verification.json
 
-      - name: Verify SBOM attestation
-        env:
-          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
-          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
-          COSIGN_ISSUER: https://token.actions.githubusercontent.com
-        run: |
-          cosign verify-attestation \
-            --type spdxjson \
-            --certificate-identity-regexp "${COSIGN_IDENTITY}" \
-            --certificate-oidc-issuer "${COSIGN_ISSUER}" \
-            "${IMAGE_NAME}@${IMAGE_DIGEST}" > sbom-attestation-verification.json
-
-      - name: Verify Admin Web provenance and SBOM attestations
+      - name: Inspect and verify Admin Web BuildKit attestations
         env:
           ADMIN_IMAGE_DIGEST: ${{ steps.admin-image.outputs.digest }}
-          COSIGN_IDENTITY: ^https://github\.com/${{ github.repository }}/\.github/workflows/container-release\.yml@refs/tags/v1\.0\.0-thesis-rc\..+$
-          COSIGN_ISSUER: https://token.actions.githubusercontent.com
+        shell: bash
         run: |
-          cosign verify-attestation \
-            --type slsaprovenance \
-            --certificate-identity-regexp "${COSIGN_IDENTITY}" \
-            --certificate-oidc-issuer "${COSIGN_ISSUER}" \
-            "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" > admin-web-provenance-attestation-verification.json
-          cosign verify-attestation \
-            --type spdxjson \
-            --certificate-identity-regexp "${COSIGN_IDENTITY}" \
-            --certificate-oidc-issuer "${COSIGN_ISSUER}" \
-            "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" > admin-web-sbom-attestation-verification.json
+          set -euo pipefail
+          docker buildx imagetools inspect \
+            "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" \
+            --format '{{json .Manifest}}' > admin-web-image-manifest.json
+          docker buildx imagetools inspect \
+            "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" \
+            --format '{{json .Provenance}}' > admin-web-image-provenance.json
+          docker buildx imagetools inspect \
+            "${ADMIN_IMAGE_NAME}@${ADMIN_IMAGE_DIGEST}" \
+            --format '{{json .SBOM}}' > admin-web-image-sbom.json
+          node backend/scripts/verify-buildkit-attestations.cjs \
+            --image "${ADMIN_IMAGE_NAME}" \
+            --manifest admin-web-image-manifest.json \
+            --provenance admin-web-image-provenance.json \
+            --sbom admin-web-image-sbom.json \
+            --digest "${ADMIN_IMAGE_DIGEST}" \
+            --provenance-output admin-web-provenance-attestation-verification.json \
+            --sbom-output admin-web-sbom-attestation-verification.json
 
       - name: Pull and smoke the exact pushed digest
         env:
@@ -451,6 +458,12 @@ jobs:
           name: ${{ env.RELEASE_ID }}-release-evidence
           path: |
             release-manifest.json
+            backend-image-manifest.json
+            backend-image-provenance.json
+            backend-image-sbom.json
+            admin-web-image-manifest.json
+            admin-web-image-provenance.json
+            admin-web-image-sbom.json
             cosign-signature-verification.json
             admin-web-signature-verification.json
             provenance-attestation-verification.json
