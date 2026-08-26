@@ -162,7 +162,6 @@ jobs:
       IMAGE_NAME: ghcr.io/nguyencaoky1603/banking-backend
       ADMIN_IMAGE_NAME: ghcr.io/nguyencaoky1603/banking-admin-web
       RELEASE_ID: ${{ github.ref_name }}
-      RELEASE_EVIDENCE_DIR: ${{ runner.temp }}/banking-system-release-evidence
     steps:
       - name: Checkout the exact merge commit
         uses: actions/checkout@v4
@@ -173,7 +172,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "${RELEASE_EVIDENCE_DIR}"
+          evidence_dir="${RUNNER_TEMP}/banking-system-release-evidence"
+          mkdir -p "${evidence_dir}"
+          printf 'RELEASE_EVIDENCE_DIR=%s\n' "${evidence_dir}" >> "${GITHUB_ENV}"
 
       - name: Validate immutable release workflow contract
         run: node backend/scripts/validate-container-release-workflow.cjs
@@ -464,17 +465,17 @@ jobs:
         with:
           name: ${{ env.RELEASE_ID }}-release-evidence
           path: |
-            ${{ env.RELEASE_EVIDENCE_DIR }}/release-manifest.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/backend-image-manifest.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/backend-image-provenance.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/backend-image-sbom.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-image-manifest.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-image-provenance.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-image-sbom.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/cosign-signature-verification.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-signature-verification.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/provenance-attestation-verification.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/sbom-attestation-verification.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-provenance-attestation-verification.json
-            ${{ env.RELEASE_EVIDENCE_DIR }}/admin-web-sbom-attestation-verification.json
+            ${{ runner.temp }}/banking-system-release-evidence/release-manifest.json
+            ${{ runner.temp }}/banking-system-release-evidence/backend-image-manifest.json
+            ${{ runner.temp }}/banking-system-release-evidence/backend-image-provenance.json
+            ${{ runner.temp }}/banking-system-release-evidence/backend-image-sbom.json
+            ${{ runner.temp }}/banking-system-release-evidence/admin-web-image-manifest.json
+            ${{ runner.temp }}/banking-system-release-evidence/admin-web-image-provenance.json
+            ${{ runner.temp }}/banking-system-release-evidence/admin-web-image-sbom.json
+            ${{ runner.temp }}/banking-system-release-evidence/cosign-signature-verification.json
+            ${{ runner.temp }}/banking-system-release-evidence/admin-web-signature-verification.json
+            ${{ runner.temp }}/banking-system-release-evidence/provenance-attestation-verification.json
+            ${{ runner.temp }}/banking-system-release-evidence/sbom-attestation-verification.json
+            ${{ runner.temp }}/banking-system-release-evidence/admin-web-provenance-attestation-verification.json
+            ${{ runner.temp }}/banking-system-release-evidence/admin-web-sbom-attestation-verification.json
           if-no-files-found: error
