@@ -324,6 +324,11 @@ export interface AdminRepository {
   findJob(id: string): Promise<AdminJob | null>;
   findOutboxEvent(id: string): Promise<Record<string, unknown> | null>;
   reserveBootstrap(reservedBy: string): Promise<void>;
+  /**
+   * Burn any invitations created by a failed bootstrap and release the
+   * singleton reservation so an operator can safely retry.
+   */
+  abortBootstrap(inviteIds: string[]): Promise<void>;
   completeBootstrap(): Promise<void>;
   outboxSummary(): Promise<Record<string, number>>;
   listOutboxEvents(status?: string): Promise<Array<Record<string, unknown>>>;
@@ -680,6 +685,19 @@ export class InMemoryAdminRepository implements AdminRepository {
   findOutboxEvent(id: string) { const row = this.outboxEvents.get(id); return Promise.resolve(row ? structuredClone(row) : null); }
   private bootstrapReserved = false;
   async reserveBootstrap(_reservedBy: string) { if (this.bootstrapReserved) throw conflictWithCode("ADMIN_BOOTSTRAP_ALREADY_COMPLETED", "Admin bootstrap has already been reserved."); this.bootstrapReserved = true; }
+  async abortBootstrap(inviteIds: string[]) {
+    for (const invite of [...this.invites.values()]) {
+      if (!inviteIds.includes(invite.id)) continue;
+      const staff = this.staff.get(invite.id);
+      this.invites.delete(invite.tokenHash);
+      if (staff?.status === "INVITED") this.staff.delete(staff.id);
+      else if (staff) {
+        staff.status = "DISABLED";
+        staff.authorizationVersion += 1;
+      }
+    }
+    this.bootstrapReserved = false;
+  }
   async completeBootstrap() {}
   outboxSummary() { const result: Record<string, number> = { PENDING: 0, PROCESSING: 0, DEAD: 0, SKIPPED: 0 }; for (const row of this.outboxEvents.values()) { const status = String(row.status ?? "PENDING"); result[status] = (result[status] ?? 0) + 1; } return Promise.resolve(result); }
   listOutboxEvents(status?: string) { return Promise.resolve([...this.outboxEvents.values()].filter((row) => !status || String(row.status) === status).map((row) => structuredClone(row))); }
@@ -1210,6 +1228,21 @@ export class PostgresAdminRepository implements AdminRepository {
     return row ? { id: String(row.id), eventType: String(row.event_type), aggregateId: String(row.aggregate_id), status: String(row.status ?? "PENDING"), attempts: asNumber(row.attempts), lastErrorCode: row.last_error_code ? String(row.last_error_code) : null, eventVersion: asNumber(row.event_version, 1), aggregateVersion: asNumber(row.aggregate_version, 1), deduplicationKey: row.deduplication_key ? String(row.deduplication_key) : null, requeueable: isCanonicalOutboxRow(row), occurredAt: new Date(String(row.occurred_at)).toISOString(), updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null, traceId: row.trace_id ? String(row.trace_id) : null } : null;
   }
   async reserveBootstrap(reservedBy: string) { await this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("UPDATE admin_bootstrap_state SET reserved_at=NOW(), reserved_by=$1 WHERE singleton=true AND reserved_at IS NULL AND completed_at IS NULL RETURNING singleton", [reservedBy]); if (!result.rowCount) throw conflictWithCode("ADMIN_BOOTSTRAP_ALREADY_COMPLETED", "Admin bootstrap has already been reserved or completed."); }); }
+  async abortBootstrap(inviteIds: string[]) {
+    await this.unitOfWork.transaction(async ({ client }) => {
+      if (inviteIds.length > 0) {
+        // Invites are deleted after their hash is no longer usable. The staff
+        // row is removed only while still INVITED so the same controlled
+        // addresses can retry; an account activated concurrently is disabled
+        // instead of being deleted.
+        await client.query("DELETE FROM staff_invites WHERE id = ANY($1::uuid[])", [inviteIds]);
+        await client.query("DELETE FROM staff_user_roles roles USING staff_users staff WHERE roles.staff_id=staff.id AND staff.id = ANY($1::uuid[]) AND staff.status='INVITED'", [inviteIds]);
+        await client.query("DELETE FROM staff_users WHERE id = ANY($1::uuid[]) AND status='INVITED'", [inviteIds]);
+        await client.query("UPDATE staff_users SET status='DISABLED', authorization_version=authorization_version+1, updated_at=NOW() WHERE id = ANY($1::uuid[]) AND status <> 'INVITED'", [inviteIds]);
+      }
+      await client.query("UPDATE admin_bootstrap_state SET reserved_at=NULL, reserved_by=NULL WHERE singleton=true AND completed_at IS NULL");
+    });
+  }
   async completeBootstrap() { await this.unitOfWork.transaction(async ({ client }) => { await client.query("UPDATE admin_bootstrap_state SET completed_at=NOW() WHERE singleton=true AND reserved_at IS NOT NULL AND completed_at IS NULL"); }); }
   async outboxSummary() { const result = await this.pool.query("SELECT status, COUNT(*)::int AS count FROM outbox_events GROUP BY status"); return Object.fromEntries(result.rows.map((row) => [String(row.status), asNumber(row.count)])); }
   async listOutboxEvents(status?: string) { const result = await this.pool.query(`SELECT id,event_type,aggregate_id,status,attempts,last_error_code,occurred_at,updated_at,trace_id FROM outbox_events ${status ? "WHERE status=$1" : ""} ORDER BY occurred_at DESC LIMIT 200`, status ? [status] : []); return result.rows.map((row) => ({ id: String(row.id), eventType: String(row.event_type), aggregateId: String(row.aggregate_id), status: String(row.status), attempts: asNumber(row.attempts), lastErrorCode: row.last_error_code ? String(row.last_error_code) : null, occurredAt: new Date(String(row.occurred_at)).toISOString(), updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null, traceId: row.trace_id ? String(row.trace_id) : null })); }

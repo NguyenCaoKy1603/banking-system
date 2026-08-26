@@ -13,13 +13,33 @@ Migration `022_admin_policy_alignment.sql` tách riêng quyền tạo yêu cầu
 
 ## Bootstrap
 
+Bootstrap không in hoặc lưu token mời. Token được tạo trong memory, chỉ gửi
+qua gateway email đã cấu hình, còn PostgreSQL chỉ giữ `token_hash`. Hai địa
+chỉ phải khác nhau; invitation có thời hạn tối đa 24 giờ và chỉ dùng một lần.
+Gateway lỗi giữa chừng sẽ đốt các invitation đã tạo và giải phóng reservation
+để chạy lại an toàn với cùng địa chỉ.
+
 ```powershell
 $env:ADMIN_BOOTSTRAP_ADMIN_EMAIL = "admin@example.test"
 $env:ADMIN_BOOTSTRAP_CONTROL_EMAIL = "control@example.test"
+$env:ADMIN_INVITATION_ACTIVATION_URL = "http://127.0.0.1:5173/admin/activate"
+$env:ADMIN_INVITATION_PROVIDER_URL = "http://127.0.0.1:8025/invitations"
+$env:ADMIN_INVITATION_ALLOWED_DOMAINS = "example.test"
 npm run admin:bootstrap
 ```
 
-CLI chỉ in invitation IDs và thời hạn, không in token/password/TOTP. Token phải được bàn giao qua kênh được phê duyệt; không lưu vào repo/log.
+`ADMIN_INVITATION_PROVIDER_URL` ở local phải trỏ tới loopback/Mailpit/MailHog
+hoặc HTTP capture service tương đương. Staging/production-like bắt buộc dùng
+HTTPS, allowlist domain kiểm soát và credential từ Secret Manager qua
+`email-provider-token` (không dùng `ADMIN_INVITATION_PROVIDER_TOKEN` trong
+deployment). CLI chỉ in invitation IDs, role và thời hạn; không in
+token/password/TOTP. Gateway không được ghi request body, token vào log,
+metric, audit, outbox hay artifact.
+
+Sau khi người nhận mở activation URL, họ đặt password và enroll TOTP. Activation
+ghi audit event `STAFF_INVITE_ACTIVATED`; login tiếp theo luôn yêu cầu TOTP.
+Nếu provider trả timeout/429/5xx, adapter retry hữu hạn với backoff; lỗi cuối
+cùng làm bootstrap fail closed và không để lại invite có thể dùng lại.
 
 ## Start
 

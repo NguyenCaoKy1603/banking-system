@@ -73,9 +73,24 @@ STAGING DEPLOYED — UNVERIFIED
 
 Chỉ chuyển sang `STAGING VERIFIED` khi manifest, `/versionz`, migration
 fingerprint, signature/SBOM/provenance, APK checksum, E2E HTTPS, backup
-restore, rollback và người review độc lập đều đã có bằng chứng. Các artifact
-được kiểm tra bởi `backend/scripts/verify-release-manifest.cjs` nhưng script
-không tự tạo hoặc giả lập cloud evidence.
+restore và rollback đều đã có bằng chứng. Với phạm vi khóa luận cá nhân,
+manifest phải ghi rõ:
+
+```json
+{
+  "verificationMode": "SOLO_ACADEMIC_OWNER",
+  "verifiedBy": "repository-owner",
+  "independentReview": false,
+  "scope": "academic-synthetic-virtual-money"
+}
+```
+
+Mode solo chỉ hợp lệ cho staging học thuật dùng dữ liệu synthetic và tiền
+virtual; không được dùng để xác nhận production-like và không được ghi nhận
+như một independent review. Các manifest production-like vẫn phải dùng mode
+`INDEPENDENT_REVIEW`. Artifact được kiểm tra bởi
+`backend/scripts/verify-release-manifest.cjs` nhưng script không tự tạo hoặc
+giả lập cloud evidence.
 
 ## Blocker bên ngoài workspace
 

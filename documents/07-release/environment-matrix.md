@@ -16,6 +16,16 @@
 | Backup | không cam kết | mục tiêu RPO 24h/RTO 2h; local logical rehearsal | mục tiêu RPO 24h/RTO 2h | mục tiêu RPO ≤5m/RTO ≤60m |
 | Tiền | virtual only | virtual only | virtual only | virtual only |
 
+## Verification mode
+
+| Môi trường | Mode hợp lệ | Reviewer độc lập |
+|---|---|---|
+| Staging học thuật synthetic/solo | `SOLO_ACADEMIC_OWNER` | Không; owner xác nhận bằng `verifiedBy=repository-owner` và `independentReview=false` |
+| Production-like | `INDEPENDENT_REVIEW` | Bắt buộc |
+
+Solo mode chỉ xác nhận phạm vi học thuật, tiền mô phỏng và dữ liệu synthetic;
+không phải tuyên bố production readiness.
+
 ## Admin Web runtime contract
 
 Admin Web được build một lần thành image độc lập môi trường. Mọi môi trường

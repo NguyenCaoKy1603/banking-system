@@ -27,7 +27,7 @@ clean commit
   → migration job cùng digest
   → /startupz + /readyz + /versionz
   → Staging evidence
-  → manual promotion với reviewer độc lập
+  → manual promotion theo verificationMode đã khai báo
 ```
 
 ## Gate local hiện có
@@ -98,6 +98,6 @@ Invoke-RestMethod https://api.staging.example.com/versionz
 - Tạo PostgreSQL Staging/Production-like riêng, role riêng, TLS private, backup/PITR và restore rehearsal.
 - Chọn provider managed container/DNS/TLS/secret manager và viết adapter deploy/IaC tương ứng.
 - Inject ManagedSecretClient/KMS envelope adapter, workload identity/OIDC và rotation/rollback evidence; workspace hiện chỉ có seam fail-closed provider-neutral.
-- Chạy mobile E2E qua HTTPS staging (không dùng Metro/ADB reverse), performance, rollback rehearsal và reviewer độc lập.
+- Chạy mobile E2E qua HTTPS staging (không dùng Metro/ADB reverse), performance và rollback rehearsal. Với phạm vi khóa luận solo, owner ghi `SOLO_ACADEMIC_OWNER`, `independentReview=false`, scope synthetic/virtual; chỉ production-like mới yêu cầu `INDEPENDENT_REVIEW`.
 
 Runbook thao tác: [`migration-runbook.md`](migration-runbook.md), [`backup-restore-runbook.md`](backup-restore-runbook.md), [`rollback-runbook.md`](rollback-runbook.md) và [`incident-checklist.md`](incident-checklist.md).
