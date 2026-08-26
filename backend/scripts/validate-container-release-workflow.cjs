@@ -50,6 +50,9 @@ requireMatch(release, /ADMIN_IMAGE_NAME }}:sha-\$\{\{\s*steps\.release_meta\.out
 requireMatch(release, /Reject an existing release tag before publishing/, "release tag immutability check must be present");
 requireMatch(release, /docker manifest inspect/, "release tag immutability must be checked in the registry");
 requireMatch(release, /admin-web\/scripts\/verify-runtime-proxy\.cjs/, "release must use the shared runtime proxy fixture");
+requireMatch(release, /docker buildx imagetools inspect/, "release must inspect registry-native BuildKit attestations");
+requireMatch(release, /verify-buildkit-attestations\.cjs/, "release must validate BuildKit provenance and SBOM metadata");
+requireAbsent(release, /cosign verify-attestation/, "release must not use Cosign attestation discovery for native BuildKit metadata");
 requireAbsent(release, /refs\/\(heads\/main\|tags\//, "Cosign identity must not allow the old main-branch workflow");
 requireMatch(release, /COSIGN_IDENTITY:[^\n]*refs\/tags\/v1\\[.]0\\[.]0-thesis-rc/, "Cosign identity must be bound to RC tags");
 requireMatch(topPermissions, /permissions:\s*\n\s+contents:\s*read\s*\n/, "quality jobs must have read-only default permissions");
