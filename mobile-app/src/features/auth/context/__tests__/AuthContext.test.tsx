@@ -29,9 +29,9 @@ jest.mock("@/features/auth/services/authApi", () => ({
   login: jest.fn(),
   refreshSession: jest.fn(),
   register: jest.fn(),
+  resendRegistrationChallenge: jest.fn(),
   revokeAllSessions: jest.fn(),
   revokeSession: jest.fn(),
-  verifyLoginChallenge: jest.fn(),
   verifyRegistrationChallenge: jest.fn(),
 }));
 jest.mock("@/features/auth/storage/authSessionStorage", () => ({

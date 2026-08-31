@@ -2,6 +2,7 @@ import type { BankingRuntimeEnvironment } from "../runtimeConfig.js";
 import { referenceFor } from "../secrets/runtimeSecrets.js";
 import type { SecretProvider } from "../secrets/SecretProvider.js";
 import { HttpEmailProvider } from "./httpEmailProvider.js";
+import { SmtpEmailProvider, type SmtpTransport } from "./smtpEmailProvider.js";
 import { NullEmailProvider, type VerificationCodeDeliveryPort } from "./delivery.js";
 
 type RuntimeEmailProviderOptions = {
@@ -11,6 +12,7 @@ type RuntimeEmailProviderOptions = {
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
   sleep?: (delayMs: number) => Promise<void>;
+  smtpTransport?: SmtpTransport;
 };
 
 const LOCAL_CAPTURE_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "mailpit", "mailhog"]);
@@ -21,6 +23,20 @@ function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number,
   const value = Number(raw);
   if (!Number.isInteger(value) || (allowZero ? value < 0 : value <= 0)) throw new Error(`${name} must be ${allowZero ? "non-negative" : "positive"}.`);
   return value;
+}
+
+function requiredValue(env: NodeJS.ProcessEnv, name: string): string {
+  const value = env[name]?.trim();
+  if (!value) throw new Error(`${name} is required.`);
+  return value;
+}
+
+function booleanValue(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boolean {
+  const raw = env[name]?.trim().toLowerCase();
+  if (!raw) return fallback;
+  if (["1", "true", "yes"].includes(raw)) return true;
+  if (["0", "false", "no"].includes(raw)) return false;
+  throw new Error(`${name} must be a boolean value.`);
 }
 function validateEndpoint(endpoint: string, productionLike: boolean): URL {
   let parsed: URL;
@@ -51,7 +67,26 @@ export async function createRuntimeEmailProvider(options: RuntimeEmailProviderOp
     if (options.isProductionLike) throw new Error("EMAIL_PROVIDER=disabled is forbidden in staging and production-like runtimes.");
     return new NullEmailProvider();
   }
-  if (mode !== "http") throw new Error("EMAIL_PROVIDER must be http or disabled.");
+  if (mode === "smtp") {
+    const secret = await options.secretProvider.getSecret(referenceFor("emailProviderToken", options.environment));
+    if (!secret.value.trim()) throw new Error("Gmail SMTP credential is empty.");
+    const port = positiveInteger(env, "SMTP_PORT", 465);
+    const secure = booleanValue(env, "SMTP_SECURE", port === 465);
+    return new SmtpEmailProvider({
+      host: requiredValue(env, "SMTP_HOST"),
+      port,
+      secure,
+      user: requiredValue(env, "SMTP_USER"),
+      from: requiredValue(env, "SMTP_FROM"),
+      password: secret.value,
+      timeoutMs: positiveInteger(env, "EMAIL_PROVIDER_TIMEOUT_MS", 5_000),
+      maxAttempts: positiveInteger(env, "EMAIL_PROVIDER_MAX_ATTEMPTS", 2),
+      retryDelayMs: positiveInteger(env, "EMAIL_PROVIDER_RETRY_DELAY_MS", 250, true),
+      transport: options.smtpTransport,
+      sleep: options.sleep,
+    });
+  }
+  if (mode !== "http") throw new Error("EMAIL_PROVIDER must be http, smtp or disabled.");
 
   const endpointValue = env.EMAIL_PROVIDER_URL?.trim();
   if (!endpointValue) throw new Error("EMAIL_PROVIDER_URL is required when EMAIL_PROVIDER=http.");

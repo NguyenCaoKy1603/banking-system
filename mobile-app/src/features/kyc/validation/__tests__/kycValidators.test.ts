@@ -7,6 +7,7 @@ describe("validateKycDraft", () => {
       identityNumber: "012345678901",
       address: "12 Đường Mẫu, Hà Nội",
       documentUri: "mock://identity-card-front",
+      syntheticDataConfirmed: true,
     });
 
     expect(hasKycFieldErrors(errors)).toBe(false);
@@ -18,10 +19,12 @@ describe("validateKycDraft", () => {
       identityNumber: "abc",
       address: "x",
       documentUri: "",
+      syntheticDataConfirmed: false,
     });
 
     expect(errors.identityNumber).toBeDefined();
     expect(errors.documentUri).toBeDefined();
+    expect(errors.syntheticDataConfirmed).toBeDefined();
     expect(hasKycFieldErrors(errors)).toBe(true);
   });
 });

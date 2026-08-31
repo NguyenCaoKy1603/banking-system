@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 
+import { BrandMark } from "@/components/brand/BrandMark";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
@@ -14,7 +15,7 @@ import {
   startMfaRecovery,
 } from "@/features/auth/services/authApi";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, spacing, typography } from "@/theme";
 
 function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "Không thể hoàn tất khôi phục MFA.";
@@ -45,7 +46,7 @@ export function MfaRecoveryScreen() {
 
   async function handleStart() {
     if (!deviceOptions || !email.trim() || !password || recoveryCode.length < 16) {
-      setError("Cần email, mật khẩu và recovery code hợp lệ.");
+      setError("Cần email, mật khẩu và mã khôi phục hợp lệ.");
       return;
     }
     setIsSubmitting(true);
@@ -99,10 +100,11 @@ export function MfaRecoveryScreen() {
     <Screen>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <BrandMark />
           <View style={styles.header}>
-            <Text style={styles.eyebrow}>KHÔI PHỤC MFA</Text>
-            <Text style={styles.title}>Đăng ký Authenticator mới</Text>
-            <Text style={styles.description}>Recovery code chỉ dùng một lần. Máy chủ sẽ thu hồi phiên và factor cũ trước khi cho đăng ký lại.</Text>
+            <Text style={styles.eyebrow}>KHÔI PHỤC BẢO MẬT</Text>
+            <Text style={styles.title}>Thiết lập Authenticator mới</Text>
+            <Text style={styles.description}>Mã khôi phục chỉ dùng một lần. Các phiên và phương thức xác thực cũ sẽ được thu hồi để bảo vệ tài khoản.</Text>
           </View>
 
           {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
@@ -144,13 +146,13 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: { flexGrow: 1, justifyContent: "center", width: "100%", maxWidth: 520, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
   header: { gap: spacing.sm },
-  eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "700", letterSpacing: 1.4 },
-  title: { color: colors.text, fontSize: 28, fontWeight: "700" },
-  description: { color: colors.muted, fontSize: 14, lineHeight: 21 },
-  sectionTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
-  card: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: spacing.md, backgroundColor: colors.surface },
-  qrFrame: { alignSelf: "center", padding: spacing.md, backgroundColor: colors.surface },
+  eyebrow: { ...typography.label, color: colors.primary, letterSpacing: 1 },
+  title: { ...typography.title, color: colors.text },
+  description: { ...typography.body, color: colors.muted },
+  sectionTitle: { ...typography.subheading, color: colors.text },
+  card: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, ...shadows.card },
+  qrFrame: { alignSelf: "center", padding: spacing.md, borderWidth: 2, borderColor: colors.primarySoft, borderRadius: radius.lg, backgroundColor: colors.surface },
   secret: { color: colors.text, fontSize: 16, fontWeight: "700", letterSpacing: 1.5 },
-  error: { color: colors.danger, fontSize: 14, lineHeight: 20 },
+  error: { ...typography.body, padding: spacing.md, borderRadius: radius.md, color: colors.danger, backgroundColor: colors.dangerSoft },
   link: { color: colors.primary, fontSize: 14, fontWeight: "600", textAlign: "center" },
 });

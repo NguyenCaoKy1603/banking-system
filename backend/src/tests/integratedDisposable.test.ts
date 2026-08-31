@@ -154,16 +154,37 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
   const outboxPayload = await repository.unitOfWork.transaction(async ({ client }) => client.query<{ payload: Record<string, unknown> }>("SELECT payload FROM outbox_events WHERE event_type = 'security.registration_otp_requested.v1' ORDER BY occurred_at DESC LIMIT 1"));
   assert.equal(JSON.stringify(outboxPayload.rows[0]?.payload ?? {}).includes(code), false);
 
+  await repository.unitOfWork.transaction(async ({ client }) => {
+    await client.query(
+      "UPDATE auth_challenges SET last_sent_at = NOW() - INTERVAL '2 minutes' WHERE id = $1",
+      [hashOpaqueToken(challenge.challengeId)],
+    );
+  });
+  const resend = await request(`/auth/challenges/${encodeURIComponent(challenge.challengeId)}/resend`, {
+    method: "POST",
+    headers: { "X-Device-ID": "integrated-device" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(resend.status, 200);
+  const resentChallenge = await resend.json() as { challengeId: string; method: string; methods: string[]; purpose: string };
+  assert.equal(resentChallenge.method, "EMAIL_OTP");
+  assert.deepEqual(resentChallenge.methods, ["EMAIL_OTP"]);
+  assert.equal(resentChallenge.purpose, "REGISTRATION_EMAIL_VERIFY");
+  assert.equal(captured.length, 2);
+  const resentCode = String(captured[1]?.code ?? "");
+  assert.match(resentCode, /^\d{6}$/);
+  assert.notEqual(resentCode, code);
+
   const verified = await request("/auth/register/verify", {
     method: "POST",
     headers: { "X-Device-ID": "integrated-device" },
-    body: JSON.stringify({ challengeId: challenge.challengeId, proof: code }),
+    body: JSON.stringify({ challengeId: resentChallenge.challengeId, method: "EMAIL_OTP", proof: resentCode }),
   });
   assert.equal(verified.status, 201);
   const replay = await request("/auth/register/verify", {
     method: "POST",
     headers: { "X-Device-ID": "integrated-device" },
-    body: JSON.stringify({ challengeId: challenge.challengeId, proof: code }),
+    body: JSON.stringify({ challengeId: resentChallenge.challengeId, method: "EMAIL_OTP", proof: resentCode }),
   });
   assert.notEqual(replay.status, 201);
   const registrationCounts = await repository.unitOfWork.transaction(async ({ client }) => client.query<{ customers: string; accounts: string }>(
@@ -171,6 +192,18 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
     [email],
   ));
   assert.deepEqual(registrationCounts.rows[0], { customers: "1", accounts: "1" });
+
+  // Registration OTP is not a login factor. A relational session is issued
+  // directly after the email/password check, even with the MFA service wired.
+  const login = await request("/auth/login", {
+    method: "POST",
+    headers: { "X-Device-ID": "integrated-login-device" },
+    body: JSON.stringify({ email, password: "Password1!" }),
+  });
+  assert.equal(login.status, 200);
+  const loginPayload = await login.json() as { accessToken?: string; refreshToken?: string };
+  assert.ok(loginPayload.accessToken);
+  assert.ok(loginPayload.refreshToken);
 
   const fixtureDatabase = new DatabasePool({ connectionString: databaseUrl!, max: 8 });
   const fixture = await disposableFixture(fixtureDatabase);

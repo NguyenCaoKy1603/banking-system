@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { PoolClient } from "pg";
-import { addDays, calculateAvailableCredit, calculateMinimumPayment, getStatementStatus, nextStatementCloseAt, type CardInstrument, type CreditAccount, type CreditApplication, type CreditApplicationRequest, type CreditCard, type CreditPayment, type CreditPaymentQuote, type CreditPaymentQuoteRequest, type CreditStatement, type CreditTransaction } from "../credit.js";
+import { addDays, calculateAvailableCredit, calculateMinimumPayment, getStatementStatus, nextStatementCloseAt, type CardInstrument, type CardReportedLostResult, type CreditAccount, type CreditApplication, type CreditApplicationRequest, type CreditCard, type CreditPayment, type CreditPaymentQuote, type CreditPaymentQuoteRequest, type CreditStatement, type CreditTransaction } from "../credit.js";
 import { conflict, invalidRequest, notFound } from "../errors.js";
 import { fingerprint } from "../security.js";
 import { parseMoney, toMoney } from "../money.js";
@@ -12,6 +12,7 @@ import { CreditRepository } from "./repositories/creditRepository.js";
 import { LedgerRepository } from "./repositories/ledgerRepository.js";
 import { OutboxRepository } from "./repositories/outboxRepository.js";
 import { IdempotencyConflictError, RelationalConflictError, RelationalNotFoundError } from "./commandErrors.js";
+import { ControlPolicyRepository } from "./controlPolicyRepository.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_APPLICATION_LIMIT = 100_000_000n;
@@ -105,7 +106,7 @@ function cursorDecode(cursor: string | undefined, kind: string, scope: string): 
   if (!cursor) return null;
   try {
     const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
-    if (parsed.version !== 1 || parsed.kind !== kind || parsed.scope !== scope || typeof parsed.sortValue !== "string" || typeof parsed.id !== "string") throw new Error("invalid cursor");
+    if (parsed.version !== 1 || parsed.kind !== kind || parsed.scope !== scope || typeof parsed.sortValue !== "string" || typeof parsed.id !== "string" || !UUID_PATTERN.test(parsed.id) || Number.isNaN(Date.parse(parsed.sortValue))) throw new Error("invalid cursor");
     return { sortValue: parsed.sortValue, id: parsed.id };
   } catch { throw invalidRequest("cursor is invalid.", { cursor: "cursor is invalid." }); }
 }
@@ -177,24 +178,12 @@ export type CreditFaultPoint = "after_quote_consumed" | "after_source_balance" |
 export class RelationalCreditService {
   constructor(private readonly unitOfWork: UnitOfWork) {}
 
-  private async assertAvailable(client: PoolClient, feature: "credit" | "payments" | "cards" = "credit"): Promise<bigint> {
-    const result = await client.query<{ global_kill_switch: boolean; credit_enabled: boolean; credit_allowlisted: boolean; credit_payments_enabled: boolean; card_controls_enabled: boolean; max_credit_payment_amount_minor: string }>(
-      `SELECT global_kill_switch, credit_enabled, credit_allowlisted,
-              credit_payments_enabled, card_controls_enabled,
-              max_credit_payment_amount_minor
-       FROM control_policy WHERE singleton = true`,
-    );
-    const row = result.rows[0];
-    if (
-      row && (
-        row.global_kill_switch ||
-        !row.credit_enabled ||
-        !row.credit_allowlisted ||
-        feature === "payments" && !row.credit_payments_enabled ||
-        feature === "cards" && !row.card_controls_enabled
-      ) || process.env.BANKING_CREDIT_ENABLED === "0"
-    ) throw conflict("Credit sandbox is temporarily unavailable.");
-    return BigInt(row?.max_credit_payment_amount_minor ?? process.env.BANKING_MAX_CREDIT_PAYMENT_AMOUNT_MINOR ?? DEFAULT_LIMIT.toString());
+  private async assertCreditApplicationAllowed(client: PoolClient, customerId: string): Promise<void> {
+    await new ControlPolicyRepository(client).assertCreditApplicationAllowed(customerId);
+  }
+
+  private async assertCreditPaymentAllowed(client: PoolClient, customerId: string, amountMinor?: bigint): Promise<bigint> {
+    return new ControlPolicyRepository(client).assertCreditPaymentAllowed(customerId, amountMinor);
   }
 
   private async statement(client: PoolClient, repository: CreditRepository, row: Record<string, unknown>): Promise<CreditStatement> {
@@ -205,7 +194,6 @@ export class RelationalCreditService {
 
   async listCards(customerId: string): Promise<{ items: CreditCard[] }> {
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client, "cards");
       const repository = new CreditRepository(client);
       const items: CreditCard[] = [];
       for (const row of await repository.listCards(customerId)) {
@@ -219,7 +207,6 @@ export class RelationalCreditService {
   async getCard(customerId: string, cardId: string): Promise<{ card: CreditCard; creditAccount: CreditAccount; latestStatement: CreditStatement | null }> {
     assertUuid(cardId, "cardId");
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client, "cards");
       const repository = new CreditRepository(client);
       const row = await repository.findCard(customerId, cardId);
       if (!row) throw notFound("Credit card not found.");
@@ -231,7 +218,6 @@ export class RelationalCreditService {
 
   async listApplications(customerId: string): Promise<{ items: CreditApplication[] }> {
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client);
       return { items: (await new CreditRepository(client).listApplications(customerId)).map(applicationPublic) };
     });
   }
@@ -239,7 +225,6 @@ export class RelationalCreditService {
   async getApplication(customerId: string, applicationId: string): Promise<CreditApplication> {
     assertUuid(applicationId, "applicationId");
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client);
       const row = await new CreditRepository(client).findApplication(customerId, applicationId);
       if (!row) throw notFound("Credit application not found.");
       return applicationPublic(row);
@@ -257,7 +242,7 @@ export class RelationalCreditService {
     if (requested <= 0n || requested > MAX_APPLICATION_LIMIT) throw conflict("Requested credit limit is outside the sandbox range.");
     const requestFingerprint = fingerprint({ requestedLimitMinor: requested.toString() });
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client);
+      await this.assertCreditApplicationAllowed(client, input.customerId);
       const repository = new CreditRepository(client);
       const reservation = await repository.reserveIdempotency({ id: randomUUID(), customerId: input.customerId, operationType: "CREDIT_APPLICATION", idempotencyKey: key, requestFingerprint });
       if (!reservation.created) {
@@ -289,7 +274,7 @@ export class RelationalCreditService {
     const key = idempotency(input.idempotencyKey);
     const requestFingerprint = fingerprint({ applicationId: input.applicationId });
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client);
+      await this.assertCreditApplicationAllowed(client, input.customerId);
       const repository = new CreditRepository(client);
       const reservation = await repository.reserveIdempotency({ id: randomUUID(), customerId: input.customerId, operationType: "CREDIT_ACTIVATION", idempotencyKey: key, requestFingerprint });
       if (!reservation.created) {
@@ -309,12 +294,10 @@ export class RelationalCreditService {
       const approved = bigint(application.approved_limit_minor ?? application.requested_limit_minor, "approved_limit_minor");
       const now = new Date().toISOString();
       const nextStatementAt = nextStatementCloseAt(now);
-      const account = await repository.createCreditAccount({ id: randomUUID(), customerId: input.customerId, limitMinor: approved.toString(), nextStatementAt });
+      const account = await repository.createCreditAccount({ id: randomUUID(), customerId: input.customerId, limitMinor: approved.toString(), currentCycleStartAt: now, nextStatementAt });
       const card = await repository.createCard({ id: randomUUID(), customerId: input.customerId, creditAccountId: string(account.id), now });
-      const cycleEnd = nextStatementAt;
-      const statement = await repository.createStatement({ id: randomUUID(), creditAccountId: string(account.id), cycleStartAt: now, cycleEndAt: cycleEnd, issuedAt: now, dueAt: addDays(cycleEnd, 15) });
       const activated = await repository.activateApplication({ applicationId: input.applicationId, creditAccountId: string(account.id), approvedLimitMinor: approved.toString() });
-      await new AuditRepository(client).append({ id: randomUUID(), eventType: "CREDIT_APPLICATION_ACTIVATED", actorCustomerId: input.customerId, resourceId: input.applicationId, occurredAt: now, payload: { creditAccountId: string(account.id), cardId: string(card.id), statementId: string(statement.id), traceId: input.traceId ?? null } });
+      await new AuditRepository(client).append({ id: randomUUID(), eventType: "CREDIT_APPLICATION_ACTIVATED", actorCustomerId: input.customerId, resourceId: input.applicationId, occurredAt: now, payload: { creditAccountId: string(account.id), cardId: string(card.id), firstCycleStartAt: now, firstCycleEndAt: nextStatementAt, traceId: input.traceId ?? null } });
       await new OutboxRepository(client).append({ id: randomUUID(), eventType: "credit.application_activated", aggregateId: input.applicationId, occurredAt: now, subjectCustomerIds: [input.customerId], payload: { applicationId: input.applicationId, creditAccountId: string(account.id) }, traceId: input.traceId });
       await repository.completeIdempotency(input.customerId, "CREDIT_ACTIVATION", key, { applicationId: input.applicationId, status: "ACTIVE", responsePayload: applicationPublic(activated) });
       return applicationPublic(activated);
@@ -322,25 +305,23 @@ export class RelationalCreditService {
   }
 
   async listAccounts(customerId: string): Promise<CreditAccount[]> {
-    return this.unitOfWork.transaction(async ({ client }) => { await this.assertAvailable(client); return (await new CreditRepository(client).listCreditAccounts(customerId)).map(accountPublic); });
+    return this.unitOfWork.transaction(async ({ client }) => (await new CreditRepository(client).listCreditAccounts(customerId)).map(accountPublic));
   }
   async getAccount(customerId: string, accountId: string): Promise<CreditAccount> {
     assertUuid(accountId, "creditAccountId");
-    return this.unitOfWork.transaction(async ({ client }) => { await this.assertAvailable(client); const row = await new CreditRepository(client).findCreditAccount(customerId, accountId); if (!row) throw notFound("Credit account not found."); return accountPublic(row); });
+    return this.unitOfWork.transaction(async ({ client }) => { const row = await new CreditRepository(client).findCreditAccount(customerId, accountId); if (!row) throw notFound("Credit account not found."); return accountPublic(row); });
   }
 
   async listTransactions(customerId: string, accountId: string, cursor?: string, limit = 20): Promise<{ items: CreditTransaction[]; nextCursor: string | null }> {
     assertUuid(accountId, "creditAccountId");
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw invalidRequest("limit must be an integer between 1 and 100.");
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client);
       const repository = new CreditRepository(client);
       if (!(await repository.findCreditAccount(customerId, accountId))) throw notFound("Credit account not found.");
-      const all = (await repository.listTransactions(customerId, accountId)).map(transactionPublic);
       const position = cursorDecode(cursor, "CREDIT_TRANSACTIONS", accountId);
-      const remaining = position ? all.filter((item) => item.occurredAt < position.sortValue || item.occurredAt === position.sortValue && item.transactionId < position.id) : all;
-      const items = remaining.slice(0, limit); const last = items.at(-1);
-      return { items, nextCursor: remaining.length > items.length && last ? cursorEncode("CREDIT_TRANSACTIONS", accountId, { sortValue: last.occurredAt, id: last.transactionId }) : null };
+      const rows = await repository.listTransactions(customerId, accountId, position ? { occurredAt: position.sortValue, id: position.id } : null, limit + 1);
+      const items = rows.slice(0, limit).map(transactionPublic); const last = items.at(-1);
+      return { items, nextCursor: rows.length > limit && last ? cursorEncode("CREDIT_TRANSACTIONS", accountId, { sortValue: last.occurredAt, id: last.transactionId }) : null };
     });
   }
 
@@ -348,21 +329,20 @@ export class RelationalCreditService {
     assertUuid(accountId, "creditAccountId");
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw invalidRequest("limit must be an integer between 1 and 100.");
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client);
       const repository = new CreditRepository(client);
       if (!(await repository.findCreditAccount(customerId, accountId))) throw notFound("Credit account not found.");
-      const all: CreditStatement[] = [];
-      for (const row of await repository.listStatements(customerId, accountId)) all.push(await this.statement(client, repository, row));
       const position = cursorDecode(cursor, "CREDIT_STATEMENTS", accountId);
-      const remaining = position ? all.filter((item) => item.issuedAt < position.sortValue || item.issuedAt === position.sortValue && item.statementId < position.id) : all;
-      const items = remaining.slice(0, limit); const last = items.at(-1);
-      return { items, nextCursor: remaining.length > items.length && last ? cursorEncode("CREDIT_STATEMENTS", accountId, { sortValue: last.issuedAt, id: last.statementId }) : null };
+      const rows = await repository.listStatements(customerId, accountId, position ? { issuedAt: position.sortValue, id: position.id } : null, limit + 1);
+      const items: CreditStatement[] = [];
+      for (const row of rows.slice(0, limit)) items.push(await this.statement(client, repository, row));
+      const last = items.at(-1);
+      return { items, nextCursor: rows.length > limit && last ? cursorEncode("CREDIT_STATEMENTS", accountId, { sortValue: last.issuedAt, id: last.statementId }) : null };
     });
   }
 
   async getStatement(customerId: string, accountId: string, statementId: string): Promise<CreditStatement> {
     assertUuid(accountId, "creditAccountId"); assertUuid(statementId, "statementId");
-    return this.unitOfWork.transaction(async ({ client }) => { await this.assertAvailable(client); const repository = new CreditRepository(client); const row = await repository.findStatement(customerId, accountId, statementId); if (!row) throw conflict("Không tìm thấy sao kê tín dụng."); return this.statement(client, repository, row); });
+    return this.unitOfWork.transaction(async ({ client }) => { const repository = new CreditRepository(client); const row = await repository.findStatement(customerId, accountId, statementId); if (!row) throw conflict("Không tìm thấy sao kê tín dụng."); return this.statement(client, repository, row); });
   }
 
   async createPaymentQuote(customerId: string, input: CreditPaymentQuoteRequest): Promise<CreditPaymentQuote> {
@@ -372,7 +352,7 @@ export class RelationalCreditService {
     assertUuid(sourceAccountId, "sourceAccountId"); assertUuid(creditAccountId, "creditAccountId"); assertUuid(statementId, "statementId");
     if (input.paymentOption !== "MINIMUM" && input.paymentOption !== "FULL_STATEMENT" && input.paymentOption !== "CUSTOM") throw invalidRequest("paymentOption is invalid.");
     return this.unitOfWork.transaction(async ({ client }) => {
-      const maxPayment = await this.assertAvailable(client, "payments");
+      const maxPayment = await this.assertCreditPaymentAllowed(client, customerId);
       const repository = new CreditRepository(client);
       const source = await new AccountRepository(client).findOwnedAccount(customerId, sourceAccountId);
       if (!source) throw notFound("Account not found.");
@@ -424,7 +404,7 @@ export class RelationalCreditService {
   async submitPayment(input: { customerId: string; idempotencyKey: string; quoteId: string; requestFingerprint: string; traceId?: string; fault?: (point: CreditFaultPoint) => void | Promise<void> }): Promise<CreditPayment> {
     const key = idempotency(input.idempotencyKey); assertUuid(input.quoteId, "quoteId");
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client, "payments");
+      await this.assertCreditPaymentAllowed(client, input.customerId);
       const repository = new CreditRepository(client);
       const reservation = await repository.reserveIdempotency({ id: randomUUID(), customerId: input.customerId, operationType: "CREDIT_PAYMENT", idempotencyKey: key, requestFingerprint: input.requestFingerprint });
       if (!reservation.created) {
@@ -447,11 +427,22 @@ export class RelationalCreditService {
       const credit = await repository.lockCreditAccount(string(quote.credit_account_id));
       const statement = await repository.lockStatement(string(quote.statement_id));
       if (!source || source.customerId !== input.customerId) throw new RelationalNotFoundError("Account not found.");
-      if (!credit || string(credit.customer_id) !== input.customerId || string(credit.status) !== "ACTIVE") throw new RelationalConflictError("CREDIT_ACCOUNT_INVALID", "Credit account is not active.");
+      const creditStatus = credit ? string(credit.status) : "";
+      if (
+        !credit ||
+        string(credit.customer_id) !== input.customerId ||
+        !["ACTIVE", "FROZEN"].includes(creditStatus)
+      ) {
+        throw new RelationalConflictError(
+          "CREDIT_ACCOUNT_INVALID",
+          "Credit account is not eligible for repayment.",
+        );
+      }
       if (!statement || string(statement.credit_account_id) !== string(credit.id) || String(statement.version) !== String(quote.statement_version)) throw new RelationalConflictError("STATEMENT_CHANGED", "Sao kê đã thay đổi; hãy tạo báo giá mới.");
       const latest = await client.query("SELECT id FROM credit_statements WHERE credit_account_id = $1 ORDER BY issued_at DESC, id DESC LIMIT 1", [credit.id]);
       if (String(latest.rows[0]?.id) !== String(statement.id)) throw new RelationalConflictError("STATEMENT_SUPERSEDED", "Sao kê không còn hiện hành.");
       const amount = bigint(quote.amount_minor, "amount_minor");
+      await this.assertCreditPaymentAllowed(client, input.customerId, amount);
       if (amount > bigint(credit.posted_outstanding_minor, "posted_outstanding_minor") || amount > bigint(statement.remaining_amount_due_minor, "remaining_amount_due_minor")) throw new RelationalConflictError("OVERPAYMENT", "Khoản thanh toán vượt dư nợ hiện tại.");
       if (bigint(source.availableMinor, "availableMinor") < amount) throw new RelationalConflictError("INSUFFICIENT_FUNDS", "Tài khoản nguồn không đủ số dư khả dụng.");
       if (!(await repository.consumePaymentQuote(input.quoteId))) throw new RelationalConflictError("QUOTE_ALREADY_CONSUMED", "Credit payment quote was consumed concurrently.");
@@ -488,14 +479,21 @@ export class RelationalCreditService {
 
   async getPayment(customerId: string, paymentId: string): Promise<CreditPayment> {
     assertUuid(paymentId, "paymentId");
-    return this.unitOfWork.transaction(async ({ client }) => { await this.assertAvailable(client); const result = await client.query("SELECT * FROM credit_payments WHERE customer_id = $1 AND id = $2", [customerId, paymentId]); if (!result.rows[0]) throw notFound("Credit payment not found."); return paymentPublic(result.rows[0] as Record<string, unknown>); });
+    return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT * FROM credit_payments WHERE customer_id = $1 AND id = $2", [customerId, paymentId]); if (!result.rows[0]) throw notFound("Credit payment not found."); return paymentPublic(result.rows[0] as Record<string, unknown>); });
   }
 
   async setCardStatus(customerId: string, cardId: string, status: "ACTIVE" | "LOCKED"): Promise<CreditCard> {
     assertUuid(cardId, "cardId");
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client, "cards");
       const repository = new CreditRepository(client); const before = await repository.lockCard(customerId, cardId); if (!before) throw notFound("Credit card not found.");
+      // Repeating the same command is an idempotent no-op.  In particular an
+      // emergency lock must not create duplicate audit/outbox records when a
+      // mobile client retries after a timeout.
+      if (string(before.status) === status) {
+        const latest = (await repository.listStatements(customerId, string(before.credit_account_id)))[0];
+        return cardPublic(before, latest ? await this.statement(client, repository, latest) : null);
+      }
+      if (status === "ACTIVE") await new ControlPolicyRepository(client).assertCardUnlockAllowed(customerId);
       if (status === "LOCKED" && ["BLOCKED", "EXPIRED", "CLOSED"].includes(string(before.status))) throw conflict("CARD_STATE_INVALID");
       if (status === "ACTIVE" && string(before.status) !== "LOCKED") throw conflict("CARD_STATE_INVALID");
       const row = await repository.updateCardStatus(customerId, cardId, status); if (!row) throw notFound("Credit card not found.");
@@ -505,5 +503,80 @@ export class RelationalCreditService {
       const latest = (await repository.listStatements(customerId, string(row.credit_account_id)))[0];
       return cardPublic({ ...row, ...before, status, updated_at: now, credit_account_id: before.credit_account_id }, latest ? await this.statement(client, repository, latest) : null);
     }, { maxRetries: 1 });
+  }
+
+  async reportCardLost(customerId: string, cardId: string, traceId?: string): Promise<CardReportedLostResult> {
+    assertUuid(cardId, "cardId");
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const repository = new CreditRepository(client);
+      const before = await repository.lockCard(customerId, cardId);
+      if (!before) throw notFound("Credit card not found.");
+      if (["EXPIRED", "CLOSED"].includes(string(before.status))) {
+        throw new RelationalConflictError("CARD_STATE_INVALID", "Expired or closed cards cannot be reported lost.");
+      }
+
+      const existingCase = await client.query<Record<string, unknown>>(
+        `SELECT id, status FROM card_security_cases
+          WHERE card_id = $1 AND customer_id = $2 AND case_type = 'REPORTED_LOST'
+            AND status IN ('OPEN', 'IN_REVIEW')
+          ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`,
+        [cardId, customerId],
+      );
+      if (existingCase.rows[0]) {
+        const latest = (await repository.listStatements(customerId, string(before.credit_account_id)))[0];
+        return {
+          card: cardPublic(before, latest ? await this.statement(client, repository, latest) : null),
+          caseId: string(existingCase.rows[0].id),
+          caseStatus: string(existingCase.rows[0].status) as CardReportedLostResult["caseStatus"],
+        };
+      }
+
+      const row = string(before.status) === "BLOCKED"
+        ? before
+        : await repository.updateCardStatus(customerId, cardId, "BLOCKED");
+      if (!row) throw notFound("Credit card not found.");
+      const caseId = randomUUID();
+      const now = new Date().toISOString();
+      await client.query(
+        `INSERT INTO card_security_cases
+          (id, card_id, customer_id, case_type, status, created_at, updated_at)
+         VALUES ($1, $2, $3, 'REPORTED_LOST', 'OPEN', $4, $4)`,
+        [caseId, cardId, customerId, now],
+      );
+      const notificationId = randomUUID();
+      await client.query(
+        `INSERT INTO notifications
+          (id, customer_id, notification_type, title, body, resource_id,
+           resource_account_id, is_read, created_at)
+         VALUES ($1, $2, 'SECURITY', 'Đã ghi nhận báo mất thẻ',
+                 'Thẻ đã bị chặn và hồ sơ vận hành đã được tạo.', $3, NULL, false, $4)`,
+        [notificationId, customerId, caseId, now],
+      );
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "CREDIT_CARD_REPORTED_LOST",
+        actorCustomerId: customerId,
+        resourceId: cardId,
+        occurredAt: now,
+        payload: { caseId, traceId: traceId ?? null },
+      });
+      await new OutboxRepository(client).append({
+        id: randomUUID(),
+        eventType: "credit.card_reported_lost",
+        aggregateType: "card-security-case",
+        aggregateId: caseId,
+        occurredAt: now,
+        traceId,
+        subjectCustomerIds: [customerId],
+        notificationIds: [notificationId],
+        payload: { caseId, cardId },
+      });
+      const latest = (await repository.listStatements(customerId, string(before.credit_account_id)))[0];
+      return {
+        card: cardPublic({ ...before, ...row, status: "BLOCKED", updated_at: now }, latest ? await this.statement(client, repository, latest) : null),
+        caseId,
+        caseStatus: "OPEN",
+      };
+    }, { traceId, maxRetries: 1 });
   }
 }

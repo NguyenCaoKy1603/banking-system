@@ -1,4 +1,5 @@
 import type {
+  CardReportedLostResponse,
   CreditAccount,
   CreditAccountsResponse,
   CreditApplication,
@@ -165,6 +166,11 @@ function isCreditStatement(value: unknown): value is CreditStatement {
 
 export function isCreditCardResponse(value: unknown): value is { card: CreditCard } {
   return isRecord(value) && isCreditCard(value.card);
+}
+
+export function isCardReportedLostResponse(value: unknown): value is CardReportedLostResponse {
+  return isRecord(value) && isCreditCard(value.card) && isString(value.caseId) &&
+    ["OPEN", "IN_REVIEW", "RESOLVED"].includes(String(value.caseStatus));
 }
 
 export function isCreditCardsResponse(value: unknown): value is CreditCardsResponse {

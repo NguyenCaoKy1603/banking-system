@@ -14,6 +14,7 @@ export const CREDIT_MINIMUM_PAYMENT_RATE_PERCENT = 5n;
 export const CREDIT_MINIMUM_PAYMENT_FLOOR_MINOR = 100_000n;
 
 export type CreditCardStatus = "ACTIVE" | "LOCKED" | "BLOCKED" | "EXPIRED" | "CLOSED";
+export type CardSecurityCaseStatus = "OPEN" | "IN_REVIEW" | "RESOLVED";
 export type CreditAccountStatus = "ACTIVE" | "FROZEN" | "CLOSED";
 export type CreditTransactionType =
   | "PURCHASE"
@@ -66,6 +67,12 @@ export type CardInstrument = {
   expiryYear: number;
   status: CreditCardStatus;
   updatedAt: string;
+};
+
+export type CardReportedLostResult = {
+  card: CreditCard;
+  caseId: string;
+  caseStatus: CardSecurityCaseStatus;
 };
 
 export type CreditAccount = {

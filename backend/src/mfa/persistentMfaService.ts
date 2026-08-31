@@ -44,6 +44,7 @@ export type MfaChallengePurpose =
   | "CARD_ACTIVATION"
   | "CREDIT_PAYMENT"
   | "CARD_UNLOCK"
+  | "CARD_REPORT_LOST"
   | "MFA_TOTP_ENROLLMENT"
   | "MFA_FACTOR_CHANGE"
   | "MFA_FACTOR_REMOVAL"
@@ -53,6 +54,8 @@ export type MfaChallengePurpose =
 export type MfaChallengeResponse = {
   challengeId: string;
   method: "EMAIL_OTP" | "TOTP";
+  /** The wire contract keeps the selected factor in an array for Mobile. */
+  methods: Array<"EMAIL_OTP" | "TOTP">;
   purpose: MfaChallengePurpose;
   expiresAt: string;
   resendAfter?: string;
@@ -426,7 +429,7 @@ export class PersistentMfaService {
       });
     });
     this.metrics.increment("auth_challenges_created_total");
-    return { challengeId, method: "TOTP", purpose: input.purpose, expiresAt };
+    return { challengeId, method: "TOTP", methods: ["TOTP"], purpose: input.purpose, expiresAt };
   }
 
   async createEmailChallenge(input: {
@@ -521,6 +524,7 @@ export class PersistentMfaService {
     return {
       challengeId,
       method: "EMAIL_OTP",
+      methods: ["EMAIL_OTP"],
       purpose: input.purpose,
       expiresAt,
       resendAfter: new Date(this.clock() + RESEND_COOLDOWN_MS).toISOString(),
@@ -640,7 +644,8 @@ export class PersistentMfaService {
 
   async resendChallenge(input: {
     challengeId: string;
-    customerId: string;
+    customerId?: string;
+    pendingRegistrationId?: string;
     deviceId: string;
     destination: string;
     networkFingerprint?: string | null;
@@ -649,7 +654,16 @@ export class PersistentMfaService {
     const data = await this.options.unitOfWork.transaction(async ({ client }) => {
       const repository = new MfaRepository(client);
       const old = await repository.lockChallenge(oldHash);
-      if (!old || old.customerId !== input.customerId || old.deviceId !== input.deviceId || old.method !== "EMAIL_OTP") {
+      const registrationSubject = input.pendingRegistrationId && old?.purpose === "REGISTRATION_EMAIL_VERIFY" &&
+        (old.pendingRegistrationId ?? old.resourceId) === input.pendingRegistrationId;
+      const customerSubject = input.customerId && old?.customerId === input.customerId;
+      if (
+        !old ||
+        old.deviceId !== input.deviceId ||
+        old.method !== "EMAIL_OTP" ||
+        old.status !== "ACTIVE" ||
+        (!registrationSubject && !customerSubject)
+      ) {
         throw notFound("MFA challenge not found.");
       }
       const lastSent = old.lastSentAt ? Date.parse(old.lastSentAt) : 0;
@@ -660,8 +674,9 @@ export class PersistentMfaService {
           Math.ceil((lastSent + RESEND_COOLDOWN_MS - this.clock()) / 1000),
         );
       }
+      const rateSubject = input.customerId ?? input.pendingRegistrationId!;
       const customerRate = await repository.atomicRateLimit({
-        bucketKey: `mfa-resend:customer:${input.customerId}`,
+        bucketKey: `mfa-resend:customer:${rateSubject}`,
         windowSeconds: 600,
         maxAttempts: 3,
       });
@@ -676,7 +691,8 @@ export class PersistentMfaService {
       await repository.cancelChallenge(oldHash);
       await repository.createChallenge({
         id: challengeHash,
-        customerId: input.customerId,
+        customerId: old.customerId,
+        pendingRegistrationId: old.pendingRegistrationId ?? input.pendingRegistrationId,
         deviceId: input.deviceId,
         method: "EMAIL_OTP",
         purpose: old.purpose as MfaChallengePurpose,
@@ -717,11 +733,48 @@ export class PersistentMfaService {
     return {
       challengeId: data.challengeId,
       method: "EMAIL_OTP",
+      methods: ["EMAIL_OTP"],
       purpose: data.purpose,
       expiresAt: data.expiresAt,
       resendAfter: new Date(this.clock() + RESEND_COOLDOWN_MS).toISOString(),
       maskedDestination: maskEmail(input.destination),
     };
+  }
+
+  /** Resend a registration OTP before a customer session exists. */
+  async resendRegistrationChallenge(input: {
+    challengeId: string;
+    deviceId: string;
+    networkFingerprint?: string | null;
+  }): Promise<MfaChallengeResponse> {
+    const target = await this.options.unitOfWork.transaction(async ({ client }) => {
+      const challenge = await new MfaRepository(client).lockChallenge(hashOpaqueToken(input.challengeId));
+      if (
+        !challenge ||
+        challenge.deviceId !== input.deviceId ||
+        challenge.method !== "EMAIL_OTP" ||
+        challenge.purpose !== "REGISTRATION_EMAIL_VERIFY" ||
+        challenge.status !== "ACTIVE"
+      ) {
+        throw notFound("Registration challenge not found.");
+      }
+      const pendingRegistrationId = challenge.pendingRegistrationId ?? challenge.resourceId;
+      if (!pendingRegistrationId) throw notFound("Registration challenge not found.");
+      const result = await client.query<{ email?: string }>(
+        "SELECT email FROM pending_registrations WHERE id = $1",
+        [pendingRegistrationId],
+      );
+      const destination = String(result.rows[0]?.email ?? "").trim();
+      if (!destination) throw notFound("Registration challenge not found.");
+      return { pendingRegistrationId, destination };
+    });
+    return this.resendChallenge({
+      challengeId: input.challengeId,
+      pendingRegistrationId: target.pendingRegistrationId,
+      deviceId: input.deviceId,
+      destination: target.destination,
+      networkFingerprint: input.networkFingerprint,
+    });
   }
 
   async verifyRecoveryCode(customerId: string, code: string): Promise<{

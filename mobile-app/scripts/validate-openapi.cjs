@@ -21,6 +21,7 @@ if (!String(document.info?.version).endsWith("-draft") || !String(document.info?
 const requiredPaths = [
   "/auth/register",
   "/auth/register/verify",
+  "/auth/challenges/{challengeId}/resend",
   "/auth/otp/challenges",
   "/auth/login",
   "/auth/verify",
@@ -62,6 +63,8 @@ const requiredPaths = [
   "/credit/payment-quotes",
   "/credit/payments",
   "/credit/payments/{paymentId}",
+  "/kyc/application",
+  "/kyc/application/submit",
 ];
 
 for (const requiredPath of requiredPaths) {
@@ -113,6 +116,7 @@ const implementationMarkers = [
   'segments[0] === "cards"',
   'segments[0] === "credit"',
   'segments[1] === "applications"',
+  'segments[0] === "kyc"',
 ];
 for (const marker of implementationMarkers) {
   if (!backendHttp.includes(marker)) {
@@ -130,8 +134,8 @@ if (idempotencyParameter?.required !== true) {
 }
 
 const loginResponses = document.paths["/auth/login"].post?.responses;
-if (!loginResponses?.["200"] || !loginResponses?.["202"]) {
-  throw new Error("POST /auth/login must document both session and MFA responses.");
+if (!loginResponses?.["200"] || loginResponses?.["202"]) {
+  throw new Error("POST /auth/login must document only the password session response.");
 }
 
 const refreshResponses = document.paths["/auth/refresh"].post?.responses;
@@ -206,6 +210,7 @@ const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete"]);
 const PUBLIC_OPERATIONS = new Set([
   "POST /auth/register",
   "POST /auth/register/verify",
+  "POST /auth/challenges/{challengeId}/resend",
   "POST /auth/login",
   "POST /auth/refresh",
   "POST /auth/verify",
@@ -254,6 +259,7 @@ function resolveParameter(parameter) {
 for (const [method, routePath] of [
   ["post", "/auth/register"],
   ["post", "/auth/register/verify"],
+  ["post", "/auth/challenges/{challengeId}/resend"],
   ["post", "/auth/login"],
   ["post", "/auth/verify"],
   ["post", "/auth/refresh"],

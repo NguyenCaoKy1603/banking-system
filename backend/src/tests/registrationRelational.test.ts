@@ -40,6 +40,24 @@ test("relational registration persists only OTP digest, uses outbox intent and c
   const code = delivery.latestCode("REGISTRATION_EMAIL_VERIFY");
   assert.match(code ?? "", /^\d{6}$/);
 
+  // Cooldown is normally one minute. Move the disposable fixture clock
+  // boundary back so the test can prove that resend creates a new one-time
+  // challenge without weakening the production cooldown policy.
+  await database.query(
+    "UPDATE auth_challenges SET last_sent_at = NOW() - INTERVAL '2 minutes' WHERE id = $1",
+    [hashOpaqueToken(challenge.challengeId)],
+  );
+  const resent = await mfa.resendRegistrationChallenge({
+    challengeId: challenge.challengeId,
+    deviceId: "registration-device",
+    networkFingerprint: "registration-network",
+  });
+  assert.equal(resent.method, "EMAIL_OTP");
+  assert.deepEqual(resent.methods, ["EMAIL_OTP"]);
+  const resentCode = delivery.latestCode("REGISTRATION_EMAIL_VERIFY");
+  assert.match(resentCode ?? "", /^\d{6}$/);
+  assert.notEqual(resentCode, code);
+
   const challengeRow = await database.query<{ id: string; proof_digest: string; status: string }>(
     "SELECT id, proof_digest, status FROM auth_challenges WHERE purpose = 'REGISTRATION_EMAIL_VERIFY' ORDER BY created_at DESC LIMIT 1",
   );
@@ -58,8 +76,8 @@ test("relational registration persists only OTP digest, uses outbox intent and c
   assert.equal(payloadText.toLowerCase().includes("secret"), false);
 
   const concurrent = await Promise.allSettled([
-    registration.verify(challenge.challengeId, code!, "registration-device", mfa),
-    registration.verify(challenge.challengeId, code!, "registration-device", mfa),
+    registration.verify(resent.challengeId, resentCode!, "registration-device", mfa),
+    registration.verify(resent.challengeId, resentCode!, "registration-device", mfa),
   ]);
   assert.equal(concurrent.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(concurrent.filter((result) => result.status === "rejected").length, 1);
@@ -73,7 +91,7 @@ test("relational registration persists only OTP digest, uses outbox intent and c
        (SELECT COUNT(*)::text FROM registration_completions) AS completions,
        (SELECT COUNT(*)::text FROM pending_registrations) AS pending,
        (SELECT COUNT(*)::text FROM auth_challenges WHERE id = $2 AND status = 'CONSUMED') AS consumed`,
-    [email, hashOpaqueToken(challenge.challengeId)],
+    [email, hashOpaqueToken(resent.challengeId)],
   );
   assert.equal(counts.rows[0]?.customers, "1");
   assert.equal(counts.rows[0]?.accounts, "1");
@@ -82,7 +100,7 @@ test("relational registration persists only OTP digest, uses outbox intent and c
   assert.equal(counts.rows[0]?.consumed, "1");
 
   await assert.rejects(
-    registration.verify(challenge.challengeId, code!, "registration-device", mfa),
+    registration.verify(resent.challengeId, resentCode!, "registration-device", mfa),
   );
   await assert.rejects(
     registration.begin({ fullName: "Duplicate", email, phoneNumber: `09${randomUUID().replaceAll("-", "").slice(0, 8)}`, password: "Password1!" }, "another-device", mfa),

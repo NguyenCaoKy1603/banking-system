@@ -38,6 +38,26 @@ appId: ${APP_ID}
     visible:
       id: credit-card-detail
     timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: card-toggle-lock
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: card-toggle-lock
+- extendedWaitUntil:
+    visible:
+      id: credit-unlock-code
+    timeout: 10000
+- tapOn:
+    id: credit-unlock-code
+- inputText: ${LOCK_TOTP}
+- pressKey: BACK
+- scrollUntilVisible:
+    element:
+      id: card-toggle-lock
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     id: card-toggle-lock
 - assertVisible: "Đã khóa"
@@ -67,6 +87,13 @@ appId: ${APP_ID}
       id: credit-unlock-code
     direction: DOWN
     timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: card-toggle-lock
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: card-toggle-lock
 - tapOn:
     id: credit-unlock-code
 - inputText: ${TRANSFER_TOTP}

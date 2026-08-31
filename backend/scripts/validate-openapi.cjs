@@ -67,6 +67,8 @@ const requiredPaths = [
   "/credit/payment-quotes",
   "/credit/payments",
   "/credit/payments/{paymentId}",
+  "/kyc/application",
+  "/kyc/application/submit",
 ];
 
 for (const requiredPath of requiredPaths) {
@@ -164,6 +166,9 @@ const routeContracts = [
   ["POST", "/credit/payment-quotes", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "credit"), segmentGuard(1, "payment-quotes")]],
   ["POST", "/credit/payments", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "credit"), segmentGuard(1, "payments")]],
   ["GET", "/credit/payments/{paymentId}", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "credit"), segmentGuard(1, "payments")]],
+  ["GET", "/kyc/application", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "kyc"), segmentGuard(1, "application")]],
+  ["POST", "/kyc/application", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "kyc"), segmentGuard(1, "application")]],
+  ["POST", "/kyc/application/submit", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "kyc"), segmentGuard(1, "application"), segmentGuard(2, "submit")]],
 ];
 
 for (const [method, routePath, fragments] of routeContracts) {
@@ -229,8 +234,8 @@ if (!authChallengeSchema?.required?.includes("purpose")) {
   throw new Error("AuthChallengeResponse must require a bound purpose.");
 }
 const loginResponses = document.paths["/auth/login"].post?.responses;
-if (!loginResponses?.["200"] || !loginResponses?.["202"]) {
-  throw new Error("POST /auth/login must document both session and MFA responses.");
+if (!loginResponses?.["200"] || loginResponses?.["202"]) {
+  throw new Error("POST /auth/login must document only the password session response.");
 }
 if (document.paths["/auth/refresh"].post?.responses?.["202"]) {
   throw new Error("POST /auth/refresh must not document a login MFA response.");
@@ -259,6 +264,7 @@ const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete"]);
 const PUBLIC_OPERATIONS = new Set([
   "POST /auth/register",
   "POST /auth/register/verify",
+  "POST /auth/challenges/{challengeId}/resend",
   "POST /auth/login",
   "POST /auth/refresh",
   "POST /auth/verify",

@@ -84,6 +84,39 @@ test("persistent MFA lifecycle is transactional, one-time and restart-safe", { s
     restarted.verifyChallenge({ challengeId: loginChallenge.challengeId, customerId, deviceId: "mfa-device", proof: loginCode, purpose: "LOGIN" }),
   );
 
+  now += 30_000;
+  const lostCardId = randomUUID();
+  const lostFingerprint = `reported-lost:${lostCardId}`;
+  const lostChallenge = await restarted.beginTotpChallenge({
+    customerId,
+    deviceId: "mfa-device",
+    purpose: "CARD_REPORT_LOST",
+    resourceId: lostCardId,
+    requestFingerprint: lostFingerprint,
+  });
+  const lostCode = generateTotp(enrollment.manualSetupKey, now);
+  await assert.rejects(
+    restarted.verifyChallenge({
+      challengeId: lostChallenge.challengeId,
+      customerId,
+      deviceId: "mfa-device",
+      proof: lostCode,
+      purpose: "CARD_UNLOCK",
+      resourceId: lostCardId,
+      requestFingerprint: lostFingerprint,
+    }),
+    (error: unknown) => error instanceof Error && "code" in error && (error as { code: string }).code === "STEP_UP_VERIFICATION_FAILED",
+  );
+  assert.equal((await restarted.verifyChallenge({
+    challengeId: lostChallenge.challengeId,
+    customerId,
+    deviceId: "mfa-device",
+    proof: lostCode,
+    purpose: "CARD_REPORT_LOST",
+    resourceId: lostCardId,
+    requestFingerprint: lostFingerprint,
+  })).customerId, customerId);
+
   const expiredChallenge = await restarted.beginTotpChallenge({ customerId, deviceId: "mfa-device", purpose: "MFA_FACTOR_CHANGE" });
   now += 5 * 60 * 1000 + 1;
   await assert.rejects(

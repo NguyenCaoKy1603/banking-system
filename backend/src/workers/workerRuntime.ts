@@ -80,9 +80,11 @@ export function workerConfigFromEnv(databaseUrlOverride?: string): WorkerConfig 
 export async function createProviderSetFromSecretProvider(provider: SecretProvider, environment: "development" | "test" | "preview" | "staging" | "production-like", required: boolean): Promise<ProviderSet> {
   const pushMode = (process.env.PUSH_PROVIDER?.trim() || "disabled").toLowerCase();
   const configuredEmailMode = (process.env.OUTBOX_EMAIL_PROVIDER?.trim() || process.env.EMAIL_PROVIDER?.trim() || "disabled").toLowerCase();
-  // EMAIL_PROVIDER is also used by the API's OTP adapter. An HTTP OTP mode
-  // must not be mistaken for the separate notification outbox adapter.
-  const emailMode = configuredEmailMode === "http" ? "disabled" : configuredEmailMode;
+  // EMAIL_PROVIDER is also used by the API's OTP adapter. HTTP and Gmail SMTP
+  // modes are API-only registration delivery and must not be mistaken for the
+  // separate notification outbox adapter (the registration event deliberately
+  // contains no plaintext OTP for a worker to reconstruct).
+  const emailMode = configuredEmailMode === "http" || configuredEmailMode === "smtp" ? "disabled" : configuredEmailMode;
   if (!new Set(["fake", "disabled"]).has(pushMode)) {
     throw new Error("PUSH_PROVIDER supports only fake or disabled until a real provider adapter is configured.");
   }
@@ -113,7 +115,7 @@ export async function createProviderSetFromSecretProvider(provider: SecretProvid
 function providerSetFromEnv(): ProviderSet {
   const pushMode = (process.env.PUSH_PROVIDER?.trim() || "disabled").toLowerCase();
   const configuredEmailMode = (process.env.OUTBOX_EMAIL_PROVIDER?.trim() || process.env.EMAIL_PROVIDER?.trim() || "disabled").toLowerCase();
-  const emailMode = configuredEmailMode === "http" ? "disabled" : configuredEmailMode;
+  const emailMode = configuredEmailMode === "http" || configuredEmailMode === "smtp" ? "disabled" : configuredEmailMode;
   if (!new Set(["fake", "disabled"]).has(pushMode)) throw new Error("PUSH_PROVIDER supports only fake or disabled until a real provider adapter is configured.");
   if (!new Set(["fake", "disabled"]).has(emailMode)) throw new Error("EMAIL_PROVIDER supports only fake or disabled until a real provider adapter is configured.");
   return {
@@ -240,7 +242,7 @@ export class WorkerRuntime {
   /** Test/rehearsal hook for one durable scheduler tick; production uses start(). */
   async runScheduledLifecycleOnce(asOf?: string): Promise<ScheduledLifecycleRun> {
     if (!this.lifecycleScheduler) {
-      return { savingsMaturities: 0, statementsClosed: 0, statementsOverdue: 0, paymentsSettled: 0 };
+      return { savingsMaturities: 0, savingsSuspenseResolved: 0, savingsSuspenseRetried: 0, savingsSuspenseDeadLettered: 0, statementsClosed: 0, statementsOverdue: 0, paymentsSettled: 0 };
     }
     return this.lifecycleScheduler.runOnce(asOf);
   }

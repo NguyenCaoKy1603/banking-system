@@ -1,5 +1,5 @@
 import { Link, useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -11,6 +11,8 @@ import {
   View,
 } from "react-native";
 
+import { BrandMark } from "@/components/brand/BrandMark";
+import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
@@ -22,7 +24,7 @@ import type {
 } from "@/features/auth/types/auth";
 import { validateRegisterForm } from "@/features/auth/validation/authValidation";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, spacing, typography } from "@/theme";
 
 const initialValues: RegisterFormValues = {
   fullName: "",
@@ -34,7 +36,11 @@ const initialValues: RegisterFormValues = {
 
 export function RegisterScreen() {
   const router = useRouter();
-  const { register, verifyRegistrationChallenge } = useAuth();
+  const {
+    register,
+    resendRegistrationChallenge,
+    verifyRegistrationChallenge,
+  } = useAuth();
   const [values, setValues] = useState<RegisterFormValues>(initialValues);
   const [errors, setErrors] = useState<RegisterFieldErrors>({});
   const [serverError, setServerError] = useState<string | undefined>();
@@ -42,6 +48,17 @@ export function RegisterScreen() {
   const [registrationChallenge, setRegistrationChallenge] =
     useState<AuthChallengeResponse | null>(null);
   const [registrationOtp, setRegistrationOtp] = useState("");
+  const [challengeClock, setChallengeClock] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!registrationChallenge?.resendAfter) return undefined;
+    const timer = setInterval(() => setChallengeClock(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, [registrationChallenge?.resendAfter]);
+
+  const resendSeconds = registrationChallenge?.resendAfter
+    ? Math.max(0, Math.ceil((Date.parse(registrationChallenge.resendAfter) - challengeClock) / 1_000))
+    : 0;
 
   function updateField(field: keyof RegisterFormValues, value: string) {
     setValues((currentValues) => ({ ...currentValues, [field]: value }));
@@ -66,7 +83,7 @@ export function RegisterScreen() {
         }
         await verifyRegistrationChallenge({
           challengeId: registrationChallenge.challengeId,
-          method: "OTP",
+          method: registrationChallenge.method ?? "EMAIL_OTP",
           proof: registrationOtp.trim(),
         });
         Alert.alert(
@@ -107,7 +124,8 @@ export function RegisterScreen() {
       });
 
       setRegistrationChallenge(registrationResult);
-      setServerError("Mã OTP đã được yêu cầu. Nhập mã để hoàn tất đăng ký.");
+      setChallengeClock(Date.now());
+      setServerError(undefined);
     } catch (error: unknown) {
       if (error instanceof ApiError) {
         setErrors({
@@ -126,6 +144,24 @@ export function RegisterScreen() {
     }
   }
 
+  async function handleResendRegistrationChallenge() {
+    if (!registrationChallenge || resendSeconds > 0 || isSubmitting) return;
+    setServerError(undefined);
+    try {
+      const nextChallenge = await resendRegistrationChallenge(registrationChallenge.challengeId);
+      setRegistrationChallenge(nextChallenge);
+      setChallengeClock(Date.now());
+      setRegistrationOtp("");
+      setServerError(undefined);
+    } catch (error: unknown) {
+      setServerError(
+        error instanceof ApiError
+          ? error.message
+          : "Không thể gửi lại mã OTP. Vui lòng thử lại.",
+      );
+    }
+  }
+
   return (
     <Screen>
       <KeyboardAvoidingView
@@ -136,11 +172,15 @@ export function RegisterScreen() {
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
         >
+          <View style={styles.brandRow}>
+            <BrandMark />
+            <EnvironmentBadge />
+          </View>
           <View style={styles.intro}>
-            <Text style={styles.eyebrow}>TÀI KHOẢN MỚI</Text>
-            <Text style={styles.title}>Đăng ký</Text>
+            <Text style={styles.eyebrow}>BẮT ĐẦU VỚI NOVA</Text>
+            <Text style={styles.title}>Tạo tài khoản</Text>
             <Text style={styles.description}>
-              Tạo tài khoản để đăng nhập vào hệ thống.
+              Điền thông tin bên dưới để tạo hồ sơ ngân hàng số của bạn.
             </Text>
           </View>
 
@@ -211,7 +251,7 @@ export function RegisterScreen() {
             {registrationChallenge ? (
               <>
                 <Text style={styles.challengeNotice}>
-                  Thông tin đăng ký đã được khóa theo OTP này. Muốn sửa email, số điện thoại hoặc mật khẩu, hãy hủy bước OTP và đăng ký lại.
+                  Mã xác minh đã được gửi tới {registrationChallenge.maskedDestination ?? "email đăng ký"}. Thông tin được tạm khóa trong bước này để đảm bảo an toàn.
                 </Text>
                 <TextField
                   accessibilityLabel="Mã OTP đăng ký"
@@ -229,6 +269,16 @@ export function RegisterScreen() {
                   testID="register-otp"
                   value={registrationOtp}
                 />
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={resendSeconds > 0 || isSubmitting}
+                  onPress={() => void handleResendRegistrationChallenge()}
+                  testID="register-otp-resend"
+                >
+                  <Text style={[styles.link, (resendSeconds > 0 || isSubmitting) && styles.disabledLink]}>
+                    {resendSeconds > 0 ? `Gửi lại mã sau ${resendSeconds}s` : "Gửi lại mã OTP"}
+                  </Text>
+                </Pressable>
                 <Pressable
                   accessibilityRole="button"
                   onPress={() => {
@@ -286,45 +336,60 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.xl,
   },
+  brandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
+  },
   intro: {
     gap: spacing.sm,
   },
   eyebrow: {
+    ...typography.label,
     color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.4,
+    letterSpacing: 1,
   },
   title: {
+    ...typography.display,
     color: colors.text,
-    fontSize: 32,
-    fontWeight: "700",
   },
   description: {
+    ...typography.body,
     color: colors.muted,
-    fontSize: 16,
-    lineHeight: 24,
   },
   form: {
     gap: spacing.md,
+    padding: spacing.mlg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    ...shadows.card,
   },
   backLink: {
     alignSelf: "center",
     padding: spacing.sm,
   },
   link: {
+    ...typography.label,
     color: colors.primary,
-    fontSize: 14,
-    fontWeight: "600",
+  },
+  disabledLink: {
+    color: colors.muted,
   },
   serverError: {
+    ...typography.body,
+    padding: spacing.md,
+    borderRadius: radius.md,
     color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
+    backgroundColor: colors.dangerSoft,
   },
   challengeNotice: {
-    color: colors.muted,
-    fontSize: 14,
-    lineHeight: 20,
+    ...typography.body,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    color: colors.info,
+    backgroundColor: colors.infoSoft,
   },
 });

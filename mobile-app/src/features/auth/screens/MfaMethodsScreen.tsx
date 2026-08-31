@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "expo-router";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 
+import { AppHeader } from "@/components/ui/AppHeader";
+import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
@@ -21,7 +24,7 @@ import type {
 } from "@/features/auth/types/auth";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 type PendingAction =
   | { kind: "remove"; credential: MfaCredentialSummary }
@@ -40,6 +43,7 @@ function getMessage(error: unknown, fallback: string): string {
 }
 
 export function MfaMethodsScreen() {
+  const router = useRouter();
   const { deviceId, refreshAccessToken, session } = useAuth();
   const [credentials, setCredentials] = useState<MfaCredentialSummary[]>([]);
   const [password, setPassword] = useState("");
@@ -133,7 +137,7 @@ export function MfaMethodsScreen() {
       setChallenge(response);
       setChallengeCode("");
     } catch (challengeError: unknown) {
-      setError(getMessage(challengeError, "Không thể tạo challenge TOTP."));
+      setError(getMessage(challengeError, "Không thể tạo yêu cầu xác thực."));
     } finally {
       setIsLoading(false);
     }
@@ -177,15 +181,15 @@ export function MfaMethodsScreen() {
   const activeCredential = credentials.find((credential) => credential.status === "ACTIVE");
 
   return (
-    <Screen style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>BẢO MẬT TÀI KHOẢN</Text>
-          <Text style={styles.title}>Authenticator (TOTP)</Text>
-          <Text style={styles.description}>
-            Mã TOTP được xác minh bởi máy chủ, dùng cho đăng nhập và xác nhận giao dịch.
-          </Text>
-        </View>
+    <Screen>
+      <ScrollView contentContainerStyle={styles.content} style={styles.scroll}>
+        <AppHeader
+          eyebrow="Bảo mật tài khoản"
+          onBack={() => router.back()}
+          subtitle="Dùng ứng dụng Authenticator để bảo vệ giao dịch và thay đổi quan trọng."
+          title="Ứng dụng xác thực"
+        />
+        <EnvironmentBadge />
 
         {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
         {isLoading ? <Text style={styles.muted}>Đang cập nhật bảo mật…</Text> : null}
@@ -198,7 +202,9 @@ export function MfaMethodsScreen() {
             <View key={credential.id} style={styles.factorRow}>
               <View style={styles.factorText}>
                 <Text style={styles.factorName}>{credential.displayName}</Text>
-                <Text style={styles.muted}>{credential.credentialType} · {credential.status}</Text>
+                <Text style={styles.muted}>
+                  {credential.credentialType} · {credential.status === "ACTIVE" ? "Đang hoạt động" : "Đã thu hồi"}
+                </Text>
               </View>
               {credential.status === "ACTIVE" ? (
                 <PrimaryButton
@@ -263,13 +269,13 @@ export function MfaMethodsScreen() {
 
         {activeCredential ? (
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Recovery code</Text>
+            <Text style={styles.sectionTitle}>Mã khôi phục</Text>
             <Text style={styles.description}>
-              Chỉ hiển thị recovery code một lần. Lưu ngoại tuyến và không gửi cho người khác.
+              Mã khôi phục chỉ hiển thị một lần. Hãy lưu ngoại tuyến và không gửi cho người khác.
             </Text>
             <PrimaryButton
               disabled={isLoading}
-              label="Đổi recovery code"
+              label="Tạo lại mã khôi phục"
               onPress={() => void handleStartLifecycleAction({ kind: "rotate" }, "RECOVERY_CODE_ROTATION")}
               testID="mfa-recovery-rotate"
             />
@@ -278,7 +284,7 @@ export function MfaMethodsScreen() {
 
         {challenge && pendingAction ? (
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Xác nhận thay đổi MFA</Text>
+            <Text style={styles.sectionTitle}>Xác nhận thay đổi bảo mật</Text>
             <TextField
               keyboardType="number-pad"
               label="Mã TOTP hiện tại"
@@ -290,7 +296,7 @@ export function MfaMethodsScreen() {
             />
             <PrimaryButton
               disabled={isLoading}
-              label={pendingAction.kind === "remove" ? "Thu hồi Authenticator" : "Đổi recovery code"}
+              label={pendingAction.kind === "remove" ? "Thu hồi Authenticator" : "Tạo lại mã khôi phục"}
               onPress={() => void handleLifecycleAction()}
               testID="mfa-lifecycle-confirm"
             />
@@ -299,8 +305,8 @@ export function MfaMethodsScreen() {
 
         {recoveryCodes ? (
           <View style={styles.recoveryCard}>
-            <Text style={styles.sectionTitle}>Lưu recovery code ngay</Text>
-            <Text style={styles.description}>Máy chủ không có API xem lại các mã này.</Text>
+            <Text style={styles.sectionTitle}>Lưu mã khôi phục ngay</Text>
+            <Text style={styles.description}>Bạn sẽ không thể xem lại các mã này sau khi đóng.</Text>
             <Text selectable style={styles.recoveryCodes}>{recoveryCodes.join("\n")}</Text>
             <PrimaryButton
               label="Đã lưu, ẩn mã"
@@ -322,22 +328,19 @@ export function MfaMethodsScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { alignItems: "center" },
-  content: { width: "100%", maxWidth: 720, padding: spacing.lg, gap: spacing.lg, alignSelf: "center" },
-  header: { gap: spacing.sm },
-  eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "700", letterSpacing: 1.4 },
-  title: { color: colors.text, fontSize: 28, fontWeight: "700" },
-  description: { color: colors.muted, fontSize: 14, lineHeight: 21 },
-  sectionTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
-  card: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: spacing.md, backgroundColor: colors.surface },
-  recoveryCard: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.primary, borderRadius: spacing.md, backgroundColor: colors.surface },
+  scroll: { width: "100%" },
+  content: { width: "100%", maxWidth: sizes.contentMaxWidth, padding: spacing.lg, gap: spacing.lg, alignSelf: "center" },
+  description: { ...typography.body, color: colors.muted },
+  sectionTitle: { ...typography.subheading, color: colors.text },
+  card: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, ...shadows.card },
+  recoveryCard: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.lg, backgroundColor: colors.primarySoft, ...shadows.card },
   factorRow: { gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
   factorText: { gap: spacing.xs },
-  factorName: { color: colors.text, fontSize: 15, fontWeight: "700" },
-  muted: { color: colors.muted, fontSize: 14, lineHeight: 20 },
-  error: { color: colors.danger, fontSize: 14, lineHeight: 20 },
+  factorName: { ...typography.bodyStrong, color: colors.text },
+  muted: { ...typography.body, color: colors.muted },
+  error: { ...typography.body, padding: spacing.md, borderRadius: radius.md, color: colors.danger, backgroundColor: colors.dangerSoft },
   secret: { color: colors.text, fontSize: 16, fontWeight: "700", letterSpacing: 1.5 },
   uri: { color: colors.muted, fontSize: 12, lineHeight: 17 },
-  qrFrame: { alignSelf: "center", padding: spacing.md, backgroundColor: colors.surface },
+  qrFrame: { alignSelf: "center", padding: spacing.md, borderWidth: 2, borderColor: colors.primarySoft, borderRadius: radius.lg, backgroundColor: colors.surface },
   recoveryCodes: { color: colors.text, fontFamily: "monospace", fontSize: 15, lineHeight: 24 },
 });

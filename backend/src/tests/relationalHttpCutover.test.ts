@@ -9,7 +9,7 @@ import type { UnitOfWork } from "../database/unitOfWork.js";
 
 test("relational-v2 boundary requires every approved customer route group", () => {
   const unitOfWork = {} as UnitOfWork;
-  const complete = new RelationalHttpBoundary(unitOfWork, "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud");
+  const complete = new RelationalHttpBoundary(unitOfWork, "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud,kyc");
   assert.doesNotThrow(() => complete.assertRelationalV2Complete());
   const incomplete = new RelationalHttpBoundary(unitOfWork, "auth,mfa,accounts,beneficiaries,transfers,savings,credit");
   assert.throws(() => incomplete.assertRelationalV2Complete(), /cutover is incomplete/);
@@ -41,6 +41,56 @@ test("direct relational account route bypasses the legacy state boundary", async
   });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { accounts: [] });
+  assert.equal(legacyBoundaryCalls, 0);
+});
+
+test("direct relational control-policy route bypasses legacy state and returns the durable policy", async (t) => {
+  let legacyBoundaryCalls = 0;
+  const repository = {
+    withState: async (): Promise<never> => {
+      legacyBoundaryCalls += 1;
+      throw new Error("legacy boundary must not run for control policy");
+    },
+  };
+  const controlPolicy = {
+    configVersion: "m7-sandbox-1",
+    globalKillSwitch: false,
+    transfersEnabled: true,
+    allowlisted: true,
+    maxTransferAmountMinor: "5000000",
+    stepUpMethods: ["TOTP"],
+    savingsEnabled: true,
+    savingsAllowlisted: true,
+    maxSavingsAmountMinor: "500000000",
+    savingsStepUpMethods: ["TOTP"],
+    creditEnabled: true,
+    creditAllowlisted: true,
+    creditPaymentsEnabled: true,
+    cardControlsEnabled: true,
+    maxCreditPaymentAmountMinor: "20000000",
+    creditPaymentStepUpMethods: ["TOTP"],
+    cardUnlockStepUpMethods: ["TOTP"],
+    updatedAt: new Date().toISOString(),
+  };
+  const relationalHttp = {
+    isRouteEnabled: (method: string | undefined, segments: readonly string[]) =>
+      method === "GET" && segments.join("/") === "mobile/control-policy",
+    authenticate: async () => ({ id: "customer-1" }),
+    getControlPolicy: async () => controlPolicy,
+  } as unknown as RelationalHttpBoundary;
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/mobile/control-policy`, {
+    headers: {
+      Authorization: "Bearer direct-test-token",
+      "X-Device-ID": "direct-test-device",
+    },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), controlPolicy);
   assert.equal(legacyBoundaryCalls, 0);
 });
 
@@ -175,4 +225,85 @@ test("persistent MFA lifecycle routes bypass the legacy state boundary", async (
   assert.ok(relationalCalls.includes("authenticate"));
   assert.ok(relationalCalls.includes("verifyCurrentPassword"));
   assert.ok(relationalCalls.includes("getUser"));
+});
+
+test("direct card controls keep emergency lock separate from purpose-bound TOTP actions", async (t) => {
+  let legacyBoundaryCalls = 0;
+  const cardCalls: string[] = [];
+  const verificationCalls: Array<Record<string, unknown>> = [];
+  const repository = {
+    withState: async (): Promise<never> => {
+      legacyBoundaryCalls += 1;
+      throw new Error("legacy card boundary must not run for direct route");
+    },
+  };
+  const card = {
+    cardId: "card-1",
+    status: "LOCKED",
+  };
+  const relationalHttp = {
+    isRouteEnabled: (method: string | undefined, segments: readonly string[]) =>
+      method === "POST" && segments.length === 3 && segments[0] === "cards",
+    authenticate: async () => ({ id: "customer-1" }),
+    lockCard: async () => {
+      cardCalls.push("lock");
+      return card;
+    },
+    unlockCard: async () => {
+      cardCalls.push("unlock");
+      return { ...card, status: "ACTIVE" };
+    },
+    reportCardLost: async () => {
+      cardCalls.push("report-lost");
+      return { caseId: "case-1", caseStatus: "OPEN", card: { ...card, status: "BLOCKED" } };
+    },
+  } as unknown as RelationalHttpBoundary;
+  const mfaService = {
+    verifyChallenge: async (input: Record<string, unknown>) => {
+      verificationCalls.push(input);
+      return { customerId: "customer-1" };
+    },
+  } as never;
+  const server = createPersistentBankingServer(repository, new BankingSystem(), {
+    relationalHttp,
+    mfaService,
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${address.port}/api/v1/cards/card-1`;
+  const headers = {
+    Authorization: "Bearer direct-card-token",
+    "X-Device-ID": "direct-card-device",
+    "Content-Type": "application/json",
+  };
+  const locked = await fetch(`${baseUrl}/lock`, { method: "POST", headers });
+  assert.equal(locked.status, 200);
+  assert.equal(verificationCalls.length, 0);
+
+  const unlocked = await fetch(`${baseUrl}/unlock`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      stepUp: { method: "TOTP", challengeId: "unlock-challenge", proof: "opaque-unlock-proof" },
+    }),
+  });
+  assert.equal(unlocked.status, 200);
+  assert.equal(verificationCalls[0]?.purpose, "CARD_UNLOCK");
+  assert.equal(verificationCalls[0]?.resourceId, "card-1");
+
+  const reported = await fetch(`${baseUrl}/report-lost`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      stepUp: { method: "TOTP", challengeId: "lost-challenge", proof: "opaque-lost-proof" },
+    }),
+  });
+  assert.equal(reported.status, 200);
+  assert.equal((await reported.json() as { caseId: string }).caseId, "case-1");
+  assert.equal(verificationCalls[1]?.purpose, "CARD_REPORT_LOST");
+  assert.equal(verificationCalls[1]?.resourceId, "card-1");
+  assert.deepEqual(cardCalls, ["lock", "unlock", "report-lost"]);
+  assert.equal(legacyBoundaryCalls, 0);
 });

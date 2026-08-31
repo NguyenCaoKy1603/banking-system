@@ -5,6 +5,7 @@ import { DomainError, invalidRequest, notFound, unauthorized } from "../../error
 import { requirePermission, requireStaffSession } from "../authorization/authorization.js";
 import { ADMIN_ROUTES, type AdminRouteDefinition } from "../authorization/permissionRegistry.js";
 import { StaffAuthService } from "../auth/staffAuthService.js";
+import type { AdminInvitationDeliveryPort } from "../auth/adminInvitationProvider.js";
 import { AdminActionEngine } from "../actions/actionEngine.js";
 import type { AdminCaseScope, AdminRepository } from "../repositories/adminRepository.js";
 import type { RuntimeMetadata } from "../../runtimeMetadata.js";
@@ -24,6 +25,7 @@ export type AdminHttpOptions = {
   repository: AdminRepository;
   auth: StaffAuthService;
   actions: AdminActionEngine;
+  invitationProvider?: Pick<AdminInvitationDeliveryPort, "health">;
   allowedOrigins?: string[];
   environment?: string;
   commitSha?: string;
@@ -129,7 +131,20 @@ export async function handleAdminRequest(request: IncomingMessage, response: Ser
   if (url.pathname === "/startupz") { const ready = options.startupReady !== false; write(response, ready ? 200 : 503, traceId, { ...metadata, status: ready ? "ok" : "starting" }); return; }
   if (url.pathname === "/versionz") { write(response, 200, traceId, metadata); return; }
   if (url.pathname === "/metrics" && options.metrics) { response.statusCode = 200; response.setHeader("Content-Type", "text/plain; version=0.0.4; charset=utf-8"); response.end(options.metrics.prometheus()); return; }
-  if (url.pathname === "/readyz") { try { await options.repository.initialize(); write(response, 200, traceId, { service: "banking-admin-api", status: "ready" }); } catch { writeError(response, traceId, new DomainError(503, "PERSISTENCE_UNAVAILABLE", "Admin persistence is unavailable.")); } return; }
+  if (url.pathname === "/readyz") {
+    try {
+      await options.repository.initialize();
+      const invitationHealth = options.invitationProvider?.health();
+      write(response, 200, traceId, {
+        service: "banking-admin-api",
+        status: "ready",
+        invitationDelivery: invitationHealth ?? { provider: "http", status: "degraded", configured: false, credentialConfigured: false },
+      });
+    } catch {
+      writeError(response, traceId, new DomainError(503, "PERSISTENCE_UNAVAILABLE", "Admin persistence is unavailable."));
+    }
+    return;
+  }
   if (!url.pathname.startsWith(`${API_PREFIX}/admin`)) { writeError(response, traceId, notFound("Admin API route not found.")); return; }
   const pathname = url.pathname.slice(API_PREFIX.length);
   const route = routeFor(request.method ?? "GET", pathname);
@@ -173,7 +188,7 @@ export async function handleAdminRequest(request: IncomingMessage, response: Ser
     if (request.method === "GET" && pathname === "/admin/permissions") { write(response, 200, traceId, { items: await options.repository.listPermissions() }); return; }
     if (request.method === "GET" && pathname === "/admin/staff") { const items = (await options.repository.listStaff()).map((staff) => ({ id: staff.id, employeeCode: staff.employeeCode, email: staff.emailNormalized, displayName: staff.displayName, status: staff.status, roles: staff.roles, mfaEnrolled: Boolean(staff.mfaEnrolledAt), createdAt: staff.createdAt })); await auditRead(options, authContext!.staff.id, "STAFF_LIST_READ", "STAFF", null, traceId, { resultCount: items.length }); write(response, 200, traceId, { items }); return; }
     if (request.method === "GET" && pathname.startsWith("/admin/staff/") && !pathname.includes("/role-change") && !pathname.includes("/disable")) { const staffId = requireId(pathParam(route.path, pathname, "staffId"), "staffId"); const staff = await options.repository.findStaffById(staffId); if (!staff) throw notFound("Staff not found."); await auditRead(options, authContext!.staff.id, "STAFF_DETAIL_READ", "STAFF", staffId, traceId); write(response, 200, traceId, { staff: { id: staff.id, employeeCode: staff.employeeCode, email: staff.emailNormalized, displayName: staff.displayName, status: staff.status, roles: staff.roles, mfaEnrolled: Boolean(staff.mfaEnrolledAt), createdAt: staff.createdAt } }); return; }
-    if (request.method === "POST" && pathname === "/admin/staff/invite-requests") { requireCommandIdempotency(request); requireBodyFields(body, ["email", "employeeCode", "displayName", "role"]); const action = await options.actions.create({ subject: authContext!.subject, actionType: "STAFF_INVITE", targetType: "STAFF_INVITE", targetId: "new", body, idempotencyKey: header(request, "idempotency-key") ?? "", traceId }); write(response, 202, traceId, { action }); return; }
+    if (request.method === "POST" && pathname === "/admin/staff/invite-requests") { requireCommandIdempotency(request); requireBodyFields(body, ["email", "employeeCode", "displayName", "role", "reasonCode", "ticketReference", "description"]); const action = await options.actions.create({ subject: authContext!.subject, actionType: "STAFF_INVITE", targetType: "STAFF_INVITE", targetId: "new", body, idempotencyKey: header(request, "idempotency-key") ?? "", traceId }); write(response, 202, traceId, { action }); return; }
     if (request.method === "GET" && pathname === "/admin/customers") { const items = await options.repository.findCustomers(url.searchParams.get("q") ?? ""); await options.repository.appendAudit({ id: crypto.randomUUID(), actorStaffId: authContext!.staff.id, action: "CUSTOMER_SEARCH_READ", targetType: "CUSTOMER", targetId: null, outcome: "SUCCEEDED", reasonCode: "MASKED_READ", requestId: null, traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { resultCount: items.length } }); write(response, 200, traceId, { items }); return; }
     if (request.method === "GET" && pathname.startsWith("/admin/customers/") && pathname.endsWith("/accounts")) { const customerId = requireId(pathParam(route.path, pathname, "customerId"), "customerId"); const items = await options.repository.listCustomerAccounts(customerId); await options.repository.appendAudit({ id: crypto.randomUUID(), actorStaffId: authContext!.staff.id, action: "CUSTOMER_ACCOUNTS_READ", targetType: "CUSTOMER", targetId: customerId, outcome: "SUCCEEDED", reasonCode: "ACCOUNT_READ", requestId: null, traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { resultCount: items.length } }); write(response, 200, traceId, { items }); return; }
     if (request.method === "GET" && pathname.startsWith("/admin/customers/")) { const customerId = requireId(pathParam(route.path, pathname, "customerId"), "customerId"); const customer = await options.repository.findCustomer(customerId); if (!customer) throw notFound("Customer not found."); await options.repository.appendAudit({ id: crypto.randomUUID(), actorStaffId: authContext!.staff.id, action: "CUSTOMER_READ_MASKED", targetType: "CUSTOMER", targetId: customerId, outcome: "SUCCEEDED", reasonCode: "MASKED_READ", requestId: null, traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: {} }); write(response, 200, traceId, { customer }); return; }

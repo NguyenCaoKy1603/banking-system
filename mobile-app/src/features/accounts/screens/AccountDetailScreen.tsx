@@ -3,7 +3,6 @@ import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   Alert,
-  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,9 +10,14 @@ import {
   View,
 } from "react-native";
 
-import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { AppHeader } from "@/components/ui/AppHeader";
+import { AppIcon } from "@/components/ui/AppIcon";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
+import { StateCard } from "@/components/ui/StateCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { getAccountNumber, listAccounts } from "@/features/accounts/services/accountsApi";
 import {
@@ -22,7 +26,7 @@ import {
 } from "@/features/accounts/presentation/accountPresentation";
 import type { PaymentAccount } from "@/features/accounts/types/account";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
-import { colors, spacing } from "@/theme";
+import { colors, radius, sizes, spacing, typography } from "@/theme";
 
 export function AccountDetailScreen() {
   const router = useRouter();
@@ -137,28 +141,16 @@ export function AccountDetailScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="account-detail-back"
-        >
-          <Text style={styles.backLabel}>‹ Quay lại</Text>
-        </Pressable>
-
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>M3 · ACCOUNT</Text>
-          <Text style={styles.title}>Chi tiết tài khoản</Text>
-          <Text style={styles.description}>
-            Số dư và trạng thái được tải lại từ Backend; Mobile không tự quyết định giá trị.
-          </Text>
-        </View>
+        <AppHeader
+          backTestID="account-detail-back"
+          eyebrow="Tài khoản thanh toán"
+          onBack={() => router.back()}
+          subtitle="Theo dõi số dư và thông tin nhận tiền của bạn."
+          title="Chi tiết tài khoản"
+        />
 
         {isLoading ? (
-          <View style={styles.centerState}>
-            <ActivityIndicator color={colors.primary} size="large" />
-          </View>
+          <StateCard loading message="Đang tải thông tin tài khoản..." />
         ) : error ? (
           <RequestErrorNotice
             error={error}
@@ -167,22 +159,27 @@ export function AccountDetailScreen() {
             testID="account-detail-error"
           />
         ) : !account ? (
-          <View style={styles.card}>
-            <Text style={styles.emptyText}>Không tìm thấy tài khoản trong phạm vi phiên hiện tại.</Text>
-          </View>
+          <StateCard
+            icon="account"
+            message="Không tìm thấy tài khoản trong phiên đăng nhập hiện tại."
+            title="Tài khoản không khả dụng"
+          />
         ) : (
           <>
-            <View style={styles.card} testID="account-detail-card">
+            <Card elevated style={styles.accountCard} testID="account-detail-card">
               <View style={styles.accountHeader}>
-                <View style={styles.headerText}>
+                <View style={styles.accountHeading}>
+                  <Text style={styles.accountKicker}>TÀI KHOẢN CỦA TÔI</Text>
                   <Text style={styles.accountName}>{account.displayName}</Text>
                 </View>
-                <Text style={[styles.status, account.status === "BLOCKED" ? styles.statusBlocked : null]}>
-                  {getAccountStatusLabel(account.status)}
-                </Text>
+                <StatusBadge
+                  label={getAccountStatusLabel(account.status)}
+                  tone={account.status === "BLOCKED" ? "danger" : "success"}
+                />
               </View>
+
               <View style={styles.numberSection}>
-                <Text style={styles.label}>Số tài khoản đã che</Text>
+                <Text style={styles.label}>Số tài khoản</Text>
                 <View style={styles.numberRow}>
                   <Text style={styles.maskedNumber} testID="account-detail-number">
                     {getAccountNumberDisplay(
@@ -200,6 +197,11 @@ export function AccountDetailScreen() {
                       style={[styles.numberAction, isRevealingNumber ? styles.numberActionDisabled : null]}
                       testID="account-detail-toggle-number"
                     >
+                      <AppIcon
+                        color={colors.primary}
+                        name={isNumberVisible ? "eyeOff" : "eye"}
+                        size={17}
+                      />
                       <Text style={styles.numberActionLabel}>
                         {isRevealingNumber ? "Đang tải" : isNumberVisible ? "Ẩn" : "Hiện"}
                       </Text>
@@ -212,15 +214,14 @@ export function AccountDetailScreen() {
                       style={[styles.numberAction, isCopyingNumber || isRevealingNumber ? styles.numberActionDisabled : null]}
                       testID="account-detail-copy-number"
                     >
+                      <AppIcon color={colors.primary} name="copy" size={17} />
                       <Text style={styles.numberActionLabel}>
                         {isCopyingNumber ? "Đang sao chép" : "Sao chép"}
                       </Text>
                     </Pressable>
                   </View>
                 </View>
-                <Text style={styles.securityNote}>
-                  Số đầy đủ chỉ được tải từ server khi bạn bấm Hiện hoặc Sao chép.
-                </Text>
+                <Text style={styles.securityNote}>Số đầy đủ chỉ hiển thị theo yêu cầu và không được lưu lâu dài trên màn hình.</Text>
                 {accountNumberError ? (
                   <RequestErrorNotice
                     error={accountNumberError}
@@ -231,48 +232,48 @@ export function AccountDetailScreen() {
                 ) : null}
               </View>
               <View style={styles.balanceGrid}>
-                <View style={styles.balanceCell}>
+                <View style={[styles.balanceCell, styles.availableBalance]}>
                   <Text style={styles.label}>Số dư khả dụng</Text>
-                  <Text style={styles.value}>{formatVndMinor(account.availableBalance.amountMinor)}</Text>
+                  <Text adjustsFontSizeToFit numberOfLines={1} style={styles.primaryValue}>{formatVndMinor(account.availableBalance.amountMinor)}</Text>
                 </View>
                 <View style={styles.balanceCell}>
                   <Text style={styles.label}>Số dư hiện tại</Text>
-                  <Text style={styles.value}>{formatVndMinor(account.currentBalance.amountMinor)}</Text>
+                  <Text adjustsFontSizeToFit numberOfLines={1} style={styles.value}>{formatVndMinor(account.currentBalance.amountMinor)}</Text>
                 </View>
               </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.label}>Tên chủ tài khoản</Text>
-                <Text style={styles.detailValue}>{ownerName}</Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.label}>Ngân hàng</Text>
-                <Text style={styles.detailValue}>{account.bankName}</Text>
-              </View>
-              <View style={styles.detailRow}>
-                <Text style={styles.label}>Loại tiền</Text>
-                <Text style={styles.detailValue}>{account.currency}</Text>
-              </View>
+            </Card>
+
+            <Card style={styles.detailsCard}>
+              <Text style={styles.sectionTitle}>Thông tin tài khoản</Text>
+              <DetailRow label="Tên chủ tài khoản" value={ownerName} />
+              <DetailRow label="Ngân hàng" value={account.bankName} />
+              <DetailRow label="Loại tiền" value={account.currency} />
+            </Card>
+
+            <View style={styles.actions}>
+              <Button
+                icon="transfer"
+                label="Chuyển tiền"
+                onPress={() => router.push("/transfer")}
+                testID="account-detail-transfer"
+              />
+              <Button
+                icon="qr"
+                label="Nhận tiền / QR"
+                onPress={() =>
+                  router.push({ pathname: "/qr", params: { mode: "my", accountId: account.id } })
+                }
+                testID="account-detail-receive-qr"
+                variant="secondary"
+              />
+              <Button
+                icon="history"
+                label="Xem lịch sử giao dịch"
+                onPress={() => router.push("/history")}
+                testID="account-detail-history"
+                variant="outline"
+              />
             </View>
-            <PrimaryButton
-              label="Xem lịch sử giao dịch"
-              onPress={() => router.push("/history")}
-              testID="account-detail-history"
-            />
-            <PrimaryButton
-              label="Chuyển tiền"
-              onPress={() => router.push("/transfer")}
-              testID="account-detail-transfer"
-            />
-            <PrimaryButton
-              label="Nhận tiền / QR"
-              onPress={() =>
-                router.push({
-                  pathname: "/qr",
-                  params: { mode: "my", accountId: account.id },
-                })
-              }
-              testID="account-detail-receive-qr"
-            />
           </>
         )}
       </ScrollView>
@@ -280,55 +281,26 @@ export function AccountDetailScreen() {
   );
 }
 
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.detailRow}>
+      <Text style={styles.label}>{label}</Text>
+      <Text style={styles.detailValue}>{value}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     width: "100%",
-    maxWidth: 720,
+    maxWidth: sizes.contentMaxWidth,
     alignSelf: "center",
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  backButton: {
-    alignSelf: "flex-start",
-    paddingVertical: spacing.xs,
-  },
-  backLabel: {
-    color: colors.primary,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  header: {
-    gap: spacing.sm,
-  },
-  eyebrow: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: "700",
-  },
-  description: {
-    color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  centerState: {
-    minHeight: 180,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  card: {
+  accountCard: {
     gap: spacing.lg,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: spacing.md,
-    backgroundColor: colors.surface,
   },
   accountHeader: {
     flexDirection: "row",
@@ -350,11 +322,16 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   numberAction: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderWidth: 1,
     borderColor: colors.primary,
-    borderRadius: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.primarySoft,
   },
   numberActionDisabled: {
     opacity: 0.5,
@@ -364,64 +341,79 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
   },
-  headerText: {
+  accountHeading: {
     flex: 1,
     gap: spacing.xs,
   },
+  accountKicker: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+  },
   accountName: {
+    ...typography.heading,
     color: colors.text,
-    fontSize: 20,
-    fontWeight: "700",
   },
   maskedNumber: {
-    color: colors.muted,
-    fontSize: 15,
-  },
-  status: {
-    color: colors.success,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  statusBlocked: {
-    color: colors.danger,
+    ...typography.bodyStrong,
+    color: colors.text,
+    letterSpacing: 0.6,
   },
   balanceGrid: {
     flexDirection: "row",
-    gap: spacing.lg,
+    gap: spacing.sm,
   },
   balanceCell: {
     flex: 1,
-    gap: spacing.xs,
+    minHeight: 104,
+    justifyContent: "center",
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceMuted,
+  },
+  availableBalance: {
+    backgroundColor: colors.primarySoft,
   },
   label: {
+    ...typography.caption,
     color: colors.muted,
-    fontSize: 13,
   },
   value: {
+    ...typography.bodyStrong,
     color: colors.text,
-    fontSize: 18,
-    fontWeight: "700",
+  },
+  primaryValue: {
+    ...typography.subheading,
+    color: colors.primary,
   },
   detailRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     gap: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
   },
   detailValue: {
     flex: 1,
+    ...typography.bodyStrong,
     color: colors.text,
-    fontSize: 14,
-    fontWeight: "600",
     textAlign: "right",
   },
   securityNote: {
+    ...typography.caption,
     color: colors.muted,
-    fontSize: 12,
-    lineHeight: 18,
   },
-  emptyText: {
+  sectionTitle: {
+    ...typography.subheading,
     color: colors.text,
-    fontSize: 16,
-    fontWeight: "600",
+  },
+  detailsCard: {
+    gap: spacing.sm,
+  },
+  actions: {
+    gap: spacing.sm,
   },
 });

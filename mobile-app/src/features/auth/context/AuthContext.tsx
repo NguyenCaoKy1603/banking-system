@@ -14,9 +14,9 @@ import {
   login as loginRequest,
   refreshSession as refreshSessionRequest,
   register as registerRequest,
+  resendRegistrationChallenge as resendRegistrationChallengeRequest,
   revokeAllSessions,
   revokeSession,
-  verifyLoginChallenge as verifyLoginChallengeRequest,
   verifyRegistrationChallenge as verifyRegistrationChallengeRequest,
 } from "@/features/auth/services/authApi";
 import type {
@@ -26,7 +26,6 @@ import type {
   RegisterResponse,
   VerifyAuthChallengeRequest,
 } from "@/features/auth/types/auth";
-import { isAuthChallengeResponse } from "@/features/auth/services/authResponseValidators";
 import { isTerminalRefreshFailure } from "@/features/auth/domain/refreshFailure";
 import {
   createAuthSession,
@@ -119,16 +118,14 @@ async function revokeAllSessionsForLogout(
 type AuthContextValue = {
   status: AuthStatus;
   session: AuthSession | null;
-  pendingLoginChallenge: AuthChallengeResponse | null;
   logoutNotice: string | null;
   deviceId: string | null;
   isAuthenticated: boolean;
   refreshAccessToken: RefreshAccessToken;
   login: (request: LoginRequest) => Promise<void>;
   register: (request: RegisterRequest) => Promise<AuthChallengeResponse>;
-  verifyLoginChallenge: (request: VerifyAuthChallengeRequest) => Promise<void>;
   verifyRegistrationChallenge: (request: VerifyAuthChallengeRequest) => Promise<RegisterResponse>;
-  cancelLoginChallenge: () => void;
+  resendRegistrationChallenge: (challengeId: string) => Promise<AuthChallengeResponse>;
   logout: () => Promise<LogoutResult>;
   logoutAll: () => Promise<LogoutResult>;
 };
@@ -138,8 +135,6 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<AuthStatus>("booting");
   const [session, setSession] = useState<AuthSession | null>(null);
-  const [pendingLoginChallenge, setPendingLoginChallenge] =
-    useState<AuthChallengeResponse | null>(null);
   const [logoutNotice, setLogoutNotice] = useState<string | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const sessionRef = useRef<AuthSession | null>(null);
@@ -375,32 +370,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setLogoutNotice(null);
       const currentDeviceId = await ensureDeviceId();
       const response = await loginRequest(request, { deviceId: currentDeviceId });
-
-      if (isAuthChallengeResponse(response)) {
-        setPendingLoginChallenge(response);
-        return;
-      }
-
-      setPendingLoginChallenge(null);
       const nextSession = createAuthSession(response);
 
       await saveAuthSession(nextSession);
-      setActiveSession(nextSession, "authenticated");
-    },
-    [ensureDeviceId, setActiveSession],
-  );
-
-  const verifyLoginChallenge = useCallback(
-    async (request: VerifyAuthChallengeRequest) => {
-      const currentDeviceId = await ensureDeviceId();
-      const response = await verifyLoginChallengeRequest(request, {
-        deviceId: currentDeviceId,
-      });
-      const nextSession = createAuthSession(response);
-
-      await saveAuthSession(nextSession);
-      setLogoutNotice(null);
-      setPendingLoginChallenge(null);
       setActiveSession(nextSession, "authenticated");
     },
     [ensureDeviceId, setActiveSession],
@@ -424,9 +396,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [ensureDeviceId],
   );
 
-  const cancelLoginChallenge = useCallback(() => {
-    setPendingLoginChallenge(null);
-  }, []);
+  const resendRegistrationChallenge = useCallback(
+    async (challengeId: string) => {
+      const currentDeviceId = await ensureDeviceId();
+      return resendRegistrationChallengeRequest(challengeId, { deviceId: currentDeviceId });
+    },
+    [ensureDeviceId],
+  );
 
   const waitForPendingRefreshes = useCallback(async (
     sessionEpoch: string | null,
@@ -456,7 +432,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } catch {
       localSessionCleared = false;
     }
-    setPendingLoginChallenge(null);
     setActiveSession(null, "anonymous");
     return localSessionCleared;
   }, [setActiveSession]);
@@ -549,7 +524,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
     () => ({
       status,
       session,
-      pendingLoginChallenge,
       logoutNotice,
       deviceId,
       isAuthenticated:
@@ -557,26 +531,23 @@ export function AuthProvider({ children }: PropsWithChildren) {
       refreshAccessToken,
       login,
       register,
-      verifyLoginChallenge,
       verifyRegistrationChallenge,
-      cancelLoginChallenge,
+      resendRegistrationChallenge,
       logout,
       logoutAll,
     }),
     [
-      cancelLoginChallenge,
       deviceId,
       login,
       logout,
       logoutAll,
-      pendingLoginChallenge,
       logoutNotice,
       refreshAccessToken,
       register,
       session,
       status,
-      verifyLoginChallenge,
       verifyRegistrationChallenge,
+      resendRegistrationChallenge,
     ],
   );
 

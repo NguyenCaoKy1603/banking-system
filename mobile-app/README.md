@@ -4,6 +4,9 @@
 
 ## Phạm vi hiện tại
 
+- Giao diện dùng nhận diện riêng `NOVA Digital Banking`, design token thống nhất cho màu sắc, chữ, khoảng cách, bo góc, bóng đổ và vùng bấm; không sử dụng logo hoặc nội dung tiếp thị của ngân hàng khác.
+- Thanh điều hướng gồm bốn mục `Trang chủ`, `Thẻ`, `QR`, `Thêm`; nút QR được nhấn mạnh nhưng vẫn có nhãn chữ và accessibility label.
+- Trang chủ có đúng ba dịch vụ nhanh: chuyển tiền, tiền gửi và thẻ tín dụng; dữ liệu mô phỏng được gắn nhãn rõ ràng, không có banner quảng cáo hoặc mục ưu đãi.
 - Đăng nhập/đăng ký qua Auth API contract, có server-driven MFA challenge khi policy yêu cầu.
 - Khôi phục session khi mở app và route guard theo trạng thái auth.
 - Lưu session bằng một bản ghi SecureStore nguyên tử, có serialize mutation và migration từ format cũ.
@@ -11,12 +14,14 @@
 - Đăng xuất xóa session cục bộ trên thiết bị; có endpoint logout mọi thiết bị ở server.
 - HTTP client có Authorization, timeout, cancel, request ID, idempotency key và refresh single-flight hook.
 - Dashboard có trạng thái rỗng, thao tác nhanh có phản hồi rõ ràng và nội dung cuộn được.
+- Các màn chính dùng cùng một ngôn ngữ giao diện và có trạng thái loading, empty, error/retry, offline hoặc unauthorized phù hợp; tên dài và nội dung cuộn được kiểm tra trên Pixel 7 API 35.
 - Accounts/transactions có cursor pagination, runtime validation và màn hình lịch sử.
 - Home và Account Detail chỉ nhận số tài khoản đã che từ list API; khi bấm `Hiện đầy đủ` hoặc `Sao chép`, app gọi endpoint riêng để hiện và sao chép toàn bộ số tài khoản trong bộ nhớ tạm của phiên màn hình.
 - Có transaction detail, notification giao dịch và fraud-reporting channel từ transaction detail.
-- Transfer flow có beneficiary lookup, quote/phí, review, server-driven OTP/sinh trắc học step-up, idempotent submit và receipt state; danh bạ có list/create/rename/delete và chỉ hiển thị số tài khoản đã che.
-- Có eKYC mô phỏng với form, ảnh giấy tờ mẫu và trạng thái DRAFT/PENDING/APPROVED/REJECTED.
-- Có QR nhận tiền, QR code renderer, camera scanner, payload validation và manual fallback khi camera không dùng được.
+- Transfer flow có beneficiary lookup, quote/phí, review, persistent TOTP step-up, idempotent submit và receipt state; danh bạ có list/create/rename/delete và chỉ hiển thị số tài khoản đã che.
+- Có eKYC synthetic-only persistent dùng cùng nguồn PostgreSQL với Admin, theo vòng đời DRAFT/SUBMITTED/UNDER_REVIEW/NEEDS_MORE_INFO/APPROVED/REJECTED.
+- Danh sách thẻ không hiển thị thao tác đăng ký thêm khi khách hàng đã có thẻ; hồ sơ đang chờ dẫn về màn hình trạng thái. Khóa khẩn cấp không cần TOTP, còn mở khóa và báo mất dùng purpose TOTP riêng.
+- Có “QR thông tin nhận tiền”, QR code renderer, camera scanner và manual fallback. Payload v2 dùng số tài khoản thay vì UUID nội bộ, chỉ nhận đúng schema đã version hóa và luôn được coi là `UNVERIFIED`; màn hình không khởi tạo giao dịch thanh toán.
 - Notification có list/detail, mark-read và deep link tới transaction detail/profile theo resource của server.
 
 Client đã có refresh rotation single-flight, server-side revoke best-effort, logout mọi thiết bị, native biometric gate, transfer intent resume sau crash và server-driven control policy. `EXPO_PUBLIC_DEVICE_ASSERTION` đã bị loại bỏ: native biometric prompt chỉ là local user presence, không phải bằng chứng backend; cho tới khi nối provider attestation/passkey được phê duyệt, client fail closed và không tự tạo device proof trong public bundle. OTP/MFA assertion provider, core adapter, audit/outbox/reconciliation production vẫn phải được nối với backend/partner contract trước khi pilot dùng tiền thật.

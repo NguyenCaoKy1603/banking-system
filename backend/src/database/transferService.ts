@@ -11,6 +11,7 @@ import { fingerprint, hashOpaqueToken } from "../security.js";
 import { parseMoney, toMoney } from "../money.js";
 import type { Beneficiary, TransferQuote, TransferReceipt } from "../types.js";
 import { conflict, invalidRequest, notFound } from "../errors.js";
+import { ControlPolicyRepository } from "./controlPolicyRepository.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -92,10 +93,11 @@ export class RelationalTransferService {
     if (hasBeneficiary === hasLookup) throw invalidRequest("Exactly one recipient reference is required.");
     if (hasBeneficiary) assertUuid(input.beneficiaryId!, "beneficiaryId");
     const amountMinor = parseMoney(input.amount, "amount");
-    if (amountMinor <= 0n || amountMinor > 500_000_000n) throw conflict("Transfer amount is outside the sandbox limit.");
+    if (amountMinor <= 0n) throw conflict("Transfer amount is outside the sandbox limit.");
     const now = input.now ?? new Date().toISOString();
     const feeMinor = 1_000n;
     return this.unitOfWork.transaction(async ({ client }) => {
+      await new ControlPolicyRepository(client).assertTransferAllowed(input.customerId, amountMinor);
       const accounts = new AccountRepository(client);
       const transfers = new TransferRepository(client);
       const source = await accounts.findOwnedAccount(input.customerId, input.sourceAccountId);
@@ -133,6 +135,7 @@ export class RelationalTransferService {
         beneficiarySnapshot: beneficiary,
         destinationAccountId,
         destinationOwnerId: String(destination.destination_owner_id ?? destination.destination_customer_id),
+        destinationOwnerName: String(destination.destination_full_name ?? destination.account_holder_name ?? ""),
       });
       await new AuditRepository(client).append({
         id: randomUUID(),
@@ -218,6 +221,14 @@ export class RelationalTransferService {
           throw new RelationalConflictError("SELF_TRANSFER", "A transfer cannot be sent to the source account.");
         }
 
+        // A quote is only a preview. Re-read the durable policy after locking
+        // the quote so a policy change between quote and submit takes effect
+        // before any account lock or financial mutation.
+        await new ControlPolicyRepository(client).assertTransferAllowed(
+          input.customerId,
+          BigInt(quote.amountMinor),
+        );
+
         const lockedAccounts = await accounts.lockManyByIds([
           quote.sourceAccountId,
           quote.destinationAccountId,
@@ -287,6 +298,11 @@ export class RelationalTransferService {
         });
         await input.fault?.("after_balance_updated");
 
+        const senderResult = await client.query<{ full_name: string }>(
+          "SELECT full_name FROM customers WHERE id = $1",
+          [input.customerId],
+        );
+        const senderName = String(senderResult.rows[0]?.full_name ?? "");
         await accounts.appendTransaction({
           id: transfer.sourceTransactionId!,
           accountId: source.id,
@@ -296,7 +312,7 @@ export class RelationalTransferService {
           feeMinor: fee.toString(),
           status: "SUCCEEDED",
           description: input.description ?? "Chuyển tiền nội bộ",
-          counterpartyName: input.counterpartyName ?? null,
+          counterpartyName: quote.destinationOwnerName || null,
           reference,
           occurredAt: now,
           completedAt: now,
@@ -311,7 +327,7 @@ export class RelationalTransferService {
           feeMinor: "0",
           status: "SUCCEEDED",
           description: "Nhận tiền chuyển khoản nội bộ",
-          counterpartyName: input.counterpartyName ?? null,
+          counterpartyName: senderName || null,
           reference,
           occurredAt: now,
           completedAt: now,

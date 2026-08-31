@@ -152,24 +152,32 @@ export class CreditRepository {
     return result.rows[0] ? result.rows[0] as Record<string, unknown> : null;
   }
 
-  async listTransactions(customerId: string, creditAccountId: string): Promise<Array<Record<string, unknown>>> {
+  async listTransactions(customerId: string, creditAccountId: string, cursor?: { occurredAt: string; id: string } | null, limit = 101): Promise<Array<Record<string, unknown>>> {
     const result = await this.client.query(
       `SELECT t.* FROM credit_transactions t
        JOIN credit_accounts ca ON ca.id = t.credit_account_id
        WHERE ca.customer_id = $1 AND t.credit_account_id = $2
-       ORDER BY t.occurred_at DESC, t.id DESC`,
-      [requireUuid(customerId, "customerId"), requireUuid(creditAccountId, "creditAccountId")],
+         AND ($3::timestamptz IS NULL
+           OR t.occurred_at < $3::timestamptz
+           OR (t.occurred_at = $3::timestamptz AND t.id < $4::uuid))
+       ORDER BY t.occurred_at DESC, t.id DESC
+       LIMIT $5`,
+      [requireUuid(customerId, "customerId"), requireUuid(creditAccountId, "creditAccountId"), cursor?.occurredAt ?? null, cursor?.id ?? null, limit],
     );
     return result.rows as Array<Record<string, unknown>>;
   }
 
-  async listStatements(customerId: string, creditAccountId: string): Promise<Array<Record<string, unknown>>> {
+  async listStatements(customerId: string, creditAccountId: string, cursor?: { issuedAt: string; id: string } | null, limit = 101): Promise<Array<Record<string, unknown>>> {
     const result = await this.client.query(
       `SELECT s.* FROM credit_statements s
        JOIN credit_accounts ca ON ca.id = s.credit_account_id
        WHERE ca.customer_id = $1 AND s.credit_account_id = $2
-       ORDER BY s.issued_at DESC, s.id DESC`,
-      [requireUuid(customerId, "customerId"), requireUuid(creditAccountId, "creditAccountId")],
+         AND ($3::timestamptz IS NULL
+           OR s.issued_at < $3::timestamptz
+           OR (s.issued_at = $3::timestamptz AND s.id < $4::uuid))
+       ORDER BY s.issued_at DESC, s.id DESC
+       LIMIT $5`,
+      [requireUuid(customerId, "customerId"), requireUuid(creditAccountId, "creditAccountId"), cursor?.issuedAt ?? null, cursor?.id ?? null, limit],
     );
     return result.rows as Array<Record<string, unknown>>;
   }
@@ -199,13 +207,14 @@ export class CreditRepository {
     return result.rows as Array<Record<string, unknown>>;
   }
 
-  async createCreditAccount(input: { id: string; customerId: string; limitMinor: string; nextStatementAt: string }): Promise<Record<string, unknown>> {
+  async createCreditAccount(input: { id: string; customerId: string; limitMinor: string; currentCycleStartAt: string; nextStatementAt: string }): Promise<Record<string, unknown>> {
     const result = await this.client.query(
       `INSERT INTO credit_accounts
         (id, customer_id, currency, credit_limit_minor, posted_outstanding_minor,
-         pending_authorizations_minor, next_statement_at, status, version, updated_at)
-       VALUES ($1, $2, 'VND', $3, 0, 0, $4, 'ACTIVE', 0, NOW()) RETURNING *`,
-      [requireUuid(input.id), requireUuid(input.customerId, "customerId"), input.limitMinor, input.nextStatementAt],
+        pending_authorizations_minor, current_cycle_start_at, next_statement_at,
+        status, version, updated_at)
+       VALUES ($1, $2, 'VND', $3, 0, 0, $4, $5, 'ACTIVE', 0, NOW()) RETURNING *`,
+      [requireUuid(input.id), requireUuid(input.customerId, "customerId"), input.limitMinor, input.currentCycleStartAt, input.nextStatementAt],
     );
     return result.rows[0] as Record<string, unknown>;
   }

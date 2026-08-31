@@ -3,8 +3,8 @@ import {
   refreshSession as refreshSessionApi,
   revokeAllSessions,
   register as registerApi,
+  resendRegistrationChallenge as resendRegistrationChallengeApi,
   revokeSession as revokeSessionApi,
-  verifyLoginChallenge as verifyLoginChallengeApi,
 } from "@/features/auth/services/authApi";
 import type {
   AuthUser,
@@ -14,7 +14,6 @@ import type {
   RegisterFormValues,
   RegisterRequest,
   RegisterResponse,
-  VerifyAuthChallengeRequest,
 } from "@/features/auth/types/auth";
 import { ApiError } from "@/services/api/ApiError";
 
@@ -52,8 +51,11 @@ const DEVICE_OPTIONS = { deviceId: "device-test" };
 const registrationChallenge: AuthChallengeResponse = {
   challengeId: "registration-challenge-1",
   expiresAt: "2026-08-14T00:05:00Z",
-  methods: ["OTP"],
-  purpose: "REGISTRATION_VERIFY",
+  methods: ["EMAIL_OTP"],
+  method: "EMAIL_OTP",
+  purpose: "REGISTRATION_EMAIL_VERIFY",
+  resendAfter: "2026-08-14T00:01:00Z",
+  maskedDestination: "te****@example.com",
 };
 const login = (
   request: LoginRequest,
@@ -67,8 +69,8 @@ const refreshSession = (refreshToken: string) =>
   refreshSessionApi(refreshToken, DEVICE_OPTIONS);
 const revokeSession = (refreshToken: string) =>
   revokeSessionApi(refreshToken, DEVICE_OPTIONS);
-const verifyLoginChallenge = (request: VerifyAuthChallengeRequest) =>
-  verifyLoginChallengeApi(request, DEVICE_OPTIONS);
+const resendRegistrationChallenge = (challengeId: string) =>
+  resendRegistrationChallengeApi(challengeId, DEVICE_OPTIONS);
 
 const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>();
 const originalFetch = globalThis.fetch;
@@ -167,7 +169,7 @@ describe("authApi", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("accepts a server-driven MFA challenge and verifies it", async () => {
+  it("fails closed when a server returns a login challenge", async () => {
     const challenge: AuthChallengeResponse = {
       challengeId: "challenge-1",
       expiresAt: "2026-08-14T00:05:00Z",
@@ -176,23 +178,8 @@ describe("authApi", () => {
     };
     fetchMock.mockResolvedValueOnce(createJsonResponse(challenge, 202));
 
-    await expect(login(loginRequest)).resolves.toEqual(challenge);
-
-    const response: LoginResponse = {
-      accessToken: "access-token-mfa",
-      refreshToken: "refresh-token-mfa",
-      expiresInSeconds: 900,
-      user: authUser,
-    };
-    fetchMock.mockResolvedValueOnce(createJsonResponse(response, 200));
-
-    await expect(
-      verifyLoginChallenge({
-        challengeId: "challenge-1",
-        method: "OTP",
-        proof: "654321",
-      }),
-    ).resolves.toEqual(response);
+    const error = await expectApiError(login(loginRequest));
+    expect(error).toMatchObject({ status: 202, code: "INVALID_RESPONSE" });
   });
 
   it("accepts a 204 response when revoking a session", async () => {
@@ -320,6 +307,21 @@ describe("authApi", () => {
     fetchMock.mockResolvedValueOnce(createJsonResponse(registrationChallenge, 202));
 
     await expect(register(registerFormValues)).resolves.toEqual(registrationChallenge);
+  });
+
+  it("gửi lại OTP đăng ký qua endpoint pre-auth và giữ device binding", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(registrationChallenge, 200));
+
+    await expect(resendRegistrationChallenge("registration/challenge 1")).resolves.toEqual(registrationChallenge);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/auth/challenges/registration%2Fchallenge%201/resend`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: expect.objectContaining({ "X-Device-ID": "device-test" }),
+      }),
+    );
   });
 
   it("từ chối direct registration success để không có hai state machine", async () => {

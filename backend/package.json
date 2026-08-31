@@ -66,7 +66,7 @@
     "test:registration:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/registrationRelational.test.ts",
     "test:lifecycle:persistence": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/lifecycleRelational.test.ts",
     "test:lifecycle:scheduler": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/lifecycleScheduler.test.ts",
-    "test:runtime-email": "tsx --test src/tests/runtimeEmailProvider.test.ts",
+    "test:runtime-email": "tsx --test src/tests/runtimeEmailProvider.test.ts src/tests/smtpEmailProvider.test.ts",
     "test:integrated:disposable": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/integratedDisposable.test.ts",
     "test:database": "node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/databaseFoundation.test.ts",
     "test:database:guard": "tsx --test src/tests/disposableDatabaseGuard.test.ts",
@@ -74,12 +74,14 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.21.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "yaml": "^2.9.0"
   },
   "dependencies": {
+    "nodemailer": "^9.0.5",
     "otpauth": "^9.5.1",
     "pg": "^8.23.0"
   }

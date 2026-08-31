@@ -5,6 +5,8 @@ import { Pool } from "pg";
 
 import { PostgresAdminRepository } from "../admin/repositories/adminRepository.js";
 import { DatabasePool } from "../database/pool.js";
+import { UnitOfWork } from "../database/unitOfWork.js";
+import { RelationalKycService } from "../database/kycService.js";
 import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
 import { BankingSystem } from "../bankingSystem.js";
 import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
@@ -91,6 +93,87 @@ test("PostgreSQL Admin funding action is typed, atomic and single-execution", { 
     assert.deepEqual(audit.rows, [{ event_type: "ADMIN_SIMULATION_FUNDING_SUCCEEDED", outcome: "SUCCEEDED", request_id: action.id }]);
   } finally {
     await repository.close();
+    await pool.end();
+  }
+});
+
+test("customer and Admin KYC workflow reads and mutates the same persistent application", { skip: !databaseUrl }, async () => {
+  const pool = new Pool({ connectionString: databaseUrl, max: 6 });
+  const database = new DatabasePool({ connectionString: databaseUrl!, max: 6 });
+  const repository = new PostgresAdminRepository({ connectionString: databaseUrl!, maxConnections: 6 });
+  const kyc = new RelationalKycService(new UnitOfWork(database));
+  const customerId = randomUUID();
+  const makerId = randomUUID();
+  const checkerId = randomUUID();
+  try {
+    await repository.initialize();
+    await pool.query(
+      "INSERT INTO customers (id, full_name, email, phone_number, password_salt, password_digest, created_at) VALUES ($1,'Synthetic KYC shared source',$2,$3,'salt','digest',NOW())",
+      [customerId, `${customerId}@example.test`, `09${customerId.replaceAll("-", "").slice(0, 9)}`],
+    );
+    for (const [id, prefix] of [[makerId, "K-M"], [checkerId, "K-C"]]) {
+      await pool.query(
+        "INSERT INTO staff_users (id, employee_code, email_normalized, display_name, password_salt, password_digest, status) VALUES ($1,$2,$3,'Synthetic KYC staff','salt','digest','ACTIVE')",
+        [id, `${prefix}-${id.slice(0, 8)}`, `${id}@example.test`],
+      );
+    }
+    const submitted = await kyc.submit(customerId, {
+      fullName: "Synthetic KYC shared source",
+      identityNumber: "123456789012",
+      address: "Synthetic address shared with Admin",
+      documentUri: "synthetic://document/admin-shared-source",
+      syntheticDataConfirmed: true,
+    });
+    const adminVisible = await repository.findApplication("KYC", submitted.id);
+    assert.equal(adminVisible?.customerId, customerId);
+    assert.equal(adminVisible?.status, "SUBMITTED");
+    const claimed = await repository.claimApplication("KYC", submitted.id, makerId);
+    assert.equal(claimed.status, "UNDER_REVIEW");
+    assert.equal((await kyc.get(customerId))?.status, "UNDER_REVIEW");
+
+    const action = await repository.createAction({
+      actionType: "KYC_DECISION",
+      requesterStaffId: makerId,
+      targetType: "KYC_APPLICATION",
+      targetId: submitted.id,
+      requestFingerprint: `kyc-shared-${randomUUID()}`,
+      policyVersion: "admin-p0-v1",
+      idempotencyKey: `kyc-shared-${randomUUID()}`,
+      expectedTargetVersion: claimed.version,
+      expectedTargetStatus: "UNDER_REVIEW",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      payload: {
+        decision: "NEEDS_MORE_INFO",
+        reasonCode: "SYNTHETIC_MORE_INFO",
+        ticketReference: "KYC-SHARED-1",
+        description: "Synthetic KYC shared-source decision",
+      },
+    });
+    await repository.decideAction({
+      requestId: action.id,
+      reviewerStaffId: checkerId,
+      decision: "APPROVED",
+      approvedFingerprint: action.requestFingerprint,
+      reasonCode: "SYNTHETIC_APPROVED",
+      mfaVerifiedAt: new Date().toISOString(),
+    });
+    assert.equal((await repository.executeApprovedAction({ requestId: action.id, approverStaffId: checkerId, traceId: "kyc-shared-source" })).status, "SUCCEEDED");
+    const customerVisible = await kyc.get(customerId);
+    assert.equal(customerVisible?.id, submitted.id);
+    assert.equal(customerVisible?.status, "NEEDS_MORE_INFO");
+    assert.equal(customerVisible?.rejectionReason, "SYNTHETIC_MORE_INFO");
+    const persisted = await pool.query<{ status: string; reviews: string; audit: string; outbox: string }>(
+      `SELECT
+         (SELECT status FROM kyc_applications WHERE id=$1) AS status,
+         (SELECT COUNT(*)::text FROM kyc_reviews WHERE application_id=$1 AND recommendation='MORE_INFO_REQUIRED') AS reviews,
+         (SELECT COUNT(*)::text FROM audit_events WHERE target_id=$1::text AND event_type='KYC_DECISION_APPROVED') AS audit,
+         (SELECT COUNT(*)::text FROM outbox_events WHERE aggregate_id=$1::text AND event_type='security.kyc_status_changed.v1') AS outbox`,
+      [submitted.id],
+    );
+    assert.deepEqual(persisted.rows[0], { status: "NEEDS_MORE_INFO", reviews: "1", audit: "1", outbox: "1" });
+  } finally {
+    await repository.close();
+    await database.close();
     await pool.end();
   }
 });

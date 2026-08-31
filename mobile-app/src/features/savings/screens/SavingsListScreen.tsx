@@ -1,16 +1,25 @@
 import { useCallback, useMemo, useState } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { AppHeader } from "@/components/ui/AppHeader";
+import { AppIcon } from "@/components/ui/AppIcon";
+import { Button } from "@/components/ui/Button";
+import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { Screen } from "@/components/ui/Screen";
+import { StateCard } from "@/components/ui/StateCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
 import { getSavingsDepositStatusLabel } from "@/features/savings/presentation/savingsPresentation";
 import { listSavingsDeposits } from "@/features/savings/services/savingsApi";
-import type { SavingsDeposit, SavingsDepositsResponse } from "@/features/savings/types/savings";
+import type {
+  SavingsDeposit,
+  SavingsDepositStatus,
+  SavingsDepositsResponse,
+} from "@/features/savings/types/savings";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 type DepositFilter = "ACTIVE" | "COMPLETED";
 
@@ -27,6 +36,10 @@ function formatDate(value: string): string {
 
 function matchesFilter(deposit: SavingsDeposit, filter: DepositFilter): boolean {
   return filter === "ACTIVE" ? deposit.status === "ACTIVE" : deposit.status !== "ACTIVE";
+}
+
+function getStatusTone(status: SavingsDepositStatus): "success" | "neutral" {
+  return status === "ACTIVE" ? "success" : "neutral";
 }
 
 export function SavingsListScreen() {
@@ -72,109 +85,131 @@ export function SavingsListScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="savings-list-back"
-        >
-          <Text style={styles.backLabel}>‹ Quay lại</Text>
-        </Pressable>
-
-        <View style={styles.header}>
-          <View style={styles.titleRow}>
-            <View style={styles.titleBlock}>
-              <Text style={styles.eyebrow}>M6 · TIỀN GỬI</Text>
-              <Text style={styles.title}>Tiền gửi tiết kiệm</Text>
-            </View>
-            <View style={styles.sandboxBadge}>
-              <Text style={styles.sandboxText}>SANDBOX</Text>
-            </View>
-          </View>
-          <Text style={styles.description}>
-            Dữ liệu mô phỏng VND; lãi suất và ngày đáo hạn do backend trả về.
-          </Text>
-        </View>
+        <AppHeader
+          backTestID="savings-list-back"
+          eyebrow="Tích lũy"
+          onBack={() => router.back()}
+          subtitle="Theo dõi tiền gốc, lãi dự kiến và ngày đáo hạn."
+          title="Tiền gửi tiết kiệm"
+        />
+        <EnvironmentBadge />
 
         {isLoading ? (
-          <View style={styles.centerState} testID="savings-list-loading">
-            <ActivityIndicator color={colors.primary} size="large" />
-            <Text style={styles.stateText}>Đang tải danh sách tiền gửi...</Text>
-          </View>
+          <StateCard loading message="Đang tải danh sách tiền gửi..." testID="savings-list-loading" />
         ) : error ? (
-          <View style={styles.stateCard} testID="savings-list-error">
-            <Text style={styles.stateTitle}>Không thể tải dữ liệu</Text>
-            <Text style={styles.errorText}>{error}</Text>
-            <PrimaryButton label="Thử lại" onPress={loadDeposits} testID="savings-list-retry" />
-          </View>
+          <StateCard
+            actionLabel="Thử lại"
+            actionTestID="savings-list-retry"
+            icon="alert"
+            message={error}
+            onAction={loadDeposits}
+            testID="savings-list-error"
+            title="Không thể tải dữ liệu"
+          />
         ) : (
           <>
             <View style={styles.totalCard} testID="savings-total-principal">
-              <Text style={styles.totalLabel}>Tổng gốc đang gửi</Text>
+              <View style={styles.totalTopRow}>
+                <View style={styles.totalIcon}>
+                  <AppIcon color={colors.onPrimary} name="savings" size={22} />
+                </View>
+                <Text style={styles.totalCurrency}>VND</Text>
+              </View>
+              <Text style={styles.totalLabel}>Tổng tiền gốc đang gửi</Text>
               <Text style={styles.totalValue}>
                 {response ? formatVndMinor(response.totalPrincipal.amountMinor) : "—"}
               </Text>
-              <Text style={styles.totalHint}>Tổng này do server tính, Mobile không tự cộng.</Text>
+              <Text style={styles.totalHint}>Giá trị được cập nhật theo dữ liệu tài khoản của bạn.</Text>
             </View>
 
-            <View style={styles.filterRow}>
-              {(["ACTIVE", "COMPLETED"] as const).map((item) => (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: filter === item }}
-                  key={item}
-                  onPress={() => setFilter(item)}
-                  style={[styles.filterButton, filter === item ? styles.filterButtonSelected : null]}
-                  testID={`savings-filter-${item.toLowerCase()}`}
-                >
-                  <Text style={[styles.filterText, filter === item ? styles.filterTextSelected : null]}>
-                    {item === "ACTIVE" ? "Đang hoạt động" : "Đã hoàn tất"}
-                  </Text>
-                </Pressable>
-              ))}
+            <View style={styles.filterRow} testID="savings-filters">
+              {(["ACTIVE", "COMPLETED"] as const).map((item) => {
+                const selected = filter === item;
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    key={item}
+                    onPress={() => setFilter(item)}
+                    style={[styles.filterButton, selected ? styles.filterButtonSelected : null]}
+                    testID={`savings-filter-${item.toLowerCase()}`}
+                  >
+                    <Text style={[styles.filterText, selected ? styles.filterTextSelected : null]}>
+                      {item === "ACTIVE" ? "Đang hoạt động" : "Đã hoàn tất"}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
 
             {deposits.length === 0 ? (
-              <View style={styles.stateCard} testID="savings-list-empty">
-                <Text style={styles.stateTitle}>Chưa có khoản tiền gửi</Text>
-                <Text style={styles.stateText}>
-                  Chọn kỳ hạn và số tiền để mở khoản tiết kiệm sandbox đầu tiên.
-                </Text>
-              </View>
+              <StateCard
+                icon="savings"
+                message={
+                  filter === "ACTIVE"
+                    ? "Hãy chọn kỳ hạn và số tiền để mở khoản tiết kiệm đầu tiên."
+                    : "Bạn chưa có khoản tiền gửi đã hoàn tất."
+                }
+                testID="savings-list-empty"
+                title={filter === "ACTIVE" ? "Chưa có khoản tiền gửi" : "Chưa có dữ liệu"}
+              />
             ) : (
               <View style={styles.list} testID="savings-list-items">
                 {deposits.map((deposit) => (
                   <Pressable
+                    accessibilityLabel={`Mở chi tiết ${deposit.productName}`}
                     accessibilityRole="button"
                     key={deposit.depositId}
                     onPress={() =>
-                      router.push({ pathname: "/savings/[depositId]", params: { depositId: deposit.depositId } })
+                      router.push({
+                        pathname: "/savings/[depositId]",
+                        params: { depositId: deposit.depositId },
+                      })
                     }
                     style={({ pressed }) => [styles.depositCard, pressed ? styles.pressed : null]}
                     testID={`savings-item-${deposit.depositId}`}
                   >
                     <View style={styles.depositTopRow}>
-                      <View style={styles.depositTitleBlock}>
-                        <Text style={styles.depositName}>{deposit.productName}</Text>
-                        <Text style={styles.depositMeta}>{deposit.termMonths} tháng · {deposit.sourceAccountMaskedNumber}</Text>
+                      <View style={styles.depositIdentity}>
+                        <View style={styles.depositIcon}>
+                          <AppIcon color={colors.primary} name="savings" size={21} />
+                        </View>
+                        <View style={styles.depositTitleBlock}>
+                          <Text style={styles.depositName}>{deposit.productName}</Text>
+                          <Text style={styles.depositMeta}>
+                            Kỳ hạn {deposit.termMonths} tháng · {deposit.sourceAccountMaskedNumber}
+                          </Text>
+                        </View>
                       </View>
-                      <Text style={styles.depositStatus}>{getSavingsDepositStatusLabel(deposit.status)}</Text>
+                      <StatusBadge
+                        label={getSavingsDepositStatusLabel(deposit.status)}
+                        tone={getStatusTone(deposit.status)}
+                      />
+                    </View>
+                    <View style={styles.amountBlock}>
+                      <Text style={styles.amountLabel}>Tiền gốc</Text>
+                      <Text style={styles.amountValue}>{formatVndMinor(deposit.principal.amountMinor)}</Text>
                     </View>
                     <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>Tiền gốc</Text>
-                      <Text style={styles.summaryValue}>{formatVndMinor(deposit.principal.amountMinor)}</Text>
-                    </View>
-                    <View style={styles.summaryRow}>
-                      <Text style={styles.summaryLabel}>Lãi dự kiến · đáo hạn</Text>
-                      <Text style={styles.summaryValue}>{formatDate(deposit.maturityAt)}</Text>
+                      <View style={styles.summaryItem}>
+                        <Text style={styles.summaryLabel}>Lãi suất</Text>
+                        <Text style={styles.summaryValue}>
+                          {(deposit.annualRateBasisPoints / 100).toLocaleString("vi-VN")}%/năm
+                        </Text>
+                      </View>
+                      <View style={styles.summaryItem}>
+                        <Text style={styles.summaryLabel}>Ngày đáo hạn</Text>
+                        <Text style={styles.summaryValue}>{formatDate(deposit.maturityAt)}</Text>
+                      </View>
+                      <AppIcon color={colors.subtle} name="chevronRight" size={20} />
                     </View>
                   </Pressable>
                 ))}
               </View>
             )}
 
-            <PrimaryButton
+            <Button
+              icon="savings"
               label="Mở khoản tiền gửi"
               onPress={() => router.push("/savings/open")}
               testID="savings-open-button"
@@ -190,44 +225,89 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     width: "100%",
-    maxWidth: 720,
+    maxWidth: sizes.contentMaxWidth,
     alignSelf: "center",
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  backButton: { alignSelf: "flex-start", paddingVertical: spacing.xs },
-  backLabel: { color: colors.primary, fontSize: 15, fontWeight: "600" },
-  header: { gap: spacing.sm },
-  titleRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.md },
-  titleBlock: { flex: 1, gap: spacing.sm },
-  eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "700", letterSpacing: 1.4 },
-  title: { color: colors.text, fontSize: 30, fontWeight: "700" },
-  description: { color: colors.muted, fontSize: 15, lineHeight: 22 },
-  sandboxBadge: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: 999, backgroundColor: colors.primarySoft },
-  sandboxText: { color: colors.primary, fontSize: 10, fontWeight: "800" },
-  centerState: { minHeight: 220, alignItems: "center", justifyContent: "center", gap: spacing.md },
-  stateCard: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: spacing.md, backgroundColor: colors.surface },
-  stateTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
-  stateText: { color: colors.muted, fontSize: 14, lineHeight: 21 },
-  errorText: { color: colors.danger, fontSize: 14, lineHeight: 20 },
-  totalCard: { gap: spacing.xs, padding: spacing.lg, borderRadius: 20, backgroundColor: colors.primary },
-  totalLabel: { color: "rgba(255,255,255,0.8)", fontSize: 13, fontWeight: "700" },
-  totalValue: { color: colors.surface, fontSize: 26, fontWeight: "800" },
-  totalHint: { color: "rgba(255,255,255,0.75)", fontSize: 12 },
-  filterRow: { flexDirection: "row", gap: spacing.sm },
-  filterButton: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surface },
-  filterButtonSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-  filterText: { color: colors.muted, fontSize: 13, fontWeight: "700" },
+  totalCard: {
+    gap: spacing.sm,
+    padding: spacing.mlg,
+    borderRadius: radius.xl,
+    backgroundColor: colors.navy,
+    ...shadows.card,
+  },
+  totalTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  totalIcon: {
+    width: 42,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.md,
+    backgroundColor: colors.primary,
+  },
+  totalCurrency: { ...typography.label, color: "rgba(255,255,255,0.72)", letterSpacing: 1 },
+  totalLabel: { ...typography.label, color: "rgba(255,255,255,0.72)" },
+  totalValue: { ...typography.amount, color: colors.onPrimary },
+  totalHint: { ...typography.caption, color: "rgba(255,255,255,0.68)" },
+  filterRow: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    padding: 4,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceMuted,
+  },
+  filterButton: {
+    flex: 1,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.sm,
+  },
+  filterButtonSelected: { backgroundColor: colors.surface, ...shadows.card },
+  filterText: { ...typography.label, color: colors.muted },
   filterTextSelected: { color: colors.primary },
   list: { gap: spacing.md },
-  depositCard: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: 20, backgroundColor: colors.surface },
-  pressed: { opacity: 0.75 },
-  depositTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.md },
+  depositCard: {
+    gap: spacing.md,
+    padding: spacing.mlg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    ...shadows.card,
+  },
+  pressed: { opacity: 0.8, transform: [{ scale: 0.995 }] },
+  depositTopRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: spacing.md,
+  },
+  depositIdentity: { flex: 1, flexDirection: "row", alignItems: "center", gap: spacing.md },
+  depositIcon: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+  },
   depositTitleBlock: { flex: 1, gap: spacing.xs },
-  depositName: { color: colors.text, fontSize: 16, fontWeight: "800" },
-  depositMeta: { color: colors.muted, fontSize: 13 },
-  depositStatus: { color: colors.success, fontSize: 11, fontWeight: "800", textAlign: "right" },
-  summaryRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md },
-  summaryLabel: { color: colors.muted, fontSize: 13 },
-  summaryValue: { flex: 1, color: colors.text, fontSize: 14, fontWeight: "700", textAlign: "right" },
+  depositName: { ...typography.subheading, color: colors.text },
+  depositMeta: { ...typography.caption, color: colors.muted },
+  amountBlock: { gap: spacing.xs },
+  amountLabel: { ...typography.caption, color: colors.muted },
+  amountValue: { ...typography.heading, color: colors.text },
+  summaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+  },
+  summaryItem: { flex: 1, gap: spacing.xs },
+  summaryLabel: { ...typography.caption, color: colors.muted },
+  summaryValue: { ...typography.label, color: colors.text },
 });

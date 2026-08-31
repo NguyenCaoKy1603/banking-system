@@ -122,6 +122,17 @@ test("Admin P0 HTTP E2E covers case operations, transfer, fraud, outbox and staf
     const control = await login(fixture[1]);
     const support = await login(fixture[2]);
     const admin = await login(fixture[3]);
+    const validStaffInvite = await request("/api/v1/admin/staff/invite-requests", { method: "POST", headers: { "idempotency-key": "p0-staff-invite-001" }, body: json({ email: "p0-new-operations@example.test", employeeCode: "P0-NEW-OPS", displayName: "P0 New Operations", role: "OPERATIONS", reasonCode: "P0_STAFF_INVITE", ticketReference: "P0-STAFF-001", description: "Create a synthetic operations invitation" }) }, admin);
+    assert.equal(validStaffInvite.status, 202, JSON.stringify(validStaffInvite.body));
+    assert.equal((validStaffInvite.body?.action as Record<string, unknown>)?.status, "PENDING_APPROVAL");
+    const invalidStaffInvite = await request("/api/v1/admin/staff/invite-requests", { method: "POST", headers: { "idempotency-key": "p0-staff-invite-unknown-field" }, body: json({ email: "p0-invalid@example.test", employeeCode: "P0-INVALID", displayName: "P0 Invalid", role: "OPERATIONS", reasonCode: "P0_STAFF_INVITE", ticketReference: "P0-STAFF-002", description: "Reject unsupported field", unsupported: true }) }, admin);
+    assert.equal(invalidStaffInvite.status, 422);
+    assert.equal(invalidStaffInvite.body?.code, "VALIDATION_ERROR");
+    const actionCountBeforeInvalidReason = (await repository.listActions()).length;
+    const invalidStaffInviteReason = await request("/api/v1/admin/staff/invite-requests", { method: "POST", headers: { "idempotency-key": "p0-staff-invite-invalid-reason" }, body: json({ email: "p0-invalid-reason@example.test", employeeCode: "P0-INVALID-REASON", displayName: "P0 Invalid Reason", role: "OPERATIONS", reasonCode: "P0 invalid reason", ticketReference: "P0-STAFF-003", description: "Reject non-normalized reason" }) }, admin);
+    assert.equal(invalidStaffInviteReason.status, 422);
+    assert.equal((invalidStaffInviteReason.body?.fieldErrors as Record<string, unknown>)?.reasonCode, "Use a normalized reason code.");
+    assert.equal((await repository.listActions()).length, actionCountBeforeInvalidReason);
     const corsDenied = await request("/api/v1/admin/me", { headers: { Origin: "http://evil.test" } }, control);
     assert.equal(corsDenied.status, 403);
     assert.equal(corsDenied.body?.code, "CORS_ORIGIN_DENIED");

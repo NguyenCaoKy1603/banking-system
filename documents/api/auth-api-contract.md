@@ -78,8 +78,11 @@ type RegisterRequest = {
 type AuthChallengeResponse = {
   challengeId: string;
   expiresAt: string;
-  methods: Array<"OTP">;
-  purpose: "REGISTRATION_VERIFY";
+  methods: Array<"EMAIL_OTP">;
+  method: "EMAIL_OTP";
+  purpose: "REGISTRATION_EMAIL_VERIFY";
+  resendAfter: string;
+  maskedDestination: string;
 };
 ```
 
@@ -92,7 +95,7 @@ Client gửi `X-Device-ID` giống bước bắt đầu và body:
 ```ts
 type VerifyRegistrationRequest = {
   challengeId: string;
-  method: "OTP";
+  method: "EMAIL_OTP";
   proof: string;
 };
 ```
@@ -135,6 +138,15 @@ type RegisterResponse = {
 - `429 Too Many Requests`: vượt rate limit.
 - `500 Internal Server Error`: lỗi ngoài dự kiến.
 
+### Gửi lại OTP đăng ký — `POST /auth/challenges/{challengeId}/resend`
+
+Đây là endpoint **pre-authentication** chỉ dành cho challenge `REGISTRATION_EMAIL_VERIFY`.
+Client gửi `X-Device-ID` giống bước đăng ký và body JSON rỗng `{}`. Server tự tra email từ
+pending registration; client không được gửi hoặc thay đổi địa chỉ nhận. Challenge cũ bị hủy,
+challenge mới được tạo với OTP mới, cooldown tối thiểu 60 giây và giới hạn tối đa 3 lần trong
+10 phút. Response `200 OK` có `challengeId`, `method: "EMAIL_OTP"`, `methods: ["EMAIL_OTP"]`,
+`expiresAt`, `resendAfter` và `maskedDestination`; không có plaintext OTP.
+
 ## 4. POST `/auth/login`
 
 URL hoàn chỉnh trên Android Emulator:
@@ -145,7 +157,8 @@ http://10.0.2.2:5000/api/v1/auth/login
 
 ### Mục đích
 
-Xác thực bằng email và password, sau đó trả phiên đăng nhập cùng thông tin người dùng.
+Xác thực bằng email và password, sau đó trả phiên đăng nhập cùng thông tin người dùng. Đây là
+luồng password-only: login không gửi OTP/TOTP, không tạo challenge và không có bước xác thực bổ sung.
 
 ### Request body
 
@@ -192,37 +205,15 @@ type LoginResponse = {
 ### HTTP status
 
 - `200 OK`: đăng nhập thành công.
-- `202 Accepted`: password đúng nhưng server/risk policy yêu cầu thêm MFA; response chứa `challengeId`, `expiresAt`, `methods` và không chứa token.
 - `400 Bad Request`: request body không đọc được.
 - `401 Unauthorized`: thông tin đăng nhập không hợp lệ.
 - `422 Unprocessable Entity`: validation không đạt.
 - `429 Too Many Requests`: vượt rate limit.
 - `500 Internal Server Error`: lỗi ngoài dự kiến.
 
-### MFA challenge — `POST /auth/verify`
-
-Khi login trả `202`, client gửi `X-Device-ID` và request sau để hoàn tất authentication:
-
-```ts
-type AuthChallengeResponse = {
-  challengeId: string;
-  expiresAt: string;
-  methods: Array<"OTP" | "BIOMETRIC">;
-  purpose: "LOGIN";
-};
-```
-
-Login `202 Accepted` chỉ trả challenge response và không trả token.
-
-```ts
-type VerifyAuthChallengeRequest = {
-  challengeId: string;
-  method: "OTP" | "BIOMETRIC";
-  proof: string; // opaque provider assertion; không log
-};
-```
-
-`200 OK` trả `LoginResponse`. Challenge phải one-time, có TTL, bind purpose/resource/device và được audit ở server. Reference mặc định chỉ bật OTP. Proof sinh trắc học tĩnh bị tắt trừ khi local test bật cờ unsafe tường minh; preview/production phải dùng provider assertion ký và không được hard-code proof trong Mobile.
+`POST /auth/verify` không thuộc login password-only của relational-v2. Endpoint chỉ được giữ cho
+backward compatibility của reference sandbox; các OTP/TOTP challenge còn lại là step-up cho giao
+dịch hoặc thao tác bảo mật sau khi đã đăng nhập.
 
 ## 5. Bảo mật và phạm vi Mobile
 
@@ -240,7 +231,7 @@ Các endpoint session mở rộng đã có reference implementation và mobile i
 - `POST /auth/refresh` — refresh rotation và phát hiện reuse.
 - `POST /auth/logout` — revoke phiên hiện tại.
 - `POST /auth/logout-all` — revoke mọi phiên của user.
-- `POST /auth/verify` — hoàn tất MFA challenge OTP/biometric.
+- `POST /auth/verify` — endpoint tương thích lịch sử, không được gọi trong login relational-v2.
 - `GET /users/me` chưa thuộc scope MVP hiện tại.
 
 OpenAPI draft accounts/transfers trong [`banking-mvp.openapi.yaml`](./banking-mvp.openapi.yaml) phải được partner phê duyệt trước pilot dùng tiền thật.

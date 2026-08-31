@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AdminActionEngine } from "../admin/actions/actionEngine.js";
+import type { AdminInvitationDeliveryInput } from "../admin/auth/adminInvitationProvider.js";
+import { StaffAuthService } from "../admin/auth/staffAuthService.js";
 import { InMemoryAdminRepository, type AdminAccount } from "../admin/repositories/adminRepository.js";
 import type { AdminSubject } from "../admin/authorization/permissionRegistry.js";
+import { LocalDevelopmentKeyEncryptionAdapter } from "../mfa/crypto.js";
 
 const operations: AdminSubject = { staffId: "operations-staff", status: "ACTIVE", authorizationVersion: 1, roles: [{ role: "OPERATIONS", environmentScope: "preview", expiresAt: null }] };
 const control: AdminSubject = { staffId: "control-staff", status: "ACTIVE", authorizationVersion: 1, roles: [{ role: "CONTROL", environmentScope: "preview", expiresAt: null }], mfaVerifiedAt: new Date().toISOString(), stepUpVerifiedAt: new Date().toISOString() };
@@ -34,6 +37,48 @@ test("approved action recovers after the decision transaction boundary", async (
   const recovered = await actions.approve({ subject: control, accessToken: "unused", requestId: created.id, body: { fingerprint: created.requestFingerprint, reasonCode: "RECOVERY_APPROVED" }, traceId: "trace-recovery-2" });
   assert.equal(recovered.status, "SUCCEEDED");
   assert.equal((await repository.findAccount(account.id))?.availableMinor, "50000");
+});
+
+test("staff approval delivers a one-time activation token without persisting it", async () => {
+  const repository = new InMemoryAdminRepository();
+  await repository.initialize();
+  const encryption = new LocalDevelopmentKeyEncryptionAdapter(Buffer.alloc(32, 19), "admin-invite-delivery");
+  const auth = new StaffAuthService({ repository, encryption, environmentScope: "preview" });
+  const delivered: AdminInvitationDeliveryInput[] = [];
+  const provider = {
+    send: async (input: AdminInvitationDeliveryInput) => { delivered.push(input); return { status: "SENT" as const, providerMessageId: "capture-message-1" }; },
+    health: () => ({ provider: "http" as const, status: "ok" as const, configured: true, credentialConfigured: false }),
+  };
+  const actions = new AdminActionEngine(repository, auth, { invitationProvider: provider, activationUrl: "http://127.0.0.1:5173/admin/activate" });
+  const created = await actions.create({
+    subject: { staffId: "admin-maker", status: "ACTIVE", authorizationVersion: 1, roles: [{ role: "ADMIN", environmentScope: "preview", expiresAt: null }] },
+    actionType: "STAFF_INVITE",
+    targetType: "STAFF_INVITE",
+    targetId: "new",
+    body: { email: "invite-delivery@example.test", employeeCode: "INV-DELIVERY", displayName: "Invite Delivery", role: "OPERATIONS", reasonCode: "STAFF_INVITE_TEST", ticketReference: "INV-TEST-1", description: "delivery test" },
+    idempotencyKey: "staff-invite-delivery-1",
+    traceId: "trace-staff-invite-delivery",
+  });
+  const approved = await actions.approve({
+    subject: { staffId: "control-checker", status: "ACTIVE", authorizationVersion: 1, roles: [{ role: "CONTROL", environmentScope: "preview", expiresAt: null }], stepUpVerifiedAt: new Date().toISOString() },
+    accessToken: "unused",
+    requestId: created.id,
+    body: { fingerprint: created.requestFingerprint, reasonCode: "CONTROL_INVITE_REVIEW", decision: "APPROVED", comment: "independent checker" },
+    traceId: "trace-staff-invite-approved",
+  });
+  assert.equal(approved.status, "SUCCEEDED");
+  assert.equal(delivered.length, 1);
+  assert.equal(delivered[0].destination, "invite-delivery@example.test");
+  assert.match(delivered[0].invitationToken, /^[A-Za-z0-9_-]{40,}$/);
+  assert.equal(delivered[0].activationUrl, "http://127.0.0.1:5173/admin/activate");
+  assert.equal((approved.payload as Record<string, unknown>).token, undefined);
+  const auditText = JSON.stringify(await repository.listAudit(20));
+  assert.equal(auditText.includes(delivered[0].invitationToken), false);
+
+  const activated = await auth.activate({ inviteToken: delivered[0].invitationToken, password: "Invite-delivery-password-2026!", totpSecret: "JBSWY3DPEHPK3PXP" });
+  assert.equal(activated.staffId, delivered[0].deliveryId.replace("staff-invite:", ""));
+  assert.equal((await repository.findStaffById(activated.staffId))?.status, "ACTIVE");
+  await assert.rejects(() => auth.activate({ inviteToken: delivered[0].invitationToken, password: "Invite-delivery-password-2026!", totpSecret: "JBSWY3DPEHPK3PXP" }), /invalid or expired/i);
 });
 
 test("rejected action is an idempotent terminal receipt", async () => {

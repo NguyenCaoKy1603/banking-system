@@ -95,6 +95,215 @@ test("Savings maturity/renewal is durable, balanced and one-shot across concurre
   assert.equal(await lifecycle.runSavingsMaturities(asOf), 0);
 });
 
+test("savings kill switch is command-only and maturity falls back when a product is retired", { skip: !databaseUrl }, async (t) => {
+  const database = new DatabasePool({ connectionString: databaseUrl!, max: 12 });
+  const unitOfWork = new UnitOfWork(database);
+  const savings = new RelationalSavingsService(unitOfWork);
+  const lifecycle = new RelationalLifecycleService(unitOfWork);
+  const fixture = await customerAndAccount(database, "Savings Kill Switch");
+  const previous = (await database.query("SELECT savings_enabled, savings_allowlist_enabled FROM control_policy WHERE singleton=true")).rows[0]!;
+  const previousProduct = (await database.query("SELECT status FROM savings_products WHERE product_code='savings-vnd-1m'")).rows[0]!;
+  t.after(async () => {
+    await database.query("UPDATE control_policy SET savings_enabled=$1, savings_allowlist_enabled=$2, updated_at=NOW() WHERE singleton=true", [previous.savings_enabled, previous.savings_allowlist_enabled]);
+    await database.query("UPDATE savings_products SET status=$1 WHERE product_code='savings-vnd-1m'", [previousProduct.status]);
+    await database.close();
+  });
+  const quote = await savings.createQuote(fixture.customerId, {
+    sourceAccountId: fixture.accountId,
+    productId: "savings-vnd-1m",
+    principal: { currency: "VND", amountMinor: "1000000" },
+    maturityInstruction: "RENEW_PRINCIPAL",
+  });
+  const opening = await savings.submitOpening({
+    customerId: fixture.customerId,
+    idempotencyKey: "savings-kill-switch-key",
+    request: { quoteId: quote.quoteId, stepUp: { method: "TOTP", proof: "not-used" } },
+  });
+  await database.query("UPDATE savings_deposits SET maturity_at = NOW() - INTERVAL '1 minute' WHERE id=$1", [opening.depositId]);
+  await database.query("UPDATE savings_products SET status='INACTIVE' WHERE product_code='savings-vnd-1m'");
+  await database.query("UPDATE control_policy SET savings_enabled=false, savings_allowlist_enabled=false, updated_at=NOW() WHERE singleton=true");
+
+  assert.equal((await savings.listProducts(fixture.customerId)).length, 3);
+  assert.equal((await savings.listDeposits(fixture.customerId)).items.length, 1);
+  await assert.rejects(
+    savings.createQuote(fixture.customerId, { sourceAccountId: fixture.accountId, productId: "savings-vnd-3m", principal: { currency: "VND", amountMinor: "1000000" }, maturityInstruction: "RETURN_PRINCIPAL_AND_INTEREST" }),
+    /Savings opening is temporarily unavailable/i,
+  );
+  const result = await lifecycle.matureSavingsDeposit(opening.depositId!, new Date().toISOString());
+  assert.equal(result.status, "MATURED");
+  const state = await database.query<{ status: string; active: string; balance: string }>(
+    `SELECT d.status, (SELECT COUNT(*)::text FROM savings_deposits WHERE id=d.id AND status='ACTIVE') AS active,
+            (SELECT available_minor::text FROM payment_accounts WHERE id=$2) AS balance
+       FROM savings_deposits d WHERE d.id=$1`,
+    [opening.depositId, fixture.accountId],
+  );
+  assert.deepEqual(state.rows[0], { status: "MATURED", active: "0", balance: (9000000n + BigInt(quote.totalAtMaturity.amountMinor)).toString() });
+});
+
+test("savings maturity moves an unavailable destination to durable suspense instead of leaving it ACTIVE", { skip: !databaseUrl }, async (t) => {
+  const database = new DatabasePool({ connectionString: databaseUrl!, max: 12 });
+  const unitOfWork = new UnitOfWork(database);
+  const savings = new RelationalSavingsService(unitOfWork);
+  const lifecycle = new RelationalLifecycleService(unitOfWork);
+  const fixture = await customerAndAccount(database, "Savings Suspense");
+  t.after(() => database.close());
+  const quote = await savings.createQuote(fixture.customerId, {
+    sourceAccountId: fixture.accountId,
+    productId: "savings-vnd-1m",
+    principal: { currency: "VND", amountMinor: "1000000" },
+    maturityInstruction: "RETURN_PRINCIPAL_AND_INTEREST",
+  });
+  const opening = await savings.submitOpening({
+    customerId: fixture.customerId,
+    idempotencyKey: "savings-suspense-key",
+    request: { quoteId: quote.quoteId, stepUp: { method: "TOTP", proof: "not-used" } },
+  });
+  await database.query("UPDATE savings_deposits SET maturity_at=NOW()-INTERVAL '1 minute' WHERE id=$1", [opening.depositId]);
+  await database.query("UPDATE payment_accounts SET status='BLOCKED' WHERE id=$1", [fixture.accountId]);
+  const result = await lifecycle.matureSavingsDeposit(opening.depositId!, new Date().toISOString());
+  assert.equal(result.status, "PENDING");
+  const state = await database.query<{ deposit: string; suspense: string; ledger_debit: string; ledger_credit: string }>(
+    `SELECT
+       (SELECT status FROM savings_deposits WHERE id=$1) AS deposit,
+       (SELECT status FROM savings_maturity_suspense WHERE deposit_id=$1) AS suspense,
+       (SELECT SUM(CASE WHEN le.side='DEBIT' THEN le.amount_minor ELSE 0 END)::text FROM ledger_entries le JOIN ledger_journals lj ON lj.id=le.journal_id WHERE lj.aggregate_id=$1::text AND lj.journal_type='SAVINGS_MATURITY_SUSPENSE') AS ledger_debit,
+       (SELECT SUM(CASE WHEN le.side='CREDIT' THEN le.amount_minor ELSE 0 END)::text FROM ledger_entries le JOIN ledger_journals lj ON lj.id=le.journal_id WHERE lj.aggregate_id=$1::text AND lj.journal_type='SAVINGS_MATURITY_SUSPENSE') AS ledger_credit`,
+    [opening.depositId],
+  );
+  assert.deepEqual(state.rows[0], { deposit: "MATURED", suspense: "PENDING", ledger_debit: quote.totalAtMaturity.amountMinor, ledger_credit: quote.totalAtMaturity.amountMinor });
+  assert.equal((await lifecycle.runSavingsMaturities(new Date().toISOString())).toString(), "0");
+
+  await database.query("UPDATE payment_accounts SET status='ACTIVE' WHERE id=$1", [fixture.accountId]);
+  await database.query("UPDATE savings_maturity_suspense SET next_attempt_at=NOW()-INTERVAL '1 second' WHERE deposit_id=$1", [opening.depositId]);
+  const [firstResolution, secondResolution] = await Promise.all([
+    lifecycle.runSavingsSuspense(new Date().toISOString()),
+    lifecycle.runSavingsSuspense(new Date().toISOString()),
+  ]);
+  assert.equal(firstResolution.resolved + secondResolution.resolved, 1);
+  assert.equal(firstResolution.retried + secondResolution.retried, 0);
+  const resolved = await database.query<{
+    status: string;
+    balance: string;
+    transactions: string;
+    journals: string;
+    outbox: string;
+  }>(
+    `SELECT
+       (SELECT status FROM savings_maturity_suspense WHERE deposit_id=$1) AS status,
+       (SELECT available_minor::text FROM payment_accounts WHERE id=$2) AS balance,
+       (SELECT COUNT(*)::text FROM account_transactions WHERE savings_deposit_id=$1 AND kind='SAVINGS_MATURITY') AS transactions,
+       (SELECT COUNT(*)::text FROM ledger_journals lj JOIN savings_maturity_suspense s ON s.id::text=lj.aggregate_id WHERE s.deposit_id=$1 AND lj.journal_type='SAVINGS_MATURITY_SUSPENSE_RESOLUTION') AS journals,
+       (SELECT COUNT(*)::text FROM outbox_events WHERE aggregate_id=$1::text AND event_type LIKE 'savings.maturity_resolved%') AS outbox`,
+    [opening.depositId, fixture.accountId],
+  );
+  assert.deepEqual(resolved.rows[0], {
+    status: "RESOLVED",
+    balance: (9000000n + BigInt(quote.totalAtMaturity.amountMinor)).toString(),
+    transactions: "1",
+    journals: "1",
+    outbox: "1",
+  });
+});
+
+test("savings suspense retries with backoff then dead-letters exactly once", { skip: !databaseUrl }, async (t) => {
+  const database = new DatabasePool({ connectionString: databaseUrl!, max: 12 });
+  const unitOfWork = new UnitOfWork(database);
+  const savings = new RelationalSavingsService(unitOfWork);
+  const lifecycle = new RelationalLifecycleService(unitOfWork);
+  const fixture = await customerAndAccount(database, "Savings Suspense Dead");
+  t.after(() => database.close());
+  const quote = await savings.createQuote(fixture.customerId, {
+    sourceAccountId: fixture.accountId,
+    productId: "savings-vnd-1m",
+    principal: { currency: "VND", amountMinor: "1000000" },
+    maturityInstruction: "RETURN_PRINCIPAL_AND_INTEREST",
+  });
+  const opening = await savings.submitOpening({
+    customerId: fixture.customerId,
+    idempotencyKey: "savings-suspense-dead-key",
+    request: { quoteId: quote.quoteId, stepUp: { method: "TOTP", proof: "not-used" } },
+  });
+  await database.query("UPDATE savings_deposits SET maturity_at=NOW()-INTERVAL '1 minute' WHERE id=$1", [opening.depositId]);
+  await database.query("UPDATE payment_accounts SET status='BLOCKED' WHERE id=$1", [fixture.accountId]);
+  assert.equal((await lifecycle.matureSavingsDeposit(opening.depositId!, new Date().toISOString())).status, "PENDING");
+
+  await database.query("UPDATE savings_maturity_suspense SET next_attempt_at=NOW()-INTERVAL '1 second' WHERE deposit_id=$1", [opening.depositId]);
+  const first = await lifecycle.runSavingsSuspense(new Date().toISOString(), 100, 2);
+  assert.deepEqual(first, { resolved: 0, retried: 1, deadLettered: 0 });
+  const retryState = await database.query<{ attempts: string; delayed: boolean }>(
+    "SELECT attempts::text, next_attempt_at > last_attempt_at AS delayed FROM savings_maturity_suspense WHERE deposit_id=$1",
+    [opening.depositId],
+  );
+  assert.deepEqual(retryState.rows[0], { attempts: "1", delayed: true });
+
+  await database.query("UPDATE savings_maturity_suspense SET next_attempt_at=NOW()-INTERVAL '1 second' WHERE deposit_id=$1", [opening.depositId]);
+  const [deadA, deadB] = await Promise.all([
+    lifecycle.runSavingsSuspense(new Date().toISOString(), 100, 2),
+    lifecycle.runSavingsSuspense(new Date().toISOString(), 100, 2),
+  ]);
+  assert.equal(deadA.deadLettered + deadB.deadLettered, 1);
+  const deadState = await database.query<{ status: string; attempts: string; audit: string; outbox: string }>(
+    `SELECT
+       (SELECT status FROM savings_maturity_suspense WHERE deposit_id=$1) AS status,
+       (SELECT attempts::text FROM savings_maturity_suspense WHERE deposit_id=$1) AS attempts,
+       (SELECT COUNT(*)::text FROM audit_events WHERE resource_id=$1::text AND event_type='SAVINGS_MATURITY_DEAD_LETTERED') AS audit,
+       (SELECT COUNT(*)::text FROM outbox_events WHERE aggregate_id=$1::text AND event_type LIKE 'savings.maturity_dead%') AS outbox`,
+    [opening.depositId],
+  );
+  assert.deepEqual(deadState.rows[0], { status: "DEAD", attempts: "2", audit: "1", outbox: "1" });
+});
+
+test("credit statement cycles use a half-open boundary without losing the cycle-end transaction", { skip: !databaseUrl }, async (t) => {
+  const database = new DatabasePool({ connectionString: databaseUrl!, max: 12 });
+  const lifecycle = new RelationalLifecycleService(new UnitOfWork(database));
+  const fixture = await customerAndAccount(database, "Credit Boundary");
+  const creditAccountId = randomUUID();
+  const transactionId = randomUUID();
+  const cycleStart = new Date("2026-01-01T00:00:00.000Z");
+  const cycleEnd = new Date("2026-02-01T00:00:00.000Z");
+  t.after(() => database.close());
+  await database.query(
+    `INSERT INTO credit_accounts
+      (id, customer_id, currency, credit_limit_minor, posted_outstanding_minor,
+       pending_authorizations_minor, current_cycle_start_at, next_statement_at, status, version, updated_at)
+     VALUES ($1,$2,'VND',1000000,300000,0,$3,$4,'ACTIVE',0,NOW())`,
+    [creditAccountId, fixture.customerId, cycleStart.toISOString(), cycleEnd.toISOString()],
+  );
+  await database.query(
+    `INSERT INTO credit_transactions
+      (id, credit_account_id, statement_id, type, status, description,
+       merchant_name, amount_minor, debt_effect, occurred_at, posted_at)
+     VALUES ($1,$2,NULL,'PURCHASE','POSTED','Cycle boundary purchase','Merchant',300000,'INCREASE',$3,$3)`,
+    [transactionId, creditAccountId, cycleEnd.toISOString()],
+  );
+
+  assert.equal((await lifecycle.runCreditLifecycle(new Date("2026-02-01T00:00:01.000Z").toISOString())).statementsClosed, 1);
+  const first = await database.query<{ closing: string; statement_id: string | null }>(
+    `SELECT
+       (SELECT closing_balance_minor::text FROM credit_statements WHERE credit_account_id=$1 ORDER BY cycle_end_at LIMIT 1) AS closing,
+       (SELECT statement_id::text FROM credit_transactions WHERE id=$2) AS statement_id`,
+    [creditAccountId, transactionId],
+  );
+  assert.deepEqual(first.rows[0], { closing: "0", statement_id: null });
+
+  assert.equal((await lifecycle.runCreditLifecycle(new Date("2026-03-01T00:00:01.000Z").toISOString())).statementsClosed, 1);
+  const second = await database.query<{ statements: string; closing: string; attached: boolean }>(
+    `SELECT
+       (SELECT COUNT(*)::text FROM credit_statements WHERE credit_account_id=$1) AS statements,
+       (SELECT closing_balance_minor::text FROM credit_statements WHERE credit_account_id=$1 ORDER BY cycle_end_at DESC LIMIT 1) AS closing,
+       EXISTS(SELECT 1 FROM credit_transactions WHERE id=$2 AND statement_id IS NOT NULL) AS attached`,
+    [creditAccountId, transactionId],
+  );
+  assert.deepEqual(second.rows[0], { statements: "2", closing: "300000", attached: true });
+  await database.query("UPDATE credit_accounts SET status='CLOSED', next_statement_at='2100-01-01T00:00:00.000Z' WHERE id=$1", [creditAccountId]);
+  await database.query(
+    `UPDATE credit_statements
+        SET status='PAID', remaining_amount_due_minor=0, minimum_payment_remaining_minor=0
+      WHERE credit_account_id=$1`,
+    [creditAccountId],
+  );
+});
+
 test("Credit close, overdue, pending payment and reversal are idempotent and never overpay", { skip: !databaseUrl }, async (t) => {
   const database = new DatabasePool({ connectionString: databaseUrl!, max: 16 });
   const unitOfWork = new UnitOfWork(database);
@@ -109,9 +318,9 @@ test("Credit close, overdue, pending payment and reversal are idempotent and nev
   await database.query(
     `INSERT INTO credit_accounts
       (id, customer_id, currency, credit_limit_minor, posted_outstanding_minor,
-       pending_authorizations_minor, next_statement_at, status, version, updated_at)
-     VALUES ($1,$2,'VND',10000000,2000000,0,$3,'ACTIVE',0,NOW())`,
-    [creditAccountId, fixture.customerId, cycleEnd.toISOString()],
+       pending_authorizations_minor, current_cycle_start_at, next_statement_at, status, version, updated_at)
+     VALUES ($1,$2,'VND',10000000,2000000,0,$3,$4,'ACTIVE',0,NOW())`,
+    [creditAccountId, fixture.customerId, cycleStart.toISOString(), cycleEnd.toISOString()],
   );
   await database.query(
     `INSERT INTO credit_cards

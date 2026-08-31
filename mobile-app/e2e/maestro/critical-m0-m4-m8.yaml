@@ -124,7 +124,7 @@ appId: ${APP_ID}
     timeout: 10000
 - tapOn:
     id: qr-manual-payload
-- inputText: '{"version":1,"kind":"RECEIVE_MONEY","accountId":"1","displayName":"A","maskedAccountNumber":"1","bankName":"B","currency":"VND"}'
+- inputText: '{"version":2,"kind":"RECEIVE_MONEY","accountNumber":"970400000001","displayName":"A","maskedAccountNumber":"****0001","bankName":"B","currency":"VND"}'
 - tapOn:
     id: qr-parse-manual
 - extendedWaitUntil:

@@ -696,7 +696,7 @@ test("HTTP API supports beneficiary directory CRUD without exposing raw account 
   assert.equal(deletedLookup.status, 404);
 });
 
-test("HTTP auth exposes a device-bound MFA challenge", async (t) => {
+test("HTTP auth is password-only even when the legacy MFA flag is enabled", async (t) => {
   const system = new BankingSystem({
     sandboxMfaOtp: "654321",
     mfaRequired: true,
@@ -730,28 +730,13 @@ test("HTTP auth exposes a device-bound MFA challenge", async (t) => {
     headers: { "X-Device-ID": deviceId },
     body: json({ email: "mfa-http@example.com", password: "Password1" }),
   });
-  assert.equal(loginResponse.status, 202);
-  const challenge = (await loginResponse.json()) as {
-    challengeId: string;
-    methods: string[];
-  };
-  assert.deepEqual(challenge.methods, ["OTP"]);
-
-  const verifyResponse = await request("/auth/verify", {
-    method: "POST",
-    headers: { "X-Device-ID": deviceId },
-    body: json({
-      challengeId: challenge.challengeId,
-      method: "OTP",
-      proof: "654321",
-    }),
-  });
-  assert.equal(verifyResponse.status, 200);
-  const session = (await verifyResponse.json()) as { accessToken: string };
+  assert.equal(loginResponse.status, 200);
+  const session = (await loginResponse.json()) as { accessToken: string; refreshToken: string };
   assert.ok(session.accessToken);
+  assert.ok(session.refreshToken);
 });
 
-test("HTTP auth exposes a server-configured biometric challenge", async (t) => {
+test("HTTP auth ignores legacy biometric login configuration", async (t) => {
   const system = new BankingSystem({
     authChallengeMethods: ["BIOMETRIC"],
     mfaRequired: true,
@@ -789,23 +774,8 @@ test("HTTP auth exposes a server-configured biometric challenge", async (t) => {
       password: "Password1",
     }),
   });
-  assert.equal(loginResponse.status, 202);
-  const challenge = (await loginResponse.json()) as {
-    challengeId: string;
-    methods: string[];
-  };
-  assert.deepEqual(challenge.methods, ["BIOMETRIC"]);
-
-  const verifyResponse = await request("/auth/verify", {
-    method: "POST",
-    headers: { "X-Device-ID": deviceId },
-    body: json({
-      challengeId: challenge.challengeId,
-      method: "BIOMETRIC",
-      proof: "sandbox-biometric",
-    }),
-  });
-  assert.equal(verifyResponse.status, 200);
-  const session = (await verifyResponse.json()) as { accessToken: string };
+  assert.equal(loginResponse.status, 200);
+  const session = (await loginResponse.json()) as { accessToken: string; refreshToken: string };
   assert.ok(session.accessToken);
+  assert.ok(session.refreshToken);
 });

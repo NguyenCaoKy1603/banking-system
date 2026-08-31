@@ -21,7 +21,8 @@ export type OtpPurpose =
   | "CREDIT_APPLICATION"
   | "CARD_ACTIVATION"
   | "CREDIT_PAYMENT"
-  | "CARD_UNLOCK";
+  | "CARD_UNLOCK"
+  | "CARD_REPORT_LOST";
 
 export type LoginResponse = {
   accessToken: string;

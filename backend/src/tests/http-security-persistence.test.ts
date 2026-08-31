@@ -164,9 +164,9 @@ test("persistent HTTP keeps failed-login rate limits across a restart", async (t
   assert.equal(blockedResponse.status, 429);
 });
 
-test("persistent HTTP keeps challenge attempts and lockout across a restart", async (t) => {
+test("persistent HTTP keeps password-only login across a restart", async (t) => {
   const repository = new MemoryStateRepository();
-  const deviceId = `challenge-device-${randomUUID()}`;
+  const deviceId = `password-device-${randomUUID()}`;
   const options = {
     mfaRequired: true,
     sandboxMfaOtp: "654321",
@@ -186,46 +186,23 @@ test("persistent HTTP keeps challenge attempts and lockout across a restart", as
     headers: { "X-Device-ID": deviceId },
     body: JSON.stringify({ email, password: "Password1" }),
   });
-  assert.equal(loginResponse.status, 202);
-  const challenge = (await loginResponse.json()) as { challengeId: string };
-
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    const response = await request(first.baseUrl, "/auth/verify", {
-      method: "POST",
-      headers: { "X-Device-ID": deviceId },
-      body: JSON.stringify({
-        challengeId: challenge.challengeId,
-        method: "OTP",
-        proof: "000000",
-      }),
-    });
-    assert.equal(response.status, 401);
-  }
+  assert.equal(loginResponse.status, 200);
+  const firstSession = (await loginResponse.json()) as { accessToken: string; refreshToken: string };
+  assert.ok(firstSession.accessToken);
+  assert.ok(firstSession.refreshToken);
   await closeServer(first.server);
 
   const second = await startServer(repository, new BankingSystem(options));
   runningServers.push(second.server);
-  const lockResponse = await request(second.baseUrl, "/auth/verify", {
+  const secondLoginResponse = await request(second.baseUrl, "/auth/login", {
     method: "POST",
-    headers: { "X-Device-ID": deviceId },
-    body: JSON.stringify({
-      challengeId: challenge.challengeId,
-      method: "OTP",
-      proof: "000000",
-    }),
+    headers: { "X-Device-ID": `${deviceId}-restart` },
+    body: JSON.stringify({ email, password: "Password1" }),
   });
-  assert.equal(lockResponse.status, 429);
-
-  const replayResponse = await request(second.baseUrl, "/auth/verify", {
-    method: "POST",
-    headers: { "X-Device-ID": deviceId },
-    body: JSON.stringify({
-      challengeId: challenge.challengeId,
-      method: "OTP",
-      proof: "654321",
-    }),
-  });
-  assert.equal(replayResponse.status, 401);
+  assert.equal(secondLoginResponse.status, 200);
+  const secondSession = (await secondLoginResponse.json()) as { accessToken: string; refreshToken: string };
+  assert.ok(secondSession.accessToken);
+  assert.ok(secondSession.refreshToken);
 });
 
 test("persistent HTTP does not expose a fixture OTP route after a state boundary", async (t) => {

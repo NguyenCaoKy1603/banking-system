@@ -1,8 +1,10 @@
 import * as Crypto from "expo-crypto";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AppHeader } from "@/components/ui/AppHeader";
+import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
@@ -18,10 +20,10 @@ import {
 import { getCreditApplicationStatusLabel } from "@/features/credit/presentation/creditPresentation";
 import type { CreditApplication } from "@/features/credit/types/credit";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getErrorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : "Không thể xử lý đăng ký thẻ sandbox.";
+  return error instanceof ApiError ? error.message : "Không thể xử lý đăng ký thẻ.";
 }
 
 async function fingerprint(value: unknown): Promise<string> {
@@ -115,7 +117,7 @@ export function CreditApplicationScreen() {
     }
     const idempotencyKey = idempotencyKeyRef.current;
     if (!idempotencyKey) {
-      setError("Ý định gửi hồ sơ không còn hợp lệ. Vui lòng tạo lại challenge TOTP.");
+      setError("Yêu cầu gửi hồ sơ không còn hợp lệ. Vui lòng tạo lại mã xác thực.");
       return;
     }
     setIsSubmitting(true);
@@ -190,16 +192,13 @@ export function CreditApplicationScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable accessibilityRole="button" accessibilityState={{ disabled: isSubmitting }} disabled={isSubmitting} onPress={handleBack} style={styles.backButton}>
-          <Text style={styles.backLabel}>‹ Quay lại</Text>
-        </Pressable>
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>CREDIT SANDBOX</Text>
-          <Text style={styles.title}>Đăng ký thẻ tín dụng</Text>
-          <Text style={styles.description}>
-            Đây là luồng mô phỏng. Hệ thống chỉ tạo thẻ sau khi bạn xác nhận kích hoạt.
-          </Text>
-        </View>
+        <AppHeader
+          eyebrow="Sản phẩm thẻ"
+          onBack={handleBack}
+          subtitle="Đề nghị hạn mức, theo dõi xét duyệt và kích hoạt thẻ sau khi được chấp thuận."
+          title="Đăng ký thẻ tín dụng"
+        />
+        <EnvironmentBadge />
         {application ? (
           <View style={styles.card} testID="credit-application-status">
             <Text style={styles.sectionTitle}>Trạng thái hồ sơ</Text>
@@ -212,7 +211,7 @@ export function CreditApplicationScreen() {
             ) : application.status === "PENDING_ACTIVATION" ? (
               <PrimaryButton
                 disabled={isSubmitting || mode !== "idle"}
-                label="Xác nhận và kích hoạt thẻ sandbox"
+                label="Xác nhận và kích hoạt thẻ"
                 onPress={() => void requestActivationOtp()}
                 testID="credit-application-activate"
               />
@@ -233,7 +232,7 @@ export function CreditApplicationScreen() {
             />
             <PrimaryButton
               disabled={isSubmitting || mode !== "idle"}
-              label={isSubmitting ? "Đang tạo challenge TOTP..." : "Gửi hồ sơ sandbox"}
+              label={isSubmitting ? "Đang chuẩn bị xác thực..." : "Gửi hồ sơ đăng ký"}
               onPress={() => void requestApplicationOtp()}
               testID="credit-application-submit"
             />
@@ -265,15 +264,10 @@ export function CreditApplicationScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { flexGrow: 1, width: "100%", maxWidth: 720, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
-  backButton: { alignSelf: "flex-start", paddingVertical: spacing.xs },
-  backLabel: { color: colors.primary, fontSize: 15, fontWeight: "700" },
-  header: { gap: spacing.sm },
-  eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "800", letterSpacing: 1.2 },
-  title: { color: colors.text, fontSize: 30, fontWeight: "800" },
-  description: { color: colors.muted, fontSize: 14, lineHeight: 21 },
-  card: { gap: spacing.md, padding: spacing.lg, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
-  sectionTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
-  value: { color: colors.primary, fontSize: 16, fontWeight: "800" },
-  errorText: { color: colors.danger, fontSize: 14, lineHeight: 20 },
+  content: { flexGrow: 1, width: "100%", maxWidth: sizes.contentMaxWidth, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
+  description: { ...typography.body, color: colors.muted },
+  card: { gap: spacing.md, padding: spacing.mlg, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, ...shadows.card },
+  sectionTitle: { ...typography.subheading, color: colors.text },
+  value: { ...typography.bodyStrong, color: colors.primary },
+  errorText: { ...typography.body, padding: spacing.md, borderRadius: radius.md, color: colors.danger, backgroundColor: colors.dangerSoft },
 });

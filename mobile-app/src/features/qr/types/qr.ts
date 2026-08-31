@@ -1,9 +1,9 @@
-export const RECEIVE_QR_VERSION = 1 as const;
+export const RECEIVE_QR_VERSION = 2 as const;
 
 export type ReceiveQrPayload = {
   version: typeof RECEIVE_QR_VERSION;
   kind: "RECEIVE_MONEY";
-  accountId: string;
+  accountNumber: string;
   displayName: string;
   maskedAccountNumber: string;
   bankName: string;

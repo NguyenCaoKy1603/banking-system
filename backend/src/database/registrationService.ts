@@ -172,6 +172,15 @@ export class RelationalRegistrationService {
         id: accountId,
         customerId: customer.id,
       });
+      // Seed the explicit feature entitlements atomically with registration so
+      // an allowlisted sandbox policy does not leave a newly verified customer
+      // unable to use the reference transfer/savings/credit flows.
+      await client.query(
+        `INSERT INTO customer_feature_entitlements (customer_id, feature_code)
+         VALUES ($1, 'TRANSFERS'), ($1, 'SAVINGS'), ($1, 'CREDIT')
+         ON CONFLICT (customer_id, feature_code) DO NOTHING`,
+        [customer.id],
+      );
       await client.query(
         `INSERT INTO registration_completions
           (pending_registration_id, customer_id, account_id)

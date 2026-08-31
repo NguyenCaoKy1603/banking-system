@@ -263,6 +263,19 @@ export type ExecuteActionResult = {
   failureCode?: string;
   beforeVersion?: number | null;
   afterVersion?: number | null;
+  /**
+   * A newly-created invitation is returned only to the in-process delivery
+   * seam.  The token is never persisted in an action, audit event, outbox
+   * payload or HTTP response.
+   */
+  invitation?: {
+    inviteId: string;
+    destination: string;
+    displayName: string;
+    role: AdminRole;
+    token: string;
+    expiresAt: string;
+  };
 };
 
 export type AdminCaseScope = {
@@ -411,6 +424,8 @@ async function insertAdminOutboxEvent(client: PoolClient, input: {
   deduplicationKey: string;
   payload: Record<string, unknown>;
   traceId: string | null;
+  subjectCustomerIds?: readonly string[];
+  notificationIds?: readonly string[];
 }): Promise<void> {
   const eventId = createId("outbox");
   const policy = resolveEventPolicy(input.eventType, 1);
@@ -425,6 +440,8 @@ async function insertAdminOutboxEvent(client: PoolClient, input: {
     aggregateVersion: input.aggregateVersion,
     occurredAt: new Date().toISOString(),
     traceId: input.traceId,
+    subjectCustomerIds: input.subjectCustomerIds,
+    notificationIds: input.notificationIds,
   });
   const payload = { ...input.payload, ...envelope };
   await client.query(
@@ -568,8 +585,12 @@ export class InMemoryAdminRepository implements AdminRepository {
       if (action.actionType === "STAFF_INVITE") {
         const token = createOpaqueToken();
         const inviteId = randomUUID();
-        await this.createStaffInvite({ id: inviteId, emailNormalized: String(action.payload.email ?? "").trim().toLowerCase(), employeeCode: String(action.payload.employeeCode ?? "").trim(), displayName: String(action.payload.displayName ?? "").trim(), roleCode: String(action.payload.role ?? "SUPPORT") as AdminRole, tokenHash: hashOpaqueToken(token), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), createdByStaffId: action.requesterStaffId });
-        return finish("SUCCEEDED", inviteId);
+        const destination = String(action.payload.email ?? "").trim().toLowerCase();
+        const displayName = String(action.payload.displayName ?? "").trim();
+        const role = String(action.payload.role ?? "SUPPORT") as AdminRole;
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        await this.createStaffInvite({ id: inviteId, emailNormalized: destination, employeeCode: String(action.payload.employeeCode ?? "").trim(), displayName, roleCode: role, tokenHash: hashOpaqueToken(token), expiresAt, createdByStaffId: action.requesterStaffId });
+        return { ...finish("SUCCEEDED", inviteId), invitation: { inviteId, destination, displayName, role, token, expiresAt } };
       }
       if (action.actionType === "STAFF_ROLE_CHANGE") {
         const staff = this.staff.get(action.targetId)!;
@@ -911,7 +932,31 @@ export class PostgresAdminRepository implements AdminRepository {
           ? await client.query("UPDATE kyc_applications SET status=$2, decision_reason_code=$3, decision_at=NOW(), version=version+1, updated_at=NOW() WHERE id=$1 RETURNING version", [action.targetId, decision, String(action.payload.reasonCode ?? "ADMIN_DECISION")])
           : await client.query("UPDATE credit_applications SET status=$2, approved_limit_minor=CASE WHEN $3='PENDING_ACTIVATION' THEN COALESCE($4, requested_limit_minor) ELSE approved_limit_minor END, decision_reason_code=$5, decision_at=NOW(), version=version+1, updated_at=NOW() WHERE id=$1 RETURNING version", [action.targetId, decision, decision, action.payload.approvedLimitMinor ? String(action.payload.approvedLimitMinor) : null, String(action.payload.reasonCode ?? "ADMIN_DECISION")]);
         const after = asNumber(update.rows[0]?.version, before + 1);
-        if (applicationType === "KYC") await client.query("INSERT INTO kyc_reviews (id, application_id, reviewer_staff_id, recommendation, application_version, request_fingerprint, reason_code) VALUES ($1,$2,$3,$4,$5,$6,$7)", [createId("kyc-review"), action.targetId, input.approverStaffId, decision, before, action.requestFingerprint, String(action.payload.reasonCode ?? "ADMIN_DECISION")]);
+        if (applicationType === "KYC") {
+          await client.query("INSERT INTO kyc_reviews (id, application_id, reviewer_staff_id, recommendation, application_version, request_fingerprint, reason_code) VALUES ($1,$2,$3,$4,$5,$6,$7)", [createId("kyc-review"), action.targetId, input.approverStaffId, decision === "NEEDS_MORE_INFO" ? "MORE_INFO_REQUIRED" : decision, before, action.requestFingerprint, String(action.payload.reasonCode ?? "ADMIN_DECISION")]);
+          const customerId = String(target.rows[0].customer_id);
+          const notificationId = createId("kyc-notification");
+          const message = decision === "APPROVED"
+            ? "Hồ sơ định danh đã được phê duyệt."
+            : decision === "REJECTED"
+              ? "Hồ sơ định danh chưa được phê duyệt."
+              : "Hồ sơ định danh cần bổ sung thông tin.";
+          await client.query(
+            "INSERT INTO notifications (id, customer_id, notification_type, title, body, resource_id, resource_account_id, is_read, created_at) VALUES ($1,$2,'SECURITY','Cập nhật hồ sơ định danh',$3,$4,NULL,false,NOW())",
+            [notificationId, customerId, message, action.targetId],
+          );
+          await insertAdminOutboxEvent(client, {
+            eventType: "SECURITY_KYC_STATUS_CHANGED",
+            aggregateType: "kyc-application",
+            aggregateId: action.targetId,
+            aggregateVersion: after,
+            deduplicationKey: `kyc-status:${action.targetId}:${after}`,
+            traceId: input.traceId,
+            subjectCustomerIds: [customerId],
+            notificationIds: [notificationId],
+            payload: { applicationId: action.targetId, status: decision },
+          });
+        }
         await client.query("INSERT INTO audit_events (id,event_type,actor_type,actor_staff_id,action,target_type,target_id,outcome,reason_code,request_id,trace_id,before_version,after_version,payload,occurred_at) VALUES ($1,$2,'STAFF',$3,$4,$5,$6,'SUCCEEDED',$7,$8,$9,$10,$11,$12,NOW())", [createId("audit"), `${applicationType}_DECISION_APPROVED`, input.approverStaffId, action.actionType, applicationType, action.targetId, String(action.payload.reasonCode ?? "ADMIN_DECISION"), action.id, input.traceId, before, after, JSON.stringify(redactAdminMetadata({ decision }))]);
         await client.query("UPDATE admin_action_execution_attempts SET outcome='SUCCEEDED', finished_at=NOW() WHERE id=$1", [attempt]);
         await client.query("UPDATE admin_action_requests SET status='SUCCEEDED', result_resource_id=$2, updated_at=NOW() WHERE id=$1", [action.id, action.targetId]);
@@ -1044,18 +1089,20 @@ export class PostgresAdminRepository implements AdminRepository {
           return { status: "FAILED", failureCode: "STAFF_ALREADY_EXISTS" };
         }
         const inviteId = createId("staff-invite");
-        // Only a hash is persisted.  A delivery provider should consume the
-        // outbox event; the plaintext invitation is never put in the action,
-        // audit, database or response.
-        const inviteTokenHash = hashOpaqueToken(createOpaqueToken());
+        // Only a hash is persisted. The plaintext token is returned through a
+        // transient in-process delivery seam and is never put in the action,
+        // audit, database, outbox or HTTP response.
+        const inviteToken = createOpaqueToken();
+        const inviteTokenHash = hashOpaqueToken(inviteToken);
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         await client.query("INSERT INTO staff_users (id, employee_code, email_normalized, display_name, status, created_by_staff_id) VALUES ($1,$2,$3,$4,'INVITED',$5)", [inviteId, employeeCode, email, displayName, action.requesterStaffId]);
-        await client.query("INSERT INTO staff_invites (id, email_normalized, employee_code, display_name, role_code, token_hash, expires_at, created_by_staff_id) VALUES ($1,$2,$3,$4,$5,$6,NOW()+INTERVAL '24 hours',$7)", [inviteId, email, employeeCode, displayName, roleCode, inviteTokenHash, action.requesterStaffId]);
+        await client.query("INSERT INTO staff_invites (id, email_normalized, employee_code, display_name, role_code, token_hash, expires_at, created_by_staff_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [inviteId, email, employeeCode, displayName, roleCode, inviteTokenHash, expiresAt, action.requesterStaffId]);
         await client.query("INSERT INTO staff_user_roles (staff_id, role_code, environment_scope, granted_by_staff_id, approved_by_staff_id) VALUES ($1,$2,'preview',$3,$4)", [inviteId, roleCode, action.requesterStaffId, input.approverStaffId]);
         await insertAdminOutboxEvent(client, { eventType: "STAFF_INVITE_CREATED", aggregateType: "staff", aggregateId: inviteId, aggregateVersion: 1, deduplicationKey: `staff-invite:${action.id}`, traceId: input.traceId, payload: { actionId: action.id, inviteId, email, employeeCode, role: roleCode } });
         await client.query("INSERT INTO audit_events (id,event_type,actor_type,actor_staff_id,action,target_type,target_id,outcome,reason_code,request_id,trace_id,before_version,after_version,payload,occurred_at) VALUES ($1,'ADMIN_STAFF_INVITE_CREATED','STAFF',$2,'STAFF_INVITE','STAFF_INVITE',$3,'SUCCEEDED',$4,$5,$6,NULL,NULL,$7,NOW())", [createId("audit"), input.approverStaffId, inviteId, String(action.payload.reasonCode ?? "STAFF_INVITE"), action.id, input.traceId, JSON.stringify(redactAdminMetadata({ email, employeeCode, role: roleCode }))]);
         await client.query("UPDATE admin_action_execution_attempts SET outcome='SUCCEEDED', finished_at=NOW() WHERE id=$1", [attempt]);
         await client.query("UPDATE admin_action_requests SET status='SUCCEEDED', result_resource_id=$2, updated_at=NOW() WHERE id=$1", [action.id, inviteId]);
-        return { status: "SUCCEEDED", resultResourceId: inviteId };
+        return { status: "SUCCEEDED", resultResourceId: inviteId, invitation: { inviteId, destination: email, displayName, role: roleCode as AdminRole, token: inviteToken, expiresAt } };
       }
       if (action.actionType === "STAFF_ROLE_CHANGE") {
         const target = await client.query("SELECT id, status, authorization_version, version FROM staff_users WHERE id=$1 FOR UPDATE", [action.targetId]);

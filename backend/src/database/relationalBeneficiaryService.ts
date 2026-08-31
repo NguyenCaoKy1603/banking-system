@@ -53,9 +53,8 @@ function accountNumberFingerprint(accountNumber: string): string {
   return createHash("sha256").update(accountNumber).digest("hex");
 }
 
-/** Direct relational beneficiary boundary. A delete is represented as a block
- * so references in historical quotes remain auditable and foreign keys stay
- * intact. */
+/** Direct relational beneficiary boundary. Deletion is a tombstone so
+ * historical quotes remain auditable while a risk block stays reversible. */
 export class RelationalBeneficiaryService {
   constructor(private readonly unitOfWork: UnitOfWork) {}
 
@@ -90,6 +89,7 @@ export class RelationalBeneficiaryService {
       const duplicate = await client.query(
         `SELECT id FROM beneficiaries
          WHERE customer_id = $1 AND destination_account_id = $2
+           AND deleted_at IS NULL AND status <> 'DELETED'
          LIMIT 1`,
         [customerId, target.id],
       );
@@ -134,10 +134,16 @@ export class RelationalBeneficiaryService {
   async remove(customerId: string, beneficiaryId: string): Promise<void> {
     assertUuid(beneficiaryId, "beneficiaryId");
     await this.unitOfWork.transaction(async ({ client }) => {
-      const changed = await new TransferRepository(client).blockBeneficiary(customerId, beneficiaryId);
+      const changed = await new TransferRepository(client).deleteBeneficiary(customerId, beneficiaryId);
       if (!changed) {
-        const row = await new TransferRepository(client).findOwnedBeneficiary(customerId, beneficiaryId);
-        if (!row) throw notFound("Beneficiary not found.");
+        const deleted = await client.query(
+          `SELECT 1 FROM beneficiaries
+            WHERE id = $1 AND customer_id = $2 AND status = 'DELETED'`,
+          [beneficiaryId, customerId],
+        );
+        // Deleting an already tombstoned beneficiary is an idempotent no-op.
+        if ((deleted.rowCount ?? 0) === 1) return;
+        throw notFound("Beneficiary not found.");
       }
       await new AuditRepository(client).append({
         id: randomUUID(),

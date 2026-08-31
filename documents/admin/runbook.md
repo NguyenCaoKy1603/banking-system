@@ -29,17 +29,38 @@ npm run admin:bootstrap
 ```
 
 `ADMIN_INVITATION_PROVIDER_URL` ở local phải trỏ tới loopback/Mailpit/MailHog
-hoặc HTTP capture service tương đương. Staging/production-like bắt buộc dùng
-HTTPS, allowlist domain kiểm soát và credential từ Secret Manager qua
-`email-provider-token` (không dùng `ADMIN_INVITATION_PROVIDER_TOKEN` trong
-deployment). CLI chỉ in invitation IDs, role và thời hạn; không in
-token/password/TOTP. Gateway không được ghi request body, token vào log,
-metric, audit, outbox hay artifact.
+hoặc HTTP capture service tương đương. Compose local của repo đã có service
+`invitation-capture` tại `http://127.0.0.1:8025/inbox`; service chỉ giữ thư
+trong memory và xóa hộp thư khi restart, không gửi ra Internet. Staging và
+production-like bắt buộc dùng HTTPS, allowlist domain kiểm soát và credential
+từ Secret Manager qua `email-provider-token` (không dùng
+`ADMIN_INVITATION_PROVIDER_TOKEN` trong deployment). CLI chỉ in invitation IDs,
+role và thời hạn; không in token/password/TOTP. Provider không được ghi request
+body, token vào log, metric, audit, outbox hay artifact.
+
+Luồng invite từ Admin Web local:
+
+1. Tạo `Invite request` bằng địa chỉ thuộc allowlist mặc định `@example.test`.
+2. Control duyệt request bằng step-up MFA.
+3. Mở `http://127.0.0.1:8025/inbox` và chọn liên kết kích hoạt tương ứng.
+4. Tại `/admin/activate`, đặt password tối thiểu 12 ký tự; để trống TOTP để
+   server tạo khóa một lần hoặc nhập khóa đã chuẩn bị trong Authenticator.
+5. Lưu khóa TOTP nếu server hiển thị, sau đó đăng nhập Admin Web bằng email,
+   password và mã TOTP.
+
+Token plaintext chỉ đi qua delivery request trong memory; PostgreSQL chỉ giữ
+`token_hash`. Liên kết kích hoạt dùng một lần và trang web xóa token khỏi URL
+sau khi kích hoạt thành công. Nếu capture service restart hoặc provider lỗi
+cuối cùng, hãy tạo invite request mới; không lấy token từ database/log.
 
 Sau khi người nhận mở activation URL, họ đặt password và enroll TOTP. Activation
 ghi audit event `STAFF_INVITE_ACTIVATED`; login tiếp theo luôn yêu cầu TOTP.
-Nếu provider trả timeout/429/5xx, adapter retry hữu hạn với backoff; lỗi cuối
-cùng làm bootstrap fail closed và không để lại invite có thể dùng lại.
+Nếu provider trả timeout/429/5xx, adapter retry hữu hạn với backoff. Với
+`admin:bootstrap`, lỗi cuối cùng gọi `abortBootstrap` để burn invitation và
+giải phóng reservation. Với invite tạo từ Admin Web, mutation DB đã commit
+trước delivery (vì provider là hệ thống ngoài transaction); lỗi được audit,
+không có plaintext token để dùng lại, và cần operator reconcile bản ghi
+`INVITED` đó trước khi gửi yêu cầu mới cùng địa chỉ.
 
 ## Start
 
@@ -48,7 +69,10 @@ $env:ADMIN_PORT = "5001"
 npm run admin:dev
 ```
 
-Admin API bind `127.0.0.1`. Health: `GET http://127.0.0.1:5001/livez` và `/readyz`. Admin Web dùng `http://127.0.0.1:5173` và `credentials: include`.
+Admin API bind `127.0.0.1`. Health: `GET http://127.0.0.1:5001/livez` và
+`/readyz`; readiness có `invitationDelivery.configured`,
+`credentialConfigured` và `status` dạng boolean/enum, không trả credential.
+Admin Web dùng `http://127.0.0.1:5173` và `credentials: include`.
 
 Khi chạy Admin Web trực tiếp bằng Vite, cấu hình proxy ở development:
 

@@ -42,7 +42,7 @@
 Đây vẫn là reference hardening, chưa phải production-ready:
 
 - Các endpoint public `/sandbox/fundings`, `/sandbox/process-scheduled`, `/sandbox/otp/{challengeId}` và operator-key config/runtime đã bị loại bỏ; fixture seed dùng DB transaction nội bộ hoặc dữ liệu pre-seeded.
-- Staff invite đã có maker-checker và chỉ tạo staff sau khi checker duyệt; delivery provider/token hand-off chưa triển khai nên preview cần một kênh cấp invite an toàn ngoài repository.
+- Staff invite đã có maker-checker và chỉ tạo staff sau khi checker duyệt; local preview dùng HTTP `invitation-capture` trong memory để hand-off token tới `/admin/activate`, còn PostgreSQL chỉ giữ `token_hash`. Staging/production vẫn cần provider HTTPS và credential từ Secret Manager.
 - Password staff hiện dùng PBKDF2 reference implementation; production cần Argon2id hoặc adapter đã phê duyệt.
 - DB principals/RLS/policy đã có migration, nhưng preview local vẫn chạy bằng owner role; production phải cấp credential riêng và đặt `app.staff_id`/`app.staff_scope` cho mọi transaction. ABAC case queue hiện giới hạn theo assigned/unassigned scope, chưa có unit/tenant directory thật.
 - Fraud `BLOCK/REVOKE/REVERSAL` vẫn yêu cầu domain adapter riêng; chỉ `RESOLVE` được thực thi trong P0.

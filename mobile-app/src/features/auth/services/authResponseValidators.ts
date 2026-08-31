@@ -48,6 +48,7 @@ function isAuthChallengePurpose(
     "CARD_ACTIVATION",
     "CREDIT_PAYMENT",
     "CARD_UNLOCK",
+    "CARD_REPORT_LOST",
     "RECOVERY_CODE_ROTATION",
     "MFA_FACTOR_CHANGE",
     "MFA_FACTOR_REMOVAL",
@@ -57,15 +58,24 @@ function isAuthChallengePurpose(
 export function isAuthChallengeResponse(
   payload: unknown,
 ): payload is AuthChallengeResponse {
+  const record = isRecord(payload) ? payload : null;
+  const methods = record?.methods;
+  const selectedMethod = record?.method;
   return (
-    isRecord(payload) &&
-    typeof payload.challengeId === "string" &&
-    payload.challengeId.trim().length > 0 &&
-    isNonEmptyDateTime(payload.expiresAt) &&
-    isAuthChallengePurpose(payload.purpose) &&
-    Array.isArray(payload.methods) &&
-    payload.methods.length > 0 &&
-    payload.methods.every(isAuthChallengeMethod)
+    record !== null &&
+    typeof record.challengeId === "string" &&
+    record.challengeId.trim().length > 0 &&
+    isNonEmptyDateTime(record.expiresAt) &&
+    isAuthChallengePurpose(record.purpose) &&
+    Array.isArray(methods) &&
+    methods.length > 0 &&
+    methods.every(isAuthChallengeMethod) &&
+    (selectedMethod === undefined || isAuthChallengeMethod(selectedMethod)) &&
+    (record.resendAfter === undefined || isNonEmptyDateTime(record.resendAfter)) &&
+    (record.maskedDestination === undefined || (
+      typeof record.maskedDestination === "string" &&
+      record.maskedDestination.trim().length > 0
+    ))
   );
 }
 

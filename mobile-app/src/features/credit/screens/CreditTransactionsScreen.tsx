@@ -1,18 +1,39 @@
 import { useCallback, useMemo, useState } from "react";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { AppHeader } from "@/components/ui/AppHeader";
+import { AppIcon } from "@/components/ui/AppIcon";
 import { Screen } from "@/components/ui/Screen";
+import { StateCard } from "@/components/ui/StateCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
 import { getCreditTransactionTypeLabel } from "@/features/credit/presentation/creditPresentation";
 import { getCreditCard, listCreditTransactions } from "@/features/credit/services/creditApi";
 import type { CreditTransaction } from "@/features/credit/types/credit";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
-function getErrorMessage(error: unknown): string { return error instanceof ApiError ? error.message : "Không thể tải giao dịch thẻ."; }
+function getErrorMessage(error: unknown): string {
+  return error instanceof ApiError ? error.message : "Không thể tải giao dịch thẻ.";
+}
+
+function getStatusLabel(status: CreditTransaction["status"]): string {
+  if (status === "POSTED") return "Đã ghi nhận";
+  if (status === "PENDING") return "Đang xử lý";
+  if (status === "REVERSED") return "Đã hoàn tác";
+  return "Từ chối";
+}
+
+function getStatusTone(
+  status: CreditTransaction["status"],
+): "success" | "warning" | "danger" | "neutral" {
+  if (status === "POSTED") return "success";
+  if (status === "PENDING") return "warning";
+  if (status === "DECLINED") return "danger";
+  return "neutral";
+}
 
 export function CreditTransactionsScreen() {
   const router = useRouter();
@@ -20,34 +41,142 @@ export function CreditTransactionsScreen() {
   const cardId = typeof params.cardId === "string" ? params.cardId : "";
   const { deviceId, refreshAccessToken, session } = useAuth();
   const accessToken = session?.accessToken ?? null;
-  const auth = useMemo(() => ({ accessToken, deviceId, refreshAccessToken }), [accessToken, deviceId, refreshAccessToken]);
+  const auth = useMemo(
+    () => ({ accessToken, deviceId, refreshAccessToken }),
+    [accessToken, deviceId, refreshAccessToken],
+  );
   const [items, setItems] = useState<CreditTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
 
   const load = useCallback(async () => {
-    if (!accessToken || !cardId) { setIsLoading(false); return; }
-    setIsLoading(true); setError(undefined);
+    if (!accessToken || !cardId) {
+      setIsLoading(false);
+      return;
+    }
+    setIsLoading(true);
+    setError(undefined);
     try {
       const detail = await getCreditCard(cardId, auth);
-      setItems((await listCreditTransactions(detail.creditAccount.creditAccountId, { auth, limit: 100 })).items);
-    } catch (requestError: unknown) { setError(getErrorMessage(requestError)); }
-    finally { setIsLoading(false); }
+      const response = await listCreditTransactions(detail.creditAccount.creditAccountId, {
+        auth,
+        limit: 100,
+      });
+      setItems(response.items);
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError));
+    } finally {
+      setIsLoading(false);
+    }
   }, [accessToken, auth, cardId]);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
 
-  return <Screen><ScrollView contentContainerStyle={styles.content}>
-    <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backButton} testID="credit-transactions-back"><Text style={styles.backLabel}>‹ Quay lại</Text></Pressable>
-    <View style={styles.header}><Text style={styles.eyebrow}>M7 · CREDIT</Text><Text style={styles.title}>Giao dịch thẻ</Text><Text style={styles.description}>Giao dịch được cập nhật từ backend; không tự cộng/trừ ở Mobile.</Text></View>
-    {isLoading ? <View style={styles.centerState} testID="credit-transactions-loading"><ActivityIndicator color={colors.primary} size="large" /></View> : error ? <View style={styles.card}><Text style={styles.errorText}>{error}</Text><PrimaryButton label="Thử lại" onPress={load} testID="credit-transactions-retry" /></View> : items.length === 0 ? <View style={styles.card} testID="credit-transactions-empty"><Text style={styles.emptyText}>Chưa có giao dịch.</Text></View> : <View style={styles.list} testID="credit-transactions-list">{items.map((item) => <View key={item.transactionId} style={styles.row}><View style={styles.rowMain}><Text style={styles.rowTitle}>{getCreditTransactionTypeLabel(item.type)}</Text><Text style={styles.rowDescription}>{item.description}</Text><Text style={styles.rowDate}>{new Date(item.occurredAt).toLocaleString("vi-VN")}</Text></View><Text style={[styles.amount, item.debtEffect === "DECREASE" ? styles.decrease : null]}>{item.debtEffect === "DECREASE" ? "−" : item.debtEffect === "INCREASE" ? "+" : ""}{formatVndMinor(item.amount.amountMinor)}</Text></View>)}</View>}
-  </ScrollView></Screen>;
+  return (
+    <Screen>
+      <ScrollView contentContainerStyle={styles.content}>
+        <AppHeader
+          backTestID="credit-transactions-back"
+          eyebrow="Hoạt động thẻ"
+          onBack={() => router.back()}
+          subtitle="Theo dõi giao dịch đã ghi nhận, đang xử lý hoặc được hoàn tác."
+          title="Giao dịch thẻ"
+        />
+
+        {isLoading ? (
+          <StateCard loading message="Đang tải giao dịch thẻ..." testID="credit-transactions-loading" />
+        ) : error ? (
+          <StateCard
+            actionLabel="Thử lại"
+            actionTestID="credit-transactions-retry"
+            icon="alert"
+            message={error}
+            onAction={load}
+            title="Không thể tải giao dịch"
+          />
+        ) : items.length === 0 ? (
+          <StateCard
+            icon="history"
+            message="Các giao dịch phát sinh từ thẻ sẽ xuất hiện tại đây."
+            testID="credit-transactions-empty"
+            title="Chưa có giao dịch"
+          />
+        ) : (
+          <View style={styles.list} testID="credit-transactions-list">
+            {items.map((item) => (
+              <View key={item.transactionId} style={styles.row}>
+                <View
+                  style={[
+                    styles.iconBox,
+                    item.debtEffect === "DECREASE" ? styles.decreaseIcon : null,
+                  ]}
+                >
+                  <AppIcon
+                    color={item.debtEffect === "DECREASE" ? colors.success : colors.primary}
+                    name={item.debtEffect === "DECREASE" ? "transfer" : "card"}
+                    size={20}
+                  />
+                </View>
+                <View style={styles.rowMain}>
+                  <Text style={styles.rowTitle}>{getCreditTransactionTypeLabel(item.type)}</Text>
+                  <Text numberOfLines={1} style={styles.rowDescription}>{item.description}</Text>
+                  <Text style={styles.rowDate}>{new Date(item.occurredAt).toLocaleString("vi-VN")}</Text>
+                </View>
+                <View style={styles.rowRight}>
+                  <Text style={[styles.amount, item.debtEffect === "DECREASE" ? styles.decrease : null]}>
+                    {item.debtEffect === "DECREASE" ? "−" : item.debtEffect === "INCREASE" ? "+" : ""}
+                    {formatVndMinor(item.amount.amountMinor)}
+                  </Text>
+                  <StatusBadge label={getStatusLabel(item.status)} tone={getStatusTone(item.status)} />
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+      </ScrollView>
+    </Screen>
+  );
 }
 
 const styles = StyleSheet.create({
-  content: { flexGrow: 1, width: "100%", maxWidth: 720, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
-  backButton: { alignSelf: "flex-start", paddingVertical: spacing.xs }, backLabel: { color: colors.primary, fontSize: 15, fontWeight: "600" },
-  header: { gap: spacing.sm }, eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "700", letterSpacing: 1.4 }, title: { color: colors.text, fontSize: 30, fontWeight: "700" }, description: { color: colors.muted, fontSize: 15, lineHeight: 22 },
-  centerState: { minHeight: 220, alignItems: "center", justifyContent: "center" }, card: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: 20, backgroundColor: colors.surface }, list: { borderWidth: 1, borderColor: colors.border, borderRadius: 20, backgroundColor: colors.surface, overflow: "hidden" },
-  row: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border }, rowMain: { flex: 1, gap: spacing.xs }, rowTitle: { color: colors.text, fontSize: 16, fontWeight: "800" }, rowDescription: { color: colors.muted, fontSize: 13 }, rowDate: { color: colors.muted, fontSize: 12 }, amount: { color: colors.danger, fontSize: 15, fontWeight: "800", textAlign: "right" }, decrease: { color: colors.success }, emptyText: { color: colors.text, fontSize: 16, fontWeight: "700" }, errorText: { color: colors.danger, fontSize: 14, lineHeight: 20 },
+  content: {
+    flexGrow: 1,
+    width: "100%",
+    maxWidth: sizes.contentMaxWidth,
+    alignSelf: "center",
+    padding: spacing.lg,
+    gap: spacing.lg,
+  },
+  list: { gap: spacing.sm },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+    ...shadows.card,
+  },
+  iconBox: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+  },
+  decreaseIcon: { backgroundColor: colors.successSoft },
+  rowMain: { flex: 1, gap: 2 },
+  rowTitle: { ...typography.bodyStrong, color: colors.text },
+  rowDescription: { ...typography.caption, color: colors.muted },
+  rowDate: { ...typography.caption, color: colors.subtle },
+  rowRight: { alignItems: "flex-end", gap: spacing.xs },
+  amount: { ...typography.bodyStrong, color: colors.danger, textAlign: "right" },
+  decrease: { color: colors.success },
 });

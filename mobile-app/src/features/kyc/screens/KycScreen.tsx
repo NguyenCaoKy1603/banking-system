@@ -1,21 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
-  Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from "react-native";
 
+import { AppHeader } from "@/components/ui/AppHeader";
+import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
-import {
-  getMockKycApplication,
-  submitMockKycApplication,
-} from "@/features/kyc/services/kycMock";
+import { getKycApplication, saveKycDraft, submitKycApplication } from "@/features/kyc/services/kycApi";
 import type { KycApplication, KycDraft, KycStatus } from "@/features/kyc/types/kyc";
 import {
   hasKycFieldErrors,
@@ -23,18 +22,23 @@ import {
   type KycFieldErrors,
 } from "@/features/kyc/validation/kycValidators";
 import { useAuth } from "@/features/auth/context/AuthContext";
-import { colors, spacing } from "@/theme";
+import { ApiError } from "@/services/api/ApiError";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getStatusLabel(status: KycStatus): string {
   switch (status) {
     case "DRAFT":
       return "Bản nháp";
-    case "PENDING":
+    case "SUBMITTED":
       return "Đang chờ duyệt";
+    case "UNDER_REVIEW":
+      return "Đang được xem xét";
+    case "NEEDS_MORE_INFO":
+      return "Cần bổ sung thông tin";
     case "APPROVED":
       return "Đã duyệt";
     case "REJECTED":
-      return "Cần bổ sung";
+      return "Không được phê duyệt";
   }
 }
 
@@ -50,14 +54,23 @@ const emptyErrors: KycFieldErrors = {};
 
 export function KycScreen() {
   const router = useRouter();
-  const { session } = useAuth();
+  const { deviceId, refreshAccessToken, session } = useAuth();
   const userId = session?.user.id ?? null;
+  const auth = useMemo(
+    () => ({
+      accessToken: session?.accessToken ?? null,
+      deviceId,
+      refreshAccessToken,
+    }),
+    [deviceId, refreshAccessToken, session?.accessToken],
+  );
   const [application, setApplication] = useState<KycApplication | null>(null);
   const [draft, setDraft] = useState<KycDraft>({
     fullName: session?.user.fullName ?? "",
     identityNumber: "",
     address: "",
     documentUri: "",
+    syntheticDataConfirmed: false,
   });
   const [fieldErrors, setFieldErrors] = useState<KycFieldErrors>(emptyErrors);
   const [isLoading, setIsLoading] = useState(true);
@@ -74,7 +87,7 @@ export function KycScreen() {
     setError(undefined);
 
     try {
-      const current = await getMockKycApplication(userId);
+      const current = await getKycApplication(auth);
       setApplication(current);
       if (current) {
         setDraft({
@@ -82,14 +95,15 @@ export function KycScreen() {
           identityNumber: current.identityNumber,
           address: current.address,
           documentUri: current.documentUri,
+          syntheticDataConfirmed: true,
         });
       }
-    } catch {
-      setError("Không thể tải hồ sơ eKYC mô phỏng.");
+    } catch (loadError) {
+      setError(loadError instanceof ApiError ? loadError.message : "Không thể tải hồ sơ định danh.");
     } finally {
       setIsLoading(false);
     }
-  }, [userId]);
+  }, [auth, userId]);
 
   useEffect(() => {
     void Promise.resolve().then(() => loadApplication());
@@ -118,37 +132,28 @@ export function KycScreen() {
     setError(undefined);
 
     try {
-      const submitted = await submitMockKycApplication(userId, draft);
+      const submitted = await submitKycApplication(draft, auth);
       setApplication(submitted);
-    } catch {
-      setError("Không thể gửi hồ sơ eKYC mô phỏng. Vui lòng thử lại.");
+    } catch (submitError) {
+      setError(submitError instanceof ApiError ? submitError.message : "Không thể gửi hồ sơ định danh. Vui lòng thử lại.");
     } finally {
       setIsSubmitting(false);
     }
-  }, [draft, userId]);
+  }, [auth, draft, userId]);
 
-  const isEditable = !application || application.status === "DRAFT" || application.status === "REJECTED";
+  const isEditable = !application || application.status === "DRAFT" || application.status === "REJECTED" || application.status === "NEEDS_MORE_INFO";
 
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="kyc-back"
-        >
-          <Text style={styles.backLabel}>‹ Quay lại</Text>
-        </Pressable>
-
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>M2 · eKYC</Text>
-          <Text style={styles.title}>Hồ sơ định danh</Text>
-          <Text style={styles.description}>
-            Ứng dụng khách hàng chỉ gửi hồ sơ và đọc trạng thái. Quyết định duyệt phải đến từ dịch vụ có thẩm quyền phía server.
-          </Text>
-        </View>
+        <AppHeader
+          backTestID="kyc-back"
+          eyebrow="Xác minh danh tính"
+          onBack={() => router.back()}
+          subtitle="Cung cấp thông tin định danh và theo dõi trạng thái xét duyệt hồ sơ."
+          title="Hồ sơ định danh"
+        />
+        <EnvironmentBadge />
 
         {isLoading ? (
           <View style={styles.centerState}>
@@ -158,8 +163,8 @@ export function KycScreen() {
           <View style={styles.card}>
             <Text style={styles.statusTitle}>{getStatusLabel(application.status)}</Text>
             <Text style={styles.description}>
-              {application.status === "PENDING"
-                ? "Hồ sơ đã được gửi và đang chờ dịch vụ kiểm duyệt xử lý."
+              {application.status === "SUBMITTED" || application.status === "UNDER_REVIEW"
+                ? "Hồ sơ đã được lưu trên máy chủ và đang chờ nhân viên có thẩm quyền xử lý."
                 : "Đây là trạng thái chỉ đọc từ nguồn kiểm duyệt; ứng dụng khách hàng không thể thay đổi quyết định."}
             </Text>
             <View style={styles.summaryRow}>
@@ -174,9 +179,9 @@ export function KycScreen() {
               <Text style={styles.errorText}>{application.rejectionReason}</Text>
             ) : null}
             <PrimaryButton label="Tải lại trạng thái" onPress={loadApplication} testID="kyc-refresh-status" />
-            {application.status === "PENDING" ? (
+            {application.status === "SUBMITTED" || application.status === "UNDER_REVIEW" ? (
               <Text style={styles.noteText} testID="kyc-pending-entitlement-note">
-                Bản reference chưa có entitlement/API kiểm duyệt phía server nên hồ sơ sẽ giữ trạng thái chờ; không có thao tác tự duyệt trên ứng dụng này.
+                Hồ sơ sẽ giữ trạng thái chờ cho đến khi nhân viên có thẩm quyền hoàn tất xét duyệt.
               </Text>
             ) : null}
           </View>
@@ -200,7 +205,7 @@ export function KycScreen() {
               accessibilityLabel="Số định danh"
               error={fieldErrors.identityNumber}
               keyboardType="number-pad"
-              label="Số định danh (mô phỏng)"
+              label="Số CCCD hoặc định danh"
               onChangeText={(value) => updateDraft("identityNumber", value.replace(/\D/g, ""))}
               testID="kyc-identity-number"
               value={draft.identityNumber}
@@ -217,16 +222,47 @@ export function KycScreen() {
             <View style={styles.documentBox}>
               <Text style={styles.summaryLabel}>Ảnh giấy tờ</Text>
               <Text style={styles.documentText}>
-                {draft.documentUri ? "Đã chọn ảnh mẫu identity-card-front" : "Chưa chọn ảnh giấy tờ mẫu"}
+                {draft.documentUri ? "Đã chọn ảnh giấy tờ" : "Chưa chọn ảnh giấy tờ"}
               </Text>
               {fieldErrors.documentUri ? <Text style={styles.errorText}>{fieldErrors.documentUri}</Text> : null}
               <PrimaryButton
-                label="Chọn ảnh mẫu (eKYC mô phỏng)"
+                label="Chọn ảnh giấy tờ mẫu"
                 onPress={() => updateDraft("documentUri", "mock://identity-card-front")}
                 testID="kyc-select-sample-document"
               />
             </View>
+            <View style={styles.confirmationBox}>
+              <View style={styles.confirmationCopy}>
+                <Text style={styles.summaryLabel}>Xác nhận dữ liệu mô phỏng</Text>
+                <Text style={styles.noteText}>
+                  Tôi xác nhận họ tên, số định danh, địa chỉ và giấy tờ ở trên chỉ là dữ liệu giả lập; không nhập thông tin cá nhân thật.
+                </Text>
+              </View>
+              <Switch
+                accessibilityLabel="Xác nhận dữ liệu KYC mô phỏng"
+                onValueChange={(value) => updateDraft("syntheticDataConfirmed", value)}
+                testID="kyc-synthetic-confirmation"
+                value={draft.syntheticDataConfirmed}
+              />
+            </View>
+            {fieldErrors.syntheticDataConfirmed ? <Text style={styles.errorText}>{fieldErrors.syntheticDataConfirmed}</Text> : null}
             {error ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>{error}</Text> : null}
+            <PrimaryButton
+              disabled={isSubmitting}
+              label="Lưu bản nháp"
+              onPress={() => void (async () => {
+                if (!userId) { setError("Phiên đăng nhập không hợp lệ."); return; }
+                const errors = validateKycDraft(draft);
+                setFieldErrors(errors);
+                if (hasKycFieldErrors(errors)) { setError("Vui lòng kiểm tra các trường hồ sơ trước khi lưu."); return; }
+                setIsSubmitting(true);
+                setError(undefined);
+                try { setApplication(await saveKycDraft(draft, auth)); }
+                catch (saveError) { setError(saveError instanceof ApiError ? saveError.message : "Không thể lưu bản nháp."); }
+                finally { setIsSubmitting(false); }
+              })()}
+              testID="kyc-save-draft"
+            />
             <PrimaryButton
               disabled={isSubmitting}
               label={isSubmitting ? "Đang gửi hồ sơ..." : "Gửi hồ sơ eKYC"}
@@ -248,38 +284,14 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     width: "100%",
-    maxWidth: 720,
+    maxWidth: sizes.contentMaxWidth,
     alignSelf: "center",
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  backButton: {
-    alignSelf: "flex-start",
-    paddingVertical: spacing.xs,
-  },
-  backLabel: {
-    color: colors.primary,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  header: {
-    gap: spacing.sm,
-  },
-  eyebrow: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: "700",
-  },
   description: {
+    ...typography.body,
     color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
   },
   centerState: {
     minHeight: 180,
@@ -288,16 +300,16 @@ const styles = StyleSheet.create({
   },
   card: {
     gap: spacing.md,
-    padding: spacing.lg,
+    padding: spacing.mlg,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: spacing.md,
+    borderRadius: radius.lg,
     backgroundColor: colors.surface,
+    ...shadows.card,
   },
   statusTitle: {
+    ...typography.heading,
     color: colors.success,
-    fontSize: 21,
-    fontWeight: "700",
   },
   summaryRow: {
     flexDirection: "row",
@@ -305,34 +317,46 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   summaryLabel: {
+    ...typography.body,
     color: colors.muted,
-    fontSize: 14,
   },
   summaryValue: {
     flex: 1,
+    ...typography.bodyStrong,
     color: colors.text,
-    fontSize: 14,
-    fontWeight: "600",
     textAlign: "right",
   },
   documentBox: {
     gap: spacing.sm,
     padding: spacing.md,
-    borderRadius: spacing.sm,
+    borderRadius: radius.md,
     backgroundColor: colors.background,
   },
   documentText: {
+    ...typography.body,
     color: colors.text,
-    fontSize: 14,
+  },
+  confirmationBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.infoSoft,
+  },
+  confirmationCopy: {
+    flex: 1,
+    gap: spacing.xs,
   },
   errorText: {
+    ...typography.body,
     color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
   },
   noteText: {
+    ...typography.caption,
+    padding: spacing.md,
+    borderRadius: radius.md,
     color: colors.muted,
-    fontSize: 13,
-    lineHeight: 19,
+    backgroundColor: colors.infoSoft,
   },
 });

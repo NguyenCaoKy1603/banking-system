@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Crypto from "expo-crypto";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AppHeader } from "@/components/ui/AppHeader";
+import { AppIcon } from "@/components/ui/AppIcon";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
@@ -19,7 +21,7 @@ import {
 } from "@/features/fraud/storage/fraudReportIntentStorage";
 import { getFraudReportSubmitFailureDisposition } from "@/features/fraud/domain/fraudReportSubmitFailure";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getParam(value: string | string[] | undefined): string {
   const normalized = Array.isArray(value) ? value[0] : value;
@@ -214,25 +216,21 @@ export function FraudReportScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => {
+        <AppHeader
+          eyebrow="An toàn tài khoản"
+          onBack={() => {
             if (reportId && userId) {
               void clearFraudReportIntent(userId, accountId, transactionId);
             }
             router.back();
           }}
-          style={styles.backButton}
-        >
-          <Text style={styles.backLabel}>‹ Quay lại</Text>
-        </Pressable>
-
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>AN TOÀN</Text>
-          <Text style={styles.title}>Báo cáo giao dịch</Text>
-          <Text style={styles.description}>
-            Báo cáo được gửi đến fraud/risk engine. Không nhập OTP, password hoặc token.
+          subtitle="Gửi yêu cầu kiểm tra khi bạn không nhận ra một giao dịch."
+          title="Báo cáo giao dịch"
+        />
+        <View style={styles.securityNote}>
+          <AppIcon color={colors.warning} name="shield" size={20} />
+          <Text style={styles.securityText}>
+            Không nhập mật khẩu, PIN, OTP hoặc mã xác thực vào phần lý do.
           </Text>
         </View>
 
@@ -318,55 +316,46 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     width: "100%",
-    maxWidth: 720,
+    maxWidth: sizes.contentMaxWidth,
     alignSelf: "center",
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  backButton: {
-    alignSelf: "flex-start",
-    paddingVertical: spacing.xs,
-  },
-  backLabel: {
-    color: colors.primary,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  header: {
-    gap: spacing.sm,
-  },
-  eyebrow: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: "700",
-  },
   description: {
+    ...typography.body,
     color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
+  },
+  securityNote: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.warningSoft,
+  },
+  securityText: {
+    flex: 1,
+    ...typography.body,
+    color: colors.warning,
   },
   card: {
     gap: spacing.md,
-    padding: spacing.lg,
+    padding: spacing.mlg,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: spacing.md,
+    borderRadius: radius.lg,
     backgroundColor: colors.surface,
+    ...shadows.card,
   },
   successTitle: {
+    ...typography.heading,
     color: colors.success,
-    fontSize: 20,
-    fontWeight: "700",
   },
   recoveryNotice: {
+    ...typography.body,
     color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.dangerSoft,
   },
 });

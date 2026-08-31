@@ -20,6 +20,7 @@ tags:
   - name: Transfers
   - name: Savings
   - name: Credit
+  - name: KYC
 security:
   - bearerAuth: []
     deviceBinding: []
@@ -43,7 +44,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthChallengeResponse'
+                $ref: '#/components/schemas/RegistrationChallengeResponse'
         '409':
           $ref: '#/components/responses/Conflict'
         '422':
@@ -255,15 +256,17 @@ paths:
     post:
       tags: [Auth]
       operationId: resendVerificationChallenge
+      security: []
       parameters:
         - $ref: '#/components/parameters/ChallengeId'
+        - $ref: '#/components/parameters/DeviceId'
       responses:
         '200':
-          description: New challenge and code delivery metadata. The old challenge is cancelled.
+          description: New registration email OTP challenge. The old challenge is cancelled; the destination is resolved server-side.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MfaChallengeResponse'
+                $ref: '#/components/schemas/RegistrationChallengeResponse'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -288,12 +291,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LoginResponse'
-        '202':
-          description: Additional authentication step is required.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AuthChallengeResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -328,6 +325,8 @@ paths:
     post:
       tags: [Auth]
       operationId: verifyLoginChallenge
+      deprecated: true
+      description: Legacy reference-sandbox endpoint. Relational-v2 login is password-only and never calls this endpoint.
       security: []
       parameters:
         - $ref: '#/components/parameters/DeviceId'
@@ -752,8 +751,6 @@ paths:
                     items: { $ref: '#/components/schemas/SavingsProduct' }
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
   /savings/quotes:
     post:
       tags: [Savings]
@@ -927,7 +924,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreditStepUpRequest'
+              $ref: '#/components/schemas/CardControlStepUpRequest'
       responses:
         '200':
           description: Card unlocked after sandbox step-up.
@@ -935,6 +932,35 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreditCardResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /cards/{cardId}/report-lost:
+    post:
+      tags: [Credit]
+      operationId: reportCreditCardLost
+      parameters:
+        - $ref: '#/components/parameters/CardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CardControlStepUpRequest'
+      responses:
+        '200':
+          description: Card blocked and a single durable reported-lost operations case created or reused.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CardReportedLostResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -1196,6 +1222,65 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /kyc/application:
+    get:
+      tags: [KYC]
+      operationId: getKycApplication
+      responses:
+        '200':
+          description: Latest synthetic KYC application owned by the authenticated customer, or null when none exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycApplicationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [KYC]
+      operationId: saveKycDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycApplicationRequest'
+      responses:
+        '200':
+          description: Persisted synthetic KYC draft.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycApplicationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /kyc/application/submit:
+    post:
+      tags: [KYC]
+      operationId: submitKycApplication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/KycApplicationRequest'
+      responses:
+        '201':
+          description: KYC application submitted for explicit staff review.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KycApplicationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1444,7 +1529,7 @@ components:
       properties:
         challengeId: { type: string, minLength: 1 }
         expiresAt: { type: string, format: date-time }
-        purpose: { type: string, enum: [LOGIN, TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
+        purpose: { type: string, enum: [REGISTRATION_VERIFY, REGISTRATION_EMAIL_VERIFY, LOGIN, TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, CARD_REPORT_LOST, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
         methods:
           type: array
           minItems: 1
@@ -1452,12 +1537,32 @@ components:
         method: { type: string, enum: [EMAIL_OTP, TOTP] }
         resendAfter: { type: string, format: date-time }
         maskedDestination: { type: string }
+    RegistrationChallengeResponse:
+      type: object
+      required: [challengeId, expiresAt, methods, method, purpose, resendAfter, maskedDestination]
+      properties:
+        challengeId: { type: string, minLength: 1 }
+        expiresAt: { type: string, format: date-time }
+        methods:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items: { type: string, enum: [EMAIL_OTP] }
+        method: { type: string, enum: [EMAIL_OTP] }
+        purpose: { type: string, enum: [REGISTRATION_EMAIL_VERIFY] }
+        resendAfter: { type: string, format: date-time }
+        maskedDestination: { type: string, minLength: 1 }
     MfaChallengeResponse:
       type: object
-      required: [challengeId, method, purpose, expiresAt]
+      required: [challengeId, method, methods, purpose, expiresAt]
       properties:
         challengeId: { type: string, minLength: 1 }
         method: { type: string, enum: [EMAIL_OTP, TOTP] }
+        methods:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items: { type: string, enum: [EMAIL_OTP, TOTP] }
         purpose: { type: string }
         expiresAt: { type: string, format: date-time }
         resendAfter: { type: string, format: date-time }
@@ -1567,7 +1672,7 @@ components:
         resourceId: quote-example
         requestFingerprint: fingerprint-example
       properties:
-        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
+        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, CARD_REPORT_LOST, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
         resourceId:
           oneOf:
             - { type: string }
@@ -1616,7 +1721,7 @@ components:
         proof: <provided-by-test-factor>
       properties:
         challengeId: { type: string, minLength: 1, writeOnly: true }
-        method: { type: string, enum: [OTP, TOTP] }
+        method: { type: string, enum: [OTP, EMAIL_OTP, TOTP] }
         proof: { type: string, minLength: 1, writeOnly: true }
     LogoutRequest:
       type: object
@@ -1697,6 +1802,51 @@ components:
         reportId: { type: string }
         status: { type: string, enum: [RECEIVED] }
         createdAt: { type: string, format: date-time }
+    KycApplicationRequest:
+      type: object
+      additionalProperties: false
+      required: [fullName, identityNumber, address, documentUri, syntheticDataConfirmed]
+      example:
+        fullName: Synthetic Example User
+        identityNumber: '123456789012'
+        address: Synthetic address for the reference sandbox
+        documentUri: synthetic://document/fixture-001
+        syntheticDataConfirmed: true
+      properties:
+        fullName: { type: string, minLength: 2, maxLength: 120 }
+        identityNumber: { type: string, pattern: '^\\d{6,24}$', writeOnly: true }
+        address: { type: string, minLength: 5, maxLength: 300 }
+        documentUri: { type: string, pattern: '^(mock|synthetic)://', description: Synthetic fixture URI only; no document bytes are stored. }
+        syntheticDataConfirmed: { type: boolean, enum: [true], description: Explicit confirmation that no real PII is being submitted to the reference sandbox. }
+    KycApplication:
+      type: object
+      required: [id, userId, fullName, identityNumber, address, documentUri, status, rejectionReason, submittedAt, updatedAt, version]
+      properties:
+        id: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        fullName: { type: string }
+        identityNumber: { type: string, writeOnly: true }
+        address: { type: string }
+        documentUri: { type: string }
+        status: { type: string, enum: [DRAFT, SUBMITTED, UNDER_REVIEW, NEEDS_MORE_INFO, APPROVED, REJECTED] }
+        rejectionReason:
+          oneOf:
+            - { type: string }
+            - { type: 'null' }
+        submittedAt:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: 'null' }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, minimum: 1 }
+    KycApplicationResponse:
+      type: object
+      required: [application]
+      properties:
+        application:
+          oneOf:
+            - $ref: '#/components/schemas/KycApplication'
+            - { type: 'null' }
     Money:
       type: object
       required: [currency, amountMinor]
@@ -1717,7 +1867,7 @@ components:
         accountHolderName: { type: string }
         maskedAccountNumber: { type: string }
         bankName: { type: string }
-        status: { type: string, enum: [ACTIVE, BLOCKED] }
+        status: { type: string, enum: [ACTIVE, BLOCKED], description: Deleted beneficiaries are tombstoned and omitted from the customer API. }
     BeneficiaryResponse:
       type: object
       required: [beneficiary]
@@ -2002,6 +2152,24 @@ components:
         method: { type: string, enum: [OTP, TOTP] }
         proof: { type: string, minLength: 1, writeOnly: true }
         challengeId: { type: string, minLength: 1, writeOnly: true }
+    CardControlStepUpRequest:
+      type: object
+      additionalProperties: false
+      required: [stepUp]
+      example:
+        stepUp:
+          method: TOTP
+          proof: '<provided-by-authenticator>'
+          challengeId: challenge-example
+      properties:
+        stepUp:
+          type: object
+          additionalProperties: false
+          required: [method, proof, challengeId]
+          properties:
+            method: { type: string, enum: [TOTP] }
+            proof: { type: string, minLength: 1, writeOnly: true }
+            challengeId: { type: string, minLength: 1, writeOnly: true }
     CreditCard:
       type: object
       required: [cardId, creditAccountId, displayName, brand, maskedNumber, lastFour, expiryMonth, expiryYear, status, updatedAt, creditLimit, availableCredit, postedOutstanding, pendingAuthorizations, nextDueAt, remainingAmountDue, minimumPaymentRemaining, sandbox]
@@ -2032,6 +2200,13 @@ components:
       required: [card]
       properties:
         card: { $ref: '#/components/schemas/CreditCard' }
+    CardReportedLostResponse:
+      type: object
+      required: [card, caseId, caseStatus]
+      properties:
+        card: { $ref: '#/components/schemas/CreditCard' }
+        caseId: { type: string, format: uuid }
+        caseStatus: { type: string, enum: [OPEN, IN_REVIEW, RESOLVED] }
     CreditCardDetailResponse:
       type: object
       required: [card, creditAccount, latestStatement]

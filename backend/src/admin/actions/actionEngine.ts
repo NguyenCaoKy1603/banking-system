@@ -5,6 +5,7 @@ import { fingerprint } from "../../security.js";
 import { redactAdminMetadata } from "../audit/redaction.js";
 import { requireFreshStepUp, requirePermission } from "../authorization/authorization.js";
 import type { AdminPermission, AdminSubject } from "../authorization/permissionRegistry.js";
+import type { AdminInvitationDeliveryPort, AdminInvitationDeliveryResult } from "../auth/adminInvitationProvider.js";
 import type { StaffAuthService } from "../auth/staffAuthService.js";
 import type { AdminActionRecord, AdminRepository } from "../repositories/adminRepository.js";
 
@@ -66,8 +67,17 @@ function rejectUnknownFields(actionType: string, body: Record<string, unknown>):
   if (unknown.length > 0) throw invalidRequest("Request contains unsupported fields.", { [unknown[0]]: "This field is not accepted for the selected Admin command." });
 }
 
+export type AdminActionEngineOptions = {
+  invitationProvider?: AdminInvitationDeliveryPort;
+  activationUrl?: string;
+};
+
 export class AdminActionEngine {
-  constructor(private readonly repository: AdminRepository, private readonly auth: StaffAuthService) {}
+  constructor(
+    private readonly repository: AdminRepository,
+    private readonly auth: StaffAuthService,
+    private readonly options: AdminActionEngineOptions = {},
+  ) {}
 
   async create(input: { subject: AdminSubject; actionType: string; targetType: string; targetId: string; body: Record<string, unknown>; idempotencyKey: string; traceId: string }): Promise<AdminActionRecord> {
     const permission = REQUEST_PERMISSION[input.actionType];
@@ -140,7 +150,7 @@ export class AdminActionEngine {
       expectedTargetStatus = target.status;
       if (target.status !== "SUBMITTED" && target.status !== "UNDER_REVIEW") throw conflictWithCode("CASE_STATUS_CONFLICT", "Application is not awaiting a decision.");
       const decision = typeof safePayload.decision === "string" ? safePayload.decision : "";
-      const allowed = applicationType === "KYC" ? ["APPROVED", "REJECTED", "MORE_INFO_REQUIRED"] : ["PENDING_ACTIVATION", "REJECTED"];
+      const allowed = applicationType === "KYC" ? ["APPROVED", "REJECTED", "NEEDS_MORE_INFO"] : ["PENDING_ACTIVATION", "REJECTED"];
       if (!allowed.includes(decision)) throw invalidRequest("A valid application decision is required.");
       safePayload.applicationType = applicationType;
       safePayload.decision = decision;
@@ -228,6 +238,36 @@ export class AdminActionEngine {
     const executed = await this.repository.executeApprovedAction({ requestId: action.id, approverStaffId: input.subject.staffId, traceId: input.traceId });
     if (executed.status === "STALE") throw conflictWithCode("ACTION_STALE", "Target changed before approval; create a new action.");
     if (executed.status === "FAILED") throw conflictWithCode(executed.failureCode ?? "ACTION_EXECUTION_FAILED", "Approved action could not be executed.");
+    if (executed.invitation) {
+      const delivery = this.options.invitationProvider;
+      const activationUrl = this.options.activationUrl;
+      if (!delivery || !activationUrl) {
+        await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "STAFF_INVITATION_DELIVERY_FAILED", targetType: "STAFF_INVITE", targetId: executed.invitation.inviteId, outcome: "FAILED", reasonCode: "INVITATION_DELIVERY_NOT_CONFIGURED", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { actionType: action.actionType } });
+        throw conflictWithCode("STAFF_INVITATION_DELIVERY_NOT_CONFIGURED", "Invitation delivery is not configured for this runtime.");
+      }
+      let result: AdminInvitationDeliveryResult;
+      try {
+        result = await delivery.send({
+          deliveryId: `staff-invite:${executed.invitation.inviteId}`,
+          purpose: "STAFF_INVITATION",
+          destination: executed.invitation.destination,
+          displayName: executed.invitation.displayName,
+          role: executed.invitation.role,
+          invitationToken: executed.invitation.token,
+          activationUrl,
+          expiresAt: executed.invitation.expiresAt,
+        });
+      } catch {
+        const health = delivery.health();
+        await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "STAFF_INVITATION_DELIVERY_FAILED", targetType: "STAFF_INVITE", targetId: executed.invitation.inviteId, outcome: "FAILED", reasonCode: "INVITATION_DELIVERY_EXCEPTION", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { actionType: action.actionType, provider: health.provider, providerStatus: health.status, providerConfigured: health.configured } });
+        throw conflictWithCode("STAFF_INVITATION_DELIVERY_FAILED", "Invitation was created but could not be delivered; retry with a new invite request.");
+      }
+      if (result.status !== "SENT") {
+        await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "STAFF_INVITATION_DELIVERY_FAILED", targetType: "STAFF_INVITE", targetId: executed.invitation.inviteId, outcome: "FAILED", reasonCode: "INVITATION_DELIVERY_FAILED", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { actionType: action.actionType, provider: delivery.health().provider } });
+        throw conflictWithCode("STAFF_INVITATION_DELIVERY_FAILED", "Invitation was created but could not be delivered; retry with a new invite request.");
+      }
+      await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "STAFF_INVITATION_DELIVERED", targetType: "STAFF_INVITE", targetId: executed.invitation.inviteId, outcome: "SUCCEEDED", reasonCode: "INVITATION_DELIVERED", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { actionType: action.actionType, provider: delivery.health().provider, providerMessageId: result.providerMessageId ?? null } });
+    }
     await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "ADMIN_ACTION_APPROVED", targetType: action.targetType, targetId: action.targetId, outcome: "SUCCEEDED", reasonCode, requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: executed.beforeVersion ?? action.expectedTargetVersion, afterVersion: executed.afterVersion ?? null, metadata: { actionType: action.actionType, resultResourceId: executed.resultResourceId ?? null } });
     return (await this.repository.findAction(action.id))!;
   }

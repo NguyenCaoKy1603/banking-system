@@ -12,6 +12,7 @@ import { LedgerRepository } from "./repositories/ledgerRepository.js";
 import { OutboxRepository } from "./repositories/outboxRepository.js";
 import { SavingsRepository, type SavingsDepositRow, type SavingsOpeningRow, type SavingsProductRow, type SavingsQuoteRow } from "./repositories/savingsRepository.js";
 import { IdempotencyConflictError, RelationalConflictError, RelationalNotFoundError } from "./commandErrors.js";
+import { ControlPolicyRepository } from "./controlPolicyRepository.js";
 
 const QUOTE_TTL_MS = 5 * 60 * 1000;
 
@@ -128,29 +129,8 @@ function assertUuid(value: string, field: string): void {
 export class RelationalSavingsService {
   constructor(private readonly unitOfWork: UnitOfWork) {}
 
-  private async assertAvailable(client: Parameters<Parameters<UnitOfWork["transaction"]>[0]>[0]["client"]): Promise<bigint> {
-    const policy = await client.query<{
-      global_kill_switch: boolean;
-      savings_enabled: boolean;
-      savings_allowlist_enabled: boolean;
-      max_savings_amount_minor: string;
-    }>(
-      `SELECT global_kill_switch, savings_enabled, savings_allowlist_enabled,
-              max_savings_amount_minor
-       FROM control_policy WHERE singleton = true`,
-    );
-    const row = policy.rows[0];
-    const envEnabled = process.env.BANKING_SAVINGS_ENABLED !== "0";
-    const envAllowlisted = process.env.BANKING_SAVINGS_ALLOWLIST_ENABLED !== "0";
-    if (row && (row.global_kill_switch || !row.savings_enabled || !row.savings_allowlist_enabled) || !envEnabled || !envAllowlisted) {
-      throw conflict("Savings sandbox is temporarily unavailable.");
-    }
-    return BigInt(row?.max_savings_amount_minor ?? process.env.BANKING_MAX_SAVINGS_AMOUNT_MINOR ?? "500000000");
-  }
-
   async listProducts(customerId: string): Promise<SavingsProduct[]> {
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client);
       return (await new SavingsRepository(client).listProducts()).filter((item) => item.status === "ACTIVE").map(productToPublic);
     });
   }
@@ -163,7 +143,9 @@ export class RelationalSavingsService {
     const principalMinor = parseMoney(input.principal, "principal");
     const maturityInstruction = parseInstruction(input.maturityInstruction);
     return this.unitOfWork.transaction(async ({ client }) => {
-      const maxAmount = await this.assertAvailable(client);
+      const policy = new ControlPolicyRepository(client);
+      const maxAmount = BigInt((await policy.read()).max_savings_amount_minor);
+      await policy.assertSavingsOpeningAllowed(customerId, principalMinor);
       const savings = new SavingsRepository(client);
       const product = await savings.findActiveProduct(productCode);
       if (!product) throw notFound("Savings product not found.");
@@ -218,7 +200,6 @@ export class RelationalSavingsService {
     assertUuid(quoteId, "quoteId");
     const requestFingerprint = fingerprint({ quoteId });
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client);
       const savings = new SavingsRepository(client);
       const reservation = await savings.reserveIdempotency({ id: randomUUID(), customerId: input.customerId, operationType: "SAVINGS_OPENING", idempotencyKey, requestFingerprint });
       if (!reservation.created) {
@@ -233,6 +214,7 @@ export class RelationalSavingsService {
 
       const quote = await savings.lockQuote(quoteId);
       if (!quote || quote.customerId !== input.customerId) throw new RelationalNotFoundError("Savings quote not found.");
+      await new ControlPolicyRepository(client).assertSavingsOpeningAllowed(input.customerId, BigInt(quote.principalMinor));
       const existingByQuote = await client.query<{ id: string }>("SELECT id FROM savings_openings WHERE quote_id = $1", [quoteId]);
       if (existingByQuote.rows[0]) {
         const opening = await savings.findOpening(String(existingByQuote.rows[0].id), input.customerId);
@@ -338,7 +320,6 @@ export class RelationalSavingsService {
 
   async listDeposits(customerId: string): Promise<SavingsListResult> {
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client);
       const items = (await new SavingsRepository(client).listDeposits(customerId)).map(depositToPublic);
       const total = items.filter((item) => item.status === "ACTIVE").reduce((sum, item) => sum + BigInt(item.principal.amountMinor), 0n);
       return { items, totalPrincipal: toMoney(total) };
@@ -348,7 +329,6 @@ export class RelationalSavingsService {
   async getDeposit(customerId: string, depositId: string): Promise<SavingsDeposit> {
     assertUuid(depositId, "depositId");
     return this.unitOfWork.transaction(async ({ client }) => {
-      await this.assertAvailable(client);
       const row = await new SavingsRepository(client).findDeposit(customerId, depositId);
       if (!row) throw notFound("Savings deposit not found.");
       return depositToPublic(row);

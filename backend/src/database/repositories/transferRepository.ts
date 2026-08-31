@@ -50,6 +50,7 @@ export type TransferQuoteRow = {
   consumedTransferId: string | null;
   destinationAccountId: string | null;
   destinationOwnerId: string | null;
+  destinationOwnerName: string | null;
 };
 
 function mapQuote(row: Record<string, unknown>): TransferQuoteRow {
@@ -66,6 +67,7 @@ function mapQuote(row: Record<string, unknown>): TransferQuoteRow {
     consumedTransferId: row.consumed_transfer_id ? requireUuid(row.consumed_transfer_id, "consumed_transfer_id") : null,
     destinationAccountId: row.destination_account_id ? requireUuid(row.destination_account_id, "destination_account_id") : null,
     destinationOwnerId: row.destination_owner_id ? requireUuid(row.destination_owner_id, "destination_owner_id") : null,
+    destinationOwnerName: row.destination_owner_name === null || row.destination_owner_name === undefined ? null : asString(row.destination_owner_name),
   };
 }
 
@@ -114,7 +116,7 @@ export class TransferRepository {
   async findOwnedBeneficiary(customerId: string, beneficiaryId: string): Promise<Record<string, unknown> | null> {
     const result = await this.client.query(
       `SELECT * FROM beneficiaries
-       WHERE id = $1 AND customer_id = $2`,
+       WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL AND status <> 'DELETED'`,
       [requireUuid(beneficiaryId, "beneficiaryId"), requireUuid(customerId, "customerId")],
     );
     return result.rows[0] ? result.rows[0] as Record<string, unknown> : null;
@@ -123,7 +125,7 @@ export class TransferRepository {
   async listBeneficiaries(customerId: string): Promise<Array<Record<string, unknown>>> {
     const result = await this.client.query(
       `SELECT * FROM beneficiaries
-       WHERE customer_id = $1
+       WHERE customer_id = $1 AND deleted_at IS NULL AND status = 'ACTIVE'
        ORDER BY created_at DESC, id`,
       [requireUuid(customerId, "customerId")],
     );
@@ -167,7 +169,7 @@ export class TransferRepository {
     const result = await this.client.query(
       `UPDATE beneficiaries
        SET display_name = $3
-       WHERE id = $1 AND customer_id = $2
+       WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL AND status <> 'DELETED'
        RETURNING *`,
       [requireUuid(beneficiaryId, "beneficiaryId"), requireUuid(customerId, "customerId"), displayName],
     );
@@ -178,7 +180,18 @@ export class TransferRepository {
     const result = await this.client.query(
       `UPDATE beneficiaries
        SET status = 'BLOCKED'
-       WHERE id = $1 AND customer_id = $2 AND status <> 'BLOCKED'`,
+       WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL AND status NOT IN ('BLOCKED', 'DELETED')`,
+      [requireUuid(beneficiaryId, "beneficiaryId"), requireUuid(customerId, "customerId")],
+    );
+    return (result.rowCount ?? 0) === 1;
+  }
+
+  async deleteBeneficiary(customerId: string, beneficiaryId: string): Promise<boolean> {
+    const result = await this.client.query(
+      `UPDATE beneficiaries
+          SET status = 'DELETED', deleted_at = COALESCE(deleted_at, NOW())
+        WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL
+        RETURNING id`,
       [requireUuid(beneficiaryId, "beneficiaryId"), requireUuid(customerId, "customerId")],
     );
     return (result.rowCount ?? 0) === 1;
@@ -192,7 +205,8 @@ export class TransferRepository {
        FROM beneficiaries b
        JOIN payment_accounts a ON a.id = b.destination_account_id
        JOIN customers c ON c.id = a.customer_id
-       WHERE b.id = $1 AND b.customer_id = $2`,
+       WHERE b.id = $1 AND b.customer_id = $2
+         AND b.deleted_at IS NULL AND b.status = 'ACTIVE'`,
       [requireUuid(beneficiaryId, "beneficiaryId"), requireUuid(customerId, "customerId")],
     );
     return result.rows[0] ? result.rows[0] as Record<string, unknown> : null;
@@ -220,13 +234,15 @@ export class TransferRepository {
     beneficiarySnapshot: unknown;
     destinationAccountId: string;
     destinationOwnerId: string;
+    destinationOwnerName?: string | null;
   }): Promise<TransferQuoteRow> {
     const result = await this.client.query(
       `INSERT INTO transfer_quotes
         (id, customer_id, source_account_id, beneficiary_id, amount_minor,
          fee_minor, currency, expires_at, created_at, request_fingerprint,
-         beneficiary_snapshot, destination_account_id, destination_owner_id)
-       VALUES ($1, $2, $3, $4, $5, $6, 'VND', $7, NOW(), $8, $9::jsonb, $10, $11)
+         beneficiary_snapshot, destination_account_id, destination_owner_id,
+         destination_owner_name)
+       VALUES ($1, $2, $3, $4, $5, $6, 'VND', $7, NOW(), $8, $9::jsonb, $10, $11, $12)
        RETURNING *`,
       [
         requireUuid(input.id),
@@ -240,6 +256,7 @@ export class TransferRepository {
         JSON.stringify(input.beneficiarySnapshot),
         requireUuid(input.destinationAccountId, "destinationAccountId"),
         requireUuid(input.destinationOwnerId, "destinationOwnerId"),
+        input.destinationOwnerName ?? null,
       ],
     );
     return mapQuote(result.rows[0] as Record<string, unknown>);

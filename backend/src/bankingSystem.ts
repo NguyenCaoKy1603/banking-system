@@ -246,7 +246,7 @@ export type ServiceHealth = {
   outbox: "ok" | "degraded";
   pendingOutboxEvents: number;
   emailProvider?: {
-    provider: "fake" | "disabled" | "http";
+    provider: "fake" | "disabled" | "http" | "smtp";
     status: "ok" | "disabled" | "degraded";
     configured: boolean;
     credentialConfigured: boolean;
@@ -1480,6 +1480,7 @@ export class BankingSystem {
       "CARD_ACTIVATION",
       "CREDIT_PAYMENT",
       "CARD_UNLOCK",
+      "CARD_REPORT_LOST",
     ];
     if (!supportedPurposes.includes(purpose)) {
       throw invalidRequest("OTP purpose is invalid.");
@@ -1498,7 +1499,7 @@ export class BankingSystem {
           ? this.policy.savingsStepUpMethods
           : purpose === "CREDIT_PAYMENT"
             ? this.policy.creditPaymentStepUpMethods
-            : purpose === "CARD_UNLOCK"
+            : purpose === "CARD_UNLOCK" || purpose === "CARD_REPORT_LOST"
               ? this.policy.cardUnlockStepUpMethods
               : ["OTP"] as StepUpMethod[];
     const effectiveFingerprint =

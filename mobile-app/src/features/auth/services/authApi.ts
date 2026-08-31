@@ -2,7 +2,6 @@ import type {
   AuthChallengeResponse,
   LoginRequest,
   LoginResponse,
-  LoginResult,
   LogoutRequest,
   MfaLifecyclePurpose,
   MfaMethodsResponse,
@@ -70,34 +69,17 @@ function createDeviceHeaders(
 export function login(
   request: LoginRequest,
   options: AuthRequestOptions,
-): Promise<LoginResult> {
+): Promise<LoginResponse> {
   const body: LoginRequest = {
     email: request.email,
     password: request.password,
   };
 
-  return requestJson<LoginResult>("/auth/login", {
+  return requestJson<LoginResponse>("/auth/login", {
     method: "POST",
     body,
     headers: createDeviceHeaders(options),
-  }, (payload): payload is LoginResult =>
-    isLoginResponse(payload) ||
-    (isAuthChallengeResponse(payload) && payload.purpose === "LOGIN"));
-}
-
-export function verifyLoginChallenge(
-  request: VerifyAuthChallengeRequest,
-  options: AuthRequestOptions,
-): Promise<LoginResponse> {
-  return requestJson<LoginResponse>(
-    "/auth/verify",
-    {
-      method: "POST",
-      body: request,
-      headers: createDeviceHeaders(options),
-    },
-    isLoginResponse,
-  );
+  }, isLoginResponse);
 }
 
 export function register(
@@ -130,6 +112,23 @@ export function verifyRegistrationChallenge(
       headers: createDeviceHeaders(options),
     },
     isRegisterResponse,
+  );
+}
+
+export function resendRegistrationChallenge(
+  challengeId: string,
+  options: AuthRequestOptions,
+): Promise<AuthChallengeResponse> {
+  const normalizedChallengeId = requireNonEmpty(challengeId, "challengeId");
+  return requestJson<AuthChallengeResponse>(
+    `/auth/challenges/${encodeURIComponent(normalizedChallengeId)}/resend`,
+    {
+      method: "POST",
+      body: {},
+      headers: createDeviceHeaders(options),
+    },
+    (payload): payload is AuthChallengeResponse =>
+      isRegistrationChallengeResponse(payload),
   );
 }
 
@@ -300,9 +299,9 @@ export function confirmRecoveryTotpEnrollment(
 
 export const authApi = {
   login,
-  verifyLoginChallenge,
   register,
   verifyRegistrationChallenge,
+  resendRegistrationChallenge,
   refreshSession,
   revokeSession,
   revokeAllSessions,

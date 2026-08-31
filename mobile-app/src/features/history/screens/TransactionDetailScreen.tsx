@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { AppHeader } from "@/components/ui/AppHeader";
+import { AppIcon } from "@/components/ui/AppIcon";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { Screen } from "@/components/ui/Screen";
+import { StateCard } from "@/components/ui/StateCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { getTransactionDetail } from "@/features/accounts/services/accountsApi";
 import type {
@@ -19,7 +17,7 @@ import type {
 } from "@/features/accounts/types/account";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getParam(value: string | string[] | undefined): string | null {
   const normalizedValue = Array.isArray(value) ? value[0] : value;
@@ -44,6 +42,15 @@ function getStatusLabel(status: TransactionDetail["status"]): string {
     case "REVERSED":
       return "Đã hoàn tác";
   }
+}
+
+function getStatusTone(
+  status: TransactionDetail["status"],
+): "success" | "warning" | "danger" | "neutral" {
+  if (status === "SUCCEEDED") return "success";
+  if (status === "PENDING") return "warning";
+  if (status === "FAILED") return "danger";
+  return "neutral";
 }
 
 function getDirectionLabel(direction: TransactionDirection): string {
@@ -80,17 +87,10 @@ export function TransactionDetailScreen() {
       setError("Liên kết giao dịch không hợp lệ.");
       return;
     }
-
     setIsLoading(true);
     setError(undefined);
-
     try {
-      const response = await getTransactionDetail(
-        accountId,
-        transactionId,
-        auth,
-      );
-      setDetail(response);
+      setDetail(await getTransactionDetail(accountId, transactionId, auth));
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
     } finally {
@@ -105,79 +105,98 @@ export function TransactionDetailScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => router.back()}
-          style={styles.backButton}
-        >
-          <Text style={styles.backLabel}>‹ Quay lại</Text>
-        </Pressable>
-
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>GIAO DỊCH</Text>
-          <Text style={styles.title}>Chi tiết giao dịch</Text>
-          <Text style={styles.description}>
-            Trạng thái và thông tin dưới đây được lấy từ server.
-          </Text>
-        </View>
+        <AppHeader
+          eyebrow="Biên nhận"
+          onBack={() => router.back()}
+          subtitle="Đối chiếu số tiền, trạng thái và mã tham chiếu giao dịch."
+          title="Chi tiết giao dịch"
+        />
 
         {isLoading ? (
-          <View style={styles.centerState}>
-            <ActivityIndicator color={colors.primary} size="large" />
-          </View>
+          <StateCard loading message="Đang tải chi tiết giao dịch..." />
         ) : error ? (
-          <View style={styles.stateCard}>
-            <Text style={styles.errorText}>{error}</Text>
-            <PrimaryButton label="Thử lại" onPress={loadDetail} />
-          </View>
+          <StateCard
+            actionLabel="Thử lại"
+            icon="alert"
+            message={error}
+            onAction={loadDetail}
+            title="Không thể tải giao dịch"
+          />
         ) : detail ? (
-          <View style={styles.card}>
-            <Text style={styles.status}>{getStatusLabel(detail.status)}</Text>
-            <Text
-              style={[
-                styles.amount,
-                detail.direction === "CREDIT" ? styles.creditAmount : null,
-              ]}
-            >
-              {detail.direction === "CREDIT" ? "+" : "-"}
-              {formatVndMinor(detail.amount.amountMinor)}
-            </Text>
-
-            <View style={styles.detailList}>
-              <DetailRow label="Mô tả" value={detail.description} />
-              <DetailRow
-                label="Đối tác"
-                value={detail.counterpartyName ?? "Không có thông tin"}
-              />
-              <DetailRow label="Loại" value={getDirectionLabel(detail.direction)} />
-              <DetailRow
-                label="Phí"
-                value={formatVndMinor(detail.fee.amountMinor)}
-              />
-              <DetailRow label="Mã tham chiếu" value={detail.reference} />
-              <DetailRow label="Tạo lúc" value={formatDate(detail.createdAt)} />
-              <DetailRow
-                label="Hoàn tất lúc"
-                value={detail.completedAt ? formatDate(detail.completedAt) : "—"}
-              />
+          <>
+            <View style={styles.receiptCard}>
+              <View
+                style={[
+                  styles.directionIcon,
+                  detail.direction === "CREDIT" ? styles.creditIcon : styles.debitIcon,
+                ]}
+              >
+                <AppIcon
+                  color={detail.direction === "CREDIT" ? colors.success : colors.primary}
+                  name="transfer"
+                  size={27}
+                />
+              </View>
+              <Text style={styles.directionLabel}>{getDirectionLabel(detail.direction)}</Text>
+              <Text
+                style={[
+                  styles.amount,
+                  detail.direction === "CREDIT" ? styles.creditAmount : null,
+                ]}
+              >
+                {detail.direction === "CREDIT" ? "+" : "−"}
+                {formatVndMinor(detail.amount.amountMinor)}
+              </Text>
+              <StatusBadge label={getStatusLabel(detail.status)} tone={getStatusTone(detail.status)} />
+              <Text style={styles.description}>{detail.description}</Text>
             </View>
-            <PrimaryButton
+
+            <Card elevated>
+              <View style={styles.sectionHeader}>
+                <View style={styles.sectionIcon}>
+                  <AppIcon color={colors.primary} name="account" size={19} />
+                </View>
+                <Text style={styles.sectionTitle}>Thông tin giao dịch</Text>
+              </View>
+              <View style={styles.detailList}>
+                <DetailRow
+                  label="Đối tác"
+                  value={detail.counterpartyName ?? "Không có thông tin"}
+                />
+                <DetailRow label="Loại giao dịch" value={getDirectionLabel(detail.direction)} />
+                <DetailRow label="Phí" value={formatVndMinor(detail.fee.amountMinor)} />
+                <DetailRow label="Mã tham chiếu" value={detail.reference} />
+                <DetailRow label="Thời gian tạo" value={formatDate(detail.createdAt)} />
+                <DetailRow
+                  label="Thời gian hoàn tất"
+                  value={detail.completedAt ? formatDate(detail.completedAt) : "Chưa hoàn tất"}
+                />
+              </View>
+            </Card>
+
+            <View style={styles.securityNote}>
+              <AppIcon color={colors.info} name="shield" size={18} />
+              <Text style={styles.securityText}>
+                Nếu bạn không nhận ra giao dịch này, hãy gửi báo cáo để được kiểm tra.
+              </Text>
+            </View>
+            <Button
+              icon="alert"
               label="Báo cáo giao dịch đáng ngờ"
               onPress={() => {
-                if (!accountId || !transactionId) {
-                  return;
-                }
-
+                if (!accountId || !transactionId) return;
                 router.push({
                   pathname: "/fraud-report",
                   params: { accountId, transactionId },
                 });
               }}
               testID="transaction-fraud-report"
+              variant="danger"
             />
-          </View>
-        ) : null}
+          </>
+        ) : (
+          <StateCard icon="history" message="Giao dịch không còn khả dụng." title="Không có dữ liệu" />
+        )}
       </ScrollView>
     </Screen>
   );
@@ -187,7 +206,7 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.detailRow}>
       <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
+      <Text selectable style={styles.detailValue}>{value}</Text>
     </View>
   );
 }
@@ -196,97 +215,60 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     width: "100%",
-    maxWidth: 720,
+    maxWidth: sizes.contentMaxWidth,
     alignSelf: "center",
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  backButton: {
-    alignSelf: "flex-start",
-    paddingVertical: spacing.xs,
-  },
-  backLabel: {
-    color: colors.primary,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  header: {
+  receiptCard: {
+    alignItems: "center",
     gap: spacing.sm,
+    padding: spacing.mlg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.xl,
+    backgroundColor: colors.surface,
+    ...shadows.card,
   },
-  eyebrow: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: "700",
-  },
-  description: {
-    color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  centerState: {
-    minHeight: 160,
+  directionIcon: {
+    width: 64,
+    height: 64,
     alignItems: "center",
     justifyContent: "center",
+    borderRadius: radius.lg,
   },
-  stateCard: {
-    gap: spacing.md,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: spacing.md,
-    backgroundColor: colors.surface,
+  creditIcon: { backgroundColor: colors.successSoft, transform: [{ rotate: "180deg" }] },
+  debitIcon: { backgroundColor: colors.primarySoft },
+  directionLabel: { ...typography.label, color: colors.muted },
+  amount: { ...typography.amount, color: colors.text, textAlign: "center" },
+  creditAmount: { color: colors.success },
+  description: { ...typography.bodyStrong, color: colors.text, textAlign: "center" },
+  sectionHeader: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.sm,
+    backgroundColor: colors.primarySoft,
   },
-  card: {
-    gap: spacing.md,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: spacing.md,
-    backgroundColor: colors.surface,
-  },
-  status: {
-    color: colors.muted,
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  amount: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: "700",
-  },
-  creditAmount: {
-    color: colors.success,
-  },
-  detailList: {
-    gap: spacing.md,
-    paddingTop: spacing.sm,
-  },
+  sectionTitle: { ...typography.subheading, color: colors.text },
+  detailList: { gap: spacing.md },
   detailRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: spacing.md,
   },
-  detailLabel: {
-    color: colors.muted,
-    fontSize: 14,
+  detailLabel: { ...typography.body, color: colors.muted },
+  detailValue: { flex: 1, ...typography.bodyStrong, color: colors.text, textAlign: "right" },
+  securityNote: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.infoSoft,
   },
-  detailValue: {
-    flex: 1,
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "600",
-    textAlign: "right",
-  },
-  errorText: {
-    color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
-  },
+  securityText: { flex: 1, ...typography.body, color: colors.info },
 });

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "expo-router";
 import { ActivityIndicator, Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AppHeader } from "@/components/ui/AppHeader";
+import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
@@ -40,7 +42,7 @@ import type {
 } from "@/features/savings/types/savings";
 import { ApiError } from "@/services/api/ApiError";
 import { getDeviceBoundAssertion, requestBiometricAuthentication } from "@/services/security/biometricAuth";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 type OpenSavingsStep = "input" | "review" | "stepUp" | "result";
 
@@ -49,7 +51,7 @@ function getErrorMessage(error: unknown): string {
     error instanceof ApiError &&
     error.code === "STEP_UP_VERIFICATION_FAILED"
   ) {
-    return "Xác thực bước hai không thành công. Vui lòng tạo challenge mới và thử lại.";
+    return "Xác thực không thành công. Vui lòng tạo mã mới và thử lại.";
   }
   return error instanceof ApiError
     ? error.message
@@ -57,7 +59,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 const MANUAL_REVIEW_MESSAGE =
-  "Yêu cầu này cần được đối soát thủ công. Không gửi lại, chỉnh sửa hoặc tạo challenge mới; vui lòng liên hệ hỗ trợ.";
+  "Yêu cầu này cần được đối soát thủ công. Không gửi lại, chỉnh sửa hoặc tạo mã mới; vui lòng liên hệ hỗ trợ.";
 
 function formatRemainingSeconds(value: number | null): string {
   if (value === null) {
@@ -280,7 +282,7 @@ export function OpenSavingsScreen() {
     }
     const normalizedAmount = amountMinor.trim();
     if (!/^[1-9]\d*$/.test(normalizedAmount)) {
-      setError("Số tiền phải là số nguyên dương theo minor unit VND.");
+      setError("Số tiền gửi phải là số nguyên dương.");
       return;
     }
     const amount = BigInt(normalizedAmount);
@@ -289,7 +291,7 @@ export function OpenSavingsScreen() {
       amount > BigInt(selectedProduct.maxAmountMinor) ||
       amount > BigInt(controlPolicy.maxSavingsAmountMinor)
     ) {
-      setError("Số tiền nằm ngoài hạn mức tiền gửi sandbox.");
+      setError("Số tiền nằm ngoài hạn mức của sản phẩm đã chọn.");
       return;
     }
     setIsSubmitting(true);
@@ -419,11 +421,11 @@ export function OpenSavingsScreen() {
       return;
     }
     if (!savingsChallenge || isSavingsChallengeUnavailable) {
-      setError("Challenge xác thực đã hết hạn. Vui lòng tạo challenge mới.");
+      setError("Mã xác thực đã hết hạn. Vui lòng tạo mã mới.");
       return;
     }
     if (!savingsChallenge.methods.includes(stepUpMethod)) {
-      setError("Phương thức xác thực không được challenge hiện tại cho phép.");
+      setError("Phương thức xác thực không được hỗ trợ cho yêu cầu này.");
       return;
     }
     submitLockRef.current = true;
@@ -537,7 +539,7 @@ export function OpenSavingsScreen() {
       return;
     }
     if (Date.now() >= Date.parse(savingsChallenge.expiresAt)) {
-      setError("Challenge xác thực đã hết hạn. Vui lòng tạo challenge mới.");
+      setError("Mã xác thực đã hết hạn. Vui lòng tạo mã mới.");
       return;
     }
     setIsSubmitting(true);
@@ -546,7 +548,7 @@ export function OpenSavingsScreen() {
       await requestBiometricAuthentication("Xác thực mở tiền gửi");
       const proof = getDeviceBoundAssertion();
       if (!proof) {
-        setError("Backend/risk provider chưa cung cấp biometric assertion.");
+        setError("Thiết bị chưa cung cấp kết quả xác thực sinh trắc học.");
         return;
       }
       setStepUpMethod("BIOMETRIC");
@@ -643,14 +645,14 @@ export function OpenSavingsScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Pressable accessibilityRole="button" accessibilityState={{ disabled: isSubmitting }} disabled={isSubmitting} hitSlop={8} onPress={handleBack} style={styles.backButton} testID="savings-open-back">
-          <Text style={styles.backLabel}>‹ Quay lại</Text>
-        </Pressable>
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>M6 · TIỀN GỬI SANDBOX</Text>
-          <Text style={styles.title}>Mở khoản tiết kiệm</Text>
-          <Text style={styles.description}>Chỉ mở một lần; quote, MFA và idempotency key được server kiểm soát.</Text>
-        </View>
+        <AppHeader
+          backTestID="savings-open-back"
+          eyebrow="Tích lũy"
+          onBack={() => void handleBack()}
+          subtitle="Chọn nguồn tiền, kỳ hạn và phương án đáo hạn phù hợp."
+          title="Mở khoản tiết kiệm"
+        />
+        <EnvironmentBadge />
 
         {isLoading || isRestoringIntent ? (
           <View style={styles.centerState} testID="savings-open-loading">
@@ -708,7 +710,8 @@ export function OpenSavingsScreen() {
               accessibilityLabel="Số tiền gửi"
               error={error}
               keyboardType="number-pad"
-              label="Số tiền gốc (minor unit VND)"
+              helperText="Nhập số tiền bằng VND, không dùng dấu chấm hoặc dấu phẩy."
+              label="Số tiền gửi (VND)"
               onChangeText={(value) => {
                 setAmountMinor(value.replace(/\D/g, ""));
                 setError(undefined);
@@ -737,7 +740,7 @@ export function OpenSavingsScreen() {
             <View style={styles.reviewCard}>
               <SummaryRow label="Tài khoản nguồn" value={quote?.sourceAccountMaskedNumber ?? sourceAccount?.maskedNumber ?? "—"} />
               <SummaryRow label="Kỳ hạn" value={quote ? `${quote.termMonths} tháng` : "—"} />
-              <SummaryRow label="Lãi suất snapshot" value={quote ? formatSavingsRate(quote.annualRateBasisPoints) : "—"} />
+              <SummaryRow label="Lãi suất áp dụng" value={quote ? formatSavingsRate(quote.annualRateBasisPoints) : "—"} />
               <SummaryRow label="Tiền gốc" value={quote ? formatVndMinor(quote.principal.amountMinor) : "—"} />
               <SummaryRow label="Lãi dự kiến" value={quote ? formatVndMinor(quote.expectedInterest.amountMinor) : "—"} />
               <SummaryRow label="Tổng khi đáo hạn" value={quote ? formatVndMinor(quote.totalAtMaturity.amountMinor) : "—"} />
@@ -764,10 +767,10 @@ export function OpenSavingsScreen() {
           </View>
         ) : step === "stepUp" ? (
           <View style={styles.card}>
-            <Text style={styles.stepTitle}>3. Xác thực bước hai</Text>
-            <Text style={styles.description}>Mã xác thực chỉ được dùng trong request; không lưu vào intent.</Text>
+            <Text style={styles.stepTitle}>3. Xác thực yêu cầu</Text>
+            <Text style={styles.description}>Hoàn tất bước bảo mật trước khi mở khoản tiền gửi.</Text>
             <Text style={styles.description}>Báo giá còn hiệu lực: {formatRemainingSeconds(quoteRemainingSeconds)}</Text>
-            <Text style={styles.description}>Challenge còn hiệu lực: {formatRemainingSeconds(challengeRemainingSeconds)}</Text>
+            <Text style={styles.description}>Mã xác thực còn hiệu lực: {formatRemainingSeconds(challengeRemainingSeconds)}</Text>
             {savingsChallenge?.methods.some((method) => method === "OTP" || method === "TOTP") ? (
               <PrimaryButton disabled={isSubmitting} label={stepUpMethod === "TOTP" ? "Đang dùng TOTP" : stepUpMethod === "OTP" ? "Đang dùng mã xác thực" : "Dùng mã TOTP"} onPress={() => { setStepUpMethod(savingsChallenge.methods.includes("TOTP") ? "TOTP" : "OTP"); setStepUpProof(""); }} testID="savings-step-up-otp" />
             ) : null}
@@ -792,7 +795,7 @@ export function OpenSavingsScreen() {
             <Text style={styles.description}>Mã tham chiếu: {opening?.reference ?? "—"}</Text>
             {opening?.status === "PENDING" || (!opening && recoveryOpeningId) ? (
               <>
-                <Text style={styles.description}>Yêu cầu đang xử lý. Khi timeout hoặc mở lại app, hãy cập nhật bằng cùng openingId và idempotency key.</Text>
+                <Text style={styles.description}>Yêu cầu đang được xử lý. Bạn có thể mở lại ứng dụng và cập nhật trạng thái mà không tạo yêu cầu trùng.</Text>
                 <PrimaryButton disabled={isSubmitting} label={isSubmitting ? "Đang cập nhật..." : "Cập nhật trạng thái"} onPress={handleRefreshOpening} testID="savings-opening-refresh" />
               </>
             ) : null}
@@ -823,27 +826,22 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  content: { flexGrow: 1, width: "100%", maxWidth: 720, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
-  backButton: { alignSelf: "flex-start", paddingVertical: spacing.xs },
-  backLabel: { color: colors.primary, fontSize: 15, fontWeight: "600" },
-  header: { gap: spacing.sm },
-  eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "700", letterSpacing: 1.4 },
-  title: { color: colors.text, fontSize: 30, fontWeight: "700" },
-  description: { color: colors.muted, fontSize: 15, lineHeight: 22 },
+  content: { flexGrow: 1, width: "100%", maxWidth: sizes.contentMaxWidth, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
+  description: { ...typography.body, color: colors.muted },
   centerState: { minHeight: 220, alignItems: "center", justifyContent: "center" },
-  card: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: 20, backgroundColor: colors.surface },
-  stepTitle: { color: colors.text, fontSize: 19, fontWeight: "800" },
-  cardTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
-  fieldLabel: { color: colors.text, fontSize: 14, fontWeight: "700" },
+  card: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, ...shadows.card },
+  stepTitle: { ...typography.heading, color: colors.text },
+  cardTitle: { ...typography.subheading, color: colors.text },
+  fieldLabel: { ...typography.label, color: colors.text },
   optionList: { gap: spacing.sm },
-  optionButton: { minHeight: 52, justifyContent: "center", paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: 14, backgroundColor: colors.surface },
+  optionButton: { minHeight: 52, justifyContent: "center", paddingHorizontal: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.surface },
   optionButtonSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-  optionText: { color: colors.text, fontSize: 14, fontWeight: "600" },
+  optionText: { ...typography.label, color: colors.text },
   optionTextSelected: { color: colors.primary, fontWeight: "800" },
-  reviewCard: { gap: spacing.md, padding: spacing.md, borderRadius: 16, backgroundColor: colors.background },
+  reviewCard: { gap: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.background },
   summaryRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.md },
-  summaryLabel: { color: colors.muted, fontSize: 14 },
-  summaryValue: { flex: 1, color: colors.text, fontSize: 14, fontWeight: "700", textAlign: "right" },
-  errorText: { color: colors.danger, fontSize: 14, lineHeight: 20 },
-  resultTitle: { color: colors.text, fontSize: 24, fontWeight: "800" },
+  summaryLabel: { ...typography.body, color: colors.muted },
+  summaryValue: { flex: 1, ...typography.bodyStrong, color: colors.text, textAlign: "right" },
+  errorText: { ...typography.body, padding: spacing.md, borderRadius: radius.md, color: colors.danger, backgroundColor: colors.dangerSoft },
+  resultTitle: { ...typography.title, color: colors.text },
 });

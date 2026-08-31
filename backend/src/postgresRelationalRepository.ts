@@ -239,6 +239,10 @@ export class PostgresRelationalRepository {
   async healthCheck(): Promise<void> {
     await this.pool.query("SELECT 1");
     await this.pool.query("SELECT 1 FROM reference_runtime_records LIMIT 1");
+    const controlPolicy = await this.pool.query("SELECT 1 FROM control_policy WHERE singleton = true");
+    if (!controlPolicy.rows[0]) {
+      throw new Error("PostgreSQL control policy bootstrap is missing.");
+    }
     const migration = await this.pool.query<{ migration_key: string }>(
       "SELECT migration_key FROM reference_schema_migrations ORDER BY migration_key DESC LIMIT 1",
     );
@@ -722,7 +726,7 @@ export class PostgresRelationalRepository {
     }
     for (const row of snapshot.rateLimitBuckets) {
       await insertRow(client, "rate_limit_buckets", [
-        "bucket_key", "window_started_at", "attempts", "updated_at",
+        "bucket_key", "window_started_at", "attempts", "blocked_until", "updated_at",
       ], row);
     }
     for (const row of snapshot.mfaCredentials) {

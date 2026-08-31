@@ -5,6 +5,7 @@ import {
   listCreditTransactions,
   lockCreditCard,
   quoteCreditPayment,
+  reportCreditCardLost,
   submitCreditApplication,
   submitCreditPayment,
   unlockCreditCard,
@@ -110,23 +111,41 @@ describe("credit API services", () => {
     );
   });
 
-  it("uses explicit lock/unlock methods and sends step-up proof only on unlock", async () => {
+  it("keeps emergency lock separate from TOTP-gated unlock and reported-lost case creation", async () => {
     fetchMock
       .mockResolvedValueOnce(createJsonResponse(cardResponse))
-      .mockResolvedValueOnce(createJsonResponse(cardResponse));
+      .mockResolvedValueOnce(createJsonResponse(cardResponse))
+      .mockResolvedValueOnce(createJsonResponse({ ...cardResponse, caseId: "case-1", caseStatus: "OPEN" }));
 
-    await lockCreditCard("card/1", { accessToken: "access-token" });
+    await lockCreditCard(
+      "card/1",
+      { accessToken: "access-token" },
+    );
     await unlockCreditCard(
       "card/1",
-      { method: "OTP", proof: "opaque-proof" },
+      { method: "TOTP", proof: "opaque-proof", challengeId: "challenge-unlock" },
+      { accessToken: "access-token" },
+    );
+    await reportCreditCardLost(
+      "card/1",
+      { method: "TOTP", proof: "lost-proof", challengeId: "challenge-lost" },
       { accessToken: "access-token" },
     );
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("http://10.0.2.2:5000/api/v1/cards/card%2F1/lock");
     expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://10.0.2.2:5000/api/v1/cards/card%2F1/unlock");
     expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(
-      JSON.stringify({ method: "OTP", proof: "opaque-proof" }),
+      JSON.stringify({
+        stepUp: { method: "TOTP", proof: "opaque-proof", challengeId: "challenge-unlock" },
+      }),
+    );
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("http://10.0.2.2:5000/api/v1/cards/card%2F1/report-lost");
+    expect(fetchMock.mock.calls[2]?.[1]?.body).toBe(
+      JSON.stringify({
+        stepUp: { method: "TOTP", proof: "lost-proof", challengeId: "challenge-lost" },
+      }),
     );
   });
 

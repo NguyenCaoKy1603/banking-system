@@ -162,6 +162,27 @@ describe("httpClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("không hiển thị nguyên văn lỗi nội bộ của máy chủ", async () => {
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse(
+        {
+          code: "INTERNAL_ERROR",
+          message: "Unexpected server error.",
+          fieldErrors: null,
+          traceId: "trace-server-error",
+        },
+        500,
+      ),
+    );
+
+    await expect(requestJson("/control-policy")).rejects.toMatchObject({
+      code: "INTERNAL_ERROR",
+      status: 500,
+      message: "Dịch vụ đang tạm thời gián đoạn. Vui lòng thử lại sau.",
+      traceId: "trace-server-error",
+    });
+  });
+
   it("không chia sẻ refresh single-flight giữa hai session", async () => {
     const refreshA = createDeferred<string | null>();
     const refreshB = createDeferred<string | null>();

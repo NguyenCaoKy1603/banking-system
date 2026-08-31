@@ -21,11 +21,28 @@ test("Admin Web keeps staff tokens out of browser storage", () => {
   assert.match(api, /X-CSRF-Token/);
 });
 
+test("Admin Web exposes one-time staff activation without persisting the invite token", () => {
+  assert.match(app, /\/admin\/activate/);
+  assert.match(app, /inviteToken/);
+  assert.match(app, /history\.replaceState/);
+  assert.match(app, /mfa-setup-secret/);
+  assert.doesNotMatch(app, /localStorage|sessionStorage/);
+});
+
 test("Approval submit includes the mandatory checker comment", () => {
   assert.match(app, /decision:\s*["']APPROVED["'][\s\S]*comment:\s*reason\.trim\(\)/);
   assert.match(app, /\/reject/);
   assert.match(app, /data-testid=\"step-up-mfa\"/);
   assert.doesNotMatch(app, /window\.prompt/);
+});
+
+test("Approval Inbox is gated by the staff approval permission", () => {
+  assert.match(app, /canReadApprovals/);
+  assert.match(app, /audit\.read/);
+  assert.match(app, /key !== ["']approvals["']/);
+  assert.match(app, /canReadApprovals \? adminFetch<[\s\S]*>\(["']\/admin\/approvals["']\)/);
+  assert.match(app, /key !== ["']audit["']/);
+  assert.match(app, /target === ["']audit["'][\s\S]*canReadApprovals/);
 });
 
 test("Admin Web uses a same-origin API and runtime-only upstream", () => {

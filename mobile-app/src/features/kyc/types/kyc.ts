@@ -1,4 +1,10 @@
-export type KycStatus = "DRAFT" | "PENDING" | "APPROVED" | "REJECTED";
+export type KycStatus =
+  | "DRAFT"
+  | "SUBMITTED"
+  | "UNDER_REVIEW"
+  | "NEEDS_MORE_INFO"
+  | "APPROVED"
+  | "REJECTED";
 
 export type KycApplication = {
   id: string;
@@ -11,6 +17,7 @@ export type KycApplication = {
   rejectionReason: string | null;
   submittedAt: string | null;
   updatedAt: string;
+  version?: number;
 };
 
 export type KycDraft = {
@@ -18,4 +25,5 @@ export type KycDraft = {
   identityNumber: string;
   address: string;
   documentUri: string;
+  syntheticDataConfirmed: boolean;
 };

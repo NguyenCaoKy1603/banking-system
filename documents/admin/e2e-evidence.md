@@ -33,7 +33,8 @@ Flow đã chạy trong browser:
 - `npx tsx --test src/tests/adminAuth.test.ts`: 2 pass; refresh-token rotation/reuse detection và login brute-force limit.
 - `npm run test:admin:concurrency`: hai execution cùng action chỉ có một mutation thành công.
 - Database migration rehearsal: chạy `npm run db:migrate` từ database rỗng, chạy lại lần hai để kiểm tra checksum/idempotency, sau đó chạy các validator database/admin/outbox/relational.
+- Local staff invitation rehearsal: `AdminActionEngine` tạo token một lần chỉ qua delivery seam; test workflow xác nhận PostgreSQL/in-memory chỉ giữ hash, audit/action/outbox không chứa plaintext và activation lần hai bị từ chối. Compose smoke xác nhận `invitation-capture` trả `202`, retry cùng `deliveryId` chỉ tạo một thư, `/inbox` hiển thị liên kết tại localhost, Admin `/readyz` báo `configured=true`/`credentialConfigured=false`, và service restart xóa inbox trong memory. Đây là capture local, không gửi email ra Internet.
 - Security/dependency gates: backend `npm audit --omit=dev --audit-level=high` và Admin Web audit đều không có lỗ hổng High/Critical; forbidden operator-key scan không còn occurrence trong runtime/config/docs.
 - DAST preview: OWASP ZAP baseline `admin-web` và `admin-api` đều `FAIL-NEW: 0`; Web có 4 cảnh báo cấu hình thấp (no-store/cache policy, CSP `style-src 'unsafe-inline'`, COEP và ứng dụng hiện đại), API có 1 cảnh báo `Non-Storable Content` trên 404. Không có cảnh báo High/Critical; báo cáo tạm được giữ ngoài repo.
 
-Đây là bằng chứng reference/synthetic. Chưa có device E2E native (máy này không có `adb`, emulator hoặc Maestro), provider email/invite thật hoặc chaos/fault-injection production.
+Đây là bằng chứng reference/synthetic. Chưa có device E2E native (máy này không có `adb`, emulator hoặc Maestro), provider email/invite HTTPS thật cho staging, managed credentials hoặc chaos/fault-injection production.

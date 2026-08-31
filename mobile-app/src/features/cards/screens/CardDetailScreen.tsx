@@ -1,26 +1,74 @@
 import { useCallback, useMemo, useState } from "react";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { AppHeader } from "@/components/ui/AppHeader";
+import { AppIcon } from "@/components/ui/AppIcon";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { Screen } from "@/components/ui/Screen";
+import { StateCard } from "@/components/ui/StateCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { createOtpChallenge } from "@/features/auth/services/otpApi";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
-import { getCreditCardStatusLabel, getCreditStatementStatusLabel } from "@/features/credit/presentation/creditPresentation";
-import { getCreditCard, lockCreditCard, unlockCreditCard } from "@/features/credit/services/creditApi";
-import type { CreditCardDetailResponse, CreditStepUpMethod } from "@/features/credit/types/credit";
+import {
+  getCreditCardStatusLabel,
+  getCreditStatementStatusLabel,
+} from "@/features/credit/presentation/creditPresentation";
+import {
+  getCreditCard,
+  lockCreditCard,
+  reportCreditCardLost,
+  unlockCreditCard,
+} from "@/features/credit/services/creditApi";
+import type {
+  CreditCardDetailResponse,
+  CreditCardStatus,
+} from "@/features/credit/types/credit";
 import { ApiError } from "@/services/api/ApiError";
-import { getDeviceBoundAssertion, requestBiometricAuthentication } from "@/services/security/biometricAuth";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getErrorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : "Không thể tải chi tiết thẻ. Vui lòng thử lại.";
+  return error instanceof ApiError
+    ? error.message
+    : "Không thể tải chi tiết thẻ. Vui lòng thử lại.";
 }
 
-function SummaryRow({ label, value, dark = false }: { label: string; value: string; dark?: boolean }) {
-  return <View style={styles.summaryRow}><Text style={[styles.label, dark ? styles.darkLabel : null]}>{label}</Text><Text style={[styles.value, dark ? styles.darkValue : null]}>{value}</Text></View>;
+function getStatusTone(status: CreditCardStatus): "success" | "warning" | "danger" | "neutral" {
+  if (status === "ACTIVE") return "success";
+  if (status === "LOCKED") return "warning";
+  if (status === "BLOCKED") return "danger";
+  return "neutral";
+}
+
+function SummaryRow({
+  label,
+  value,
+  dark = false,
+  emphasize = false,
+}: {
+  label: string;
+  value: string;
+  dark?: boolean;
+  emphasize?: boolean;
+}) {
+  return (
+    <View style={styles.summaryRow}>
+      <Text style={[styles.label, dark ? styles.darkLabel : null]}>{label}</Text>
+      <Text
+        style={[
+          styles.value,
+          dark ? styles.darkValue : null,
+          emphasize ? styles.emphasizedValue : null,
+        ]}
+      >
+        {value}
+      </Text>
+    </View>
+  );
 }
 
 export function CardDetailScreen() {
@@ -29,13 +77,16 @@ export function CardDetailScreen() {
   const cardId = typeof params.cardId === "string" ? params.cardId : "";
   const { deviceId, refreshAccessToken, session } = useAuth();
   const accessToken = session?.accessToken ?? null;
-  const auth = useMemo(() => ({ accessToken, deviceId, refreshAccessToken }), [accessToken, deviceId, refreshAccessToken]);
+  const auth = useMemo(
+    () => ({ accessToken, deviceId, refreshAccessToken }),
+    [accessToken, deviceId, refreshAccessToken],
+  );
   const [detail, setDetail] = useState<CreditCardDetailResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [stepUpMethod, setStepUpMethod] = useState<CreditStepUpMethod>("TOTP");
   const [stepUpProof, setStepUpProof] = useState("");
-  const [unlockChallengeId, setUnlockChallengeId] = useState<string | null>(null);
+  const [controlChallengeId, setControlChallengeId] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<"UNLOCK" | "REPORT_LOST" | null>(null);
   const [error, setError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
 
@@ -57,7 +108,11 @@ export function CardDetailScreen() {
     }
   }, [accessToken, auth, cardId]);
 
-  useFocusEffect(useCallback(() => { void loadCard(); }, [loadCard]));
+  useFocusEffect(
+    useCallback(() => {
+      void loadCard();
+    }, [loadCard]),
+  );
 
   const handleToggleLock = useCallback(async () => {
     const card = detail?.card;
@@ -68,142 +123,428 @@ export function CardDetailScreen() {
     try {
       if (card.status === "ACTIVE") {
         const response = await lockCreditCard(card.cardId, auth);
-        setDetail((current) => current ? { ...current, card: response.card } : current);
-        setNotice("Thẻ đã được khóa trong môi trường mô phỏng.");
+        setDetail((current) => (current ? { ...current, card: response.card } : current));
+        setControlChallengeId(null);
+        setPendingAction(null);
+        setStepUpProof("");
+        setNotice("Thẻ đã được khóa khẩn cấp.");
       } else if (card.status === "LOCKED") {
-        if (!unlockChallengeId) {
+        if (!controlChallengeId || pendingAction !== "UNLOCK") {
           const challenge = await createOtpChallenge(
             { purpose: "CARD_UNLOCK", resourceId: card.cardId },
             auth,
           );
-          setUnlockChallengeId(challenge.challengeId);
-          setStepUpMethod(
-            challenge.methods.includes("TOTP")
-              ? "TOTP"
-              : challenge.methods.includes("OTP")
-                ? "OTP"
-                : "BIOMETRIC",
-          );
-          setNotice("Đã tạo yêu cầu xác thực. Nhập mã xác thực rồi bấm Mở khóa thẻ lần nữa.");
+          setControlChallengeId(challenge.challengeId);
+          setPendingAction("UNLOCK");
+          setStepUpProof("");
+          setNotice("Yêu cầu xác thực đã sẵn sàng. Hoàn tất bước bên dưới để mở khóa thẻ.");
           return;
         }
-        let proof = stepUpProof.trim();
-        if (stepUpMethod === "BIOMETRIC") {
-          await requestBiometricAuthentication("Xác thực để mở khóa thẻ");
-          proof = getDeviceBoundAssertion();
-        }
+        const proof = stepUpProof.trim();
         if (!proof) {
-          setError("Cần nhập mã xác thực hoặc hoàn tất phương thức được hỗ trợ để mở khóa.");
+          setError("Cần nhập mã TOTP từ ứng dụng xác thực.");
           return;
         }
-        const response = await unlockCreditCard(
-          card.cardId,
-          { method: stepUpMethod, proof, challengeId: unlockChallengeId },
-          auth,
-        );
-        setDetail((current) => current ? { ...current, card: response.card } : current);
+        const stepUp = {
+          method: "TOTP",
+          proof,
+          challengeId: controlChallengeId,
+        } as const;
+        const response = await unlockCreditCard(card.cardId, stepUp, auth);
+        setDetail((current) => (current ? { ...current, card: response.card } : current));
         setStepUpProof("");
-        setUnlockChallengeId(null);
-        setNotice("Thẻ đã được mở khóa sau bước xác thực.");
+        setControlChallengeId(null);
+        setPendingAction(null);
+        setNotice("Thẻ đã được mở khóa sau khi xác thực.");
       } else {
-        setError("Card status does not allow this lock or unlock action.");
+        setError("Trạng thái hiện tại không cho phép khóa hoặc mở khóa thẻ.");
       }
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
     } finally {
       setIsSaving(false);
     }
-  }, [auth, detail, isSaving, stepUpMethod, stepUpProof, unlockChallengeId]);
+  }, [auth, controlChallengeId, detail, isSaving, pendingAction, stepUpProof]);
+
+  const handleReportLost = useCallback(async () => {
+    const card = detail?.card;
+    if (!card || isSaving) return;
+    if (card.status !== "ACTIVE" && card.status !== "LOCKED") {
+      setError("Chỉ thẻ đang hoạt động hoặc đang khóa mới có thể báo mất.");
+      return;
+    }
+    setIsSaving(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      if (!controlChallengeId || pendingAction !== "REPORT_LOST") {
+        const challenge = await createOtpChallenge(
+          { purpose: "CARD_REPORT_LOST", resourceId: card.cardId },
+          auth,
+        );
+        setControlChallengeId(challenge.challengeId);
+        setPendingAction("REPORT_LOST");
+        setStepUpProof("");
+        setNotice("Nhập mã TOTP để xác nhận báo mất và chặn thẻ.");
+        return;
+      }
+      const proof = stepUpProof.trim();
+      if (!proof) {
+        setError("Cần nhập mã TOTP từ ứng dụng xác thực.");
+        return;
+      }
+      const response = await reportCreditCardLost(
+        card.cardId,
+        { method: "TOTP", proof, challengeId: controlChallengeId },
+        auth,
+      );
+      setDetail((current) => (current ? { ...current, card: response.card } : current));
+      setStepUpProof("");
+      setControlChallengeId(null);
+      setPendingAction(null);
+      setNotice(`Thẻ đã bị chặn và hồ sơ vận hành ${response.caseId.slice(0, 8)} đã được tạo.`);
+    } catch (requestError: unknown) {
+      setError(getErrorMessage(requestError));
+    } finally {
+      setIsSaving(false);
+    }
+  }, [auth, controlChallengeId, detail, isSaving, pendingAction, stepUpProof]);
 
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backButton} testID="card-detail-back"><Text style={styles.backLabel}>‹ Quay lại</Text></Pressable>
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>M7 · CREDIT DETAIL</Text>
-          <Text style={styles.title}>Chi tiết thẻ tín dụng</Text>
-          <Text style={styles.description}>Chỉ hiển thị dữ liệu sandbox cần cho đồ án. Không có PAN, CVV hoặc PIN.</Text>
-        </View>
+        <AppHeader
+          backTestID="card-detail-back"
+          eyebrow="Quản lý thẻ"
+          onBack={() => router.back()}
+          subtitle="Theo dõi dư nợ, sao kê và kiểm soát trạng thái thẻ."
+          title="Chi tiết thẻ"
+        />
+        <EnvironmentBadge />
 
         {isLoading ? (
-          <View style={styles.centerState} testID="credit-card-detail-loading"><ActivityIndicator color={colors.primary} size="large" /></View>
+          <StateCard loading message="Đang tải chi tiết thẻ..." testID="credit-card-detail-loading" />
         ) : error && !detail ? (
-          <View style={styles.card} testID="credit-card-detail-error"><Text style={styles.errorText}>{error}</Text><PrimaryButton label="Thử lại" onPress={loadCard} testID="credit-card-detail-retry" /></View>
+          <StateCard
+            actionLabel="Thử lại"
+            icon="alert"
+            message={error}
+            onAction={loadCard}
+            testID="credit-card-detail-error"
+            title="Không thể tải thẻ"
+          />
         ) : detail ? (
           <>
             <View style={styles.heroCard} testID="credit-card-detail">
-              <View style={styles.heroTop}><View style={styles.heroText}><Text style={styles.heroTitle}>{detail.card.displayName}</Text><Text style={styles.heroMeta}>{detail.card.brand} · •••• {detail.card.lastFour}</Text></View><Text style={styles.heroStatus}>{getCreditCardStatusLabel(detail.card.status)}</Text></View>
-              <Text style={styles.sandboxBadge}>SANDBOX</Text>
-              <SummaryRow dark label="Hạn mức" value={formatVndMinor(detail.card.creditLimit.amountMinor)} />
-              <SummaryRow dark label="Dư nợ đã ghi nhận" value={formatVndMinor(detail.card.postedOutstanding.amountMinor)} />
-              <SummaryRow dark label="Đang chờ" value={formatVndMinor(detail.card.pendingAuthorizations.amountMinor)} />
-              <SummaryRow dark label="Còn khả dụng" value={formatVndMinor(detail.card.availableCredit.amountMinor)} />
+              <View style={styles.heroTop}>
+                <View style={styles.brandRow}>
+                  <View style={styles.brandIcon}>
+                    <AppIcon color={colors.onPrimary} name="card" size={19} />
+                  </View>
+                  <Text style={styles.novaLabel}>NOVA</Text>
+                </View>
+                <Text style={styles.networkLabel}>{detail.card.brand}</Text>
+              </View>
+              <View style={styles.heroIdentity}>
+                <Text style={styles.heroTitle}>{detail.card.displayName}</Text>
+                <Text style={styles.heroMeta}>•••• •••• •••• {detail.card.lastFour}</Text>
+              </View>
+              <View style={styles.heroBottom}>
+                <View>
+                  <Text style={styles.heroCaption}>Hiệu lực đến</Text>
+                  <Text style={styles.heroExpiry}>
+                    {String(detail.card.expiryMonth).padStart(2, "0")}/
+                    {String(detail.card.expiryYear).slice(-2)}
+                  </Text>
+                </View>
+                <StatusBadge
+                  label={getCreditCardStatusLabel(detail.card.status)}
+                  tone={getStatusTone(detail.card.status)}
+                />
+              </View>
             </View>
-            <View style={styles.card}>
-              <Text style={styles.sectionTitle}>Sao kê gần nhất</Text>
+
+            <Card elevated>
+              <Text style={styles.sectionTitle}>Tổng quan hạn mức</Text>
+              <View style={styles.highlightBalance}>
+                <Text style={styles.highlightLabel}>Hạn mức khả dụng</Text>
+                <Text style={styles.highlightValue}>
+                  {formatVndMinor(detail.card.availableCredit.amountMinor)}
+                </Text>
+              </View>
+              <SummaryRow label="Tổng hạn mức" value={formatVndMinor(detail.card.creditLimit.amountMinor)} />
+              <SummaryRow
+                emphasize
+                label="Dư nợ đã ghi nhận"
+                value={formatVndMinor(detail.card.postedOutstanding.amountMinor)}
+              />
+              <SummaryRow label="Giao dịch đang chờ" value={formatVndMinor(detail.card.pendingAuthorizations.amountMinor)} />
+            </Card>
+
+            <Card elevated>
+              <View style={styles.sectionHeaderRow}>
+                <View style={styles.sectionIcon}>
+                  <AppIcon color={colors.primary} name="history" size={19} />
+                </View>
+                <Text style={styles.sectionTitle}>Sao kê gần nhất</Text>
+              </View>
               {detail.latestStatement ? (
                 <>
-                  <SummaryRow label="Trạng thái" value={getCreditStatementStatusLabel(detail.latestStatement.status)} />
-                  <SummaryRow label="Hạn thanh toán" value={new Date(detail.latestStatement.dueAt).toLocaleDateString("vi-VN")} />
-                  <SummaryRow label="Còn phải trả" value={formatVndMinor(detail.latestStatement.remainingAmountDue.amountMinor)} />
-                  <SummaryRow label="Tối thiểu còn lại" value={formatVndMinor(detail.latestStatement.minimumPaymentRemaining.amountMinor)} />
+                  <SummaryRow
+                    label="Trạng thái"
+                    value={getCreditStatementStatusLabel(detail.latestStatement.status)}
+                  />
+                  <SummaryRow
+                    label="Hạn thanh toán"
+                    value={new Date(detail.latestStatement.dueAt).toLocaleDateString("vi-VN")}
+                  />
+                  <SummaryRow
+                    emphasize
+                    label="Còn phải trả"
+                    value={formatVndMinor(detail.latestStatement.remainingAmountDue.amountMinor)}
+                  />
+                  <SummaryRow
+                    label="Thanh toán tối thiểu"
+                    value={formatVndMinor(detail.latestStatement.minimumPaymentRemaining.amountMinor)}
+                  />
                 </>
-              ) : <Text style={styles.mutedText}>Chưa có sao kê.</Text>}
-            </View>
-            {detail.card.status === "LOCKED" ? (
-              <View style={styles.card}>
-                <Text style={styles.sectionTitle}>Mở khóa thẻ</Text>
-                <View style={styles.methodRow}>
-                  <Pressable accessibilityRole="button" accessibilityState={{ selected: stepUpMethod === "OTP" || stepUpMethod === "TOTP" }} onPress={() => setStepUpMethod("TOTP")} style={[styles.methodButton, stepUpMethod === "OTP" || stepUpMethod === "TOTP" ? styles.methodSelected : null]} testID="credit-unlock-otp"><Text style={styles.methodLabel}>Mã TOTP</Text></Pressable>
-                  <Pressable accessibilityRole="button" accessibilityState={{ selected: stepUpMethod === "BIOMETRIC" }} onPress={() => setStepUpMethod("BIOMETRIC")} style={[styles.methodButton, stepUpMethod === "BIOMETRIC" ? styles.methodSelected : null]} testID="credit-unlock-biometric"><Text style={styles.methodLabel}>Sinh trắc học</Text></Pressable>
+              ) : (
+                <Text style={styles.mutedText}>Chưa có sao kê cho kỳ hiện tại.</Text>
+              )}
+            </Card>
+
+            {controlChallengeId && pendingAction ? (
+              <Card elevated>
+                <View style={styles.sectionHeaderRow}>
+                  <View style={styles.sectionIcon}>
+                    <AppIcon color={colors.primary} name="shield" size={19} />
+                  </View>
+                  <View style={styles.sectionCopy}>
+                    <Text style={styles.sectionTitle}>
+                      {pendingAction === "UNLOCK" ? "Xác thực mở khóa" : "Xác nhận báo mất thẻ"}
+                    </Text>
+                    <Text style={styles.mutedText}>Nhập mã TOTP từ ứng dụng xác thực để tiếp tục.</Text>
+                  </View>
                 </View>
-                {stepUpMethod === "OTP" || stepUpMethod === "TOTP" ? <TextField accessibilityLabel="Mã xác thực mở khóa thẻ" keyboardType="number-pad" label={stepUpMethod === "TOTP" ? "Mã TOTP" : "Mã xác thực"} onChangeText={setStepUpProof} secureTextEntry testID="credit-unlock-code" value={stepUpProof} /> : null}
+                <TextField
+                  accessibilityLabel="Mã TOTP kiểm soát thẻ"
+                  keyboardType="number-pad"
+                  label="Mã từ ứng dụng xác thực"
+                  onChangeText={setStepUpProof}
+                  secureTextEntry
+                  testID={pendingAction === "UNLOCK" ? "credit-unlock-code" : "credit-report-lost-code"}
+                  value={stepUpProof}
+                />
+              </Card>
+            ) : null}
+
+            {error ? (
+              <View style={styles.errorBox}>
+                <AppIcon color={colors.danger} name="alert" size={18} />
+                <Text style={styles.errorText}>{error}</Text>
               </View>
             ) : null}
-            <PrimaryButton disabled={isSaving || (detail.card.status !== "ACTIVE" && detail.card.status !== "LOCKED")} label={detail.card.status === "ACTIVE" ? "Khóa thẻ" : detail.card.status === "LOCKED" ? "Mở khóa thẻ" : "Không thể thao tác"} onPress={() => void handleToggleLock()} testID="card-toggle-lock" />
-            <View style={styles.actionGrid}>
-              <PrimaryButton label="Giao dịch thẻ" onPress={() => router.push({ pathname: "/cards/[cardId]/transactions", params: { cardId: detail.card.cardId } })} testID="credit-open-transactions" />
-              <PrimaryButton label="Sao kê" onPress={() => router.push({ pathname: "/cards/[cardId]/statements", params: { cardId: detail.card.cardId } })} testID="credit-open-statements" />
-              <PrimaryButton label="Thanh toán thẻ" onPress={() => router.push({ pathname: "/cards/[cardId]/pay", params: { cardId: detail.card.cardId } })} testID="credit-open-payment" />
+            {notice ? (
+              <View style={styles.noticeBox}>
+                <AppIcon color={colors.success} name="check" size={18} />
+                <Text style={styles.noticeText}>{notice}</Text>
+              </View>
+            ) : null}
+
+            <Button
+              disabled={
+                isSaving ||
+                (detail.card.status !== "ACTIVE" && detail.card.status !== "LOCKED")
+              }
+              icon="lock"
+              label={
+                detail.card.status === "ACTIVE"
+                  ? "Khóa thẻ"
+                  : detail.card.status === "LOCKED"
+                    ? pendingAction === "UNLOCK" && controlChallengeId
+                      ? "Xác nhận mở khóa bằng TOTP"
+                      : "Mở khóa thẻ"
+                    : "Không thể thao tác"
+              }
+              loading={isSaving}
+              onPress={() => void handleToggleLock()}
+              testID="card-toggle-lock"
+              variant={detail.card.status === "ACTIVE" ? "danger" : "primary"}
+            />
+            <Button
+              disabled={isSaving || (detail.card.status !== "ACTIVE" && detail.card.status !== "LOCKED")}
+              icon="alert"
+              label={pendingAction === "REPORT_LOST" && controlChallengeId ? "Xác nhận báo mất thẻ" : "Báo mất thẻ"}
+              loading={isSaving && pendingAction === "REPORT_LOST"}
+              onPress={() => void handleReportLost()}
+              testID="card-report-lost"
+              variant="danger"
+            />
+
+            <Card>
+              <Text style={styles.sectionTitle}>Dịch vụ thẻ</Text>
+              <View style={styles.actionGrid}>
+                <Button
+                  icon="history"
+                  label="Giao dịch thẻ"
+                  onPress={() =>
+                    router.push({
+                      pathname: "/cards/[cardId]/transactions",
+                      params: { cardId: detail.card.cardId },
+                    })
+                  }
+                  testID="credit-open-transactions"
+                  variant="outline"
+                />
+                <Button
+                  icon="card"
+                  label="Sao kê"
+                  onPress={() =>
+                    router.push({
+                      pathname: "/cards/[cardId]/statements",
+                      params: { cardId: detail.card.cardId },
+                    })
+                  }
+                  testID="credit-open-statements"
+                  variant="outline"
+                />
+                <Button
+                  icon="transfer"
+                  label="Thanh toán thẻ"
+                  onPress={() =>
+                    router.push({
+                      pathname: "/cards/[cardId]/pay",
+                      params: { cardId: detail.card.cardId },
+                    })
+                  }
+                  testID="credit-open-payment"
+                />
+              </View>
+            </Card>
+
+            <View style={styles.securityNote}>
+              <AppIcon color={colors.info} name="shield" size={18} />
+              <Text style={styles.securityText}>
+                Ứng dụng không hiển thị số thẻ đầy đủ, CVV hoặc PIN.
+              </Text>
             </View>
           </>
-        ) : <View style={styles.card}><Text style={styles.mutedText}>Không tìm thấy thẻ trong phiên hiện tại.</Text></View>}
-        {error && detail ? <Text style={styles.errorText}>{error}</Text> : null}
-        {notice ? <Text style={styles.noticeText}>{notice}</Text> : null}
+        ) : (
+          <StateCard icon="card" message="Không tìm thấy thẻ trong phiên hiện tại." title="Không có dữ liệu" />
+        )}
       </ScrollView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { flexGrow: 1, width: "100%", maxWidth: 720, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
-  backButton: { alignSelf: "flex-start", paddingVertical: spacing.xs },
-  backLabel: { color: colors.primary, fontSize: 15, fontWeight: "600" },
-  header: { gap: spacing.sm },
-  eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "700", letterSpacing: 1.4 },
-  title: { color: colors.text, fontSize: 30, fontWeight: "700" },
-  description: { color: colors.muted, fontSize: 15, lineHeight: 22 },
-  centerState: { minHeight: 220, alignItems: "center", justifyContent: "center" },
-  heroCard: { gap: spacing.md, padding: spacing.lg, borderRadius: 24, backgroundColor: colors.primary },
-  heroTop: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md },
-  heroText: { flex: 1, gap: spacing.xs },
-  heroTitle: { color: colors.surface, fontSize: 21, fontWeight: "800" },
-  heroMeta: { color: "rgba(255,255,255,0.82)", fontSize: 15 },
-  heroStatus: { color: colors.surface, fontSize: 12, fontWeight: "800", textAlign: "right" },
-  sandboxBadge: { alignSelf: "flex-start", color: colors.surface, fontSize: 11, fontWeight: "800", letterSpacing: 1.5 },
-  card: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: 20, backgroundColor: colors.surface },
-  sectionTitle: { color: colors.text, fontSize: 18, fontWeight: "800" },
-  summaryRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md },
-  label: { color: colors.muted, fontSize: 14 },
-  value: { color: colors.text, fontSize: 14, fontWeight: "800", textAlign: "right" },
+  content: {
+    flexGrow: 1,
+    width: "100%",
+    maxWidth: sizes.contentMaxWidth,
+    alignSelf: "center",
+    padding: spacing.lg,
+    gap: spacing.lg,
+  },
+  heroCard: {
+    minHeight: 220,
+    justifyContent: "space-between",
+    gap: spacing.md,
+    padding: spacing.mlg,
+    borderRadius: radius.xl,
+    backgroundColor: colors.navy,
+    ...shadows.card,
+  },
+  heroTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  brandIcon: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.sm,
+    backgroundColor: colors.primary,
+  },
+  novaLabel: { ...typography.label, color: colors.onPrimary, letterSpacing: 1.2 },
+  networkLabel: { ...typography.subheading, color: colors.onPrimary, fontStyle: "italic" },
+  heroIdentity: { gap: spacing.sm },
+  heroTitle: { ...typography.bodyStrong, color: "rgba(255,255,255,0.72)" },
+  heroMeta: { ...typography.heading, color: colors.onPrimary, letterSpacing: 2 },
+  heroBottom: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" },
+  heroCaption: { ...typography.caption, color: "rgba(255,255,255,0.62)" },
+  heroExpiry: { ...typography.bodyStrong, color: colors.onPrimary },
+  sectionHeaderRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  sectionIcon: {
+    width: 40,
+    height: 40,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.sm,
+    backgroundColor: colors.primarySoft,
+  },
+  sectionCopy: { flex: 1, gap: 2 },
+  sectionTitle: { ...typography.subheading, color: colors.text },
+  highlightBalance: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+  },
+  highlightLabel: { ...typography.caption, color: colors.primary },
+  highlightValue: { ...typography.heading, color: colors.primary },
+  summaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: spacing.md,
+  },
+  label: { ...typography.body, color: colors.muted },
+  value: { flex: 1, ...typography.bodyStrong, color: colors.text, textAlign: "right" },
   darkLabel: { color: "rgba(255,255,255,0.78)" },
-  darkValue: { color: colors.surface },
-  mutedText: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+  darkValue: { color: colors.onPrimary },
+  emphasizedValue: { color: colors.primary },
+  mutedText: { ...typography.body, color: colors.muted },
   methodRow: { flexDirection: "row", gap: spacing.sm },
-  methodButton: { minHeight: 44, flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: 12 },
+  methodButton: {
+    minHeight: 52,
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
   methodSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-  methodLabel: { color: colors.primary, fontWeight: "700" },
+  methodLabel: { ...typography.label, color: colors.primary },
   actionGrid: { gap: spacing.sm },
-  errorText: { color: colors.danger, fontSize: 14, lineHeight: 20 },
-  noticeText: { color: colors.success, fontSize: 14, lineHeight: 20 },
+  errorBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.dangerSoft,
+  },
+  errorText: { flex: 1, ...typography.body, color: colors.danger },
+  noticeBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.successSoft,
+  },
+  noticeText: { flex: 1, ...typography.body, color: colors.success },
+  securityNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  securityText: { ...typography.caption, color: colors.info, textAlign: "center" },
 });

@@ -24,6 +24,10 @@ export function validateKycDraft(draft: KycDraft): KycFieldErrors {
     errors.documentUri = "Cần chọn ảnh giấy tờ mẫu để gửi hồ sơ.";
   }
 
+  if (!draft.syntheticDataConfirmed) {
+    errors.syntheticDataConfirmed = "Cần xác nhận chỉ sử dụng dữ liệu mô phỏng, không dùng thông tin thật.";
+  }
+
   return errors;
 }
 

@@ -1,11 +1,16 @@
 import { Stack } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 
-import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { BrandMark } from "@/components/brand/BrandMark";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { AuthProvider, useAuth } from "@/features/auth/context/AuthContext";
-import { colors, spacing } from "@/theme";
+import { colors, radius, spacing, typography } from "@/theme";
+
+SplashScreen.setOptions({ duration: 300, fade: true });
 
 function RootNavigator() {
   const { isAuthenticated, logout, refreshAccessToken, status } = useAuth();
@@ -19,6 +24,7 @@ function RootNavigator() {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
+        <BrandMark />
         <ActivityIndicator color={colors.primary} size="large" />
         {status === "loggingOut" ? (
           <Text accessibilityLiveRegion="polite" style={styles.loadingLabel}>
@@ -33,34 +39,26 @@ function RootNavigator() {
     return (
       <View style={styles.lockedScreen}>
         <StatusBar style="dark" />
-        <Text style={styles.lockedTitle}>Ứng dụng đang khóa</Text>
-        <Text style={styles.lockedDescription}>
-          Cần xác nhận lại phiên với máy chủ trước khi hiển thị dữ liệu tài chính.
-        </Text>
-        {recoveryError ? (
-          <Text accessibilityLiveRegion="polite" style={styles.lockedError}>
-            {recoveryError}
-          </Text>
-        ) : null}
-        <View style={styles.lockedActions}>
-          <PrimaryButton
-            label="Thử xác nhận lại"
-            onPress={() => {
-              setRecoveryError(null);
-              void refreshAccessToken().catch(() => {
-                setRecoveryError(
-                  "Chưa thể kết nối để xác nhận phiên. Dữ liệu vẫn được khóa an toàn.",
-                );
-              });
-            }}
-            testID="session-recovery-retry"
-          />
-          <PrimaryButton
-            label="Đăng xuất thiết bị này"
-            onPress={() => void logout()}
-            testID="session-recovery-logout"
-          />
-        </View>
+        <Card elevated style={styles.lockedCard}>
+          <View style={styles.lockedMark}><BrandMark compact /></View>
+          <Text style={styles.lockedTitle}>Dữ liệu đang được bảo vệ</Text>
+          <Text style={styles.lockedDescription}>NOVA cần xác nhận lại phiên trước khi hiển thị thông tin tài chính.</Text>
+          {recoveryError ? <Text accessibilityLiveRegion="polite" style={styles.lockedError}>{recoveryError}</Text> : null}
+          <View style={styles.lockedActions}>
+            <Button
+              icon="shield"
+              label="Thử xác nhận lại"
+              onPress={() => {
+                setRecoveryError(null);
+                void refreshAccessToken().catch(() => {
+                  setRecoveryError("Chưa thể kết nối để xác nhận phiên. Dữ liệu vẫn được khóa an toàn.");
+                });
+              }}
+              testID="session-recovery-retry"
+            />
+            <Button icon="logout" label="Đăng xuất thiết bị này" onPress={() => void logout()} testID="session-recovery-logout" variant="outline" />
+          </View>
+        </Card>
       </View>
     );
   }
@@ -107,39 +105,49 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    gap: spacing.sm,
+    gap: spacing.lg,
     backgroundColor: colors.background,
   },
   loadingLabel: {
+    ...typography.body,
     color: colors.muted,
-    fontSize: 14,
   },
   lockedScreen: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: spacing.xl,
-    gap: spacing.md,
+    padding: spacing.lg,
     backgroundColor: colors.background,
   },
+  lockedCard: {
+    width: "100%",
+    maxWidth: 420,
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radius.xl,
+  },
+  lockedMark: {
+    marginBottom: spacing.sm,
+  },
   lockedTitle: {
+    ...typography.title,
     color: colors.text,
-    fontSize: 26,
-    fontWeight: "700",
     textAlign: "center",
   },
   lockedDescription: {
     maxWidth: 520,
+    ...typography.body,
     color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
     textAlign: "center",
   },
   lockedError: {
     maxWidth: 520,
+    ...typography.body,
+    padding: spacing.smd,
+    borderRadius: radius.sm,
     color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
+    backgroundColor: colors.dangerSoft,
     textAlign: "center",
   },
   lockedActions: {

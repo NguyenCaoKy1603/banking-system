@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PoolClient } from "pg";
 
 import { unauthorized, rateLimited } from "../errors.js";
 import type { AuthUser, LoginResponse } from "../types.js";
@@ -30,6 +31,14 @@ function normalizeDeviceId(deviceId: string): string {
   return normalized;
 }
 
+function configuredPositiveInt(name: string, fallback: number, maximum: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0 || value > maximum) return fallback;
+  return value;
+}
+
 /**
  * Direct relational authentication boundary used by the staged HTTP cutover.
  * It deliberately owns only identity/session rows; legacy BankingSystem state
@@ -41,10 +50,16 @@ export class RelationalAuthService {
   async loginPasswordOnly(email: string, password: string, deviceId: string): Promise<AuthUser> {
     const normalizedEmail = String(email ?? "").trim().toLowerCase();
     const normalizedDeviceId = normalizeDeviceId(deviceId);
-    const customer = await this.unitOfWork.transaction(async ({ client }) => {
+    const windowSeconds = configuredPositiveInt("LOGIN_RATE_LIMIT_WINDOW_SECONDS", LOGIN_WINDOW_SECONDS, 86_400);
+    const maxAttempts = configuredPositiveInt("LOGIN_RATE_LIMIT_MAX_ATTEMPTS", LOGIN_MAX_ATTEMPTS, 100);
+    const outcome = await this.unitOfWork.transaction(async ({ client }) => {
+      const keys = this.loginBucketKeys(normalizedEmail, normalizedDeviceId);
+      const guard = await this.lockLoginBuckets(client, keys, windowSeconds, maxAttempts);
+      if (guard.blocked) return { kind: "blocked" as const, retryAfterSeconds: guard.retryAfterSeconds };
+
       const result = await client.query("SELECT * FROM customers WHERE lower(email) = lower($1)", [normalizedEmail]);
       const row = result.rows[0] as Record<string, unknown> | undefined;
-      return row ? {
+      const customer = row ? {
         id: String(row.id),
         fullName: String(row.full_name),
         email: String(row.email),
@@ -53,18 +68,23 @@ export class RelationalAuthService {
         passwordDigest: String(row.password_digest),
         createdAt: new Date(String(row.created_at)).toISOString(),
       } satisfies CustomerRow : null;
+      const valid = await verifyPasswordAsync(
+        typeof password === "string" ? password : "",
+        customer?.passwordSalt ?? DUMMY_PASSWORD.salt,
+        customer?.passwordDigest ?? DUMMY_PASSWORD.digest,
+      );
+      if (!customer || !valid) {
+        const failure = await this.recordLoginFailure(client, keys, windowSeconds, maxAttempts);
+        return failure.blocked
+          ? { kind: "blocked" as const, retryAfterSeconds: failure.retryAfterSeconds }
+          : { kind: "invalid" as const };
+      }
+      await this.resetLoginBuckets(client, keys);
+      return { kind: "ok" as const, customer };
     });
-    const valid = await verifyPasswordAsync(
-      typeof password === "string" ? password : "",
-      customer?.passwordSalt ?? DUMMY_PASSWORD.salt,
-      customer?.passwordDigest ?? DUMMY_PASSWORD.digest,
-    );
-    if (!customer || !valid) {
-      await this.recordLoginAttempt(normalizedEmail, normalizedDeviceId);
-      throw unauthorized("Invalid credentials.");
-    }
-    await this.assertLoginRateAllowed(normalizedEmail, normalizedDeviceId);
-    return publicUser(customer);
+    if (outcome.kind === "blocked") throw rateLimited("Too many login attempts.", outcome.retryAfterSeconds);
+    if (outcome.kind === "invalid") throw unauthorized("Invalid credentials.");
+    return publicUser(outcome.customer);
   }
 
   async issueSession(customerId: string, deviceId: string): Promise<LoginResponse> {
@@ -293,40 +313,92 @@ export class RelationalAuthService {
     }, { maxRetries: 1 });
   }
 
-  private async assertLoginRateAllowed(email: string, deviceId: string): Promise<void> {
-    const keys = [`relational-login:email:${email}`, `relational-login:device:${deviceId}`];
-    await this.unitOfWork.transaction(async ({ client }) => {
-      for (const bucketKey of keys) {
-        const result = await client.query(
-          `INSERT INTO rate_limit_buckets (bucket_key, window_started_at, attempts, updated_at)
-           VALUES ($1, NOW(), 1, NOW())
-           ON CONFLICT (bucket_key) DO UPDATE SET
-             window_started_at = CASE WHEN rate_limit_buckets.window_started_at <= NOW() - INTERVAL '10 minutes' THEN NOW() ELSE rate_limit_buckets.window_started_at END,
-             attempts = CASE WHEN rate_limit_buckets.window_started_at <= NOW() - INTERVAL '10 minutes' THEN 1 ELSE rate_limit_buckets.attempts + 1 END,
-             updated_at = NOW()
-           RETURNING attempts`,
-          [bucketKey],
-        );
-        if (Number(result.rows[0]?.attempts ?? 0) > LOGIN_MAX_ATTEMPTS) {
-          throw rateLimited("Too many login attempts.", LOGIN_WINDOW_SECONDS);
-        }
-      }
-    }, { maxRetries: 1 });
+  private loginBucketKeys(email: string, deviceId: string): string[] {
+    return [`relational-login:email:${email}`, `relational-login:device:${deviceId}`];
   }
 
-  private async recordLoginAttempt(email: string, deviceId: string): Promise<void> {
-    await this.unitOfWork.transaction(async ({ client }) => {
-      for (const bucketKey of [`relational-login:email:${email}`, `relational-login:device:${deviceId}`]) {
+  private async lockLoginBuckets(
+    client: PoolClient,
+    keys: string[],
+    windowSeconds: number,
+    maxAttempts: number,
+  ): Promise<{ blocked: boolean; retryAfterSeconds: number }> {
+    await client.query(
+      `INSERT INTO rate_limit_buckets (bucket_key, window_started_at, attempts, blocked_until, updated_at)
+       SELECT key, NOW(), 0, NULL, NOW() FROM unnest($1::text[]) AS key
+       ON CONFLICT (bucket_key) DO NOTHING`,
+      [keys],
+    );
+    const result = await client.query<{ bucket_key: string; blocked_until: Date | null; attempts: number; retry_after: number }>(
+      `SELECT bucket_key, blocked_until, attempts,
+              COALESCE(EXTRACT(EPOCH FROM (blocked_until - NOW()))::int, $2) AS retry_after
+         FROM rate_limit_buckets
+        WHERE bucket_key = ANY($1::text[])
+        ORDER BY bucket_key
+        FOR UPDATE`,
+      [keys, windowSeconds],
+    );
+    let blocked = false;
+    let retryAfterSeconds = windowSeconds;
+    for (const row of result.rows) {
+      const expired = row.blocked_until !== null && new Date(String(row.blocked_until)).getTime() <= Date.now();
+      if (expired) {
         await client.query(
-          `INSERT INTO rate_limit_buckets (bucket_key, window_started_at, attempts, updated_at)
-           VALUES ($1, NOW(), 1, NOW())
-           ON CONFLICT (bucket_key) DO UPDATE SET
-             window_started_at = CASE WHEN rate_limit_buckets.window_started_at <= NOW() - INTERVAL '10 minutes' THEN NOW() ELSE rate_limit_buckets.window_started_at END,
-             attempts = CASE WHEN rate_limit_buckets.window_started_at <= NOW() - INTERVAL '10 minutes' THEN 1 ELSE rate_limit_buckets.attempts + 1 END,
-             updated_at = NOW()`,
-          [bucketKey],
+          `UPDATE rate_limit_buckets
+              SET window_started_at = NOW(), attempts = 0, blocked_until = NULL, updated_at = NOW()
+            WHERE bucket_key = $1`,
+            [row.bucket_key],
         );
+        continue;
       }
-    }, { maxRetries: 1 });
+      if ((row.blocked_until && new Date(String(row.blocked_until)).getTime() > Date.now()) || Number(row.attempts) >= maxAttempts) {
+        blocked = true;
+        retryAfterSeconds = Math.max(1, Math.min(windowSeconds, Number(row.retry_after) || windowSeconds));
+      }
+    }
+    return { blocked, retryAfterSeconds };
+  }
+
+  private async recordLoginFailure(
+    client: PoolClient,
+    keys: string[],
+    windowSeconds: number,
+    maxAttempts: number,
+  ): Promise<{ blocked: boolean; retryAfterSeconds: number }> {
+    let blocked = false;
+    let retryAfterSeconds = windowSeconds;
+    for (const bucketKey of keys) {
+      const result = await client.query<{ attempts: number; retry_after: number }>(
+        `UPDATE rate_limit_buckets
+            SET window_started_at = CASE
+                  WHEN window_started_at <= NOW() - ($2::text || ' seconds')::interval
+                    THEN NOW() ELSE window_started_at END,
+                attempts = CASE
+                  WHEN window_started_at <= NOW() - ($2::text || ' seconds')::interval
+                    THEN 1 ELSE attempts + 1 END,
+                blocked_until = CASE
+                  WHEN (CASE WHEN window_started_at <= NOW() - ($2::text || ' seconds')::interval THEN 1 ELSE attempts + 1 END) >= $3
+                    THEN NOW() + ($2::text || ' seconds')::interval ELSE NULL END,
+                updated_at = NOW()
+          WHERE bucket_key = $1
+          RETURNING attempts, COALESCE(EXTRACT(EPOCH FROM (blocked_until - NOW()))::int, $2) AS retry_after`,
+        [bucketKey, windowSeconds, maxAttempts],
+      );
+      const row = result.rows[0];
+      if (row && Number(row.attempts) >= maxAttempts) {
+        blocked = true;
+        retryAfterSeconds = Math.max(1, Math.min(windowSeconds, Number(row.retry_after) || windowSeconds));
+      }
+    }
+    return { blocked, retryAfterSeconds };
+  }
+
+  private async resetLoginBuckets(client: PoolClient, keys: string[]): Promise<void> {
+    await client.query(
+      `UPDATE rate_limit_buckets
+          SET attempts = 0, blocked_until = NULL, window_started_at = NOW(), updated_at = NOW()
+        WHERE bucket_key = ANY($1::text[])`,
+      [keys],
+    );
   }
 }

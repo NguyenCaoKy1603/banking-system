@@ -374,7 +374,7 @@ function getRateLimitKey(request: IncomingMessage): string {
 
 type PersistentStepUpPurpose = Extract<
   MfaChallengePurpose,
-  "TRANSFER" | "SAVINGS_OPENING" | "CREDIT_APPLICATION" | "CARD_ACTIVATION" | "CREDIT_PAYMENT" | "CARD_UNLOCK" | "RECOVERY_CODE_ROTATION" | "MFA_FACTOR_CHANGE" | "MFA_FACTOR_REMOVAL"
+  "TRANSFER" | "SAVINGS_OPENING" | "CREDIT_APPLICATION" | "CARD_ACTIVATION" | "CREDIT_PAYMENT" | "CARD_UNLOCK" | "CARD_REPORT_LOST" | "RECOVERY_CODE_ROTATION" | "MFA_FACTOR_CHANGE" | "MFA_FACTOR_REMOVAL"
 >;
 
 async function verifyMfaLifecycleChallenge(
@@ -497,6 +497,13 @@ function isAuthenticatedRoute(
   if (method === "POST" && segments.length === 1 && segments[0] === "fraud-reports") {
     return true;
   }
+  if (
+    (method === "GET" && segments.length === 2 && segments[0] === "kyc" && segments[1] === "application") ||
+    (method === "POST" && segments.length === 2 && segments[0] === "kyc" && segments[1] === "application") ||
+    (method === "POST" && segments.length === 3 && segments[0] === "kyc" && segments[1] === "application" && segments[2] === "submit")
+  ) {
+    return true;
+  }
   if (method === "GET" && segments.length === 2 && segments[0] === "fraud-reports") {
     return true;
   }
@@ -574,7 +581,7 @@ function isAuthenticatedRoute(
     method === "POST" &&
     segments.length === 3 &&
     segments[0] === "cards" &&
-    (segments[2] === "lock" || segments[2] === "unlock")
+    (segments[2] === "lock" || segments[2] === "unlock" || segments[2] === "report-lost")
   ) {
     return true;
   }
@@ -837,47 +844,18 @@ export async function handleRequest(
       const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
         ? options.relationalHttp
         : undefined;
-      if (options.mfaService) {
-        const user = relationalAuth
-          ? await relationalAuth.loginPasswordOnly(data.email as string, data.password as string, requireDeviceId(request))
-          : await system.loginPasswordOnly(data.email as string, data.password as string, requireDeviceId(request));
-        if (options.customerAccessStatus && (await options.customerAccessStatus(user.id)) === "LOCKED") {
-          throw unauthorized("Customer access is locked by the control plane.");
-        }
-        const challenge = await options.mfaService.beginLoginChallenge({
-          customerId: user.id,
-          deviceId: requireDeviceId(request),
-          networkFingerprint: getRateLimitKey(request),
-        });
-        writeResponse(response, 202, traceId, {
-          challengeId: challenge.challengeId,
-          expiresAt: challenge.expiresAt,
-          methods: ["TOTP"],
-          method: "TOTP",
-          purpose: "LOGIN",
-        });
-        return;
+      // Customer login is deliberately password-only in every HTTP runtime.
+      // Transactional and account-security step-up challenges are separate
+      // authenticated flows and must never be part of session issuance.
+      const user = relationalAuth
+        ? await relationalAuth.loginPasswordOnly(data.email as string, data.password as string, requireDeviceId(request))
+        : await system.loginPasswordOnly(data.email as string, data.password as string, requireDeviceId(request));
+      if (options.customerAccessStatus && (await options.customerAccessStatus(user.id)) === "LOCKED") {
+        throw unauthorized("Customer access is locked by the control plane.");
       }
-      if (relationalAuth) {
-        const user = await relationalAuth.loginPasswordOnly(
-          data.email as string,
-          data.password as string,
-          requireDeviceId(request),
-        );
-        writeResponse(response, 200, traceId, await relationalAuth.issueMfaSession(user.id, requireDeviceId(request)));
-        return;
-      }
-      const session = await system.loginAsync(
-        data.email as string,
-        data.password as string,
-        requireDeviceId(request),
-      );
-      writeResponse(
-        response,
-        "accessToken" in session ? 200 : 202,
-        traceId,
-        session,
-      );
+      writeResponse(response, 200, traceId, relationalAuth
+        ? await relationalAuth.issueMfaSession(user.id, requireDeviceId(request))
+        : system.issueMfaSession(user.id, requireDeviceId(request)));
       return;
     }
 
@@ -891,6 +869,13 @@ export async function handleRequest(
       const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
         ? options.relationalHttp
         : undefined;
+      // The persistent customer runtime has a password-only login contract.
+      // Keep the legacy challenge verifier available only to the in-memory
+      // reference harness; no relational-v2 request can use it as a second
+      // login factor.
+      if (relationalAuth) {
+        throw invalidRequest("Relational-v2 login is password-only; no login MFA challenge is supported.");
+      }
       if (options.mfaService) {
         const result = await options.mfaService.verifyChallenge({
           challengeId: data.challengeId as string,
@@ -904,9 +889,7 @@ export async function handleRequest(
         if (options.customerAccessStatus && (await options.customerAccessStatus(result.customerId)) === "LOCKED") {
           throw unauthorized("Customer access is locked by the control plane.");
         }
-        writeResponse(response, 200, traceId, relationalAuth
-          ? await relationalAuth.issueMfaSession(result.customerId, requireDeviceId(request))
-          : system.issueMfaSession(result.customerId, requireDeviceId(request)));
+        writeResponse(response, 200, traceId, system.issueMfaSession(result.customerId, requireDeviceId(request)));
         return;
       }
       writeResponse(
@@ -1062,6 +1045,27 @@ export async function handleRequest(
       }
     }
 
+    // Registration is still pre-authentication, so its OTP must be
+    // resendable without a bearer token. The service resolves the pending
+    // registration email server-side and never trusts a client destination.
+    if (
+      options.mfaService &&
+      request.method === "POST" &&
+      segments.length === 4 &&
+      segments[0] === "auth" &&
+      segments[1] === "challenges" &&
+      segments[3] === "resend" &&
+      !header(request, "authorization")
+    ) {
+      requireObject(body);
+      writeResponse(response, 200, traceId, await options.mfaService.resendRegistrationChallenge({
+        challengeId: segments[2]!,
+        deviceId: requireDeviceId(request),
+        networkFingerprint: getRateLimitKey(request),
+      }));
+      return;
+    }
+
     if (
       request.method === "GET" &&
       segments.length === 2 &&
@@ -1090,6 +1094,20 @@ export async function handleRequest(
     const relationalAuth = relationalRoute ? options.relationalHttp : undefined;
 
     if (relationalRoute && options.relationalHttp) {
+      if (request.method === "GET" && segments.length === 2 && segments[0] === "kyc" && segments[1] === "application") {
+        writeResponse(response, 200, traceId, { application: await options.relationalHttp.getKycApplication(userId) });
+        return;
+      }
+      if (request.method === "POST" && segments.length === 2 && segments[0] === "kyc" && segments[1] === "application") {
+        const data = requireObject(body);
+        writeResponse(response, 200, traceId, { application: await options.relationalHttp.saveKycDraft(userId, data as never) });
+        return;
+      }
+      if (request.method === "POST" && segments.length === 3 && segments[0] === "kyc" && segments[1] === "application" && segments[2] === "submit") {
+        const data = requireObject(body);
+        writeResponse(response, 201, traceId, { application: await options.relationalHttp.submitKycApplication(userId, data as never) });
+        return;
+      }
       if (request.method === "GET" && segments.length === 1 && segments[0] === "cards") {
         writeResponse(response, 200, traceId, await options.relationalHttp.listCards(userId));
         return;
@@ -1127,14 +1145,32 @@ export async function handleRequest(
         writeResponse(response, 200, traceId, await options.relationalHttp.activateCreditApplication({ customerId: userId, applicationId: segments[2], idempotencyKey: header(request, "idempotency-key") ?? "", traceId }));
         return;
       }
-      if (request.method === "POST" && segments.length === 3 && segments[0] === "cards" && (segments[2] === "lock" || segments[2] === "unlock")) {
-        const data = requireObject(body);
-        if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational card control.");
-        const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
-        if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational card control.");
-        const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CARD_UNLOCK", resourceId: segments[1], requestFingerprint: fingerprint({ cardId: segments[1] }) });
-        if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
-        const card = segments[2] === "lock" ? await options.relationalHttp.lockCard(userId, segments[1]) : await options.relationalHttp.unlockCard(userId, segments[1]);
+      if (request.method === "POST" && segments.length === 3 && segments[0] === "cards" && (segments[2] === "lock" || segments[2] === "unlock" || segments[2] === "report-lost")) {
+        const data = segments[2] === "unlock" || segments[2] === "report-lost"
+          ? requireObject(body)
+          : (body === undefined ? {} : requireObject(body));
+        let card;
+        if (segments[2] === "lock") {
+          // Emergency lock is deliberately available with an authenticated
+          // customer session and device binding; it must not depend on a
+          // credit kill-switch or a working TOTP provider.
+          card = await options.relationalHttp.lockCard(userId, segments[1]);
+        } else if (segments[2] === "unlock") {
+          if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational card unlock.");
+          const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
+          if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational card unlock.");
+          const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CARD_UNLOCK", resourceId: segments[1], requestFingerprint: fingerprint({ cardId: segments[1] }) });
+          if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+          card = await options.relationalHttp.unlockCard(userId, segments[1]);
+        } else {
+          if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required to report a card lost.");
+          const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
+          if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required to report a card lost.");
+          const verified = await options.mfaService.verifyChallenge({ challengeId: stepUp.challengeId, customerId: userId, deviceId: requireDeviceId(request), proof: stepUp.proof, purpose: "CARD_REPORT_LOST", resourceId: segments[1], requestFingerprint: fingerprint({ cardId: segments[1], action: "REPORT_LOST" }) });
+          if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
+          writeResponse(response, 200, traceId, await options.relationalHttp.reportCardLost(userId, segments[1], traceId));
+          return;
+        }
         writeResponse(response, 200, traceId, { card });
         return;
       }
@@ -1494,6 +1530,7 @@ export async function handleRequest(
           "CARD_ACTIVATION",
           "CREDIT_PAYMENT",
           "CARD_UNLOCK",
+          "CARD_REPORT_LOST",
           "RECOVERY_CODE_ROTATION",
           "MFA_FACTOR_CHANGE",
           "MFA_FACTOR_REMOVAL",
@@ -1507,6 +1544,7 @@ export async function handleRequest(
         const directSavingsCutover = purpose === "SAVINGS_OPENING" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["savings", "deposits"]);
         const directCreditPaymentCutover = purpose === "CREDIT_PAYMENT" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["credit", "payments"]);
         const directCreditCardCutover = purpose === "CARD_UNLOCK" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["cards", resourceId, "unlock"]);
+        const directCardLostCutover = purpose === "CARD_REPORT_LOST" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["cards", resourceId, "report-lost"]);
         const directCreditApplicationCutover = purpose === "CREDIT_APPLICATION" && options.relationalHttp?.isRouteEnabled("POST", ["credit", "applications"]);
         const directCreditActivationCutover = purpose === "CARD_ACTIVATION" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["credit", "applications", resourceId, "activate"]);
         const directMfaLifecycle = options.relationalHttp?.isRouteEnabled("POST", ["auth", "otp", "challenges"]) &&
@@ -1519,6 +1557,8 @@ export async function handleRequest(
               ? await options.relationalHttp.getCreditPaymentStepUpRequestFingerprint(resourceId)
               : directCreditCardCutover
                 ? fingerprint({ cardId: resourceId })
+              : directCardLostCutover
+                ? fingerprint({ cardId: resourceId, action: "REPORT_LOST" })
               : directCreditApplicationCutover
                   ? (typeof data.requestFingerprint === "string" ? data.requestFingerprint : null)
                   : directCreditActivationCutover

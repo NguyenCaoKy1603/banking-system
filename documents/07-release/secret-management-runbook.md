@@ -20,6 +20,7 @@ Deployment adapter sẽ truyền `ManagedSecretClient` vào `createRuntimeSecret
 - Metadata-only registry: `documents/07-release/secret-registry.yaml`.
 - Runtime references: `backend/src/secrets/runtimeSecrets.ts`.
 - Các nhóm bắt buộc gồm database credential, OTP pepper, MFA encryption key, notification endpoint key, backup encryption key và mobile signing key.
+- `email-provider-token` là credential của adapter email. Khi `EMAIL_PROVIDER=smtp` trong rehearsal Gmail, giá trị là App Password của tài khoản gửi; khi dùng HTTP provider, giá trị là bearer/API token. Cả hai trường hợp đều phải đi qua SecretProvider, không ghi giá trị vào registry, Compose file, log hoặc artifact.
 - Local provider chỉ đọc env của đúng environment; `SecretCache` chỉ giữ giá trị trong memory, có TTL/refresh và không ghi file.
 
 Kiểm tra:
