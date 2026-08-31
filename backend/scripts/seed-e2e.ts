@@ -15,6 +15,7 @@ const email = process.env.E2E_EMAIL ?? "tester@example.com";
 const password = process.env.E2E_PASSWORD?.trim();
 const deviceId = process.env.E2E_DEVICE_ID ?? "e2e-device-android";
 const registrationCode = process.env.E2E_REGISTRATION_CODE?.trim();
+const emailCaptureUrl = process.env.E2E_EMAIL_CAPTURE_URL?.trim().replace(/\/+$/, "");
 const totpSecret = process.env.E2E_TOTP_SECRET?.trim();
 const explicitTotpCode = process.env.E2E_TOTP_CODE?.trim();
 let lastTotpStep = -1;
@@ -101,13 +102,33 @@ async function seedReferenceFunding(accountId: string, amountMinor: string, seed
   }
 }
 
-async function getRegistrationCode(): Promise<string> {
-  if (!registrationCode || !/^\d{6}$/.test(registrationCode)) {
+async function getRegistrationCode(destination: string): Promise<string> {
+  if (registrationCode && /^\d{6}$/.test(registrationCode)) return registrationCode;
+  if (!emailCaptureUrl) {
     throw new Error(
-      "E2E_REGISTRATION_CODE must be supplied by the configured email test provider; no sandbox OTP endpoint is available.",
+      "E2E_REGISTRATION_CODE or E2E_EMAIL_CAPTURE_URL must be supplied by the configured email test provider.",
     );
   }
-  return registrationCode;
+  const deadline = Date.now() + Number(process.env.E2E_EMAIL_CAPTURE_TIMEOUT_MS ?? 30_000);
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${emailCaptureUrl}/messages`, { headers: { Accept: "application/json" } });
+      if (response.ok) {
+        const body = await response.json() as { messages?: Array<{ purpose?: string; destination?: string; code?: string; expiresAt?: string }> };
+        const message = body.messages?.find((candidate) =>
+          candidate.purpose === "REGISTRATION_EMAIL_VERIFY" &&
+          candidate.destination === destination &&
+          /^\d{6}$/.test(candidate.code ?? "") &&
+          Date.parse(candidate.expiresAt ?? "") > Date.now(),
+        );
+        if (message?.code) return message.code;
+      }
+    } catch {
+      // The local capture service may start after the API; keep polling until the bounded deadline.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("The local email capture service did not receive a live registration challenge in time.");
 }
 
 async function getTotpCode(): Promise<string> {
@@ -155,7 +176,7 @@ async function registerIfNeeded(
   });
   if (register.status === 202) {
     const challenge = requireBody<{ challengeId: string }>(register, "registration");
-    const proof = await getRegistrationCode();
+    const proof = await getRegistrationCode(input.email);
     requireBody(
       await request("/auth/register/verify", {
         method: "POST",
