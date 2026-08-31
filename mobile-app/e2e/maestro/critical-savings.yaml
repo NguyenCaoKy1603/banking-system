@@ -13,15 +13,6 @@ appId: ${APP_ID}
     id: login-submit
 - extendedWaitUntil:
     visible:
-      id: login-mfa-submit
-    timeout: 10000
-- tapOn:
-    id: login-mfa-code
-- inputText: ${MFA_TOTP}
-- tapOn:
-    id: login-mfa-submit
-- extendedWaitUntil:
-    visible:
       id: home-balance-card
     timeout: 15000
 - tapOn:
