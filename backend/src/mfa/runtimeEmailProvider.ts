@@ -15,7 +15,7 @@ type RuntimeEmailProviderOptions = {
   smtpTransport?: SmtpTransport;
 };
 
-const LOCAL_CAPTURE_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "mailpit", "mailhog"]);
+const LOCAL_CAPTURE_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "mailpit", "mailhog", "email-capture"]);
 
 function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number, allowZero = false): number {
   const raw = env[name]?.trim();

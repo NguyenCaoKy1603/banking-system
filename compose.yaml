@@ -114,6 +114,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      email-capture:
+        condition: service_healthy
     ports:
       - "127.0.0.1:${BACKEND_PORT:-5000}:5000"
     healthcheck:
@@ -144,6 +146,31 @@ services:
       - "127.0.0.1:${ADMIN_INVITATION_CAPTURE_PORT:-8025}:8025"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8025/readyz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  # Local-only OTP capture inbox. It stores synthetic verification messages in
+  # memory and is never a staging/production email provider.
+  email-capture:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+      args:
+        COMMIT_SHA: ${COMMIT_SHA:-local}
+        RELEASE_ID: ${RELEASE_ID:-local}
+        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
+        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
+    environment:
+      EMAIL_CAPTURE_PORT: 5700
+    command: ["node", "scripts/email-capture.cjs"]
+    ports:
+      - "127.0.0.1:${EMAIL_CAPTURE_PORT:-5700}:5700"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5700/readyz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -236,10 +263,9 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # Opt-in only: local customer HTTP routes are now direct relational-v2 when
-  # BANKING_PERSISTENCE_MODE=relational-v2, but registration and scheduled
-  # settlement/maturity remain out of scope. Do not enable this profile until
-  # those boundaries have their approved worker/core evidence.
+  # Opt-in only: local customer HTTP routes and scheduled lifecycle use the
+  # direct relational-v2 boundary in the confirmed academic rehearsal. This is
+  # still synthetic local preview and is not staging/production evidence.
   worker:
     profiles: ["worker"]
     build:
