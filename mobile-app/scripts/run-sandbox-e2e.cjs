@@ -196,6 +196,7 @@ async function main() {
     E2E_TOTP_SECRET: totpSecret,
     E2E_RECIPIENT_EMAIL: `recipient-${suffix}@example.test`,
     E2E_RECIPIENT_PASSWORD: `Recipient${suffix}Aa1`,
+    E2E_RECIPIENT_PHONE: `091${String(Number.parseInt(suffix.slice(2, 9), 16) % 10_000_000).padStart(7, "0")}`,
     APP_ID: process.env.APP_ID ?? "com.example.digitalbanking.mobile",
   };
   const artifactDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "banking-maestro-"));
