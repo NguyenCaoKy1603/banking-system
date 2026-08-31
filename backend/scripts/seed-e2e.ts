@@ -35,12 +35,14 @@ async function request(
   init: RequestInit = {},
   accessToken?: string,
 ): Promise<{ status: number; body: unknown }> {
+  const rateLimitKey = process.env.E2E_RATE_LIMIT_KEY?.trim();
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
       "X-Device-ID": deviceId,
+      ...(rateLimitKey ? { "X-Forwarded-For": rateLimitKey } : {}),
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...(init.headers ?? {}),
     },
