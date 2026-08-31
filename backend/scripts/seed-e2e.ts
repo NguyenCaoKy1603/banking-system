@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { Pool, type PoolConfig } from "pg";
-import { generateTotp } from "../src/mfa/crypto.js";
+import { generateTotp, KeyEncryptionKeyringAdapter } from "../src/mfa/crypto.js";
 
 const require = createRequire(import.meta.url);
 const { resolvePostgresSsl } = require("./postgres-ssl.cjs") as { resolvePostgresSsl: () => PoolConfig["ssl"] };
@@ -92,6 +92,75 @@ async function seedReferenceFunding(accountId: string, amountMinor: string, seed
         await client.query("INSERT INTO ledger_entries (journal_id,line_number,account_ref,side,amount_minor,currency) VALUES ($1,1,'reference-fixture-source','DEBIT',$2,'VND'),($1,2,$3,'CREDIT',$2,'VND')", [journalId, amount.toString(), `payment-account:${accountId}`]);
         await client.query("INSERT INTO outbox_events (id,event_type,aggregate_id,payload,occurred_at,published_at,attempts,next_attempt_at,event_version,aggregate_type,aggregate_version,status,priority,deduplication_key,created_at,updated_at,trace_id) VALUES ($1,'REFERENCE_FIXTURE_FUNDING_SUCCEEDED',$2,$3,NOW(),NULL,0,NOW(),1,'payment-account',$4,'PENDING',100,$5,NOW(),NOW(),$6)", [outboxId, accountId, JSON.stringify({ transactionId, amountMinor: amount.toString(), currency: "VND" }), version, `e2e-reference-funding:${seedKey}`, `e2e:${seedKey}`]);
       }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
+function envelopeMetadata(ciphertext: string): { version: string; aadVersion: string | null; algorithm: string; encryptedDataKey: string | null } {
+  const parts = ciphertext.split(".");
+  return {
+    version: parts[0] === "v2" ? "v2" : "v1",
+    aadVersion: parts[0] === "v2" ? parts[2] ?? null : null,
+    algorithm: parts[0] === "v2" ? "AES-256-GCM-ENVELOPE" : "AES-256-GCM",
+    encryptedDataKey: parts[0] === "v2" ? parts[6] ?? null : null,
+  };
+}
+
+/**
+ * Provision a per-run TOTP fixture without exposing the seed secret through an
+ * HTTP endpoint. The credential is encrypted with the same local runtime key
+ * and is only used by this disposable E2E database.
+ */
+async function ensureE2eTotpCredential(userEmail: string): Promise<void> {
+  if (!totpSecret) throw new Error("E2E_TOTP_SECRET is required to provision the E2E MFA fixture.");
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) throw new Error("DATABASE_URL is required to provision the E2E MFA fixture.");
+  const encryption = KeyEncryptionKeyringAdapter.fromEnvironment({ required: true });
+  const credentialId = randomUUID();
+  const pool = new Pool({ connectionString: databaseUrl, max: 1, ssl: resolvePostgresSsl() });
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const customer = await client.query<{ id: string }>("SELECT id FROM customers WHERE email = $1", [userEmail]);
+      const customerId = customer.rows[0]?.id;
+      if (!customerId) throw new Error("E2E fixture customer was not found while provisioning MFA.");
+      const active = await client.query("SELECT id FROM mfa_credentials WHERE customer_id = $1 AND credential_type = 'TOTP' AND status = 'ACTIVE' LIMIT 1", [customerId]);
+      if (active.rows[0]) {
+        await client.query("COMMIT");
+        return;
+      }
+      const encryptedSecret = encryption.encrypt(totpSecret, {
+        environment: process.env.BANKING_ENV?.trim() || "preview",
+        recordType: "mfa-totp",
+        recordId: credentialId,
+        subjectId: customerId,
+        schemaVersion: "026",
+      });
+      const metadata = envelopeMetadata(encryptedSecret);
+      const displayName = `E2E Authenticator ${fingerprint(userEmail).slice(0, 8)}`;
+      await client.query(
+        `INSERT INTO mfa_credentials
+          (id, customer_id, credential_type, display_name, status,
+           secret_ciphertext, secret_key_id, secret_cipher_version,
+           secret_aad_version, secret_encryption_algorithm, secret_encrypted_data_key,
+           algorithm, digits, period_seconds, enrolled_at)
+         VALUES ($1, $2, 'TOTP', $3, 'ACTIVE', $4, $5, $6, $7, $8, $9, 'SHA1', 6, 30, NOW())`,
+        [credentialId, customerId, displayName, encryptedSecret, encryption.keyId, metadata.version, metadata.aadVersion, metadata.algorithm, metadata.encryptedDataKey],
+      );
+      await client.query(
+        `INSERT INTO auth_security_events (id, customer_id, event_type, purpose, resource_id, metadata)
+         VALUES ($1, $2, 'MFA_ENROLLED', 'MFA_TOTP_ENROLLMENT', $3, $4::jsonb)`,
+        [randomUUID(), customerId, credentialId, JSON.stringify({ source: "e2e_fixture" })],
+      );
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
@@ -224,6 +293,7 @@ async function main(): Promise<void> {
     password: requiredPassword,
   });
   const accessToken = await loginUser(email, requiredPassword);
+  await ensureE2eTotpCredential(email);
   const accounts = requireBody<{
     accounts: Array<{
       id: string;
