@@ -3,12 +3,25 @@ appId: ${APP_ID}
 ---
 - launchApp:
     clearState: true
+- extendedWaitUntil:
+    visible:
+      id: login-email
+    timeout: 180000
 - tapOn:
     id: login-email
+- waitForAnimationToEnd:
+    timeout: 1000
 - inputText: ${TEST_EMAIL}
+- waitForAnimationToEnd:
+    timeout: 1000
+- pressKey: BACK
 - tapOn:
     id: login-password
+- waitForAnimationToEnd:
+    timeout: 1000
 - inputText: ${TEST_PASSWORD}
+- waitForAnimationToEnd:
+    timeout: 1000
 - pressKey: BACK
 - tapOn:
     id: login-submit
@@ -29,12 +42,14 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible:
       id: credit-card-detail
-    timeout: 10000
+    timeout: 30000
 - scrollUntilVisible:
     element:
       id: credit-open-transactions
     direction: DOWN
-    timeout: 10000
+    visibilityPercentage: 50
+    waitToSettleTimeoutMs: 1000
+    timeout: 30000
 - tapOn:
     id: credit-open-transactions
 - extendedWaitUntil:
@@ -43,10 +58,9 @@ appId: ${APP_ID}
     timeout: 10000
 - tapOn:
     id: credit-transactions-back
-- scrollUntilVisible:
-    element:
+- extendedWaitUntil:
+    visible:
       id: credit-open-statements
-    direction: DOWN
     timeout: 10000
 - tapOn:
     id: credit-open-statements
@@ -56,10 +70,9 @@ appId: ${APP_ID}
     timeout: 10000
 - tapOn:
     id: credit-statements-back
-- scrollUntilVisible:
-    element:
+- extendedWaitUntil:
+    visible:
       id: credit-open-payment
-    direction: DOWN
     timeout: 10000
 - tapOn:
     id: credit-open-payment

@@ -3,12 +3,25 @@ appId: ${APP_ID}
 ---
 - launchApp:
     clearState: true
+- extendedWaitUntil:
+    visible:
+      id: login-email
+    timeout: 180000
 - tapOn:
     id: login-email
+- waitForAnimationToEnd:
+    timeout: 1000
 - inputText: ${TEST_EMAIL}
+- waitForAnimationToEnd:
+    timeout: 1000
+- pressKey: BACK
 - tapOn:
     id: login-password
+- waitForAnimationToEnd:
+    timeout: 1000
 - inputText: ${TEST_PASSWORD}
+- waitForAnimationToEnd:
+    timeout: 1000
 - hideKeyboard
 - tapOn:
     id: login-submit

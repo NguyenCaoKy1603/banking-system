@@ -182,7 +182,7 @@ export function LoginScreen() {
           <View style={styles.footer}>
             <Text style={styles.footerText}>Chưa có tài khoản?</Text>
             <Link href="./register" asChild>
-              <Pressable accessibilityRole="link" hitSlop={8}>
+              <Pressable accessibilityRole="link" hitSlop={8} testID="login-register">
                 <Text style={styles.link}>Đăng ký ngay</Text>
               </Pressable>
             </Link>

@@ -52,7 +52,7 @@ không gửi email ra ngoài và không ghi OTP/password/token vào evidence.
 | Backend | Integrated API + email capture + 2 worker + 2 scheduler | PASS |
 | Mobile | lint, typecheck, OpenAPI, public-env | PASS |
 | Mobile | Unit test | 45 suite, 259/259 PASS |
-| Mobile | Maestro syntax | 20 flow hợp lệ |
+| Mobile | Maestro syntax | 19 flow hợp lệ |
 | Mobile | Web export | PASS, 36 static route |
 | Admin Web | lint/typecheck, unit test | 7/7 PASS |
 | Admin Web | Playwright E2E | 1/1 PASS |
@@ -64,17 +64,22 @@ bằng runner disposable và đều PASS.
 
 ## E2E emulator đã chạy
 
-Thiết bị kiểm tra: Android emulator `emulator-5554`, Pixel 7, API 35.
+Thiết bị kiểm tra: Android emulator `emulator-5554`, Pixel 7, API 34 (`Pixel_7`),
+APK release cục bộ. API 35 (`Pixel_7_API_35`) không được dùng làm bằng chứng cuối
+vì cấu hình AVD có `hw.keyboard=no`, làm mất ký tự khi nhập liệu; đây là vấn đề
+cấu hình emulator, không phải lỗi validation của ứng dụng.
 
 | Flow | Phạm vi kiểm tra | Kết quả |
 |---|---|---:|
+| `critical-registration.yaml` | đăng ký customer, nhận OTP từ HTTP email capture nội bộ, nhập OTP một lần và hoàn tất xác minh | PASS |
 | `critical-m0-m4-m8.yaml` | đăng nhập, tài khoản, hiện/copy số tài khoản đầy đủ, KYC synthetic, QR và thông báo | PASS |
 | `critical-transfer-retry.yaml` | quote, review, TOTP step-up, submit transfer, status và mở lại sau restart | PASS |
 | `critical-savings.yaml` | quote mở tiết kiệm, TOTP step-up, submit và đọc lại danh sách | PASS |
 | `critical-credit.yaml` | thẻ, giao dịch, sao kê, thanh toán, TOTP step-up và kết quả | PASS |
 
-Các flow transfer/savings/credit dùng test runner để điền TOTP hiện thời vào
-challenge đang hiển thị. Mã không được in ra terminal, không lưu trong source
+Flow đăng ký dùng email synthetic và HTTP capture local nên không phụ thuộc SMTP
+thật. Các flow transfer/savings/credit dùng test runner để điền TOTP hiện thời
+vào challenge đang hiển thị. Mã không được in ra terminal, không lưu trong source
 hoặc database.
 
 ## Data flow được xác minh

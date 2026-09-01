@@ -50,6 +50,7 @@ Lệnh dùng credential ngẫu nhiên trong bộ nhớ, gọi `backend` seed, l�
 ## Coverage
 
 - `critical-auth-and-logout.yaml`: login MFA, session entry và logout tất cả thiết bị.
+- `critical-registration.yaml`: đăng ký customer, nhận OTP từ HTTP email capture local, xác minh OTP một lần và quay về màn hình đăng nhập.
 - `critical-transfer-retry.yaml`: quote, step-up, double-tap, pending status và khôi phục sau stop/start app.
 - `critical-fraud-report.yaml`: mở chi tiết giao dịch và gửi fraud report.
 - `critical-m0-m4-m8.yaml`: login, trang chủ với thẻ số dư hiện/che, hiện và sao chép số tài khoản đầy đủ, eKYC submit → `PENDING`/read-only, danh bạ người nhận, My QR/QR payload fallback chỉ hiển thị dữ liệu chưa xác minh và chặn chuyển tiền, notification detail và deep link.
@@ -60,9 +61,18 @@ Lệnh dùng credential ngẫu nhiên trong bộ nhớ, gọi `backend` seed, l�
 - `critical-credit-overdue-notification.yaml`: mở thông báo sao kê Credit quá hạn và deep-link tới đúng chi tiết thẻ.
 - `critical-offline-retry.yaml`: mô phỏng API không reachable, kiểm tra banner mất kết nối và retry ở màn hình đăng nhập.
 
-Maestro CLI 2.8.0 đã chạy thành công trên Android emulator `Pixel_7_API_35` cho các flow M0–M4/M8, M6, M7 và `critical-offline-retry.yaml`. Bộ thư mục hiện có 10 flow hợp lệ; M0–M4/M8 đã kiểm tra hiện và sao chép số tài khoản đầy đủ trên APK hiện tại, M6 đã kiểm tra quote/review/OTP/mở khoản, M7 đã kiểm tra payment, pending → stop/launch → resume, khóa → restart → mở khóa thẻ bằng OTP, thông báo sao kê quá hạn → mở đúng thẻ, còn offline retry đã kiểm tra banner mất kết nối và retry. Artifact raw của offline flow đã được xóa để không lưu dữ liệu test nhạy cảm. Camera permission, biometric prompt, transfer lifecycle native đầy đủ và thiết bị thật vẫn cần chạy bổ sung.
+Trong phiên xác minh ngày 2026-09-01, Maestro CLI 2.8.0 đã chạy thành công
+trên Android emulator `Pixel_7` API 34 với APK release local cho các flow đăng ký,
+M0–M4/M8, transfer, M6 và M7; bộ validator xác nhận 19 flow hợp lệ. M0–M4/M8
+đã kiểm tra hiện và sao chép số tài khoản đầy đủ; M6/M7 đã kiểm tra quote,
+review, TOTP và nghiệp vụ tương ứng. Flow đăng ký lấy OTP từ HTTP capture nội bộ,
+không cần SMTP thật. API 35 `Pixel_7_API_35` không dùng làm bằng chứng cuối vì
+AVD đang có `hw.keyboard=no`, gây mất ký tự khi nhập; có thể chạy lại sau khi
+đóng emulator và đặt `hw.keyboard=yes`. Camera permission, biometric prompt,
+transfer lifecycle native đầy đủ và thiết bị thật vẫn cần chạy bổ sung.
 
-Thay đổi trust boundary eKYC/QR ngày 2026-08-23 mới đạt unit test, lint, type-check và Maestro syntax validation; chưa chạy lại trên emulator. Bằng chứng emulator trước đó không được dùng để tuyên bố UI mới đã qua native E2E.
+Thay đổi trust boundary eKYC/QR đã được chạy lại qua flow M0–M4/M8 trên API 34;
+không dùng bằng chứng cũ của API 35 để thay thế kết quả này.
 
 ## Cap nhat M7
 

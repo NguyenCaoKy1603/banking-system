@@ -15,6 +15,9 @@ let apiBindingDeviceId = process.env.E2E_API_DEVICE_ID?.trim() ?? "e2e-device-an
 const apiBaseUrl = (
   process.env.E2E_BASE_URL ?? "http://127.0.0.1:5000/api/v1"
 ).replace(/\/+$/, "");
+const emailCaptureBaseUrl = (
+  process.env.E2E_EMAIL_CAPTURE_URL ?? "http://127.0.0.1:5700"
+).replace(/\/+$/, "");
 const totpSecret = process.env.E2E_TOTP_SECRET?.trim();
 const { Secret, TOTP } = require(path.join(backendRoot, "node_modules", "otpauth"));
 const TOTP_PERIOD_MS = 30000;
@@ -46,6 +49,62 @@ function fail(message) {
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function emailCaptureRequest(pathname, init = {}) {
+  const response = await fetch(`${emailCaptureBaseUrl}${pathname}`, {
+    ...init,
+    headers: {
+      Accept: "application/json",
+      ...(init.headers ?? {}),
+    },
+  });
+  const body = response.status === 204 ? null : await response.json().catch(() => null);
+  if (!response.ok) fail(`E2E email capture request failed with HTTP ${response.status}.`);
+  return body;
+}
+
+async function resetEmailCapture() {
+  await emailCaptureRequest("/reset", { method: "POST" });
+}
+
+async function waitForRegistrationOtp(destination) {
+  const timeoutMs = Number(process.env.E2E_REGISTRATION_OTP_TIMEOUT_MS ?? 120_000);
+  const deadline = Date.now() + (Number.isFinite(timeoutMs) ? timeoutMs : 120_000);
+  while (Date.now() < deadline) {
+    try {
+      const message = await emailCaptureRequest("/last");
+      if (
+        message?.purpose === "REGISTRATION_EMAIL_VERIFY" &&
+        message?.destination === destination &&
+        /^\d{6}$/.test(String(message.code ?? "")) &&
+        Date.parse(String(message.expiresAt ?? "")) > Date.now()
+      ) {
+        return String(message.code);
+      }
+    } catch {
+      // The local capture service may still be starting; keep polling until the deadline.
+    }
+    await delay(500);
+  }
+  fail("Registration OTP did not arrive in the local email capture service before timeout.");
+}
+
+function injectNumericCode(resourceId, code) {
+  const injected = spawnSync(
+    adbPath,
+    ["-s", deviceId, "shell", "input", "text", code],
+    { encoding: "utf8", stdio: "ignore", timeout: 5000 },
+  );
+  if (injected.status !== 0) {
+    fail(`E2E could not inject the code into ${resourceId}; the code value was not printed.`);
+  }
+  spawnSync(
+    adbPath,
+    ["-s", deviceId, "shell", "input", "keyevent", "4"],
+    { encoding: "utf8", stdio: "ignore", timeout: 5000 },
+  );
+  console.log(`E2E registration OTP injected for ${resourceId}.`);
 }
 
 function findAdb() {
@@ -301,6 +360,31 @@ function runMaestroProcess(environment, flowFile, flowEnvironment, artifactDirec
   });
 }
 
+async function runRegistrationMaestro(environment, artifactDirectory) {
+  const flowEnvironment = new Map([
+    ["APP_ID", environment.APP_ID],
+    ["REGISTRATION_FULL_NAME", environment.REGISTRATION_FULL_NAME],
+    ["REGISTRATION_EMAIL", environment.REGISTRATION_EMAIL],
+    ["REGISTRATION_PHONE", environment.REGISTRATION_PHONE],
+    ["REGISTRATION_PASSWORD", environment.REGISTRATION_PASSWORD],
+  ]);
+  const prepareFlow = path.join(maestroRoot, "critical-registration-prepare.yaml");
+  const submitFlow = path.join(maestroRoot, "critical-registration-submit.yaml");
+
+  await resetEmailCapture();
+  const prepareStatus = await runMaestroProcess(
+    environment,
+    prepareFlow,
+    flowEnvironment,
+    artifactDirectory,
+  );
+  if (prepareStatus !== 0) return prepareStatus;
+
+  const code = await waitForRegistrationOtp(environment.REGISTRATION_EMAIL);
+  injectNumericCode("register-otp", code);
+  return runMaestroProcess(environment, submitFlow, flowEnvironment, artifactDirectory);
+}
+
 async function runMaestro(environment, fixture, accountNumber, artifactDirectory) {
   const wrapper = path.join(mobileRoot, "scripts", "run-maestro.cjs");
   const dynamicStepUp = dynamicStepUpResourceId();
@@ -394,6 +478,7 @@ async function main() {
     fail("Set E2E_TOTP_SECRET to the test fixture secret; do not configure fixed OTP values.");
   }
   const suffix = randomSuffix();
+  const registrationFlow = path.basename(flowPath) === "critical-registration.yaml";
   const environment = {
     ...process.env,
     // The local Compose API uses the preview secret context.  Explicitly set
@@ -411,15 +496,26 @@ async function main() {
     E2E_RECIPIENT_EMAIL: `recipient-${suffix}@example.test`,
     E2E_RECIPIENT_PASSWORD: `Recipient${suffix}Aa1`,
     E2E_RECIPIENT_PHONE: `091${String(Number.parseInt(suffix.slice(2, 9), 16) % 10_000_000).padStart(7, "0")}`,
+    // Keep the fixture name shell-safe because the Windows Maestro wrapper
+    // forwards --env values through cmd.exe; production users can still use
+    // ordinary names containing spaces.
+    REGISTRATION_FULL_NAME: "E2E-Registration",
+    REGISTRATION_EMAIL: `registration-${suffix}@example.test`,
+    REGISTRATION_PHONE: `090${String(Number.parseInt(suffix.slice(1, 8), 16) % 10_000_000).padStart(7, "0")}`,
+    REGISTRATION_PASSWORD: `Registration${suffix}Aa1`,
     APP_ID: process.env.APP_ID ?? "com.example.digitalbanking.mobile",
   };
   apiBindingDeviceId = environment.E2E_DEVICE_ID;
   const artifactDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "banking-maestro-"));
 
   try {
-    const fixture = runSeed(environment);
-    const accountNumber = await resolveAccountNumber(environment);
-    const status = await runMaestro(environment, fixture, accountNumber, artifactDirectory);
+    const status = registrationFlow
+      ? await runRegistrationMaestro(environment, artifactDirectory)
+      : await (async () => {
+          const fixture = runSeed(environment);
+          const accountNumber = await resolveAccountNumber(environment);
+          return runMaestro(environment, fixture, accountNumber, artifactDirectory);
+        })();
     if (status !== 0) {
       fail(`Maestro E2E failed with exit code ${status}.`);
     }

@@ -6,10 +6,13 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible:
       id: login-email
-    timeout: 90000
+    timeout: 180000
 - tapOn:
     id: login-email
+- waitForAnimationToEnd:
+    timeout: 1000
 - inputText: ${TEST_EMAIL}
+- pressKey: BACK
 - scrollUntilVisible:
     element:
       id: login-password
@@ -17,6 +20,8 @@ appId: ${APP_ID}
     timeout: 10000
 - tapOn:
     id: login-password
+- waitForAnimationToEnd:
+    timeout: 1000
 - inputText: ${TEST_PASSWORD}
 - pressKey: BACK
 - tapOn:
