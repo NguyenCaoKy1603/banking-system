@@ -42,12 +42,8 @@ function getStatusLabel(status: KycStatus): string {
   }
 }
 
-function maskIdentityNumber(identityNumber: string): string {
-  if (identityNumber.length < 4) {
-    return "••••";
-  }
-
-  return `${"•".repeat(Math.max(identityNumber.length - 4, 0))}${identityNumber.slice(-4)}`;
+function maskIdentityNumberLast4(identityNumberLast4: string): string {
+  return `••••${identityNumberLast4}`;
 }
 
 const emptyErrors: KycFieldErrors = {};
@@ -65,6 +61,7 @@ export function KycScreen() {
     [deviceId, refreshAccessToken, session?.accessToken],
   );
   const [application, setApplication] = useState<KycApplication | null>(null);
+  const [identityChanged, setIdentityChanged] = useState(false);
   const [draft, setDraft] = useState<KycDraft>({
     fullName: session?.user.fullName ?? "",
     identityNumber: "",
@@ -92,11 +89,12 @@ export function KycScreen() {
       if (current) {
         setDraft({
           fullName: current.fullName,
-          identityNumber: current.identityNumber,
+          identityNumber: "",
           address: current.address,
           documentUri: current.documentUri,
           syntheticDataConfirmed: true,
         });
+        setIdentityChanged(false);
       }
     } catch (loadError) {
       setError(loadError instanceof ApiError ? loadError.message : "Không thể tải hồ sơ định danh.");
@@ -113,7 +111,12 @@ export function KycScreen() {
     setDraft((current) => ({ ...current, [field]: value }));
     setFieldErrors((current) => ({ ...current, [field]: undefined }));
     setError(undefined);
+    if (field === "identityNumber") {
+      setIdentityChanged(true);
+    }
   }, []);
+
+  const identityRequired = !application || identityChanged;
 
   const handleSubmit = useCallback(async () => {
     if (!userId) {
@@ -121,7 +124,7 @@ export function KycScreen() {
       return;
     }
 
-    const errors = validateKycDraft(draft);
+    const errors = validateKycDraft(draft, { identityRequired });
     setFieldErrors(errors);
     if (hasKycFieldErrors(errors)) {
       setError("Vui lòng kiểm tra các trường hồ sơ trước khi gửi.");
@@ -132,14 +135,18 @@ export function KycScreen() {
     setError(undefined);
 
     try {
-      const submitted = await submitKycApplication(draft, auth);
+      const submitted = await submitKycApplication(draft, auth, {
+        includeIdentityNumber: identityRequired,
+      });
       setApplication(submitted);
+      setDraft((current) => ({ ...current, identityNumber: "" }));
+      setIdentityChanged(false);
     } catch (submitError) {
       setError(submitError instanceof ApiError ? submitError.message : "Không thể gửi hồ sơ định danh. Vui lòng thử lại.");
     } finally {
       setIsSubmitting(false);
     }
-  }, [auth, draft, userId]);
+  }, [auth, draft, identityRequired, userId]);
 
   const isEditable = !application || application.status === "DRAFT" || application.status === "REJECTED" || application.status === "NEEDS_MORE_INFO";
 
@@ -173,7 +180,7 @@ export function KycScreen() {
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Số định danh</Text>
-              <Text style={styles.summaryValue}>{maskIdentityNumber(application.identityNumber)}</Text>
+              <Text style={styles.summaryValue}>{maskIdentityNumberLast4(application.identityNumberLast4)}</Text>
             </View>
             {application.rejectionReason ? (
               <Text style={styles.errorText}>{application.rejectionReason}</Text>
@@ -201,6 +208,14 @@ export function KycScreen() {
               testID="kyc-full-name"
               value={draft.fullName}
             />
+            {application ? (
+              <View style={styles.summaryRow} testID="kyc-identity-last4-summary">
+                <Text style={styles.summaryLabel}>Số định danh hiện tại</Text>
+                <Text style={styles.summaryValue}>
+                  {maskIdentityNumberLast4(application.identityNumberLast4)}
+                </Text>
+              </View>
+            ) : null}
             <TextField
               accessibilityLabel="Số định danh"
               error={fieldErrors.identityNumber}
@@ -252,12 +267,18 @@ export function KycScreen() {
               label="Lưu bản nháp"
               onPress={() => void (async () => {
                 if (!userId) { setError("Phiên đăng nhập không hợp lệ."); return; }
-                const errors = validateKycDraft(draft);
+                const errors = validateKycDraft(draft, { identityRequired });
                 setFieldErrors(errors);
                 if (hasKycFieldErrors(errors)) { setError("Vui lòng kiểm tra các trường hồ sơ trước khi lưu."); return; }
                 setIsSubmitting(true);
                 setError(undefined);
-                try { setApplication(await saveKycDraft(draft, auth)); }
+                try {
+                  setApplication(await saveKycDraft(draft, auth, {
+                    includeIdentityNumber: identityRequired,
+                  }));
+                  setDraft((current) => ({ ...current, identityNumber: "" }));
+                  setIdentityChanged(false);
+                }
                 catch (saveError) { setError(saveError instanceof ApiError ? saveError.message : "Không thể lưu bản nháp."); }
                 finally { setIsSubmitting(false); }
               })()}

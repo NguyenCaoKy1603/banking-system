@@ -10,14 +10,14 @@ export type KycApplication = {
   id: string;
   userId: string;
   fullName: string;
-  identityNumber: string;
+  identityNumberLast4: string;
   address: string;
   documentUri: string;
   status: KycStatus;
   rejectionReason: string | null;
   submittedAt: string | null;
   updatedAt: string;
-  version?: number;
+  version: number;
 };
 
 export type KycDraft = {

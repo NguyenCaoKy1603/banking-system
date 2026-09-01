@@ -2,14 +2,28 @@ import type { KycApplication, KycDraft } from "@/features/kyc/types/kyc";
 import { isKycApplicationResponse } from "@/features/kyc/validation/kycResponseValidators";
 import { requestJson, type RequestAuth } from "@/services/api/httpClient";
 
-function requireDraft(draft: KycDraft): KycDraft {
-  return {
+export type KycWriteOptions = {
+  includeIdentityNumber?: boolean;
+};
+
+type KycWriteRequest = Omit<KycDraft, "identityNumber"> & {
+  identityNumber?: string;
+};
+
+export function requireDraft(
+  draft: KycDraft,
+  options: KycWriteOptions = {},
+): KycWriteRequest {
+  const request: KycWriteRequest = {
     fullName: draft.fullName.trim(),
-    identityNumber: draft.identityNumber.trim(),
     address: draft.address.trim(),
     documentUri: draft.documentUri.trim(),
     syntheticDataConfirmed: draft.syntheticDataConfirmed,
   };
+  if (options.includeIdentityNumber !== false) {
+    request.identityNumber = draft.identityNumber.trim();
+  }
+  return request;
 }
 
 export function getKycApplication(auth: RequestAuth): Promise<KycApplication | null> {
@@ -20,18 +34,26 @@ export function getKycApplication(auth: RequestAuth): Promise<KycApplication | n
   ).then((response) => response.application);
 }
 
-export function saveKycDraft(draft: KycDraft, auth: RequestAuth): Promise<KycApplication> {
+export function saveKycDraft(
+  draft: KycDraft,
+  auth: RequestAuth,
+  options: KycWriteOptions = {},
+): Promise<KycApplication> {
   return requestJson<{ application: KycApplication }>(
     "/kyc/application",
-    { method: "POST", body: requireDraft(draft), auth },
+    { method: "POST", body: requireDraft(draft, options), auth },
     (value): value is { application: KycApplication } => isKycApplicationResponse(value) && value.application !== null,
   ).then((response) => response.application);
 }
 
-export function submitKycApplication(draft: KycDraft, auth: RequestAuth): Promise<KycApplication> {
+export function submitKycApplication(
+  draft: KycDraft,
+  auth: RequestAuth,
+  options: KycWriteOptions = {},
+): Promise<KycApplication> {
   return requestJson<{ application: KycApplication }>(
     "/kyc/application/submit",
-    { method: "POST", body: requireDraft(draft), auth },
+    { method: "POST", body: requireDraft(draft, options), auth },
     (value): value is { application: KycApplication } => isKycApplicationResponse(value) && value.application !== null,
   ).then((response) => response.application);
 }

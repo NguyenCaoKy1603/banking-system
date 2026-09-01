@@ -19,7 +19,7 @@ export type CustomerKycStatus =
 
 export type CustomerKycInput = {
   fullName: unknown;
-  identityNumber: unknown;
+  identityNumber?: unknown;
   address: unknown;
   documentUri: unknown;
   syntheticDataConfirmed: unknown;
@@ -29,7 +29,7 @@ export type CustomerKycApplication = {
   id: string;
   userId: string;
   fullName: string;
-  identityNumber: string;
+  identityNumberLast4: string;
   address: string;
   documentUri: string;
   status: CustomerKycStatus;
@@ -51,9 +51,26 @@ function textField(value: unknown, field: string, min: number, max: number): str
   return normalized;
 }
 
-function normalizeInput(input: CustomerKycInput): { fullName: string; identityNumber: string; address: string; documentUri: string; syntheticDataConfirmed: true } {
+type NormalizedKycInput = {
+  fullName: string;
+  identityNumber: string;
+  address: string;
+  documentUri: string;
+  syntheticDataConfirmed: true;
+};
+
+function hasOwnProperty(value: object, property: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, property);
+}
+
+export function normalizeInput(
+  input: CustomerKycInput,
+  existingIdentityNumber?: string,
+): NormalizedKycInput {
   const fullName = textField(input.fullName, "fullName", 2, 120);
-  const identityNumber = typeof input.identityNumber === "string" ? input.identityNumber.replace(/\s+/g, "") : "";
+  const identityNumber = hasOwnProperty(input, "identityNumber")
+    ? typeof input.identityNumber === "string" ? input.identityNumber : ""
+    : existingIdentityNumber ?? "";
   if (!/^\d{6,24}$/.test(identityNumber)) {
     throw invalidRequest("identityNumber is invalid.", { identityNumber: "identityNumber must contain between 6 and 24 digits." });
   }
@@ -62,7 +79,7 @@ function normalizeInput(input: CustomerKycInput): { fullName: string; identityNu
   // The reference app accepts synthetic fixture URIs only.  This prevents a
   // browser client from accidentally turning this endpoint into a document
   // upload/PII store before a real KYC provider and retention policy exist.
-  if (!/^(mock|synthetic):\/\//i.test(documentUri)) {
+  if (!/^(mock|synthetic):\/\//.test(documentUri)) {
     throw invalidRequest("documentUri must reference a synthetic fixture.", {
       documentUri: "Use a mock:// or synthetic:// fixture URI in this sandbox.",
     });
@@ -92,8 +109,22 @@ function payload(row: Record<string, unknown>): Record<string, string> {
   };
 }
 
-function publicApplication(row: Record<string, unknown>): CustomerKycApplication {
+const KYC_STATUSES = new Set<CustomerKycStatus>([
+  "DRAFT",
+  "SUBMITTED",
+  "UNDER_REVIEW",
+  "NEEDS_MORE_INFO",
+  "APPROVED",
+  "REJECTED",
+]);
+
+export function publicApplication(row: Record<string, unknown>): CustomerKycApplication {
   const data = payload(row);
+  const status = String(row.status);
+  const last4 = data.identityNumber.slice(-4);
+  if (!/^\d{6,24}$/.test(data.identityNumber) || !/^\d{4}$/.test(last4) || !KYC_STATUSES.has(status as CustomerKycStatus)) {
+    throw new RelationalConflictError("KYC_DATA_INVALID", "KYC application data is invalid.");
+  }
   const submitted = row.submitted_at === null || row.submitted_at === undefined
     ? null
     : new Date(String(row.submitted_at)).toISOString();
@@ -101,10 +132,10 @@ function publicApplication(row: Record<string, unknown>): CustomerKycApplication
     id: String(row.id),
     userId: String(row.customer_id),
     fullName: data.fullName,
-    identityNumber: data.identityNumber,
+    identityNumberLast4: last4,
     address: data.address,
     documentUri: data.documentUri,
-    status: String(row.status) as CustomerKycStatus,
+    status: status as CustomerKycStatus,
     rejectionReason: row.decision_reason_code ? String(row.decision_reason_code) : null,
     submittedAt: submitted,
     updatedAt: new Date(String(row.updated_at)).toISOString(),
@@ -133,13 +164,13 @@ export class RelationalKycService {
 
   async saveDraft(customerId: string, input: CustomerKycInput): Promise<CustomerKycApplication> {
     assertUuid(customerId, "customerId");
-    const normalized = normalizeInput(input);
-    const requestFingerprint = fingerprint(normalized);
     return this.unitOfWork.transaction(async ({ client }) => {
       const current = await this.lockOpen(client, customerId);
       if (current && ["SUBMITTED", "UNDER_REVIEW"].includes(String(current.status))) {
         throw conflict("KYC hồ sơ đã được gửi và đang chờ xử lý.");
       }
+      const normalized = normalizeInput(input, current ? payload(current).identityNumber : undefined);
+      const requestFingerprint = fingerprint(normalized);
       const row = current
         ? (await client.query(
           `UPDATE kyc_applications
@@ -170,10 +201,10 @@ export class RelationalKycService {
 
   async submit(customerId: string, input: CustomerKycInput): Promise<CustomerKycApplication> {
     assertUuid(customerId, "customerId");
-    const normalized = normalizeInput(input);
-    const requestFingerprint = fingerprint(normalized);
     return this.unitOfWork.transaction(async ({ client }) => {
       const current = await this.lockOpen(client, customerId);
+      const normalized = normalizeInput(input, current ? payload(current).identityNumber : undefined);
+      const requestFingerprint = fingerprint(normalized);
       if (current && ["SUBMITTED", "UNDER_REVIEW"].includes(String(current.status))) {
         // Retrying the same submit is safe and returns the already committed
         // application; a changed payload is rejected instead of silently
@@ -250,7 +281,6 @@ export class RelationalKycService {
 export function mapKycDecisionStatus(value: unknown): Extract<CustomerKycStatus, "APPROVED" | "REJECTED" | "NEEDS_MORE_INFO"> {
   const status = String(value ?? "");
   if (status === "APPROVED" || status === "REJECTED" || status === "NEEDS_MORE_INFO") return status;
-  if (status === "MORE_INFO_REQUIRED") return "NEEDS_MORE_INFO";
   throw invalidRequest("decision must be APPROVED, REJECTED or NEEDS_MORE_INFO.");
 }
 
