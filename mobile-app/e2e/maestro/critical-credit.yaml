@@ -9,6 +9,7 @@ appId: ${APP_ID}
 - tapOn:
     id: login-password
 - inputText: ${TEST_PASSWORD}
+- pressKey: BACK
 - tapOn:
     id: login-submit
 - extendedWaitUntil:
@@ -28,6 +29,11 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible:
       id: credit-card-detail
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: credit-open-transactions
+    direction: DOWN
     timeout: 10000
 - tapOn:
     id: credit-open-transactions
@@ -50,6 +56,11 @@ appId: ${APP_ID}
     timeout: 10000
 - tapOn:
     id: credit-statements-back
+- scrollUntilVisible:
+    element:
+      id: credit-open-payment
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     id: credit-open-payment
 - extendedWaitUntil:
@@ -72,8 +83,9 @@ appId: ${APP_ID}
     timeout: 10000
 - tapOn:
     id: credit-step-up-code
-- inputText: ${TRANSFER_TOTP}
-- pressKey: BACK
+- hideKeyboard
+- waitForAnimationToEnd:
+    timeout: 1000
 - tapOn:
     id: credit-submit-payment
 - extendedWaitUntil:

@@ -1,0 +1,30 @@
+appId: ${APP_ID}
+
+---
+- scrollUntilVisible:
+    element:
+      id: transfer-submit
+    direction: DOWN
+    timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 1000
+- tapOn:
+    id: transfer-submit
+- extendedWaitUntil:
+    visible:
+      id: transfer-result-status
+    timeout: 15000
+- assertVisible:
+    id: transfer-result-status
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: home-balance-card
+    timeout: 15000
+- extendedWaitUntil:
+    visible:
+      id: quick-transfer
+    timeout: 15000
+- assertVisible:
+    id: quick-transfer

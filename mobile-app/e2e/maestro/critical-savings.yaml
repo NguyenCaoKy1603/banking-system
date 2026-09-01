@@ -9,6 +9,7 @@ appId: ${APP_ID}
 - tapOn:
     id: login-password
 - inputText: ${TEST_PASSWORD}
+- hideKeyboard
 - tapOn:
     id: login-submit
 - extendedWaitUntil:
@@ -30,6 +31,9 @@ appId: ${APP_ID}
 - tapOn:
     id: savings-amount
 - inputText: ${SAVINGS_AMOUNT_MINOR}
+- hideKeyboard
+- waitForAnimationToEnd:
+    timeout: 2000
 - scrollUntilVisible:
     element:
       id: savings-create-quote
@@ -45,8 +49,9 @@ appId: ${APP_ID}
     id: savings-review-confirm
 - tapOn:
     id: savings-step-up-code
-- inputText: ${TRANSFER_TOTP}
-- pressKey: BACK
+- hideKeyboard
+- waitForAnimationToEnd:
+    timeout: 1000
 - tapOn:
     id: savings-submit
 - extendedWaitUntil:

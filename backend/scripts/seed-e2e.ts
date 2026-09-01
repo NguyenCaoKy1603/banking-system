@@ -2,6 +2,10 @@ import { randomUUID, createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { Pool, type PoolConfig } from "pg";
 import { generateTotp, KeyEncryptionKeyringAdapter } from "../src/mfa/crypto.js";
+import { calculateMinimumPayment } from "../src/credit.js";
+import { AuditRepository } from "../src/database/repositories/auditRepository.js";
+import { LedgerRepository } from "../src/database/repositories/ledgerRepository.js";
+import { OutboxRepository } from "../src/database/repositories/outboxRepository.js";
 
 const require = createRequire(import.meta.url);
 const { resolvePostgresSsl } = require("./postgres-ssl.cjs") as { resolvePostgresSsl: () => PoolConfig["ssl"] };
@@ -18,6 +22,11 @@ const registrationCode = process.env.E2E_REGISTRATION_CODE?.trim();
 const emailCaptureUrl = process.env.E2E_EMAIL_CAPTURE_URL?.trim().replace(/\/+$/, "");
 const totpSecret = process.env.E2E_TOTP_SECRET?.trim();
 const explicitTotpCode = process.env.E2E_TOTP_CODE?.trim();
+const TOTP_PERIOD_MS = 30_000;
+// Host-side E2E seed and the local API container can have a few seconds of
+// clock skew.  Generate after a safe margin inside the new 30-second step so
+// the API never sees a proof from its future.
+const TOTP_EDGE_GUARD_MS = 6_000;
 let lastTotpStep = -1;
 
 if (!password) {
@@ -173,6 +182,225 @@ async function ensureE2eTotpCredential(userEmail: string): Promise<void> {
   }
 }
 
+/**
+ * Move only the disposable E2E credit fixture to the state required by the
+ * customer activation flow. The real business flow remains four-eyes:
+ * SUBMITTED -> Admin decision -> PENDING_ACTIVATION -> customer step-up.
+ */
+async function approveE2eCreditApplication(userEmail: string, applicationId: string): Promise<void> {
+  if (process.env.E2E_CREDIT_APPROVE_FIXTURE !== "1") return;
+  if ((process.env.BANKING_ENV?.trim() || "preview") !== "preview") {
+    throw new Error("E2E_CREDIT_APPROVE_FIXTURE is allowed only for the local preview environment.");
+  }
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) throw new Error("DATABASE_URL is required to provision the E2E credit approval fixture.");
+  const pool = new Pool({ connectionString: databaseUrl, max: 1, ssl: resolvePostgresSsl() });
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const customer = await client.query<{ id: string }>("SELECT id FROM customers WHERE email = $1", [userEmail]);
+      const customerId = customer.rows[0]?.id;
+      if (!customerId) throw new Error("E2E fixture customer was not found while approving credit.");
+
+      const application = await client.query<{
+        id: string;
+        customer_id: string;
+        status: string;
+        requested_limit_minor: string;
+        version: number;
+      }>(
+        "SELECT id, customer_id, status, requested_limit_minor, version FROM credit_applications WHERE id = $1 AND customer_id = $2 FOR UPDATE",
+        [applicationId, customerId],
+      );
+      const row = application.rows[0];
+      if (!row) throw new Error("E2E credit application was not found for the fixture customer.");
+      if (row.status === "PENDING_ACTIVATION") {
+        await client.query("COMMIT");
+        return;
+      }
+      if (!["SUBMITTED", "UNDER_REVIEW"].includes(row.status)) {
+        throw new Error(`E2E credit application cannot be fixture-approved from status ${row.status}.`);
+      }
+
+      const updated = await client.query<{ version: number }>(
+        `UPDATE credit_applications
+            SET status = 'PENDING_ACTIVATION',
+                approved_limit_minor = requested_limit_minor,
+                decision_reason_code = 'E2E_FIXTURE_APPROVAL',
+                decision_at = NOW(),
+                version = version + 1,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING version`,
+        [applicationId],
+      );
+      const afterVersion = Number(updated.rows[0]?.version ?? Number(row.version) + 1);
+      const approvedLimitMinor = String(row.requested_limit_minor);
+
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "CREDIT_APPLICATION_E2E_APPROVED",
+        actorCustomerId: customerId,
+        resourceId: applicationId,
+        payload: {
+          source: "disposable_e2e_fixture",
+          status: "PENDING_ACTIVATION",
+          approvedLimitMinor,
+        },
+      });
+      await new OutboxRepository(client).append({
+        id: randomUUID(),
+        eventType: "credit.application_approved",
+        aggregateType: "credit-application",
+        aggregateId: applicationId,
+        aggregateVersion: afterVersion,
+        deduplicationKey: `e2e-credit-approval:${applicationId}`,
+        subjectCustomerIds: [customerId],
+        payload: {
+          applicationId,
+          status: "PENDING_ACTIVATION",
+          approvedLimitMinor,
+          source: "disposable_e2e_fixture",
+        },
+      });
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
+/**
+ * Create the small outstanding balance needed by the payment screen. The
+ * relational activation flow intentionally creates a clean credit account;
+ * this explicit fixture adds one synthetic purchase and its statement so the
+ * payment E2E can exercise quote -> step-up -> ledger -> outbox.
+ */
+async function seedE2eCreditStatement(userEmail: string, applicationId: string): Promise<void> {
+  if (process.env.E2E_CREDIT_APPROVE_FIXTURE !== "1") return;
+  if ((process.env.BANKING_ENV?.trim() || "preview") !== "preview") {
+    throw new Error("E2E credit statement fixtures are allowed only for the local preview environment.");
+  }
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) throw new Error("DATABASE_URL is required to provision the E2E credit statement fixture.");
+  const amount = BigInt(process.env.E2E_CREDIT_OUTSTANDING_MINOR ?? "4000000");
+  if (amount <= 0n) throw new Error("E2E_CREDIT_OUTSTANDING_MINOR must be positive.");
+  const minimum = calculateMinimumPayment(amount);
+  const pool = new Pool({ connectionString: databaseUrl, max: 1, ssl: resolvePostgresSsl() });
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const customer = await client.query<{ id: string }>("SELECT id FROM customers WHERE email = $1", [userEmail]);
+      const customerId = customer.rows[0]?.id;
+      if (!customerId) throw new Error("E2E fixture customer was not found while seeding credit statement.");
+      const application = await client.query<{ credit_account_id: string | null }>(
+        "SELECT credit_account_id FROM credit_applications WHERE id = $1 AND customer_id = $2",
+        [applicationId, customerId],
+      );
+      const creditAccountId = application.rows[0]?.credit_account_id;
+      if (!creditAccountId) throw new Error("E2E credit application has no activated credit account.");
+      const account = await client.query<{ current_cycle_start_at: string }>(
+        "SELECT current_cycle_start_at FROM credit_accounts WHERE id = $1 AND customer_id = $2 FOR UPDATE",
+        [creditAccountId, customerId],
+      );
+      const accountRow = account.rows[0];
+      if (!accountRow) throw new Error("E2E activated credit account was not found.");
+      const existing = await client.query(
+        "SELECT id FROM credit_statements WHERE credit_account_id = $1 AND remaining_amount_due_minor > 0 ORDER BY issued_at DESC, id DESC LIMIT 1",
+        [creditAccountId],
+      );
+      if (existing.rows[0]) {
+        await client.query("COMMIT");
+        return;
+      }
+
+      const now = new Date();
+      const issuedAt = now.toISOString();
+      const cycleEndAt = new Date(Date.parse(accountRow.current_cycle_start_at)).toISOString();
+      const cycleStartAt = new Date(Date.parse(cycleEndAt) - 5 * 24 * 60 * 60 * 1000).toISOString();
+      const dueAt = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000).toISOString();
+      const statementId = randomUUID();
+      const transactionId = randomUUID();
+      await client.query(
+        `INSERT INTO credit_statements
+          (id, credit_account_id, cycle_start_at, cycle_end_at, issued_at, due_at,
+           opening_balance_minor, purchase_total_minor, refund_total_minor,
+           fee_total_minor, interest_total_minor, closing_balance_minor,
+           remaining_amount_due_minor, minimum_payment_due_minor,
+           minimum_payment_remaining_minor, paid_amount_minor, status, version)
+         VALUES ($1, $2, $3, $4, $5, $6, 0, $7, 0, 0, 0, $7, $7, $8, $8, 0, 'ISSUED', 1)`,
+        [statementId, creditAccountId, cycleStartAt, cycleEndAt, issuedAt, dueAt, amount.toString(), minimum.toString()],
+      );
+      await client.query(
+        `INSERT INTO credit_transactions
+          (id, credit_account_id, statement_id, type, status, description,
+           merchant_name, amount_minor, debt_effect, occurred_at, posted_at)
+         VALUES ($1, $2, $3, 'PURCHASE', 'POSTED',
+                 'Dư nợ mua sắm fixture E2E', 'Merchant fixture E2E', $4,
+                 'INCREASE', $5, $5)`,
+        [transactionId, creditAccountId, statementId, amount.toString(), new Date(Date.parse(cycleEndAt) - 24 * 60 * 60 * 1000).toISOString()],
+      );
+      await client.query("INSERT INTO credit_statement_items (statement_id, transaction_id) VALUES ($1, $2)", [statementId, transactionId]);
+      await client.query(
+        "UPDATE credit_accounts SET posted_outstanding_minor = posted_outstanding_minor + $2, version = version + 1, updated_at = NOW() WHERE id = $1",
+        [creditAccountId, amount.toString()],
+      );
+      const journalId = randomUUID();
+      const ledger = new LedgerRepository(client);
+      await ledger.appendJournal({ id: journalId, aggregateId: statementId, journalType: "CREDIT_PURCHASE_FIXTURE", occurredAt: issuedAt });
+      await ledger.appendEntries(journalId, [
+        { lineNumber: 1, accountRef: `credit-receivable:${creditAccountId}`, side: "DEBIT", amountMinor: amount.toString(), entryId: randomUUID(), occurredAt: issuedAt },
+        { lineNumber: 2, accountRef: `e2e-credit-purchase-source:${applicationId}`, side: "CREDIT", amountMinor: amount.toString(), entryId: randomUUID(), occurredAt: issuedAt },
+      ]);
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "CREDIT_STATEMENT_E2E_SEEDED",
+        actorCustomerId: customerId,
+        resourceId: statementId,
+        occurredAt: issuedAt,
+        payload: { source: "disposable_e2e_fixture", amountMinor: amount.toString(), applicationId },
+      });
+      const notificationId = randomUUID();
+      await client.query(
+        "INSERT INTO notifications (id, customer_id, notification_type, title, body, resource_id, resource_account_id, is_read, created_at) VALUES ($1, $2, 'CREDIT', 'Sao kê thẻ tín dụng đã phát hành', 'Sao kê fixture E2E đã sẵn sàng.', $3, NULL, false, $4)",
+        [notificationId, customerId, statementId, issuedAt],
+      );
+      await new OutboxRepository(client).append({
+        id: randomUUID(),
+        eventType: "credit.statement_issued",
+        aggregateType: "credit-statement",
+        aggregateId: statementId,
+        aggregateVersion: 1,
+        deduplicationKey: `e2e-credit-statement:${statementId}`,
+        subjectCustomerIds: [customerId],
+        notificationIds: [notificationId],
+        occurredAt: issuedAt,
+        payload: {
+          statementId,
+          creditAccountId,
+          closingAmountMinor: amount.toString(),
+          source: "disposable_e2e_fixture",
+        },
+      });
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
 async function getRegistrationCode(destination: string): Promise<string> {
   if (registrationCode && /^\d{6}$/.test(registrationCode)) return registrationCode;
   if (!emailCaptureUrl) {
@@ -211,11 +439,13 @@ async function getTotpCode(): Promise<string> {
     throw new Error("E2E_TOTP_SECRET is required for production-like MFA seed; never use a fixed OTP.");
   }
   let now = Date.now();
-  let step = Math.floor(now / 30_000);
-  if (step <= lastTotpStep) {
-    await new Promise((resolve) => setTimeout(resolve, ((lastTotpStep + 1) * 30_000) - now + 250));
+  let step = Math.floor(now / TOTP_PERIOD_MS);
+  while (step <= lastTotpStep || now - step * TOTP_PERIOD_MS < TOTP_EDGE_GUARD_MS) {
+    const targetStep = Math.max(step, lastTotpStep + 1);
+    const targetAt = targetStep * TOTP_PERIOD_MS + TOTP_EDGE_GUARD_MS;
+    await new Promise((resolve) => setTimeout(resolve, Math.max(1, targetAt - now)));
     now = Date.now();
-    step = Math.floor(now / 30_000);
+    step = Math.floor(now / TOTP_PERIOD_MS);
   }
   lastTotpStep = step;
   return generateTotp(totpSecret, now);
@@ -496,6 +726,7 @@ async function main(): Promise<void> {
     ),
     "credit application",
   );
+  await approveE2eCreditApplication(email, application.applicationId);
   const creditActivationChallengeId = await createOtpChallenge(
     accessToken,
     "CARD_ACTIVATION",
@@ -516,6 +747,7 @@ async function main(): Promise<void> {
     ),
     "credit activation",
   );
+  await seedE2eCreditStatement(email, application.applicationId);
 
   const creditCards = requireBody<{
     items: Array<{ cardId: string; creditAccountId: string; lastFour: string; postedOutstanding: { amountMinor: string }; minimumPaymentRemaining: { amountMinor: string } }>;

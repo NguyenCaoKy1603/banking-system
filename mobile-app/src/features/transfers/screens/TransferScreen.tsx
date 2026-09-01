@@ -969,7 +969,7 @@ export function TransferScreen() {
         ) : (
           <View style={styles.formCard}>
             <Text style={styles.stepTitle}>Kết quả giao dịch</Text>
-            <Text style={styles.resultTitle}>
+            <Text style={styles.resultTitle} testID="transfer-result-status">
               {receipt ? getReceiptStatusLabel(receipt.status) : "Chưa có kết quả"}
             </Text>
             <Text style={styles.description}>

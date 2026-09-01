@@ -111,6 +111,7 @@ services:
       DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-3000}
       DB_IDLE_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_TRANSACTION_TIMEOUT_MS:-15000}
       DB_APPLICATION_NAME: ${DB_APPLICATION_NAME:-banking-reference-backend}
+      BANKING_STRUCTURED_LOGS: ${BANKING_STRUCTURED_LOGS:-0}
     depends_on:
       migrate:
         condition: service_completed_successfully

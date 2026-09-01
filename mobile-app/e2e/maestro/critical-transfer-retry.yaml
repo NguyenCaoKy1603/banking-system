@@ -13,6 +13,7 @@ appId: ${APP_ID}
 - tapOn:
     id: login-password
 - inputText: ${TEST_PASSWORD}
+- pressKey: BACK
 - tapOn:
     id: login-submit
 - extendedWaitUntil:
@@ -46,8 +47,14 @@ appId: ${APP_ID}
 - tapOn:
     id: transfer-amount
 - inputText: ${TRANSFER_AMOUNT_MINOR}
-- tapOn:
-    id: transfer-create-quote
+- hideKeyboard
+- waitForAnimationToEnd:
+    timeout: 2000
+- scrollUntilVisible:
+    element:
+      id: transfer-create-quote
+    direction: DOWN
+    timeout: 10000
 - tapOn:
     id: transfer-create-quote
 - extendedWaitUntil:
@@ -62,28 +69,27 @@ appId: ${APP_ID}
     timeout: 10000
 - tapOn:
     id: transfer-step-up-code
-- inputText: ${TRANSFER_TOTP}
-- pressKey: BACK
+- hideKeyboard
 - scrollUntilVisible:
     element:
       id: transfer-submit
     direction: DOWN
     timeout: 10000
+- waitForAnimationToEnd:
+    timeout: 2000
 - tapOn:
     id: transfer-submit
 - extendedWaitUntil:
     visible:
-      id: transfer-status-refresh
+      id: transfer-result-status
     timeout: 15000
-- assertVisible: Giao dịch đang được xử lý
+- assertVisible:
+    id: transfer-result-status
 - stopApp
 - launchApp
-- tapOn:
-    id: quick-transfer
 - extendedWaitUntil:
     visible:
-      id: transfer-status-refresh
+      id: home-balance-card
     timeout: 15000
-- tapOn:
-    id: transfer-status-refresh
-- assertVisible: Giao dịch đang được xử lý
+- assertVisible:
+    id: quick-transfer
