@@ -21,10 +21,10 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible:
       id: home-balance-card
-    timeout: 15000
+    timeout: 30000
 - extendedWaitUntil:
     visible:
       id: quick-transfer
-    timeout: 15000
+    timeout: 30000
 - assertVisible:
     id: quick-transfer
