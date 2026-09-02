@@ -742,3 +742,15 @@ Kết quả M01-02:
 - Trong phiên này chỉ cập nhật file `tasks/UC-M01/TASK_M01_02_DECIDE_REGISTRATION_KYC_CONTRACT.md`, gồm trạng thái và mục `Decision result` theo quyền được cấp.
 - Không stage và không commit.
 - Không ghi secret, password, OTP, proof hoặc dữ liệu người dùng thật.
+
+## 14. Owner clarification after M01-03
+
+Ngày xác nhận: 2026-09-02 (Asia/Bangkok).
+
+- M01-03 đã hoàn tất phần KYC thuộc D-05 và không làm thay đổi ownership của Registration challenge. Implementation checkpoint của M01-03 là 35da22d832676a54cd2d8598feed8e1aa5b34fe6.
+- M01-04 sở hữu Registration slice của D-05, cùng D-06, D-07, D-08, D-09, D-12 và D-13. M01-04 không sở hữu D-10, D-11, D-14 hoặc D-15.
+- Registration challenge canonical mà M01-04 phải đồng bộ là method EMAIL_OTP và purpose REGISTRATION_EMAIL_VERIFY. Registration flow không được tiếp tục chấp nhận alias hoặc method ngoài contract canonical.
+- Trước khi sửa validator dùng chung, M01-04 phải quét toàn bộ consumer và regression test của login, recovery và biometric. Nếu sửa validator dùng chung có thể ảnh hưởng các flow đó, phải dùng validator theo Registration flow hoặc dừng để xin owner quyết định; không tự thu hẹp global enum.
+- Test boundary của M01-04 là unit, contract và HTTP fake, cùng lint, typecheck, build và OpenAPI. Disposable PostgreSQL, migration, row lock, transaction, race và idempotency thật thuộc M01-07. Emulator, Maestro, restart/resume UI thuộc M01-08.
+- Với D-13, M01-04 phải loại bỏ identifier nếu không cần. Nếu retry hoặc reconcile bắt buộc phải có identifier, phải dừng và xin owner quyết định về keyed fingerprint hoặc server-side secret. Không hard-code key, không dùng EXPO_PUBLIC_* và không dùng unkeyed hash.
+- Mục này chỉ làm rõ ownership sau M01-03; không sửa lại hoặc thay thế bất kỳ canonical decision D-01 đến D-15 nào trong các mục trước.
