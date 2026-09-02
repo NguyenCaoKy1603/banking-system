@@ -7,6 +7,9 @@ import { runtimeMetadata } from "../runtimeMetadata.js";
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer, createPersistentBankingServer } from "../http.js";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY =
+  "base64:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+
 const productionEnv = (): NodeJS.ProcessEnv => ({
   NODE_ENV: "production",
   BANKING_ENV: "staging",
@@ -21,6 +24,7 @@ const productionEnv = (): NodeJS.ProcessEnv => ({
   BANKING_MFA_METHODS: "TOTP",
   BANKING_OTP_PEPPER: "base64:pepper",
   BANKING_MFA_ENCRYPTION_KEY: "base64:key",
+  REGISTRATION_FINGERPRINT_KEY: TEST_REGISTRATION_FINGERPRINT_KEY,
   BANKING_ALLOWED_ORIGINS: "https://app.staging.example.test",
   BUILD_COMMIT_SHA: "0123456789012345678901234567890123456789",
   RELEASE_ID: "release-test",
@@ -34,6 +38,9 @@ test("production-like runtime contract is strict and virtual-money only", () => 
   assert.equal(config.moneyMode, "virtual");
   assert.equal(config.isProductionLike, true);
   assert.equal(config.persistenceMode, "relational-v2");
+  assert.equal(Buffer.isBuffer(config.registrationFingerprintKey), true);
+  assert.equal(config.registrationFingerprintKey.length, 32);
+  assert.deepEqual(config.registrationFingerprintKey, Buffer.alloc(32, 1));
 
   assert.throws(
     () => readRuntimeConfig({ ...productionEnv(), BANKING_MONEY_MODE: "real" }),
@@ -123,4 +130,74 @@ test("persistent server keeps startup and version probes outside the state trans
   assert.equal(version.status, 200);
   assert.equal((await version.json()).releaseId, "persistent-probe-test");
   assert.equal(stateTransactionCalls, 0);
+});
+
+test("registration fingerprint key validation in runtimeConfig", () => {
+  // Missing key fails closed
+  assert.throws(
+    () => readRuntimeConfig({ ...productionEnv(), REGISTRATION_FINGERPRINT_KEY: undefined }),
+    /REGISTRATION_FINGERPRINT_KEY is required/,
+  );
+  assert.throws(
+    () => readRuntimeConfig({ ...productionEnv(), REGISTRATION_FINGERPRINT_KEY: "" }),
+    /REGISTRATION_FINGERPRINT_KEY is required/,
+  );
+
+  // Raw base64 without prefix fails
+  assert.throws(
+    () => readRuntimeConfig({
+      ...productionEnv(),
+      REGISTRATION_FINGERPRINT_KEY: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+    }),
+    /REGISTRATION_FINGERPRINT_KEY must start with base64:/,
+  );
+
+  // hex: prefix rejected
+  assert.throws(
+    () => readRuntimeConfig({
+      ...productionEnv(),
+      REGISTRATION_FINGERPRINT_KEY: `hex:${"01".repeat(32)}`,
+    }),
+    /REGISTRATION_FINGERPRINT_KEY must start with base64:/,
+  );
+
+  // Known deterministic placeholder rejected
+  assert.throws(
+    () => readRuntimeConfig({
+      ...productionEnv(),
+      REGISTRATION_FINGERPRINT_KEY: "change-me",
+    }),
+    /REGISTRATION_FINGERPRINT_KEY must start with base64:/,
+  );
+  assert.throws(
+    () => readRuntimeConfig({
+      ...productionEnv(),
+      REGISTRATION_FINGERPRINT_KEY: "base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    }),
+    /cannot be an all-zero key/,
+  );
+
+  // Valid canonical key returns Buffer with exact decoded bytes
+  const devEnv: NodeJS.ProcessEnv = {
+    NODE_ENV: "development",
+    BANKING_ENV: "development",
+    REGISTRATION_FINGERPRINT_KEY: "base64:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+  };
+  const devConfig = readRuntimeConfig(devEnv);
+  assert.equal(Buffer.isBuffer(devConfig.registrationFingerprintKey), true);
+  assert.equal(devConfig.registrationFingerprintKey.length, 32);
+  assert.deepEqual(devConfig.registrationFingerprintKey, Buffer.alloc(32, 1));
+
+  // Error does not echo raw key
+  const secretToHide = "SECRET_CANARY_VALUE_12345";
+  assert.throws(
+    () => readRuntimeConfig({
+      ...productionEnv(),
+      REGISTRATION_FINGERPRINT_KEY: `base64:invalid-base64-${secretToHide}`,
+    }),
+    (err: Error) => {
+      assert.equal(err.message.includes(secretToHide), false);
+      return true;
+    },
+  );
 });

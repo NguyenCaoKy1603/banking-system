@@ -6,7 +6,16 @@ import yaml from "yaml";
 
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer } from "../http.js";
-import { conflict } from "../errors.js";
+import { conflict, DomainError } from "../errors.js";
+import type { MfaChallengeResponse } from "../mfa/persistentMfaService.js";
+
+const mockMfaChallengeResponse: MfaChallengeResponse = {
+  challengeId: "mock-challenge",
+  method: "EMAIL_OTP",
+  methods: ["EMAIL_OTP"],
+  purpose: "REGISTRATION_EMAIL_VERIFY",
+  expiresAt: "2030-01-01T00:00:00.000Z",
+};
 
 async function startTestServer() {
   const system = new BankingSystem();
@@ -379,11 +388,11 @@ test("B1b RegistrationService begin tests", async (t) => {
   const device = "device";
 
   await t.test("B1 No pending -> normal begin 202", async () => {
-    const { service } = createService(async (q) => {
+    const { service, mfaService } = createService(async (q: string) => {
       if (q.includes("rate_limit_buckets")) return { rows: [{ attempts: 1 }] };
       return { rows: [] };
     });
-    await service.begin(input, device, { atomicRateLimit: async () => ({ allowed: true }), createEmailChallenge: async () => ({}) });
+    await service.begin(input, device, mfaService);
   });
 
   await t.test("B2 Active pending, both contact match -> 409", async () => {
@@ -516,17 +525,17 @@ test("B1b RegistrationService begin tests", async (t) => {
   });
 
   await t.test("B14 Existing customer -> 409 before pending lookup", async () => {
-    const { service, getQueries } = createService(async (q) => {
+    const { service, getQueries, mfaService } = createService(async (q: string) => {
       if (q.includes("rate_limit_buckets")) return { rows: [{ attempts: 1 }] };
       if (q.includes("SELECT * FROM customers")) return { rows: [{ id: "550e8400-e29b-41d4-a716-446655440000", full_name: "A", email: "a@a.com", phone_number: "123", password_salt: "s", password_digest: "d", created_at: new Date().toISOString() }] };
       return { rows: [] };
     });
-    await assert.rejects(service.begin(input, device, {}), (err) => err.message === "Registration conflict." && err.code === "CONFLICT");
+    await assert.rejects(service.begin(input, device, mfaService), (err: DomainError) => err.message === "Registration conflict." && err.code === "CONFLICT");
     assert.ok(!getQueries().some((q) => q.query.includes("SELECT id, expires_at <= NOW() AS is_expired")));
   });
 
   await t.test("B15 createEmailChallenge failure -> compensation cleanup", async () => {
-    const { service, getCompensationQueries } = createService(async (q) => {
+    const { service, getCompensationQueries } = createService(async (q: string) => {
       if (q.includes("rate_limit_buckets")) return { rows: [{ attempts: 1 }] };
       return { rows: [] };
     });
@@ -538,12 +547,12 @@ test("B1b RegistrationService begin tests", async (t) => {
   });
 
   await t.test("B16 Cleanup audit event exact eventType/resourceId/payload", async () => {
-    const { service, getQueries } = createService(async (q) => {
+    const { service, getQueries, mfaService } = createService(async (q: string) => {
       if (q.includes("rate_limit_buckets")) return { rows: [{ attempts: 1 }] };
       if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "expired-id", is_expired: true }] };
       return { rows: [] };
     });
-    await service.begin(input, device, { atomicRateLimit: async () => ({ allowed: true }), createEmailChallenge: async () => ({}) });
+    await service.begin(input, device, mfaService);
     const queries = getQueries();
     const auditQuery = queries.find((q) => q.query.includes("INSERT INTO audit_events") && q.params[1] === "REGISTRATION_PENDING_CLEANUP");
     assert.ok(auditQuery);

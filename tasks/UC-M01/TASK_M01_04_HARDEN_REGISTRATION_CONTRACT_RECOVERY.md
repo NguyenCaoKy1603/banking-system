@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — B2 PLAN APPROVED — B2A NOT STARTED
+Trạng thái: IN_PROGRESS — B2A VERIFIED — AWAITING CHECKPOINT COMMIT
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -603,10 +603,38 @@ Bàn giao bằng tiếng Việt, tối thiểu gồm:
 
 ## 17. Decision result
 
-Trạng thái thực hiện: IN_PROGRESS — B2 PLAN APPROVED — B2A NOT STARTED
+Trạng thái thực hiện: IN_PROGRESS — B2A AWAITING OWNER REVIEW
 
 Owner approval date: 2026-09-03 (Asia/Bangkok).
 Scope được phê duyệt với Checkpoint A (D-05, D-06, D-07) và Checkpoint B (D-08, D-09, D-12, D-13) cùng mandatory owner gate giữa hai checkpoint đúng như task hiện tại (xem 11.7).
+
+### B2A CHECKPOINT EVIDENCE
+
+- Baseline HEAD: `87a93d30b585d71187d701d0fb823e3e7ebe4f35`
+- Exact 6 files in allowlist:
+  1. `backend/src/runtimeConfig.ts` — MODIFY
+  2. `backend/src/security.ts` — MODIFY
+  3. `backend/.env.example` — MODIFY
+  4. `backend/src/tests/runtimeConfig.test.ts` — MODIFY
+  5. `backend/src/tests/security.test.ts` — NEW
+  6. `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md` — MODIFY
+- Behavior đã triển khai:
+  - `validateRegistrationFingerprintKey(value: string | undefined): Buffer` với kiểm tra mandatory prefix `base64:`, standard Base64 regex, canonical round-trip validation (`decoded.toString("base64") === payload`), độ dài giải mã tối thiểu 32 bytes (`Buffer.length >= 32`), loại bỏ all-zero keys, static error messages không leak secret.
+  - `computeRegistrationNetworkFingerprint(remoteAddress: string | undefined, secretKey: Buffer): string` với chuẩn hóa địa chỉ IP (trim, lowercase, `::ffff:IPv4` -> IPv4, `node:net.isIP` validation, sentinel `missing-remote-address`), HMAC-SHA-256 với prefix `registration-rate-limit:v1:`, output đúng 64 ký tự hex lowercase.
+  - `RuntimeConfig` bổ sung trường bắt buộc `registrationFingerprintKey: Buffer`. `readRuntimeConfig` fail-closed tại mọi môi trường nếu thiếu key, prefix sai, không canonical, dưới 32 bytes hoặc all-zero.
+  - `backend/.env.example` bổ sung comment hướng dẫn sinh key và placeholder cố ý không hợp lệ.
+  - Giữ nguyên hoàn toàn signature và behavior của `fingerprint()` chung dùng cho Admin/Idempotency.
+- Exact test names & counts:
+  - Targeted tests: `node --import=tsx --test src/tests/runtimeConfig.test.ts src/tests/security.test.ts`: **22 total / 22 pass / 0 fail / 0 skip**.
+    - `runtimeConfig.test.ts`: 4 tests PASS (strict contract, startup probes, persistent server probes, registration fingerprint key validation).
+    - `security.test.ts`: 18 tests PASS (T-B2-01 đến T-B2-16, regression shared fingerprint, security canary leak prevention).
+  - Full Backend suite (`npm test`): **265 total / 217 pass / 48 skip / 0 fail** (tăng 19 tests so với baseline 246 của HEAD).
+- Scope & Boundary verification:
+  - B2A mới là Security/Config Foundation, chưa thay đổi HTTP routes `/auth/register` hay Registration service runtime.
+  - Raw IP runtime chưa được loại bỏ cho đến B2B.
+  - B2B chưa bắt đầu.
+  - M01-04 chưa COMPLETED.
+  - Không stage, commit hoặc push.
 
 ### OWNER APPROVAL — B2 FINAL PLAN
 
@@ -2108,6 +2136,114 @@ git diff --check
 
 ---
 
-**Trạng thái:** IN_PROGRESS — B2 PLAN APPROVED — B2A NOT STARTED
+**Trạng thái:** IN_PROGRESS — B2A AWAITING OWNER REVIEW
 
-**B1b Backend và Mobile đã committed. Kế hoạch B2 (B2A & B2B) đã được Owner phê duyệt và sẵn sàng cho Checkpoint B2A.**
+**Checkpoint B2A đã hoàn thành và verified. Đang dừng chờ Owner review trước khi tiến hành Checkpoint B2B.**
+
+---
+
+## 22. B2A TYPECHECK GATE REMEDIATION
+
+**Date:** 2026-09-03
+**Status:** IN_PROGRESS — B2A AWAITING OWNER REVIEW
+
+### Remediation Target
+
+Typecheck gate `tsc --noEmit` revealed 9 type errors in `backend/src/tests/registrationContract.test.ts` after the B2A security/config foundation was applied. These were type-only issues in the test file — no production source, tsconfig, or test behavior was changed.
+
+### Errors Fixed (9 total)
+
+| # | Line | Error | Fix Applied |
+|---|------|-------|-------------|
+| 1 | 382 | `q` implicitly `any` | Added `: string` type annotation |
+| 2 | 386 | `Promise<{}>` not assignable to `Promise<MfaChallengeResponse>` | Used `mfaService` from `createService` instead of inline `{ createEmailChallenge: async () => ({}) }` |
+| 3 | 519 | `q` implicitly `any` | Added `: string` type annotation |
+| 4 | 524 | `{}` not assignable to `PersistentMfaService` | Used `mfaService` from `createService` instead of `{}` |
+| 5 | 524 | `err` is of type `unknown` | Added `: DomainError` type annotation |
+| 6 | 524 | `err` is of type `unknown` (second reference) | Same fix — `DomainError` type covers both `.message` and `.code` |
+| 7 | 529 | `q` implicitly `any` | Added `: string` type annotation |
+| 8 | 541 | `q` implicitly `any` | Added `: string` type annotation |
+| 9 | 546 | `Promise<{}>` not assignable to `Promise<MfaChallengeResponse>` | Used `mfaService` from `createService` instead of inline object |
+
+### Techniques Used
+
+- Imported `DomainError` from `../errors.js` and `MfaChallengeResponse` type from `../mfa/persistentMfaService.js`
+- Added `mockMfaChallengeResponse` typed constant for use in `createService` default
+- Destructured `mfaService` from `createService` return value and passed it to `service.begin()` instead of inline `{}` or inline mock objects
+- Added explicit `: string` type annotations to callback `q` parameters
+- Added explicit `: DomainError` type annotation to `assert.rejects` error callback
+
+### What Was NOT Changed
+
+- No `any`, `as any`, `as unknown as`, `@ts-ignore`, or `@ts-expect-error` used
+- No test data, behavior, ordering, or assertions modified
+- No production source files modified
+- No tsconfig changes
+- No tests skipped, deleted, or renamed
+- No fingerprint key wiring of B2B added
+
+### Quality Gates — All PASS
+
+| Gate | Result |
+|------|--------|
+| `npm run typecheck` | PASS (0 errors) |
+| `npm run build` | PASS |
+| `node --import=tsx --test src/tests/registrationContract.test.ts` | 28/28 PASS |
+| `node --import=tsx --test src/tests/runtimeConfig.test.ts src/tests/security.test.ts` | 22/22 PASS |
+| `npm test` | 217 pass, 0 fail, 48 skipped |
+| `npm run validate:openapi` | PASS |
+| `node scripts/validate-database-schema.cjs` | PASS |
+
+### WIP File Inventory (7 files)
+
+```
+M backend/.env.example
+M backend/src/runtimeConfig.ts
+M backend/src/security.ts
+M backend/src/tests/registrationContract.test.ts
+M backend/src/tests/runtimeConfig.test.ts
+M tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md
+?? backend/src/tests/security.test.ts
+```
+
+Cached area: clean. No raw environment values in task/report.
+
+---
+
+## 23. OWNER REVIEW — B2A READY FOR CHECKPOINT COMMIT
+
+**Date:** 2026-09-03
+**Decision:** APPROVED FOR STAGING
+
+### Owner Findings
+
+- Không có P0/P1.
+- P2 `assert.rejects` callback type là non-blocking; không sửa trong checkpoint này.
+- Typed mock MFA response được chấp nhận là test double đúng interface; kết quả không dùng để quyết định branch; không làm yếu assertion hoặc thay đổi behavior.
+
+### Quality Gates Verified
+
+| Gate | Result |
+|------|--------|
+| Typecheck | PASS (0 errors) |
+| Build | PASS |
+| B2A targeted (runtimeConfig + security) | 22/22 PASS |
+| Registration targeted | 28/28 PASS |
+| Full Backend | 265 total / 217 pass / 48 skip / 0 fail |
+| OpenAPI | PASS |
+| Static database schema validator | PASS |
+
+### Deferred
+
+- PostgreSQL runtime/integration verification: deferred to M01-07.
+- B2B (Runtime Wiring & Data Minimization): chưa bắt đầu.
+
+### Evidence Hygiene
+
+- Không có raw environment value trong evidence hoặc task/report.
+- Không có file B2B trong staging set.
+- `npm run validate:database` không chạy; chỉ `node scripts/validate-database-schema.cjs`.
+
+### Trạng thái task
+
+IN_PROGRESS — B2A VERIFIED — AWAITING CHECKPOINT COMMIT
