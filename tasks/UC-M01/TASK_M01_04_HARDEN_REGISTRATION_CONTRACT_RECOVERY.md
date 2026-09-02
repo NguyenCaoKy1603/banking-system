@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — B2A VERIFIED — AWAITING CHECKPOINT COMMIT
+Trạng thái: IN_PROGRESS — B2A COMMITTED — B2B NOT STARTED
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -2246,4 +2246,33 @@ Cached area: clean. No raw environment values in task/report.
 
 ### Trạng thái task
 
-IN_PROGRESS — B2A VERIFIED — AWAITING CHECKPOINT COMMIT
+IN_PROGRESS — B2A COMMITTED — B2B NOT STARTED
+
+## 24. B2A CHECKPOINT COMMIT
+
+- Implementation commit: `097987005b7079dd8b01495c3d9aa8e22596a1a8`
+- Parent: `87a93d30b585d71187d701d0fb823e3e7ebe4f35`
+- Message: `feat(security): add registration fingerprint foundation`
+- Timestamp: `2026-09-03T01:39:03+07:00`
+- Commit chứa đúng 7 file:
+  - `backend/.env.example`
+  - `backend/src/runtimeConfig.ts`
+  - `backend/src/security.ts`
+  - `backend/src/tests/registrationContract.test.ts`
+  - `backend/src/tests/runtimeConfig.test.ts`
+  - `backend/src/tests/security.test.ts`
+  - `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md`
+- Typecheck: PASS.
+- Build: PASS.
+- Registration targeted: 28/28 PASS.
+- B2A targeted: 22/22 PASS.
+- Full Backend: 265 total / 217 pass / 48 intentional skip / 0 fail.
+- OpenAPI: PASS.
+- Static database schema validator: PASS.
+- Không tuyên bố PostgreSQL runtime/integration đã được kiểm chứng.
+- PostgreSQL evidence vẫn deferred M01-07.
+- P2 `assert.rejects` là non-blocking.
+- B2B chưa bắt đầu.
+- M01-04 chưa COMPLETED.
+- Commit chỉ tồn tại local và chưa push.
+- Không ghi raw environment value.
