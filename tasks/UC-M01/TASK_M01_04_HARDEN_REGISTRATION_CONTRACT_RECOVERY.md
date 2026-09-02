@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — B1B BACKEND APPROVED — MOBILE NOT STARTED
+Trạng thái: IN_PROGRESS — B1B MOBILE VERIFIED — AWAITING CHECKPOINT COMMIT
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -603,23 +603,25 @@ Bàn giao bằng tiếng Việt, tối thiểu gồm:
 
 ## 17. Decision result
 
-Trạng thái thực hiện: IN_PROGRESS — B1B BACKEND APPROVED — MOBILE NOT STARTED
+Trạng thái thực hiện: IN_PROGRESS — B1B MOBILE VERIFIED — AWAITING CHECKPOINT COMMIT
 
-Owner approval date: 2026-09-02 (Asia/Bangkok).
+Owner approval date: 2026-09-03 (Asia/Bangkok).
 Scope được phê duyệt với Checkpoint A (D-05, D-06, D-07) và Checkpoint B (D-08, D-09, D-12, D-13) cùng mandatory owner gate giữa hai checkpoint đúng như task hiện tại (xem 11.7).
 
-**Current B1A checkpoint decision result:**
+**Current B1B Mobile checkpoint decision result:**
 
-- B1a D-08/D-09 đã đạt local/unit/HTTP fake gates.
-- Backend: 228 total / 180 pass / 0 fail / 48 skipped.
-- Mobile: 50 suites / 301 pass / 0 fail / 0 skipped.
-- Mobile E2E syntax: 19 flows.
-- Backend/Mobile OpenAPI validators: PASS.
-- PostgreSQL transaction/concurrency proof deferred M01-07.
-- Emulator/device proof deferred M01-08.
-- B1b chưa triển khai.
+- Owner đã duyệt Mobile B1b.
+- Targeted: 53/53 PASS.
+- Full Mobile: 51 suites, 345/345 PASS.
+- Lint/typecheck/OpenAPI/E2E syntax/web export: PASS.
+- Production hashes:
+  - RegisterScreen.tsx: 817afd12802dc010adb2b1e7619d7e5ff4b5c9de
+  - registrationSessionStorage.ts: f27e25adcd7496e4b71bd0d80429111d92815d28
+- PostgreSQL thật deferred M01-07.
+- Emulator/process-kill deferred M01-08.
 - B2 chưa triển khai.
 - M01-04 chưa COMPLETED.
+- Custom observable polling có timeout 2000 ms; maintainability improvement sang testing-library `waitFor` là non-blocking.
 
 ---
 
