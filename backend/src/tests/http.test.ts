@@ -25,7 +25,7 @@ async function completeRegistration(
     headers: { "X-Device-ID": deviceId },
     body: JSON.stringify({
       challengeId: challenge.challengeId,
-      method: "OTP",
+      method: "EMAIL_OTP",
       proof: otp.otp,
     }),
   });

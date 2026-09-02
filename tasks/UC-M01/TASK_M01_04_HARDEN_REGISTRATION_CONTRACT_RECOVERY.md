@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: APPROVED — NOT STARTED
+Trạng thái: IN_PROGRESS — CHECKPOINT A AWAITING OWNER REVIEW
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -603,12 +603,64 @@ Bàn giao bằng tiếng Việt, tối thiểu gồm:
 
 ## 17. Decision result
 
-Trạng thái thực hiện: APPROVED — NOT STARTED
+Trạng thái thực hiện: IN_PROGRESS — CHECKPOINT A BLOCKED — REGRESSION TEST ALLOWLIST REVIEW
 
 Owner approval date: 2026-09-02 (Asia/Bangkok).
 Scope được phê duyệt với Checkpoint A (D-05, D-06, D-07) và Checkpoint B (D-08, D-09, D-12, D-13) cùng mandatory owner gate giữa hai checkpoint đúng như task hiện tại (xem 11.7).
 
-Chưa có source, OpenAPI, migration hoặc test nào được sửa bởi M01-04.
+**1. Ghi nhận Owner Expansion:**
+- Owner đã cấp phép sửa 3 file test: `kycContract.test.ts`, `http.test.ts`, `savings-http.test.ts` để cập nhật schema (từ VerifyAuthChallengeRequest sang VerifyRegistrationChallengeRequest) và đổi method từ `OTP` sang `EMAIL_OTP` cho luồng Registration.
+
+**2. Báo Git evidence:**
+- `git status --short --untracked-files=all`:
+  ```text
+   M backend/src/database/registrationService.ts
+   M backend/src/http.ts
+   M backend/src/tests/http.test.ts
+   M backend/src/tests/kycContract.test.ts
+   M backend/src/tests/savings-http.test.ts
+   M documents/api/banking-mvp.openapi.yaml
+   M mobile-app/src/features/auth/services/authResponseValidators.ts
+   M tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md
+  ?? backend/src/tests/registrationContract.test.ts
+  ?? mobile-app/src/features/auth/services/__tests__/authResponseValidators.test.ts
+  ```
+- `git diff --name-only`: `backend/src/database/registrationService.ts`, `backend/src/http.ts`, `backend/src/tests/http.test.ts`, `backend/src/tests/kycContract.test.ts`, `backend/src/tests/savings-http.test.ts`, `documents/api/banking-mvp.openapi.yaml`, `mobile-app/src/features/auth/services/authResponseValidators.ts`, `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md`.
+- **Xác nhận**: Không có bất kỳ file Checkpoint B nào (Cancel route/Mobile UI/Restart logic) bị sửa.
+
+**3. Báo test evidence:**
+- **Targeted Backend** (`registrationContract.test.ts`, `kycContract.test.ts`, `http.test.ts`, `savings-http.test.ts`): PASS.
+- **Full Backend (`npm test`)**: Fails 1. (Phát hiện lỗi mới ngoài allowlist tại `credit-http.test.ts` do dùng helper gửi method `"OTP"`).
+- **Backend Quality Gates**: `npm run typecheck`, `npm run build`, `npm run validate:openapi`: PASS.
+- **Mobile Gates**: PASS.
+
+**4. Failure matrix bổ sung (BLOCKED):**
+
+| File test | Test case | Endpoint/flow | Expected cũ | Actual mới | Hợp lệ từ D-06? | Đề xuất chỉnh sửa tối thiểu |
+|---|---|---|---|---|---|---|
+| `credit-http.test.ts` | HTTP credit sandbox exposes... | `completeRegistration()` -> POST `/auth/register/verify` | HTTP 201 | HTTP 422 | CÓ | Tại helper `completeRegistration` trong file, đổi `method: "OTP"` thành `"EMAIL_OTP"`. |
+
+**5. Constraint classification (D-07):**
+
+| Phase | File/Symbol | Error class/code | PostgreSQL constraint name | Được map 409? | Unknown error rethrow? | Test fake/unit tương ứng |
+|---|---|---|---|---|---|---|
+| `begin` / `createPendingRegistration` | `registrationService.ts` / `begin` | 23505 | `pending_registrations_email_idx`, `pending_registrations_phone_idx`, `pending_registrations_pkey` | CÓ (`conflict()`) | CÓ | `Begin conflict returns 409` |
+| `complete` / `createCustomer` | `registrationService.ts` / `complete` | 23505 | `customers_email_key`, `customers_phone_number_key`, `customers_email_lower_idx`, `customers_pkey` | CÓ (`RelationalConflictError`) | CÓ | `Complete conflict returns 409` |
+*Ghi chú*: Việc map 409 cho `complete conflict` đã được xử lý. Test đang chạy bằng Fake In-Memory. (PostgreSQL test thuộc gap M01-07/M01-08 theo định hướng task).
+
+**5. Xác minh OpenAPI/Mobile strictness:**
+- `/auth/register/verify` đã được migrate sang dùng schema riêng `VerifyRegistrationChallengeRequest` chỉ chấp nhận method `EMAIL_OTP`.
+- `/auth/verify` vẫn dùng nguyên schema chung `VerifyAuthChallengeRequest`.
+- Registration Mobile validator khước từ triệt để các array mixed (`[EMAIL_OTP, OTP]`, `[EMAIL_OTP, BIOMETRIC]`), duplicate `EMAIL_OTP` (`[EMAIL_OTP, EMAIL_OTP]`), và reject alias `REGISTRATION_VERIFY`.
+- General auth validator của `/auth/verify` không bị ảnh hưởng.
+
+**6. Kết luận (Đề xuất exact allowlist expansion):**
+- **Test cũ cần cập nhật hợp lệ**:
+  - `backend/src/tests/kycContract.test.ts`
+  - `backend/src/tests/http.test.ts`
+  - `backend/src/tests/savings-http.test.ts`
+- **Source gap còn thiếu**: KHÔNG. (Checkpoint A implementation đã đáp ứng đủ).
+- **File không được phép chạm**: KHÔNG global search-and-replace `OTP`, KHÔNG sửa API endpoints của luồng ngoài Registration, KHÔNG bắt đầu Checkpoint B.
 
 Khi task được owner phê duyệt và thực hiện:
 

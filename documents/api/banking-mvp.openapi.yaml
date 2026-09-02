@@ -63,7 +63,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/VerifyAuthChallengeRequest'
+              $ref: '#/components/schemas/VerifyRegistrationChallengeRequest'
       responses:
         '201':
           description: User and the empty payment account are created after OTP verification.
@@ -1722,6 +1722,17 @@ components:
       properties:
         challengeId: { type: string, minLength: 1, writeOnly: true }
         method: { type: string, enum: [OTP, EMAIL_OTP, TOTP] }
+        proof: { type: string, minLength: 1, writeOnly: true }
+    VerifyRegistrationChallengeRequest:
+      type: object
+      required: [challengeId, method, proof]
+      example:
+        challengeId: challenge-example
+        method: EMAIL_OTP
+        proof: <provided-by-test-factor>
+      properties:
+        challengeId: { type: string, minLength: 1, writeOnly: true }
+        method: { type: string, enum: [EMAIL_OTP] }
         proof: { type: string, minLength: 1, writeOnly: true }
     LogoutRequest:
       type: object

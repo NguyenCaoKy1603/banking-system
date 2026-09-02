@@ -94,9 +94,9 @@ export function isRegistrationChallengeResponse(
 ): payload is AuthChallengeResponse {
   return (
     isAuthChallengeResponse(payload) &&
-    (payload.purpose === "REGISTRATION_VERIFY" ||
-      payload.purpose === "REGISTRATION_EMAIL_VERIFY") &&
-    (payload.methods.includes("OTP") || payload.methods.includes("EMAIL_OTP"))
+    payload.purpose === "REGISTRATION_EMAIL_VERIFY" &&
+    payload.methods.length === 1 &&
+    payload.methods[0] === "EMAIL_OTP"
   );
 }
 

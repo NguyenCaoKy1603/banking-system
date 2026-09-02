@@ -24,7 +24,7 @@ async function completeRegistration(
   const otp = { otp: system.readTestVerificationCode(challenge.challengeId) };
   const verified = await request("/auth/register/verify", {
     method: "POST",
-    body: JSON.stringify({ challengeId: challenge.challengeId, proof: otp.otp }),
+    body: JSON.stringify({ challengeId: challenge.challengeId, method: "EMAIL_OTP", proof: otp.otp }),
   });
   assert.equal(verified.status, 201);
   return (await verified.json()) as { user: { id: string } };

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { UnitOfWork } from "./unitOfWork.js";
+import { isUniqueViolation } from "./postgresErrors.js";
 import { RelationalConflictError, RelationalNotFoundError } from "./commandErrors.js";
 import { AccountRepository } from "./repositories/accountRepository.js";
 import { AuditRepository } from "./repositories/auditRepository.js";
@@ -57,16 +58,26 @@ export class RelationalRegistrationService {
       if (await customers.findCustomerByEmail(email) || await customers.findCustomerByPhone(phoneNumber)) {
         throw conflict("Email or phone number already exists.");
       }
-      await customers.createPendingRegistration({
-        id: pendingRegistrationId,
-        fullName,
-        email,
-        phoneNumber,
-        passwordSalt: passwordMaterial.salt,
-        passwordDigest: passwordMaterial.digest,
-        deviceId,
-        expiresAt,
-      });
+      try {
+        await customers.createPendingRegistration({
+          id: pendingRegistrationId,
+          fullName,
+          email,
+          phoneNumber,
+          passwordSalt: passwordMaterial.salt,
+          passwordDigest: passwordMaterial.digest,
+          deviceId,
+          expiresAt,
+        });
+      } catch (error: unknown) {
+        if (isUniqueViolation(error)) {
+          const constraint = (error as { constraint?: string }).constraint;
+          if (constraint === "pending_registrations_email_idx" || constraint === "pending_registrations_phone_idx") {
+            throw conflict("Email or phone number already exists.");
+          }
+        }
+        throw error;
+      }
       await new AuditRepository(client).append({
         id: randomUUID(),
         eventType: "REGISTRATION_STARTED",
@@ -160,14 +171,25 @@ export class RelationalRegistrationService {
 
       const customerId = input.customerId ?? randomUUID();
       const accountId = input.accountId ?? randomUUID();
-      const customer = await customers.createCustomer({
-        id: customerId,
-        fullName: String(pending.full_name),
-        email: String(pending.email),
-        phoneNumber: String(pending.phone_number),
-        passwordSalt: String(pending.password_salt),
-        passwordDigest: String(pending.password_digest),
-      });
+      let customer;
+      try {
+        customer = await customers.createCustomer({
+          id: customerId,
+          fullName: String(pending.full_name),
+          email: String(pending.email),
+          phoneNumber: String(pending.phone_number),
+          passwordSalt: String(pending.password_salt),
+          passwordDigest: String(pending.password_digest),
+        });
+      } catch (error: unknown) {
+        if (isUniqueViolation(error)) {
+          const constraint = (error as { constraint?: string }).constraint;
+          if (constraint === "customers_email_key" || constraint === "customers_phone_number_key" || constraint === "customers_email_lower_idx") {
+            throw new RelationalConflictError("CONFLICT", "Customer already exists.");
+          }
+        }
+        throw error;
+      }
       const account = await accounts.createForCustomer({
         id: accountId,
         customerId: customer.id,

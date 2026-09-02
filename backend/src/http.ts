@@ -815,6 +815,20 @@ export async function handleRequest(
       segments[2] === "verify"
     ) {
       const data = requireObject(body);
+      const challengeId = data.challengeId;
+      const method = data.method;
+      const proof = data.proof;
+
+      if (typeof challengeId !== "string" || challengeId.length < 1) {
+        throw invalidRequest("challengeId is required.", { challengeId: "challengeId must be a non-empty string." });
+      }
+      if (method !== "EMAIL_OTP") {
+        throw invalidRequest("method must be EMAIL_OTP for registration verification.", { method: "method must be EMAIL_OTP." });
+      }
+      if (typeof proof !== "string" || proof.length < 1) {
+        throw invalidRequest("proof is required.", { proof: "proof must be a non-empty string." });
+      }
+
       const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
         ? options.relationalHttp
         : undefined;
@@ -824,12 +838,12 @@ export async function handleRequest(
         traceId,
         relationalAuth && options.mfaService
           ? await relationalAuth.verifyRegistration(
-            data.challengeId as string,
-            data.proof as string,
+            challengeId,
+            proof,
             requireDeviceId(request),
             options.mfaService,
           )
-          : await Promise.resolve(system.verifyRegistrationChallenge(data.challengeId as string, data.proof as string, requireDeviceId(request))),
+          : await Promise.resolve(system.verifyRegistrationChallenge(challengeId, proof, requireDeviceId(request))),
       );
       return;
     }

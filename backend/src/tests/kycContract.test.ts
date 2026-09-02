@@ -347,5 +347,23 @@ test("KYC schema consumers are exhaustive and non-KYC OpenAPI paths are unchange
   ].sort();
 
   assert.deepEqual(consumers, expected);
-  assert.deepEqual(nonKycPaths(current), nonKycPaths(readOpenApiFromHead()));
+
+  const currentNonKyc = nonKycPaths(current) as Record<string, any>;
+  const baselineNonKyc = nonKycPaths(readOpenApiFromHead()) as Record<string, any>;
+
+  // explicitly assert the expected references on current
+  assert.equal(
+    currentNonKyc["/auth/register/verify"].post.requestBody.content["application/json"].schema.$ref,
+    "#/components/schemas/VerifyRegistrationChallengeRequest"
+  );
+  assert.equal(
+    currentNonKyc["/auth/verify"].post.requestBody.content["application/json"].schema.$ref,
+    "#/components/schemas/VerifyAuthChallengeRequest"
+  );
+
+  // allow Checkpoint A changes to baseline
+  baselineNonKyc["/auth/register/verify"].post.requestBody.content["application/json"].schema.$ref =
+    "#/components/schemas/VerifyRegistrationChallengeRequest";
+
+  assert.deepEqual(currentNonKyc, baselineNonKyc);
 });
