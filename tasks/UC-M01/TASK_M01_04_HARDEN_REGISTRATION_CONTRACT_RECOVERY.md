@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — B1B COMMITTED — B2 NOT IMPLEMENTED
+Trạng thái: IN_PROGRESS — B2 PLAN APPROVED — B2A NOT STARTED
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -603,10 +603,30 @@ Bàn giao bằng tiếng Việt, tối thiểu gồm:
 
 ## 17. Decision result
 
-Trạng thái thực hiện: IN_PROGRESS — B1B COMMITTED — B2 NOT IMPLEMENTED
+Trạng thái thực hiện: IN_PROGRESS — B2 PLAN APPROVED — B2A NOT STARTED
 
 Owner approval date: 2026-09-03 (Asia/Bangkok).
 Scope được phê duyệt với Checkpoint A (D-05, D-06, D-07) và Checkpoint B (D-08, D-09, D-12, D-13) cùng mandatory owner gate giữa hai checkpoint đúng như task hiện tại (xem 11.7).
+
+### OWNER APPROVAL — B2 FINAL PLAN
+
+- Approval date: 2026-09-02 (Asia/Bangkok).
+- Baseline HEAD: `4da08d21238c8b417e30fca3c8e29cd7bf0ba4c1`
+- B2 được chia bắt buộc thành:
+  - B2A — Security/config foundation.
+  - B2B — Runtime wiring/data minimization.
+- B2B chỉ được bắt đầu sau khi B2A có Owner review riêng.
+- D-B2-01 đến D-B2-09 đã được Owner phê duyệt.
+- `HttpOptions.registrationFingerprintKey: Buffer` là required.
+- Không default key, runtime fallback hoặc NODE_ENV bypass.
+- Test phải inject synthetic key rõ ràng.
+- B2A allowlist cố định 6 file.
+- B2B allowlist cố định 17 file.
+- `registrationRelational.test.ts` và PostgreSQL evidence deferred M01-07.
+- Mobile/device evidence deferred M01-08.
+- B2 chưa triển khai.
+- M01-04 chưa COMPLETED.
+- Không push.
 
 ### B1B CHECKPOINT COMMITS
 
@@ -1756,17 +1776,338 @@ User navigates to Register
 - PostgreSQL row lock behavior → M01-07
 - Cross-process SecureStore persistence → M01-08
 
-### B1B BACKEND EVIDENCE
+### B1B EVIDENCE (COMMITTED)
 
-- Baseline HEAD: 0517223db4147cac3dea67a156e76d429e28f745
-- Targeted registrationContract: 28 total / 28 pass / 0 fail / 0 skip
-- Full Backend: 246 total / 198 pass / 0 fail / 48 intentional skips
-- B1–B16 đều PASS.
+- Backend B1b Commit: `2cb1f5492503da657bfd9ad486dcd18175188a5b`
+  - Targeted registrationContract: 28 total / 28 pass / 0 fail / 0 skip
+  - Full Backend: 246 total / 198 pass / 0 fail / 48 intentional skips
+  - B1–B16 đều PASS.
+- Mobile B1b Commit: `b087cbe6161016dd242d66538a73fd0785bb301b`
+  - Targeted Mobile: 53 total / 53 pass / 0 fail
+  - Full Mobile: 51 suites / 345 pass / 0 fail
+  - S1–S16 & R1–R23 đều PASS.
+- Documentation Commit: `4da08d21238c8b417e30fca3c8e29cd7bf0ba4c1`
 - PostgreSQL thật deferred M01-07.
-- Mobile B1b chưa bắt đầu.
-- B2 chưa bắt đầu.
+- Device/emulator deferred M01-08.
+- B2 chưa triển khai.
 - M01-04 chưa COMPLETED.
 
-**Trạng thái:** IN_PROGRESS — B1B BACKEND APPROVED — MOBILE NOT STARTED
+---
 
-**Mobile B1b chưa triển khai. B2 chưa triển khai. M01-04 chưa COMPLETED.**
+## 21. B2 / D-13 REMEDIATION DESIGN (FINAL PLAN)
+
+### 21.1 Owner Decisions Đã Chốt
+
+Toàn bộ kế hoạch B2 tuân thủ 9 quyết định của Owner:
+
+1. **D-B2-01 — Missing remoteAddress**:
+   - Dùng internal sentinel duy nhất: `missing-remote-address`.
+   - Sentinel bắt buộc phải đi qua HMAC-SHA-256 cùng domain separation như địa chỉ IP thật.
+   - Tất cả các request thiếu `remoteAddress` dùng chung một bucket rate-limit (fail closed).
+   - Tuyệt đối không fallback sang `x-forwarded-for`, email hay contact info.
+   - Không bao giờ trả sentinel trong response, audit hay log.
+2. **D-B2-02 — Address normalization**:
+   - Trim whitespace.
+   - Lowercase toàn bộ IPv6.
+   - Chuẩn hóa IPv4-mapped IPv6: `::ffff:1.2.3.4` thành `1.2.3.4`.
+   - Dùng hàm chuẩn `node:net.isIP` để xác minh địa chỉ sau chuẩn hóa.
+   - Bất kỳ input nào không phải IP hợp lệ theo `isIP` sẽ được xử lý như missing remoteAddress (gán sentinel `missing-remote-address`).
+   - Không thêm bất kỳ external dependency nào để canonicalize IPv6.
+3. **D-B2-03 — HMAC output**:
+   - Hex lowercase.
+   - Đúng chính xác 64 ký tự hex.
+4. **D-B2-04 — Domain separation**:
+   - Dùng chính xác chuỗi: `registration-rate-limit:v1:`.
+   - Fingerprint input là chuỗi trên nối trực tiếp với normalized address: `registration-rate-limit:v1:${normalizedAddress}`.
+5. **D-B2-05 — Key rotation**:
+   - Chỉ hỗ trợ một current key duy nhất.
+   - Khi rotate key, các bucket cũ tự động reset.
+   - Do rate-limit window là 600 giây (10 phút), tác động tối đa của rotation được giới hạn trong 600 giây.
+   - Không thêm previous-key/keyring phức tạp trong scope M01-04.
+6. **D-B2-06 — Fail-closed & Required HttpOptions**:
+   - `REGISTRATION_FINGERPRINT_KEY` là bắt buộc tại mọi runtime startup đi qua `readRuntimeConfig`.
+   - `HttpOptions` trong `backend/src/http.ts` bắt buộc định nghĩa:
+     ```typescript
+     registrationFingerprintKey: Buffer;
+     ```
+     Tuyệt đối không dùng optional `registrationFingerprintKey?: Buffer`.
+   - Mọi server factory tạo server có Registration routes (`createBankingServer`, `createPersistentBankingServer`) bắt buộc nhận explicit `registrationFingerprintKey: Buffer`.
+   - Không default key trong factory. Không fallback theo `NODE_ENV`. Không `Buffer.alloc(...)` trong production factory.
+   - Production runtime lấy key từ `readRuntimeConfig`.
+   - Test truyền synthetic `Buffer` rõ ràng tại fixture/call site.
+7. **D-B2-07 — Audit**:
+   - Registration audit event (`REGISTRATION_STARTED`) dùng `payload: {}`.
+   - Không lưu raw IP vào audit.
+   - Không lưu keyed fingerprint vào audit vì không có consumer nghiệp vụ cần đọc.
+   - Không sửa file `AuditRepository`.
+8. **D-B2-08 — Config example**:
+   - Cập nhật `backend/.env.example` (đã xác minh file tồn tại và được Git track).
+   - Chỉ dùng placeholder cố ý không hợp lệ hoặc hướng dẫn sinh key: `# REGISTRATION_FINGERPRINT_KEY=base64:<generate-32-byte-base64-secret>`.
+   - Tuyệt đối không đưa fixed valid key vào repository.
+   - Không sửa file `.env` thật.
+9. **D-B2-09 — Function isolation**:
+   - Tạo function riêng biệt cho Registration trong `backend/src/security.ts`: `computeRegistrationNetworkFingerprint(remoteAddress: string | undefined, secretKey: Buffer): string`.
+   - Giữ nguyên signature và behavior của hàm `fingerprint(value: unknown): string` dùng chung trong `backend/src/security.ts`.
+   - Toàn bộ consumer Admin/Idempotency/Quotes ngoài Registration hoàn toàn không bị ảnh hưởng.
+
+---
+
+### 21.2 Canonical Key Format & Ownership Của Deterministic Validation
+
+#### 2.1. Contract canonical duy nhất
+```
+REGISTRATION_FINGERPRINT_KEY=base64:<standard-base64-data>
+```
+- **Prefix `base64:` là bắt buộc**: Bác bỏ raw UTF-8, bác bỏ hex, bác bỏ chuỗi base64 thiếu prefix.
+- **Strict Base64**: Bác bỏ ký tự ngoài bảng mã Standard Base64 (`A-Z, a-z, 0-9, +, /, =`), bác bỏ whitespace, newlines và padding không đúng chuẩn.
+- **Độ dài tối thiểu**: Giải mã ra tối thiểu 32 bytes (`Buffer.length >= 32`).
+- **Canonical Round-Trip**: Do `Buffer.from(..., "base64")` trong Node.js bỏ qua ký tự lỗi và không strict, parser bắt buộc phải kiểm tra round-trip: `decoded.toString("base64") === rawBase64Payload`.
+- **Hàm HMAC chỉ nhận `Buffer`**: `computeRegistrationNetworkFingerprint(remoteAddress, secretKey: Buffer)` chỉ nhận `Buffer`, không nhận `string`.
+
+#### 2.2. Exact Behavior Của `parseKey` Hiện Tại & Ownership Không Circular Dependency
+Trích xuất từ `backend/src/mfa/crypto.ts` (lines 42-53):
+```typescript
+function parseKey(value: string, name: string): Buffer {
+  const normalized = value.trim();
+  const encoded = normalized.startsWith("base64:")
+    ? Buffer.from(normalized.slice("base64:".length), "base64")
+    : normalized.startsWith("hex:")
+      ? Buffer.from(normalized.slice("hex:".length), "hex")
+      : Buffer.from(normalized, "base64");
+  if (encoded.length !== 32) {
+    throw new Error(`${name} must decode to exactly 32 bytes.`);
+  }
+  return encoded;
+}
+```
+`parseKey` không thể tái sử dụng vì: (1) chấp nhận `hex:` và base64 không prefix, (2) không kiểm tra canonical round-trip, (3) ép cứng đúng 32 bytes thay vì tối thiểu 32 bytes, (4) là private function.
+
+**Phân định ownership tránh Circular Dependency (`security.ts` vs `runtimeConfig.ts`)**:
+- **`backend/src/security.ts`**:
+  - Sở hữu hàm parse & validate key: `validateRegistrationFingerprintKey(value: string | undefined): Buffer`.
+  - Kiểm tra prefix `base64:`, regex Standard Base64, canonical round-trip, độ dài `Buffer.length >= 32`.
+  - Reject all-zero key: kiểm tra nếu toàn bộ 32+ bytes đều là `0x00` (ví dụ `decoded.every((byte) => byte === 0)`) thì throw lỗi `Insecure all-zero registration fingerprint key is forbidden.`
+  - Sở hữu hàm chuẩn hóa IP và `computeRegistrationNetworkFingerprint`.
+  - **Tuyệt đối không import `runtimeConfig.ts`**.
+- **`backend/src/runtimeConfig.ts`**:
+  - `rejectDeterministicSecrets(env)` hiện có tại dòng 53 kiểm tra danh sách placeholder cấm trong raw environment.
+  - Import `validateRegistrationFingerprintKey` từ `security.ts`.
+  - Tại `readRuntimeConfig`:
+    1. Kiểm tra raw env qua `rejectDeterministicSecrets(env)`.
+    2. Gọi `validateRegistrationFingerprintKey(env.REGISTRATION_FINGERPRINT_KEY)`.
+    3. Gán `Buffer` hợp lệ vào `RuntimeConfig.registrationFingerprintKey`.
+
+*Cập nhật T-B2-07*: Dùng chuỗi canonical base64 của buffer toàn zero dài 32 bytes: `base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=`. Test assert bị reject vì insecure all-zero key (bởi `security.ts`), không phải lỗi syntax prefix.
+
+---
+
+### 21.3 Corrected Registration Consumer Scan & Required-Key Call-Site Matrix
+
+Quét thực tế từ mã nguồn với `git grep` chứng minh các helper `completeRegistration()` và endpoint `/auth/register` xuất hiện tại nhiều file test hơn dự kiến.
+
+#### 3.1. Bảng Registration Operations & Server Factories Trong Tests
+
+| File | Registration operation thực sự gọi | Server factory | Key cần inject | Exact symbol/helper | B2B có phải sửa không |
+|---|---|---|---|---|---|
+| `backend/src/tests/credit-http.test.ts` | `/auth/register`, `/auth/register/verify` | `createBankingServer` | CÓ (synthetic `Buffer`) | `completeRegistration()` (line 9), `createBankingServer` (line 39) | **CÓ (B2B)** |
+| `backend/src/tests/http.test.ts` | `/auth/register`, `/auth/register/verify`, `/auth/register/extra` | `createBankingServer`, `createPersistentBankingServer` | CÓ (synthetic `Buffer`) | `completeRegistration()` (line 9), `createBankingServer` (10 vị trí), `createPersistentBankingServer` (line 63) | **CÓ (B2B)** |
+| `backend/src/tests/savings-http.test.ts` | `/auth/register`, `/auth/register/verify` | `createBankingServer` | CÓ (synthetic `Buffer`) | `completeRegistration()` (line 9), `createBankingServer` (line 38) | **CÓ (B2B)** |
+| `backend/src/tests/registrationContract.test.ts` | `/auth/register`, `/auth/register/verify`, `/auth/register/cancel` | `createBankingServer` | CÓ (synthetic `Buffer`) | `startTestServer()` (line 13), fetch `/auth/register*` | **CÓ (B2B)** |
+| `backend/src/tests/persistence.test.ts` | `/auth/register`, `/auth/register/verify`, `beginRegistrationAsync` | `createPersistentBankingServer` | CÓ (synthetic `Buffer`) | `createPersistentBankingServer` (lines 147, 180, 448), request `/auth/register` (lines 159, 481) | **CÓ (B2B)** |
+| `backend/src/tests/integratedDisposable.test.ts` | `/auth/register`, `/auth/register/verify` | `createPersistentBankingServer` | CÓ (synthetic `Buffer`) | `createPersistentBankingServer` (line 91), request `/auth/register` (line 142) | **CÓ (B2B)** |
+| `backend/src/tests/http-security-persistence.test.ts` | `/auth/register` | `createPersistentBankingServer` | CÓ (synthetic `Buffer`) | `createPersistentBankingServer` (line 34), request `/auth/register` (line 216) | **CÓ (B2B)** |
+| `backend/src/tests/observability.test.ts` | Không gọi trực tiếp registration | `createBankingServer` | CÓ (synthetic `Buffer`) | `createBankingServer` (line 12) (do `HttpOptions` required key) | **CÓ (B2B)** |
+| `backend/src/tests/runtimeConfig.test.ts` | Không gọi registration | `createBankingServer`, `createPersistentBankingServer` | CÓ (synthetic `Buffer`) | `createBankingServer` (line 78), `createPersistentBankingServer` (line 105) | **CÓ (B2B)** |
+| `backend/src/tests/databaseFoundation.test.ts` | Không gọi trực tiếp registration | `createPersistentBankingServer` | CÓ (synthetic `Buffer`) | `createPersistentBankingServer` (line 300) (do `HttpOptions` required key) | **CÓ (B2B)** |
+| `backend/src/tests/kycContract.test.ts` | Kiểm tra OpenAPI schema non-kyc | `createPersistentBankingServer` | CÓ (synthetic `Buffer`) | `createPersistentBankingServer` (line 265) (do `HttpOptions` required key) | **CÓ (B2B)** |
+| `backend/src/tests/relationalHttpCutover.test.ts` | Không gọi registration begin | `createPersistentBankingServer` | CÓ (synthetic `Buffer`) | `createPersistentBankingServer` (lines 31, 81, 119, 155, 205, 267) | **CÓ (B2B)** |
+| `backend/src/tests/miniCoreSandbox.test.ts` | `system.beginRegistrationAsync` | Không dùng server factory | KHÔNG | Gọi direct trên `BankingSystem` (line 202) | KHÔNG |
+| `backend/src/tests/registrationRelational.test.ts` | `registration.begin`, `resendRegistrationChallenge` | Không dùng server factory | KHÔNG | Direct service trên PostgreSQL thật | KHÔNG (M01-07 Deferred) |
+
+Do Owner chốt `HttpOptions.registrationFingerprintKey: Buffer` là **required**, toàn bộ **12 test files** khởi tạo HTTP server qua `createBankingServer` hoặc `createPersistentBankingServer` bắt buộc phải inject synthetic key và nằm trong B2B allowlist.
+
+#### 3.2. Module-Local Synthetic Fixture Trong Tests
+Trong mỗi file test cần sửa, định nghĩa synthetic fixture:
+```typescript
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.from(
+  "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+  "base64",
+);
+```
+- Độ dài đúng 32 bytes (toàn byte `0x01`), Base64 chuẩn, không phải all-zero, canonical round-trip hợp lệ.
+- Module-local, không export sang production, không đọc từ `.env`, không in ra log.
+- Exact 12 test files cần định nghĩa fixture này:
+  1. `backend/src/tests/credit-http.test.ts`
+  2. `backend/src/tests/databaseFoundation.test.ts`
+  3. `backend/src/tests/http-security-persistence.test.ts`
+  4. `backend/src/tests/http.test.ts`
+  5. `backend/src/tests/integratedDisposable.test.ts`
+  6. `backend/src/tests/kycContract.test.ts`
+  7. `backend/src/tests/observability.test.ts`
+  8. `backend/src/tests/persistence.test.ts`
+  9. `backend/src/tests/registrationContract.test.ts`
+  10. `backend/src/tests/relationalHttpCutover.test.ts`
+  11. `backend/src/tests/runtimeConfig.test.ts`
+  12. `backend/src/tests/savings-http.test.ts`
+
+---
+
+### 21.4 Bằng Chứng An Toàn & Quyết Định Cho RelationalHttpBoundary
+
+#### 4.1. Bằng chứng an toàn cho `BankingSystem` và `PersistentMfaService`
+- **Nơi chuyển đổi raw IP thành opaque fingerprint**: Tại `backend/src/http.ts` ngay khi nhận request.
+- **`backend/src/bankingSystem.ts`**: Nhận `rateLimitKey?: string` (giá trị đã là `keyedFingerprint`). Không parse IP, không log audit. Không có raw IP chạm tới `bankingSystem.ts`. Không cần sửa.
+- **`backend/src/mfa/persistentMfaService.ts`**: Nhận `networkFingerprint` (giá trị đã là `keyedFingerprint`). Tại dòng 396, việc băm thêm một lần SHA-256 (`createdIpFingerprint = sha256(keyedFingerprint)`) là an toàn, bảo toàn tính đơn ánh và không làm lộ IP gốc. Không cần sửa.
+
+#### 4.2. Quyết định cho `backend/src/database/relationalHttpBoundary.ts` (Chọn Option B)
+Giữ file trong B2B allowlist (MODIFY) để đồng bộ domain type rõ ràng:
+- **Before Signature** (`backend/src/database/relationalHttpBoundary.ts:187`):
+  ```typescript
+  beginRegistration(
+    input: RegistrationBeginInput,
+    deviceId: string,
+    mfaService: PersistentMfaService,
+    rateLimitKey?: string,
+  ): Promise<MfaChallengeResponse>
+  ```
+- **After Signature**:
+  ```typescript
+  beginRegistration(
+    input: RegistrationBeginInput,
+    deviceId: string,
+    mfaService: PersistentMfaService,
+    networkFingerprint: string,
+  ): Promise<MfaChallengeResponse>
+  ```
+- **Lý do**: Thể hiện đúng contract rằng tham số này là bắt buộc (`required string`) và là một `networkFingerprint` đã được HMAC, ngăn chặn caller vô tình truyền raw IP `rateLimitKey`.
+- **Test chứng minh**: `backend/src/tests/registrationContract.test.ts` và `backend/src/tests/http.test.ts`.
+
+---
+
+### 21.5 Chia Tách Implementation Thành Hai Checkpoint (B2A & B2B)
+
+#### Checkpoint B2A — Security/Config Foundation
+*Mục tiêu*: Xây dựng nền tảng crypto và config validation nghiêm ngặt, không thay đổi runtime request behavior của Registration. Chưa loại bỏ raw IP khỏi runtime và chưa tuyên bố hoàn tất D-13.
+*Nội dung công việc*:
+1. Thêm `validateRegistrationFingerprintKey(value: string | undefined): Buffer` và `computeRegistrationNetworkFingerprint(remoteAddress: string | undefined, secretKey: Buffer): string` vào `backend/src/security.ts`.
+2. Cập nhật `readRuntimeConfig` trong `backend/src/runtimeConfig.ts` để bắt buộc validate `REGISTRATION_FINGERPRINT_KEY`.
+3. Cập nhật `backend/.env.example` với placeholder và hướng dẫn sinh key.
+4. Bổ sung unit tests cho runtimeConfig trong `backend/src/tests/runtimeConfig.test.ts`.
+5. Tạo mới test suite `backend/src/tests/security.test.ts` kiểm thử toàn diện strict base64, domain separation, normalization và HMAC output.
+*Quality Gate B2A*:
+```powershell
+cd backend
+npm run typecheck
+npm run build
+node --import=tsx --test src/tests/runtimeConfig.test.ts src/tests/security.test.ts
+npm test
+npm run validate:openapi
+npm run validate:database
+cd ..
+git diff --check
+```
+- Baseline trước B2A: **246 total / 198 PASS / 48 SKIP / 0 FAIL**.
+- Sau khi thêm tests mới, total sẽ tăng. Yêu cầu mọi discovered test PASS, 0 FAIL, giải thích skips nếu có và báo actual count.
+- Dừng lại bàn giao và chờ Owner review trước khi bắt đầu B2B.
+
+#### Checkpoint B2B — Runtime Wiring và Data Minimization
+*Mục tiêu*: Chỉ thực hiện sau Owner GO riêng. Nối runtime config xuống HTTP và Registration service, thực hiện triệt để data minimization (bỏ XFF, bỏ audit IP, enforce 5/600s, required key trong HttpOptions).
+*Nội dung công việc*:
+1. Cập nhật `HttpOptions` trong `backend/src/http.ts` thành `registrationFingerprintKey: Buffer` (required). Cập nhật route `/auth/register` và `/auth/otp/challenges/:id/resend` để đọc socket `remoteAddress`, tính keyed fingerprint.
+2. Cập nhật `backend/src/server.ts` truyền key từ `runtimeConfig` vào `httpOptions`.
+3. Cập nhật `backend/src/database/relationalHttpBoundary.ts` đổi signature `beginRegistration`.
+4. Cập nhật `backend/src/database/registrationService.ts`: gỡ bỏ `rateLimitKey` khỏi `audit.append` payload (`payload: {}`), dùng `networkFingerprint` làm bucket key.
+5. Cập nhật synthetic key fixture tại toàn bộ 12 test files HTTP.
+*Quality Gate B2B*:
+```powershell
+cd backend
+npm run typecheck
+npm run build
+node --import=tsx --test src/tests/registrationContract.test.ts src/tests/http.test.ts src/tests/credit-http.test.ts src/tests/savings-http.test.ts src/tests/runtimeConfig.test.ts src/tests/security.test.ts
+npm test
+npm run validate:openapi
+cd ..
+git diff --check
+```
+- Báo cáo actual discovered/pass/fail/skip. Không xóa test cũ để giữ số 246.
+- Scan body/error/logs đảm bảo không rò rỉ secret hay raw IP.
+
+---
+
+### 21.6 Exact Allowlist Từng Checkpoint
+
+#### Allowlist Checkpoint B2A (Security & Config Foundation):
+1. `backend/src/runtimeConfig.ts` — **MODIFY** (`readRuntimeConfig`, `RuntimeConfig` type)
+2. `backend/src/security.ts` — **MODIFY** (`validateRegistrationFingerprintKey`, `computeRegistrationNetworkFingerprint`)
+3. `backend/.env.example` — **MODIFY** (thêm placeholder hướng dẫn)
+4. `backend/src/tests/runtimeConfig.test.ts` — **MODIFY** (test fail closed, synthetic key trong `productionEnv`)
+5. `backend/src/tests/security.test.ts` — **NEW** (unit tests cho crypto, canonical base64, domain separation)
+6. `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md` — **MODIFY** (cập nhật evidence B2A)
+
+#### Allowlist Checkpoint B2B (Runtime Wiring & Data Minimization):
+1. `backend/src/http.ts` — **MODIFY** (`HttpOptions.registrationFingerprintKey: Buffer`, registration routes)
+2. `backend/src/server.ts` — **MODIFY** (wiring key vào `createPersistentBankingServer`)
+3. `backend/src/database/relationalHttpBoundary.ts` — **MODIFY** (đổi signature `beginRegistration`)
+4. `backend/src/database/registrationService.ts` — **MODIFY** (audit payload `{}`, bucket key)
+5. `backend/src/tests/credit-http.test.ts` — **MODIFY** (synthetic key fixture)
+6. `backend/src/tests/databaseFoundation.test.ts` — **MODIFY** (synthetic key fixture)
+7. `backend/src/tests/http-security-persistence.test.ts` — **MODIFY** (synthetic key fixture)
+8. `backend/src/tests/http.test.ts` — **MODIFY** (synthetic key fixture)
+9. `backend/src/tests/integratedDisposable.test.ts` — **MODIFY** (synthetic key fixture)
+10. `backend/src/tests/kycContract.test.ts` — **MODIFY** (synthetic key fixture)
+11. `backend/src/tests/observability.test.ts` — **MODIFY** (synthetic key fixture)
+12. `backend/src/tests/persistence.test.ts` — **MODIFY** (synthetic key fixture)
+13. `backend/src/tests/registrationContract.test.ts` — **MODIFY** (synthetic key fixture, contract tests XFF, threshold, audit)
+14. `backend/src/tests/relationalHttpCutover.test.ts` — **MODIFY** (synthetic key fixture)
+15. `backend/src/tests/runtimeConfig.test.ts` — **MODIFY** (synthetic key fixture tại server call sites)
+16. `backend/src/tests/savings-http.test.ts` — **MODIFY** (synthetic key fixture)
+17. `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md` — **MODIFY** (cập nhật evidence B2B)
+
+#### Deferred Matrix (KHÔNG SỬA TRONG B2):
+1. `backend/src/tests/registrationRelational.test.ts`: Integration test yêu cầu PostgreSQL thật (`RELATIONAL_DATABASE_URL`). Hoãn bằng chứng sang **M01-07**.
+2. PostgreSQL row-lock & transaction concurrency proof: Hoãn sang **M01-07**.
+3. Device / Android Emulator / Process-kill persistence proof: Hoãn sang **M01-08**.
+
+#### File TUYỆT ĐỐI CẤM SỬA:
+- Toàn bộ `mobile-app/**` (Không có thay đổi Mobile trong B2).
+- Toàn bộ `backend/database/**` (Không có migration schema trong B2).
+- `backend/src/database/repositories/auditRepository.ts` (Caller gỡ payload, không sửa repository).
+- `documents/api/**` (Contract HTTP công khai không đổi).
+- `package.json`, `package-lock.json` (Không thêm dependency).
+- Bất kỳ file `.env` thật nào.
+
+---
+
+### 21.7 Test Matrix B2 (23 Test Cases)
+
+| Mã test | Checkpoint | Mô tả kịch bản test | Tầng kiểm thử | Kết quả mong đợi |
+|---|---|---|---|---|
+| T-B2-01 | B2A | Key thiếu prefix `base64:` (ví dụ raw string, hex) | Unit (`security.test.ts`) | Ném lỗi `REGISTRATION_FINGERPRINT_KEY must start with base64:` |
+| T-B2-02 | B2A | Key không phải base64 hợp lệ (chứa ký tự lạ) | Unit (`security.test.ts`) | Ném lỗi `must be valid standard Base64` |
+| T-B2-03 | B2A | Key có padding base64 sai hoặc không chuẩn canonical | Unit (`security.test.ts`) | Ném lỗi `canonical round-trip failed` |
+| T-B2-04 | B2A | Key giải mã ra 31 bytes (thiếu độ dài) | Unit (`security.test.ts`) | Ném lỗi `must decode to at least 32 bytes` |
+| T-B2-05 | B2A | Key giải mã ra đúng 32 bytes | Unit (`security.test.ts`) | Giải mã thành công trả về `Buffer` 32 bytes |
+| T-B2-06 | B2A | Key giải mã ra > 32 bytes (ví dụ 64 bytes) | Unit (`security.test.ts`) | Giải mã thành công trả về `Buffer` tương ứng |
+| T-B2-07 | B2A | Key là canonical all-zero placeholder (`base64:AAAA...`) | Unit (`security.test.ts`) | Ném lỗi cấm insecure all-zero key |
+| T-B2-08 | B2A | Thiếu key tại startup `readRuntimeConfig` | Unit (`runtimeConfig.test.ts`) | Ném lỗi fail closed tại mọi runtime |
+| T-B2-09 | B2A | Hàm HMAC nhận `Buffer` hợp lệ | Unit (`security.test.ts`) | Trả về chuỗi hex lowercase đúng 64 ký tự |
+| T-B2-10 | B2A | Cùng key + cùng IP -> cùng fingerprint | Unit (`security.test.ts`) | Hai lần tính trả về cùng chuỗi 64 ký tự hex |
+| T-B2-11 | B2A | Khác IP -> khác fingerprint | Unit (`security.test.ts`) | Hai IP khác nhau tạo hai fingerprint khác nhau |
+| T-B2-12 | B2A | Khác secret key -> khác fingerprint | Unit (`security.test.ts`) | Cùng IP nhưng khác key tạo hai fingerprint khác nhau |
+| T-B2-13 | B2A | Chuẩn hóa IPv4-mapped IPv6 (`::ffff:1.2.3.4` vs `1.2.3.4`) | Unit (`security.test.ts`) | Trả về cùng một fingerprint giống hệt nhau |
+| T-B2-14 | B2A | Chuẩn hóa IPv6 text (chữ hoa vs chữ thường) | Unit (`security.test.ts`) | Trả về cùng một fingerprint |
+| T-B2-15 | B2A | Input IP không hợp lệ hoặc malformed | Unit (`security.test.ts`) | Rơi vào sentinel `missing-remote-address` |
+| T-B2-16 | B2A | Missing remoteAddress (`undefined`, empty) | Unit (`security.test.ts`) | Rơi vào sentinel `missing-remote-address` |
+| T-B2-17 | B2B | Header `x-forwarded-for` bị bỏ qua hoàn toàn | Contract (`registrationContract.test.ts`) | Gửi XFF giả mạo không đổi rate limit bucket |
+| T-B2-18 | B2B | Chỉ `socket.remoteAddress` được sử dụng | Contract (`registrationContract.test.ts`) | Rate limit gắn chặt vào socket connection |
+| T-B2-19 | B2B | Rate limit threshold giữ nguyên (quá 5 lần -> 429) | Contract (`registrationContract.test.ts`) | Lần thứ 6 từ cùng IP trả về 429 Too Many Requests |
+| T-B2-20 | B2B | Audit event payload chính xác `{}` | Contract (`registrationContract.test.ts`) | Verify payload không có `rateLimitKey` hay raw IP |
+| T-B2-21 | B2B | Không leak raw IP hay secret vào error/log/response | Contract (`registrationContract.test.ts`) | Scan response body & error không có secret hay IP |
+| T-B2-22 | B2B | Registration resend route dùng keyed fingerprint | Contract (`registrationContract.test.ts`) | Resend request áp dụng cùng cơ chế bảo vệ |
+| T-B2-23 | B2B | Các consumer ngoài Registration không bị ảnh hưởng | Full backend suite | Toàn bộ các test Admin, KYC, Transfers PASS |
+
+---
+
+**Trạng thái:** IN_PROGRESS — B2 PLAN APPROVED — B2A NOT STARTED
+
+**B1b Backend và Mobile đã committed. Kế hoạch B2 (B2A & B2B) đã được Owner phê duyệt và sẵn sàng cho Checkpoint B2A.**
