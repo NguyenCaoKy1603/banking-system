@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — B1B MOBILE VERIFIED — AWAITING CHECKPOINT COMMIT
+Trạng thái: IN_PROGRESS — B1B COMMITTED — B2 NOT IMPLEMENTED
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -603,25 +603,59 @@ Bàn giao bằng tiếng Việt, tối thiểu gồm:
 
 ## 17. Decision result
 
-Trạng thái thực hiện: IN_PROGRESS — B1B MOBILE VERIFIED — AWAITING CHECKPOINT COMMIT
+Trạng thái thực hiện: IN_PROGRESS — B1B COMMITTED — B2 NOT IMPLEMENTED
 
 Owner approval date: 2026-09-03 (Asia/Bangkok).
 Scope được phê duyệt với Checkpoint A (D-05, D-06, D-07) và Checkpoint B (D-08, D-09, D-12, D-13) cùng mandatory owner gate giữa hai checkpoint đúng như task hiện tại (xem 11.7).
 
-**Current B1B Mobile checkpoint decision result:**
+### B1B CHECKPOINT COMMITS
 
-- Owner đã duyệt Mobile B1b.
-- Targeted: 53/53 PASS.
-- Full Mobile: 51 suites, 345/345 PASS.
-- Lint/typecheck/OpenAPI/E2E syntax/web export: PASS.
-- Production hashes:
-  - RegisterScreen.tsx: 817afd12802dc010adb2b1e7619d7e5ff4b5c9de
-  - registrationSessionStorage.ts: f27e25adcd7496e4b71bd0d80429111d92815d28
-- PostgreSQL thật deferred M01-07.
-- Emulator/process-kill deferred M01-08.
-- B2 chưa triển khai.
+Backend B1b:
+
+- Commit:
+  2cb1f5492503da657bfd9ad486dcd18175188a5b
+- Parent:
+  0517223db4147cac3dea67a156e76d429e28f745
+- Message:
+  fix(registration): recover expired pending registrations
+- Targeted Backend:
+  28/28 PASS
+- Full Backend:
+  246 total / 198 PASS / 0 FAIL / 48 intentional SKIP
+- B1–B16:
+  PASS
+
+Mobile B1b:
+
+- Commit:
+  b087cbe6161016dd242d66538a73fd0785bb301b
+- Parent:
+  2cb1f5492503da657bfd9ad486dcd18175188a5b
+- Message:
+  feat(registration): persist mobile recovery state
+- Timestamp:
+  Thu Sep 3 00:15:00 2026 +0700
+- Targeted Mobile:
+  53/53 PASS
+- Full Mobile:
+  51 suites / 345 PASS / 0 FAIL
+- Lint, typecheck, OpenAPI validation, E2E syntax 19 flows và web export:
+  PASS
+
+1. mobile-app/src/features/auth/screens/RegisterScreen.tsx
+2. mobile-app/src/features/auth/screens/__tests__/RegisterScreen.test.tsx
+3. mobile-app/src/features/auth/storage/registrationSessionStorage.ts
+4. mobile-app/src/features/auth/storage/__tests__/registrationSessionStorage.test.ts
+5. tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md
+
+- Backend và Mobile B1b đã committed local.
+- Không push.
+- PostgreSQL row-lock/concurrency proof deferred M01-07.
+- Emulator/process-kill/SecureStore device proof deferred M01-08.
+- B2/D-13 chưa triển khai.
 - M01-04 chưa COMPLETED.
-- Custom observable polling có timeout 2000 ms; maintainability improvement sang testing-library `waitFor` là non-blocking.
+- Không biến unit/Jest evidence thành device hoặc PostgreSQL evidence.
+- Giữ nguyên lịch sử Checkpoint A và B1a.
 
 ---
 
