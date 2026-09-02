@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — B1A COMMITTED — B1B/B2 NOT IMPLEMENTED
+Trạng thái: IN_PROGRESS — B1B APPROVED — NOT STARTED
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -891,3 +891,835 @@ Staging plan được owner duyệt, chưa thực hiện: chỉ stage đúng 14 
 12. `mobile-app/src/features/auth/services/authApi.ts`
 13. `mobile-app/src/features/auth/services/__tests__/authApi.test.ts`
 14. `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md`
+
+
+
+
+
+
+
+
+
+## 20. CHECKPOINT B1B — FINAL IMPLEMENTATION PLAN (OWNER AUTHORIZATION + AMENDMENTS + MOBILE SYNC 2026-09-02)
+
+### 20.0 Owner Decisions Finalized
+
+**Confirmed from prior sessions:**
+1. Manual retry + Backend cleanup expired pending.
+2. `CustomerRepository.findAndLockPendingByContact()` và `MfaRepository` helper cancel challenge theo `pending_registration_id`.
+3. SecureStore cho phase và challenge metadata không nhạy cảm.
+4. Fail-closed: không ghi BEGIN_UNKNOWN → không gửi request.
+5. PostgreSQL concurrency proof → M01-07; emulator restart proof → M01-08.
+
+**Additional owner decisions (final amendment):**
+
+6. **Challenge status policy khi cleanup expired pending:**
+   - `PENDING_DELIVERY` và `ACTIVE`: chuyển `CANCELLED` đồng thời unlink `pending_registration_id`.
+   - `VERIFIED`, `CONSUMED`, `EXPIRED`, `LOCKED`, `CANCELLED`, `DELIVERY_FAILED`: giữ nguyên status terminal, chỉ unlink `pending_registration_id`.
+   - Completion check bắt buộc chạy trước mọi mutation.
+
+7. **Contact matching policy:**
+   - Một row active (dù khớp email, phone hoặc cả hai): trả 409, không mutation.
+   - Một row expired (dù khớp email, phone hoặc cả hai): check completion → cleanup nếu safe + tạo pending mới.
+   - Hai row trở lên (email khớp row A, phone khớp row B): trả 409, không mutation.
+
+8. **Storage load discriminated result:**
+   - `{ kind: "EMPTY" }` — không có session.
+   - `{ kind: "VALID", session: RegistrationSessionV1 }` — session hợp lệ.
+   - `{ kind: "CORRUPT" }` — JSON parse fail hoặc invalid schema/version.
+   - SecureStore read error propagate → UI chuyển `RECOVERY_BLOCKED`.
+
+9. **Audit cleanup record:**
+   - `eventType: "REGISTRATION_PENDING_CLEANUP"`
+   - `resourceId: <opaque pendingRegistrationId>`
+   - `payload: {}`
+   - Không có contact/IP/fingerprint/challengeId/secret.
+   - Structured audit record, không phải application INFO log.
+
+**Additional owner decisions (mobile lifecycle sync):**
+
+10. **RegistrationSessionV1 methods field:**
+    - Phải dùng `methods: ["EMAIL_OTP"]` — array, khớp với `AuthChallengeResponse.methods`.
+    - **Không dùng singular `method` field** trong storage schema.
+    - Runtime validator bắt buộc: `Array.isArray(methods) && methods.length === 1 && methods[0] === "EMAIL_OTP"`.
+    - Validator phải reject: singular `method`, methods rỗng, methods chứa OTP/TOTP/BIOMETRIC, methods mixed/duplicate.
+
+11. **Initial begin 202 persist:**
+    - Persist `challengeId`, `methods`, `purpose`, `expiresAt`, `resendAfter` — toàn bộ canonical challenge metadata.
+
+12. **Registration resend lifecycle:**
+    - Inventory: `RegisterScreen.handleResendRegistrationChallenge` gọi `resendRegistrationChallenge(challengeId)` qua `useAuth()` → `AuthContext.resendRegistrationChallenge` → `authApi.resendRegistrationChallengeRequest` → `POST /auth/challenges/{challengeId}/resend` → trả `AuthChallengeResponse`.
+    - Sau resend thành công, **luôn cập nhật SecureStore** bằng challenge metadata mới nhất (kể cả khi `challengeId` giữ nguyên, `resendAfter`/`expiresAt` đã thay đổi).
+    - Nếu persist sau resend thất bại: giữ response mới nhất trong memory (`registrationChallenge` React state); không resend/begin tự động; không tuyên bố durable state đã được cập nhật.
+    - Không sửa `AuthContext`/`authApi` vì chúng ngoài allowlist.
+
+13. **Registration verify/complete lifecycle:**
+    - Verify thất bại: giữ nguyên `CHALLENGE_RECEIVED` storage, giữ `registrationChallenge` React state.
+    - Verify/complete thành công: gọi `clearRegistrationSession()`.
+    - Nếu clear thành công: tiếp tục success navigation hiện có (Alert → `/login`).
+    - Nếu clear thất bại: **không gọi verify lần hai; không biến server success thành failure**; ghi nhận stale local marker bằng thông báo không nhạy cảm; tiếp tục success navigation. Session stale được xử lý khi RegisterScreen được mở lại.
+
+14. **Wiring policy:**
+    - B1b tiếp tục dùng wiring hiện có: `RegisterScreen → useAuth() → AuthContext → authApi`.
+    - `RegisterScreen` không gọi `authApi` trực tiếp.
+
+### 20.1 Database/Source-of-Truth Inventory
+
+**Schema evidence — trích từ migration files:**
+
+**Migration 007** (`backend/database/007_identity_runtime_normalization.sql`):
+
+```sql
+CREATE TABLE IF NOT EXISTS pending_registrations (
+  id text PRIMARY KEY,
+  full_name text NOT NULL,
+  email text NOT NULL,
+  phone_number text NOT NULL,
+  password_salt text NOT NULL,
+  password_digest text NOT NULL,
+  device_id text NOT NULL,
+  challenge_id text,
+  expires_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS pending_registrations_email_idx
+  ON pending_registrations (lower(email));
+
+CREATE UNIQUE INDEX IF NOT EXISTS pending_registrations_phone_idx
+  ON pending_registrations (phone_number);
+```
+
+**Migration 015** (`backend/database/015_auth_challenge_hardening.sql`):
+
+```sql
+ALTER TABLE auth_challenges
+  ADD COLUMN IF NOT EXISTS pending_registration_id text REFERENCES pending_registrations (id),
+  ...
+```
+
+**FK constraint exact DDL:**
+`pending_registration_id text REFERENCES pending_registrations (id)` — **không có mệnh đề ON DELETE**.
+
+PostgreSQL mặc định: `ON DELETE NO ACTION` (không phải DEFERRABLE). Nếu DELETE `pending_registrations` row khi còn `auth_challenges` row có `pending_registration_id` trỏ vào, PostgreSQL sẽ lỗi **ngay lập tức** (không phải deferred-until-commit). Để xóa pending an toàn, phải unlink FK trước (set `pending_registration_id = NULL`) trong cùng transaction.
+
+**Migration 011** (`backend/database/011_registration_recovery.sql`):
+
+```sql
+CREATE TABLE IF NOT EXISTS registration_completions (
+  pending_registration_id text PRIMARY KEY,
+  customer_id uuid NOT NULL UNIQUE REFERENCES customers (id),
+  account_id uuid NOT NULL UNIQUE REFERENCES payment_accounts (id),
+  created_at timestamptz NOT NULL DEFAULT NOW()
+);
+```
+
+**Xác nhận:** `registration_completions.pending_registration_id` là `text PRIMARY KEY` — **KHÔNG phải FK tới `pending_registrations`**. Không có mệnh đề `REFERENCES`. Delete `pending_registrations` row không bị chặn bởi `registration_completions` table. `registration_completions` chỉ dùng để tra cứu xem pending đã completed hay chưa, không ràng buộc referential integrity với `pending_registrations`.
+
+**Quan hệ:**
+- `auth_challenges.pending_registration_id REFERENCES pending_registrations(id)` — FK có ràng buộc.
+- Một `pending_registrations` row có thể có nhiều `auth_challenges` row (resend tạo nhiều challenge).
+- Để xóa `pending_registrations` row: phải unlink tất cả `auth_challenges` trỏ vào nó trước.
+
+**Chính sách cleanup challenge khi xóa expired pending (owner decision 6):**
+
+| Challenge status | Hành động | Lý do |
+|---|---|---|
+| PENDING_DELIVERY | `status = 'CANCELLED'`, `cancelled_at = NOW()`, `pending_registration_id = NULL`, `updated_at = NOW()` | Active delivery — terminate |
+| ACTIVE | `status = 'CANCELLED'`, `cancelled_at = NOW()`, `pending_registration_id = NULL`, `updated_at = NOW()` | Active — terminate |
+| VERIFIED | `pending_registration_id = NULL`, `updated_at = NOW()` — **không đổi status** | Verified là terminal, giữ nguyên |
+| CONSUMED | `pending_registration_id = NULL`, `updated_at = NOW()` — **không đổi status** | Terminal, giữ nguyên |
+| EXPIRED | `pending_registration_id = NULL`, `updated_at = NOW()` — **không đổi status** | Terminal, giữ nguyên |
+| LOCKED | `pending_registration_id = NULL`, `updated_at = NOW()` — **không đổi status** | Terminal (locked vì attempts), giữ nguyên |
+| CANCELLED | `pending_registration_id = NULL`, `updated_at = NOW()` — **không đổi status** | Đã terminal, giữ nguyên |
+| DELIVERY_FAILED | `pending_registration_id = NULL`, `updated_at = NOW()` — **không đổi status** | Terminal failure, giữ nguyên |
+
+**Canonical unlink queries trong `cancelChallengesByPendingRegistration`:**
+
+```sql
+-- Query 1: Cancel active challenges and unlink
+UPDATE auth_challenges
+SET status = 'CANCELLED',
+    cancelled_at = NOW(),
+    pending_registration_id = NULL,
+    updated_at = NOW()
+WHERE pending_registration_id = $1
+  AND status IN ('PENDING_DELIVERY', 'ACTIVE');
+
+-- Query 2: Unlink terminal challenges without changing status
+UPDATE auth_challenges
+SET pending_registration_id = NULL,
+    updated_at = NOW()
+WHERE pending_registration_id = $1
+  AND status IN ('VERIFIED', 'CONSUMED', 'EXPIRED', 'LOCKED', 'CANCELLED', 'DELIVERY_FAILED');
+```
+
+**Sau hai query, DELETE `pending_registrations WHERE id = $1` an toàn** (không còn FK tham chiếu).
+
+**Completion check bắt buộc trước mutation:**
+Trước khi thực hiện bất kỳ cancel/unlink/delete nào:
+```sql
+SELECT 1 FROM registration_completions WHERE pending_registration_id = $1
+```
+Nếu có row → completed → ROLLBACK + 409, không mutation.
+
+**Thứ tự customer check và pending lock:**
+
+1. `atomicRateLimit` — rate-limit check
+2. `findCustomerByEmail(normalized)` AND `findCustomerByPhone(phoneNumber)` — existing customer check
+3. `findAndLockPendingByContact(normalized email, phoneNumber) ORDER BY id FOR UPDATE` — lock pending
+4. Decision tree (xem 20.2)
+5. Cleanup nếu expired safe
+6. `createPendingRegistration(...)` — tạo pending mới
+7. Audit `REGISTRATION_STARTED`
+
+**Transaction boundary:**
+
+File: `backend/src/database/registrationService.ts`, method `RelationalRegistrationService.begin`.
+
+- **Transaction 1** (`this.unitOfWork.transaction(...)`): rate-limit → customer check → lock pending → decision/cleanup → create pending → audit. Kết thúc với COMMIT hoặc ROLLBACK.
+- **Sau COMMIT** (outside transaction): `mfaService.createEmailChallenge(...)`. Nếu fail → **compensation transaction** riêng để unlink challenge và delete pending mới. Compensation transaction là một `this.unitOfWork.transaction(...)` độc lập.
+
+**Failure modes:**
+
+| Failure điểm | Transaction 1 | Trạng thái sau | Xử lý |
+|---|---|---|---|
+| `findAndLockPendingByContact` error | ROLLBACK | Không thay đổi | Propagate → 500 |
+| `cancelChallengesByPendingRegistration` error | ROLLBACK | Không thay đổi | Propagate → 500 |
+| `DELETE pending` error | ROLLBACK | Không thay đổi | Propagate → 500 |
+| `createPendingRegistration` error | ROLLBACK | Toàn bộ cleanup rollback | Propagate → 500/409 |
+| Transaction 1 COMMIT error | ROLLBACK | Không thay đổi | Propagate → 500 |
+| `createEmailChallenge` fail (sau COMMIT) | N/A (đã COMMIT) | Pending mới tồn tại | Compensation transaction xóa pending mới; nếu fail → orphan expires |
+| Compensation transaction fail | N/A | Orphan pending mới | Tự hết hạn → cleanup ở retry tiếp theo |
+
+**Query lock deterministic:**
+```sql
+SELECT id, email, phone_number, expires_at, device_id
+FROM pending_registrations
+WHERE lower(email) = lower($1) OR phone_number = $2
+ORDER BY id
+FOR UPDATE
+```
+
+`ORDER BY id FOR UPDATE` đảm bảo lock acquisition theo thứ tự deterministic, tránh deadlock khi hai transaction lock nhiều rows.
+
+**expiresAt/resendAfter type:**
+- Từ `authResponseValidators.ts`: `expiresAt` và `resendAfter` validated bằng `isNonEmptyDateTime(value)` — `typeof value === "string" && value.includes("T") && !Number.isNaN(Date.parse(value))`.
+- Type trong `auth.ts`: `AuthChallengeResponse.expiresAt: string`, `resendAfter?: string`.
+- `isNonEmptyDateTime` đã export từ `mobile-app/src/services/api/responseValidators.ts`.
+
+**RegisterScreen navigation:**
+- Route: `mobile-app/src/app/(auth)/register.tsx` mount `<RegisterScreen />`.
+- Layout: `(auth)/_layout.tsx` với Expo Router `<Stack>`, `initialRouteName: "login"`.
+- Sau app restart: root layout → auth guard → navigate login (anonymous). Người dùng phải **chủ động bấm "Đăng ký"** để navigate tới register route.
+- `RegisterScreen` **không tự mount** sau restart.
+
+### 20.2 Expired-Pending Cleanup Design at Begin (Final)
+
+**Transaction 1 — trong `UnitOfWork.transaction`:**
+
+```
+BEGIN TRANSACTION (READ COMMITTED)
+
+  Step 1: atomicRateLimit — rate-limit check (existing)
+
+  Step 2: findCustomerByEmail(normalized) AND findCustomerByPhone(phoneNumber)
+    → If customer found: ROLLBACK + 409 "already exists"
+
+  Step 3: findAndLockPendingByContact(normalized, phoneNumber) ORDER BY id FOR UPDATE
+    → Returns array of matching pending rows
+
+  Step 4: Decision tree (owner decision 7):
+
+    Case A — rows.length === 0 (no pending):
+      → Proceed to Step 6 (create pending)
+
+    Case B — rows.length === 1 (one row):
+      (Dù email khớp, phone khớp hoặc cả hai khớp cùng một row)
+
+      Sub-case B1 — expires_at > NOW() (active):
+        → ROLLBACK + 409 "active registration pending"
+
+      Sub-case B2 — expires_at <= NOW() (expired):
+        → SELECT 1 FROM registration_completions WHERE pending_registration_id = $pendingId
+           If row exists (completed): ROLLBACK + 409 "already registered"
+           If no row (not completed):
+             → cancelChallengesByPendingRegistration($pendingId)
+                [Query 1: CANCEL + unlink PENDING_DELIVERY/ACTIVE]
+                [Query 2: unlink terminal statuses]
+             → DELETE FROM pending_registrations WHERE id = $pendingId
+             → Audit: eventType = "REGISTRATION_PENDING_CLEANUP", resourceId = pendingId, payload = {}
+             → Proceed to Step 6 (create pending)
+
+    Case C — rows.length >= 2 (multiple rows):
+      (Email khớp row A, phone khớp row B — hai pending độc lập)
+      → ROLLBACK + 409 "conflict — multiple pending registrations"
+
+  Step 6: createPendingRegistration(newId, ...) — existing logic
+
+  Step 7: Audit REGISTRATION_STARTED — existing logic
+
+COMMIT
+
+Outside Transaction 1:
+  mfaService.createEmailChallenge(...) → compensation transaction nếu fail (existing)
+```
+
+**Contact matching policy (owner decision 7 — clarified):**
+
+| Kịch bản | Query kết quả | Hành động |
+|---|---|---|
+| Không có pending nào khớp | 0 rows | Create pending mới |
+| Một pending, email và phone cùng khớp row đó | 1 row | Check active/expired |
+| Một pending, chỉ email khớp (phone row đó khác) | 1 row | Check active/expired |
+| Một pending, chỉ phone khớp (email row đó khác) | 1 row | Check active/expired |
+| Email khớp row A, phone khớp row B (hai row độc lập) | 2 rows | 409 conflict, không mutation |
+| Ba row trở lên (edge case) | 3+ rows | 409 conflict |
+
+**Test cases cho contact matching:**
+
+1. Expired row khớp cả email và phone → cleanup + create mới
+2. Expired row chỉ khớp email (phone khác) → cleanup + create mới
+3. Expired row chỉ khớp phone (email khác) → cleanup + create mới
+4. Active row khớp cả email và phone → 409
+5. Active row chỉ khớp email → 409
+6. Active row chỉ khớp phone → 409
+7. Email khớp row A, phone khớp row B độc lập → 409 (không cleanup)
+
+**Kết luận orphan:**
+- Transaction 1 rollback → không có thay đổi nào được commit → không orphan.
+- Transaction 1 commit nhưng `createEmailChallenge` fail → compensation transaction xóa pending mới. Compensation fail → orphan tạm thời; pending hết hạn tự nhiên và bị cleanup ở retry tiếp theo.
+
+### 20.3 Mobile Persistent State Design (Final)
+
+**New file: `mobile-app/src/features/auth/storage/registrationSessionStorage.ts`**
+
+Dùng `expo-secure-store` (đã có, không thêm dependency).
+
+**Schema version 1:**
+
+```typescript
+export type RegistrationSessionV1 =
+  | {
+      schemaVersion: 1;
+      phase: "BEGIN_UNKNOWN";
+      createdAt: string;
+    }
+  | {
+      schemaVersion: 1;
+      phase: "CHALLENGE_RECEIVED";
+      createdAt: string;
+      challengeId: string;
+      methods: ["EMAIL_OTP"];
+      purpose: "REGISTRATION_EMAIL_VERIFY";
+      expiresAt: string;
+      resendAfter?: string;
+    };
+```
+
+Lưu ý: `methods` là array (khớp `AuthChallengeResponse.methods`), tuyệt đối không dùng singular `method` field.
+
+**Discriminated result type (owner decision 8):**
+
+```typescript
+export type LoadSessionResult =
+  | { kind: "EMPTY" }
+  | { kind: "VALID"; session: RegistrationSessionV1 }
+  | { kind: "CORRUPT" };
+```
+
+**KHÔNG persist:** email, phone, fullName, password, OTP/proof, token, deviceId, deviceSecret.
+
+**Runtime validator:**
+
+```typescript
+import { isNonEmptyDateTime } from "@/services/api/responseValidators";
+
+function isRegistrationSessionV1(value: unknown): value is RegistrationSessionV1 {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+
+  if (record.schemaVersion !== 1) return false;
+  if (record.phase !== "BEGIN_UNKNOWN" && record.phase !== "CHALLENGE_RECEIVED") return false;
+
+  const allowedKeysBegin = ["schemaVersion", "phase", "createdAt"];
+  const allowedKeysChallenge = ["schemaVersion", "phase", "createdAt", "challengeId", "methods", "purpose", "expiresAt", "resendAfter"];
+
+  const keys = Object.keys(record);
+
+  if (record.phase === "BEGIN_UNKNOWN") {
+    if (keys.some(k => !allowedKeysBegin.includes(k))) return false;
+  } else {
+    if (keys.some(k => !allowedKeysChallenge.includes(k))) return false;
+  }
+
+  if (typeof record.createdAt !== "string" || !isNonEmptyDateTime(record.createdAt)) return false;
+
+  if (record.phase === "CHALLENGE_RECEIVED") {
+    if (typeof record.challengeId !== "string" || record.challengeId.trim().length === 0) return false;
+
+    // methods: must be exactly ["EMAIL_OTP"]; reject singular method, empty, mixed, duplicate
+    if (!Array.isArray(record.methods)) return false;
+    if (record.methods.length !== 1) return false;
+    if (record.methods[0] !== "EMAIL_OTP") return false;
+
+    if (record.purpose !== "REGISTRATION_EMAIL_VERIFY") return false;
+    if (typeof record.expiresAt !== "string" || !isNonEmptyDateTime(record.expiresAt)) return false;
+    if (record.resendAfter !== undefined && !isNonEmptyDateTime(record.resendAfter)) return false;
+  }
+  return true;
+}
+```
+
+Validator phải reject: mọi unexpected keys, không chỉ email/phone/password.
+`methods` phải là array, length === 1, methods[0] === "EMAIL_OTP".
+
+**Storage API:**
+
+```typescript
+const STORAGE_KEY = "banking.registration.session.v1";
+const SECURE_STORE_OPTIONS = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY };
+
+export async function saveRegistrationSession(session: RegistrationSessionV1): Promise<void> {
+  // Tạo canonical storage object chỉ từ allowlisted fields
+  let canonical: RegistrationSessionV1;
+  if (session.phase === "BEGIN_UNKNOWN") {
+    canonical = {
+      schemaVersion: session.schemaVersion,
+      phase: session.phase,
+      createdAt: session.createdAt
+    };
+  } else {
+    canonical = {
+      schemaVersion: session.schemaVersion,
+      phase: session.phase,
+      createdAt: session.createdAt,
+      challengeId: session.challengeId,
+      methods: session.methods,
+      purpose: session.purpose,
+      expiresAt: session.expiresAt
+    };
+    if (session.resendAfter !== undefined) {
+      canonical.resendAfter = session.resendAfter;
+    }
+  }
+  await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(canonical), SECURE_STORE_OPTIONS);
+}
+
+export async function loadRegistrationSession(): Promise<LoadSessionResult> {
+  let raw: string | null;
+  try {
+    raw = await SecureStore.getItemAsync(STORAGE_KEY, SECURE_STORE_OPTIONS);
+  } catch (error: unknown) {
+    // SecureStore read error → propagate, không return CORRUPT
+    throw error;
+  }
+
+  if (raw === null) {
+    return { kind: "EMPTY" };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { kind: "CORRUPT" };
+  }
+
+  if (!isRegistrationSessionV1(parsed)) {
+    return { kind: "CORRUPT" };
+  }
+
+  return { kind: "VALID", session: parsed };
+}
+
+export async function clearRegistrationSession(): Promise<void> {
+  await SecureStore.deleteItemAsync(STORAGE_KEY, SECURE_STORE_OPTIONS);
+}
+```
+
+**Thứ tự write bắt buộc:**
+
+```
+1. Local form validation PASS
+2. saveRegistrationSession({ schemaVersion: 1, phase: "BEGIN_UNKNOWN", createdAt })
+   → If throws: Show error UI, do NOT send network request, return
+3. Chỉ sau khi write thành công: gọi register() qua useAuth()
+4. Response 202 (AuthChallengeResponse):
+   → saveRegistrationSession({
+       schemaVersion: 1, phase: "CHALLENGE_RECEIVED", createdAt,
+       challengeId, methods: challenge.methods, purpose, expiresAt, resendAfter
+     })
+     → If throws: Keep challenge in memory (React state), storage stays BEGIN_UNKNOWN
+       — allow in-memory cancel during session
+5. Response 4xx/5xx/timeout: Keep BEGIN_UNKNOWN, show error
+```
+
+**Resend lifecycle:**
+
+```
+handleResendRegistrationChallenge:
+  RegisterScreen
+  → AuthContext
+  → authApi.resendRegistrationChallenge
+  → POST /auth/challenges/{challengeId}/resend
+  → response thành công (có thể expiresAt/resendAfter thay đổi)
+
+  Thành công (nextChallenge):
+    1. setRegistrationChallenge(nextChallenge) — cập nhật React state
+    2. saveRegistrationSession({ ..., methods: nextChallenge.methods, expiresAt, resendAfter })
+       — luôn persist metadata mới nhất kể cả khi challengeId giữ nguyên
+       → If persist throws:
+           giữ nextChallenge trong React state (đã cập nhật ở bước 1)
+           không resend/begin tự động
+           không tuyên bố durable state đã được cập nhật
+           (stale storage sẽ được xử lý khi mount lại)
+```
+
+**Verify/complete lifecycle:**
+
+```
+handleRegister (khi đang ở OTP phase):
+  gọi verifyRegistrationChallenge(request) qua useAuth()
+  → AuthContext → authApi → POST /auth/register/verify
+
+  Thất bại:
+    → Giữ CHALLENGE_RECEIVED storage
+    → Giữ registrationChallenge React state
+    → Show error
+
+  Thành công:
+    → clearRegistrationSession()
+       If clear thành công:
+         tiếp tục success navigation (Alert → /login)
+       If clear thất bại:
+         KHÔNG gọi verify lần hai
+         KHÔNG biến server success thành failure
+         ghi nhận stale marker bằng thông báo không nhạy cảm
+         tiếp tục success navigation như bình thường
+         (stale local marker xử lý khi RegisterScreen mount lại)
+```
+
+**Corrupted/invalid storage behavior (owner decision 8):**
+
+- `loadRegistrationSession()` returns `{ kind: "CORRUPT" }` → RegisterScreen chuyển `RECOVERY_BLOCKED` state.
+- `RECOVERY_BLOCKED`: Hiển thị "Có lỗi xảy ra với dữ liệu đăng ký. Vui lòng xóa và thử lại."
+- Nút "Xóa và thử lại" (explicit user action):
+  - Call `clearRegistrationSession()`
+  - If success → navigate to form
+  - If fail → show error, ask user retry later
+- **Không tự động xóa và begin.**
+
+**SecureStore error propagation:**
+
+- `loadRegistrationSession()` throw từ `getItemAsync` → propagate lên caller.
+- Caller (RegisterScreen) catch error → chuyển `RECOVERY_BLOCKED` state.
+- `clearRegistrationSession()` throw từ `deleteItemAsync` → propagate; UI log error (không log content), hiển thị "stale marker", retry cleanup khi user retry.
+
+### 20.4 Restart/Retry State Machine (Final)
+
+**Khi RegisterScreen mount:**
+
+```typescript
+const result = await loadRegistrationSession();
+switch (result.kind) {
+  case "EMPTY":
+    // Show registration form, allow new begin
+    break;
+  case "VALID":
+    if (result.session.phase === "BEGIN_UNKNOWN") {
+      // Show "Đã có yêu cầu đăng ký đang chờ" UI
+      // Block auto-begin; require user fill form to manual retry
+    } else if (result.session.phase === "CHALLENGE_RECEIVED") {
+      // Resume OTP UI with challengeId
+    }
+    break;
+  case "CORRUPT":
+    // Show RECOVERY_BLOCKED UI
+    // No auto-action; require explicit user confirmation to clear
+    break;
+}
+// loadRegistrationSession throws → catch → RECOVERY_BLOCKED
+```
+
+**BEGIN_UNKNOWN behavior:**
+- Không có challengeId → **không thể gọi cancel API**.
+- UI: "Đã có một yêu cầu đăng ký đang chờ xử lý."
+- Nút "Thử lại":
+  - Yêu cầu người dùng nhập lại form đầy đủ.
+  - Submit → write BEGIN_UNKNOWN → POST /auth/register.
+  - Backend quyết định: 409 active hoặc 202 với cleanup expired.
+- **Không auto-begin khi mount.**
+
+| Storage Load Result | App Start/Mount | Server State | Local Action | Next Phase | May Begin Again? |
+|---|---|---|---|---|---|
+| EMPTY | Mount | Unknown | Show form | EMPTY | YES |
+| CORRUPT | Mount | Unknown | RECOVERY_BLOCKED, explicit clear required | RECOVERY_BLOCKED | Only after user confirms clear |
+| SecureStore read throws | Mount | Unknown | Catch → RECOVERY_BLOCKED | RECOVERY_BLOCKED | Only after retry succeeds |
+| VALID, BEGIN_UNKNOWN | Mount | Unknown | Show "pending", block auto-begin | BEGIN_UNKNOWN | NO — user fills form to retry |
+| VALID, BEGIN_UNKNOWN | Manual retry → 409 active | Active pending | Keep BEGIN_UNKNOWN, error | BEGIN_UNKNOWN | NO |
+| VALID, BEGIN_UNKNOWN | Manual retry → 202 | Expired cleaned, new challenge | Update → CHALLENGE_RECEIVED | CHALLENGE_RECEIVED | NO |
+| VALID, BEGIN_UNKNOWN | Manual retry → timeout | Unknown | Keep BEGIN_UNKNOWN, error | BEGIN_UNKNOWN | NO |
+| VALID, CHALLENGE_RECEIVED | Mount | Active challenge | Resume OTP UI | CHALLENGE_RECEIVED | NO |
+| VALID, CHALLENGE_RECEIVED | Cancel → 204 | Cancelled | clearRegistrationSession() | EMPTY (or stale if clear fails) | YES after clear |
+| VALID, CHALLENGE_RECEIVED | Cancel → 409 completed | Completed | clearRegistrationSession() + nav login | EMPTY (or stale) | NO |
+| VALID, CHALLENGE_RECEIVED | Cancel → 404/422/timeout | Not found/malformed/unknown | Do NOT clear, error | CHALLENGE_RECEIVED | NO |
+| Any | saveRegistrationSession throws (BEGIN_UNKNOWN) | Not sent | Error UI, no network | Previous | User retries |
+| Any | saveRegistrationSession throws (CHALLENGE_RECEIVED update) | Challenge created | In-memory, BEGIN_UNKNOWN storage | Memory-only | NO |
+| Any | clearRegistrationSession throws | Server handled | Stale marker, retry cleanup | Stale marker | Not until cleanup succeeds |
+
+**Invariant:**
+- Auto-begin khi mount: **không bao giờ**.
+- Cancel API chỉ khi có challengeId (CHALLENGE_RECEIVED hoặc in-memory).
+- BEGIN_UNKNOWN không có challengeId → cancel không khả dụng.
+- Manual retry phải có form input đầy đủ.
+
+### 20.5 Privacy và Audit (Final)
+
+**Error messages — không phân biệt PII:**
+- 409 active: "An active registration is already in progress. Please wait or use a different contact."
+- 409 completed: "This email or phone number is already registered."
+- 409 multiple: "A registration conflict was detected. Please contact support."
+- 404 cancel: "Registration session not found or expired."
+- 422: "Invalid request."
+- Timeout: "Request timed out. Please try again."
+- Storage failure: "Unable to save registration state." (static)
+
+**Audit cleanup (owner decision 9):**
+
+```typescript
+await new AuditRepository(client).append({
+  id: randomUUID(),
+  eventType: "REGISTRATION_PENDING_CLEANUP",
+  actorCustomerId: null, // pre-auth
+  resourceId: pendingRegistrationId, // opaque UUID
+  occurredAt: new Date().toISOString(),
+  payload: {} // empty
+});
+```
+
+- `eventType`: `"REGISTRATION_PENDING_CLEANUP"` (structured event type).
+- `resourceId`: opaque `pendingRegistrationId` (UUID).
+- `payload`: `{}` — không có contact/IP/fingerprint/challengeId/secret.
+- Structured audit record, không phải application INFO log.
+
+**Logging:**
+- Không log email, phone, password, OTP, proof.
+- Không log challengeId/pendingId ở INFO level.
+- Test failure output: synthetic data (`test-user-b1b@example.test`, `+84900000099`).
+
+### 20.6 Exact Allowlist — 9 File (Final)
+
+| # | File | Thay đổi |
+|---|---|---|
+| 1 | `backend/src/database/repositories/customerRepository.ts` | Thêm `findAndLockPendingByContact(input: { email, phoneNumber })` |
+| 2 | `backend/src/database/repositories/mfaRepository.ts` | Thêm `cancelChallengesByPendingRegistration(pendingId: string)` — hai queries |
+| 3 | `backend/src/database/registrationService.ts` | Sửa `begin()`: expired-pending cleanup trước `createPendingRegistration` |
+| 4 | `backend/src/tests/registrationContract.test.ts` | Test matrix B1b |
+| 5 | `mobile-app/src/features/auth/storage/registrationSessionStorage.ts` | **TẠO MỚI** — storage API + discriminated result |
+| 6 | `mobile-app/src/features/auth/storage/__tests__/registrationSessionStorage.test.ts` | **TẠO MỚI** — test EMPTY/VALID/CORRUPT |
+| 7 | `mobile-app/src/features/auth/screens/RegisterScreen.tsx` | Tích hợp storage: write-before-send, handle discriminated result |
+| 8 | `mobile-app/src/features/auth/screens/__tests__/RegisterScreen.test.tsx` | Test matrix B1b |
+| 9 | `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md` | File này |
+
+**Không sửa:**
+- `AuthContext.tsx`/test — cancel đã wired qua authApi từ RegisterScreen (B1a).
+- `auth.ts` types — `RegistrationSessionV1` export từ storage file.
+- `authApi.ts` — API contract không đổi.
+- `authResponseValidators.ts` — `isNonEmptyDateTime` đã export, được import vào storage file.
+- OpenAPI, migration, package.json, lockfile, bất kỳ file nào khác.
+
+**Repository method signatures:**
+
+```typescript
+// customerRepository.ts
+async findAndLockPendingByContact(input: {
+  email: string;
+  phoneNumber: string;
+}): Promise<Array<{
+  id: string;
+  email: string;
+  phoneNumber: string;
+  expiresAt: string;
+  deviceId: string;
+}>>
+```
+
+```typescript
+// mfaRepository.ts
+async cancelChallengesByPendingRegistration(pendingRegistrationId: string): Promise<void>
+// Two queries:
+// 1. UPDATE ... SET status='CANCELLED', cancelled_at=NOW(), pending_registration_id=NULL, updated_at=NOW()
+//    WHERE pending_registration_id=$1 AND status IN ('PENDING_DELIVERY','ACTIVE')
+// 2. UPDATE ... SET pending_registration_id=NULL, updated_at=NOW()
+//    WHERE pending_registration_id=$1 AND status IN ('VERIFIED','CONSUMED','EXPIRED','LOCKED','CANCELLED','DELIVERY_FAILED')
+```
+
+### 20.7 Test Matrix (Final)
+
+**Backend — trong `registrationContract.test.ts`:**
+
+| # | Test Case | Expected |
+|---|---|---|
+| B1 | No pending → normal begin 202 | 202, new challenge |
+| B2 | Active pending, email+phone khớp cùng row → 409 | 409, no mutation |
+| B3 | Active pending, chỉ email khớp → 409 | 409, no mutation |
+| B4 | Active pending, chỉ phone khớp → 409 | 409, no mutation |
+| B5 | Expired pending, email+phone khớp → cleanup + 202 | 202, expired deleted, new challenge |
+| B6 | Expired pending, chỉ email khớp → cleanup + 202 | 202, expired deleted |
+| B7 | Expired pending, chỉ phone khớp → cleanup + 202 | 202, expired deleted |
+| B8 | Expired + completed → 409 | 409, no deletion |
+| B9 | Email khớp row A, phone khớp row B → 409 | 409, neither deleted |
+| B10 | Three+ rows → 409 | 409, no mutation |
+| B11 | Cleanup throws → rollback, no partial state | 500, no change |
+| B12 | Concurrent fake: begin1 success, begin2 gets 409 | begin1: 202; begin2: 409 |
+| B13 | 409 error body không có email/phone/pendingId/challengeId | Generic message |
+| B14 | Existing customer → 409 before lock | 409, no pending query |
+| B15 | Compensation: createEmailChallenge fails → pending cleaned | No orphan in next begin |
+| B16 | Audit cleanup event created with correct payload | eventType=REGISTRATION_PENDING_CLEANUP, payload={} |
+
+**Mobile storage — trong `registrationSessionStorage.test.ts`:**
+
+| # | Test Case | Expected |
+|---|---|---|
+| S1 | save/load round-trip BEGIN_UNKNOWN | `{ kind: "VALID", session }` |
+| S2 | save/load round-trip CHALLENGE_RECEIVED với `methods: ["EMAIL_OTP"]` | `{ kind: "VALID", session }` |
+| S3 | Invalid schema version → CORRUPT | `{ kind: "CORRUPT" }`, no auto-delete |
+| S4 | Corrupted JSON → CORRUPT | `{ kind: "CORRUPT" }`, no auto-delete |
+| S5 | Missing required field → CORRUPT | `{ kind: "CORRUPT" }` |
+| S6 | Empty storage → EMPTY | `{ kind: "EMPTY" }` |
+| S7 | SecureStore.getItemAsync throws → propagate | Error thrown, not CORRUPT |
+| S8 | clearRegistrationSession calls deleteItemAsync | deleteItemAsync called |
+| S9 | Canonical serialization không chứa extra sensitive fields (email, phone, password, proof, token) | Keys verified |
+| S10 | Singular field `method` (không có `methods` array) → CORRUPT | `{ kind: "CORRUPT" }` |
+| S11 | `methods: []` rỗng → CORRUPT | `{ kind: "CORRUPT" }` |
+| S12 | `methods: ["OTP"]` alias → CORRUPT | `{ kind: "CORRUPT" }` |
+| S13 | `methods: ["TOTP"]` → CORRUPT | `{ kind: "CORRUPT" }` |
+| S14 | `methods: ["BIOMETRIC"]` → CORRUPT | `{ kind: "CORRUPT" }` |
+| S15 | `methods: ["EMAIL_OTP", "OTP"]` mixed → CORRUPT | `{ kind: "CORRUPT" }` |
+| S16 | `methods: ["EMAIL_OTP", "EMAIL_OTP"]` duplicate → CORRUPT | `{ kind: "CORRUPT" }` |
+
+**Mobile screen — trong `RegisterScreen.test.tsx`:**
+
+| # | Test Case | Expected |
+|---|---|---|
+| R1 | BEGIN_UNKNOWN written before register() via useAuth() | storage.save first, register() second |
+| R2 | SecureStore write fails → register() NOT called | register() NOT called |
+| R3 | begin 202 persist methods tuple | storage.save với CHALLENGE_RECEIVED + methods array |
+| R4 | CHALLENGE_RECEIVED write fails → in-memory challenge kept | In-memory challenge; BEGIN_UNKNOWN storage |
+| R5 | Mount với EMPTY → form shown, no auto-begin | register() NOT called on mount |
+| R6 | Mount với VALID BEGIN_UNKNOWN → "pending" UI, no auto-begin | register() NOT called on mount |
+| R7 | Mount với VALID CHALLENGE_RECEIVED → OTP UI | OTP input với challengeId |
+| R8 | Mount với CORRUPT → RECOVERY_BLOCKED | RECOVERY_BLOCKED UI, no auto-begin |
+| R9 | Mount SecureStore read throws → RECOVERY_BLOCKED | RECOVERY_BLOCKED UI |
+| R10 | Manual retry 409 active → BEGIN_UNKNOWN kept | storage.clear NOT called |
+| R11 | Manual retry 202 → CHALLENGE_RECEIVED updated | storage.save CHALLENGE_RECEIVED |
+| R12 | Cancel 204 → clearRegistrationSession | storage.clear called |
+| R13 | Cancel 409 completed → clear + nav login | storage.clear + navigate |
+| R14 | Cancel 404 → no clear | storage.clear NOT called |
+| R15 | Cancel 422 → no clear | storage.clear NOT called |
+| R16 | Cancel timeout → no clear | storage.clear NOT called |
+| R17 | No password/OTP/contact in test output | Synthetic data only |
+| R18 | BEGIN_UNKNOWN → cancel button absent (no challengeId) | Cancel disabled/hidden |
+| R19 | resend success persist challenge metadata mới nhất | storage.save called với methods array |
+| R20 | resend persistence failure giữ latest in-memory challenge | React state updated; không tự gửi lại |
+| R21 | verify failure giữ session | storage.clear NOT called; error shown |
+| R22 | verify success clear session | storage.clear called; navigation proceeds |
+| R23 | clear failure sau verify success không gọi verify lần hai | verify() called once; navigation proceeds |
+
+**Deferred (M01-07, M01-08):**
+
+| Test Case | Deferred To |
+|---|---|
+| PostgreSQL FOR UPDATE lock | M01-07 |
+| Concurrent begin from two processes | M01-07 |
+| Transaction rollback on PostgreSQL | M01-07 |
+| Emulator restart BEGIN_UNKNOWN | M01-08 |
+| Emulator restart CHALLENGE_RECEIVED | M01-08 |
+| Maestro: begin → kill → restart → cancel | M01-08 |
+| Device SecureStore cross-process persistence | M01-08 |
+
+### 20.8 Data Flow Diagrams (Final)
+
+**BEGIN flow:**
+
+```
+RegisterScreen user submit
+  │
+  ├─ Validation
+  ├─ saveRegistrationSession(BEGIN_UNKNOWN)
+  │    └─ Throw → Error UI, no network
+  │
+  └─ register() via useAuth() → AuthContext → authApi → POST /auth/register
+       │
+       └─ Backend Transaction 1:
+            rate-limit → customer check → findAndLockPendingByContact ORDER BY id FOR UPDATE
+            │
+            ├─ 0 rows: createPendingRegistration → audit → COMMIT
+            ├─ 1 row active: ROLLBACK → 409
+            ├─ 1 row expired:
+            │    check registration_completions
+            │    ├─ completed: ROLLBACK → 409
+            │    └─ not completed:
+            │         cancelChallengesByPendingRegistration (2 queries)
+            │         DELETE pending
+            │         audit REGISTRATION_PENDING_CLEANUP
+            │         createPendingRegistration → audit REGISTRATION_STARTED → COMMIT
+            └─ 2+ rows: ROLLBACK → 409
+
+       Outside Transaction 1:
+            createEmailChallenge → 202 { challengeId, methods: ["EMAIL_OTP"], purpose, expiresAt, ... }
+            └─ Fail → compensation transaction (unlink + delete new pending)
+
+  ├─ 202: saveRegistrationSession({ CHALLENGE_RECEIVED, methods: challenge.methods, ... })
+  │    ├─ OK → OTP UI
+  │    └─ Throw → in-memory, BEGIN_UNKNOWN storage
+  │
+  └─ 409/timeout: keep BEGIN_UNKNOWN, error
+```
+
+**RESTART flow:**
+
+```
+User navigates to Register
+  │
+  loadRegistrationSession()
+  ├─ { kind: "EMPTY" } → form UI
+  ├─ { kind: "CORRUPT" } → RECOVERY_BLOCKED (explicit clear)
+  ├─ throws → catch → RECOVERY_BLOCKED
+  ├─ { kind: "VALID", session: BEGIN_UNKNOWN } → "pending" UI, no auto-begin
+  └─ { kind: "VALID", session: CHALLENGE_RECEIVED } → OTP UI
+```
+
+### 20.9 Risks và Owner Decisions
+
+**Tất cả risks đã được owner chấp thuận:**
+1. CHALLENGE_RECEIVED write fail → in-memory, BEGIN_UNKNOWN storage.
+2. Compensation fail → orphan expires naturally.
+3. Multiple pending → 409 without cleanup.
+4. PostgreSQL FOR UPDATE → M01-07.
+5. Emulator process kill → M01-08.
+
+**Không còn outstanding owner decision.**
+
+### 20.10 Feasibility Conclusion (Final)
+
+**B1b: FEASIBLE — 9 file, không migration, không OpenAPI change, không dependency mới.**
+
+**Điều kiện FEASIBLE đã xác minh:**
+- FK `NO ACTION` (không DEFERRABLE): xử lý bằng unlink-then-delete trong transaction.
+- `registration_completions.pending_registration_id` là text PK, không FK: delete pending không bị chặn.
+- `isNonEmptyDateTime` đã export: dùng trong storage validator.
+- `AuditRepository.append` đã có: dùng cho cleanup audit.
+- Expo SecureStore đã có: không thêm dependency.
+- Cancel đã wired (B1a): không cần sửa AuthContext.
+- Transaction 1 atomic: không orphan khi rollback.
+- Orphan sau compensation fail: tự hết hạn, cleanup ở retry tiếp theo.
+
+**Không thể đảm bảo (deferred):**
+- PostgreSQL row lock behavior → M01-07
+- Cross-process SecureStore persistence → M01-08
+
+**Trạng thái:** IN_PROGRESS — B1B APPROVED — NOT STARTED
+
+**B1b chưa triển khai. B2 chưa triển khai. M01-04 chưa COMPLETED.**
