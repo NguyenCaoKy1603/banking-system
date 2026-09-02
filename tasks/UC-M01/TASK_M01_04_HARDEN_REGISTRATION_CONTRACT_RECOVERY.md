@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — B1B APPROVED — NOT STARTED
+Trạng thái: IN_PROGRESS — B1B BACKEND APPROVED — MOBILE NOT STARTED
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -603,7 +603,7 @@ Bàn giao bằng tiếng Việt, tối thiểu gồm:
 
 ## 17. Decision result
 
-Trạng thái thực hiện: IN_PROGRESS — B1A VERIFIED — AWAITING CHECKPOINT COMMIT
+Trạng thái thực hiện: IN_PROGRESS — B1B BACKEND APPROVED — MOBILE NOT STARTED
 
 Owner approval date: 2026-09-02 (Asia/Bangkok).
 Scope được phê duyệt với Checkpoint A (D-05, D-06, D-07) và Checkpoint B (D-08, D-09, D-12, D-13) cùng mandatory owner gate giữa hai checkpoint đúng như task hiện tại (xem 11.7).
@@ -1720,6 +1720,17 @@ User navigates to Register
 - PostgreSQL row lock behavior → M01-07
 - Cross-process SecureStore persistence → M01-08
 
-**Trạng thái:** IN_PROGRESS — B1B APPROVED — NOT STARTED
+### B1B BACKEND EVIDENCE
 
-**B1b chưa triển khai. B2 chưa triển khai. M01-04 chưa COMPLETED.**
+- Baseline HEAD: 0517223db4147cac3dea67a156e76d429e28f745
+- Targeted registrationContract: 28 total / 28 pass / 0 fail / 0 skip
+- Full Backend: 246 total / 198 pass / 0 fail / 48 intentional skips
+- B1–B16 đều PASS.
+- PostgreSQL thật deferred M01-07.
+- Mobile B1b chưa bắt đầu.
+- B2 chưa bắt đầu.
+- M01-04 chưa COMPLETED.
+
+**Trạng thái:** IN_PROGRESS — B1B BACKEND APPROVED — MOBILE NOT STARTED
+
+**Mobile B1b chưa triển khai. B2 chưa triển khai. M01-04 chưa COMPLETED.**

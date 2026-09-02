@@ -453,6 +453,28 @@ export class MfaRepository {
     return result.rowCount ?? 0;
   }
 
+  async cancelChallengesByPendingRegistration(pendingRegistrationId: string): Promise<void> {
+    await this.client.query(
+      `UPDATE auth_challenges
+       SET status = 'CANCELLED',
+           cancelled_at = NOW(),
+           pending_registration_id = NULL,
+           updated_at = NOW()
+       WHERE pending_registration_id = $1
+         AND status IN ('PENDING_DELIVERY', 'ACTIVE')`,
+      [pendingRegistrationId]
+    );
+
+    await this.client.query(
+      `UPDATE auth_challenges
+       SET pending_registration_id = NULL,
+           updated_at = NOW()
+       WHERE pending_registration_id = $1
+         AND status IN ('VERIFIED', 'CONSUMED', 'EXPIRED', 'LOCKED', 'CANCELLED', 'DELIVERY_FAILED')`,
+      [pendingRegistrationId]
+    );
+  }
+
   async atomicRateLimit(input: {
     bucketKey: string;
     windowSeconds: number;

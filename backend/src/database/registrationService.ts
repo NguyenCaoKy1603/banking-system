@@ -47,17 +47,54 @@ export class RelationalRegistrationService {
     const passwordMaterial = await hashPasswordAsync(password);
     const pendingRegistrationId = randomUUID();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
     await this.unitOfWork.transaction(async ({ client }) => {
       const customers = new CustomerRepository(client);
-      const rate = await new MfaRepository(client).atomicRateLimit({
+      const mfa = new MfaRepository(client);
+      const audit = new AuditRepository(client);
+
+      const rate = await mfa.atomicRateLimit({
         bucketKey: `relational-registration:${fingerprint(rateLimitKey?.trim() || `email:${email}`)}`,
         windowSeconds: 600,
         maxAttempts: 5,
       });
       if (!rate.allowed) throw rateLimited("Too many registration attempts.", rate.retryAfterSeconds);
+
       if (await customers.findCustomerByEmail(email) || await customers.findCustomerByPhone(phoneNumber)) {
-        throw conflict("Email or phone number already exists.");
+        throw conflict("Registration conflict.");
       }
+
+      const pendingRows = await customers.findAndLockPendingByContact(email, phoneNumber);
+      if (pendingRows.length > 1) {
+        throw conflict("Registration conflict.");
+      }
+
+      if (pendingRows.length === 1) {
+        const row = pendingRows[0];
+        if (row.isExpired !== true) {
+          throw conflict("Registration conflict.");
+        }
+
+        const completionCheck = await client.query(
+          "SELECT 1 FROM registration_completions WHERE pending_registration_id = $1",
+          [row.id]
+        );
+        if (completionCheck.rows.length > 0) {
+          throw conflict("Registration conflict.");
+        }
+
+        await mfa.cancelChallengesByPendingRegistration(String(row.id));
+        await customers.consumePendingRegistration(String(row.id));
+
+        await audit.append({
+          id: randomUUID(),
+          eventType: "REGISTRATION_PENDING_CLEANUP",
+          resourceId: String(row.id),
+          occurredAt: new Date().toISOString(),
+          payload: {}
+        });
+      }
+
       try {
         await customers.createPendingRegistration({
           id: pendingRegistrationId,
@@ -73,12 +110,13 @@ export class RelationalRegistrationService {
         if (isUniqueViolation(error)) {
           const constraint = (error as { constraint?: string }).constraint;
           if (constraint === "pending_registrations_email_idx" || constraint === "pending_registrations_phone_idx") {
-            throw conflict("Email or phone number already exists.");
+            throw conflict("Registration conflict.");
           }
         }
         throw error;
       }
-      await new AuditRepository(client).append({
+
+      await audit.append({
         id: randomUUID(),
         eventType: "REGISTRATION_STARTED",
         resourceId: pendingRegistrationId,
@@ -86,6 +124,7 @@ export class RelationalRegistrationService {
         payload: { rateLimitKey: rateLimitKey ?? null },
       });
     }, { maxRetries: 1 });
+
     try {
       return await mfaService.createEmailChallenge({
         pendingRegistrationId,
@@ -97,14 +136,10 @@ export class RelationalRegistrationService {
         networkFingerprint: rateLimitKey,
       });
     } catch (error) {
-      // A delivery failure must not leave a reusable registration payload.
       await this.unitOfWork.transaction(async ({ client }) => {
-        await client.query(
-          "UPDATE auth_challenges SET pending_registration_id = NULL, updated_at = NOW() WHERE pending_registration_id = $1",
-          [pendingRegistrationId],
-        );
+        await new MfaRepository(client).cancelChallengesByPendingRegistration(pendingRegistrationId);
         await client.query("DELETE FROM pending_registrations WHERE id = $1", [pendingRegistrationId]);
-      }, { maxRetries: 1 }).catch(() => undefined);
+      }, { maxRetries: 1 });
       throw error;
     }
   }
