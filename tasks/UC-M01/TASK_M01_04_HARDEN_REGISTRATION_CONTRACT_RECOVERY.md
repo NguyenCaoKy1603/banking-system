@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — B1A VERIFIED — AWAITING CHECKPOINT COMMIT
+Trạng thái: IN_PROGRESS — B1A COMMITTED — B1B/B2 NOT IMPLEMENTED
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -620,6 +620,58 @@ Scope được phê duyệt với Checkpoint A (D-05, D-06, D-07) và Checkpoint
 - B1b chưa triển khai.
 - B2 chưa triển khai.
 - M01-04 chưa COMPLETED.
+
+---
+
+**B1A CHECKPOINT COMMIT**
+
+- Status B1a: COMPLETED tại local/unit/HTTP fake boundary.
+- Commit SHA: `04c6f997f1d36879201d5c9a6a09e76928c25688`
+- Parent SHA: `78e2dde71f577161bcd8897c59487d3a5f72199e`
+- Message: `feat(registration): add device-bound cancellation`
+- Commit timestamp: Wed Sep 2 14:47:37 2026 +0700 (Asia/Bangkok)
+- Files: 14 — 13 modified, 1 added (`RegisterScreen.test.tsx`).
+  1. `backend/scripts/validate-openapi.cjs` (M)
+  2. `backend/src/database/registrationService.ts` (M)
+  3. `backend/src/http.ts` (M)
+  4. `backend/src/tests/kycContract.test.ts` (M)
+  5. `backend/src/tests/registrationContract.test.ts` (M)
+  6. `documents/api/banking-mvp.openapi.yaml` (M)
+  7. `mobile-app/scripts/validate-openapi.cjs` (M)
+  8. `mobile-app/src/features/auth/context/AuthContext.tsx` (M)
+  9. `mobile-app/src/features/auth/context/__tests__/AuthContext.test.tsx` (M)
+  10. `mobile-app/src/features/auth/screens/RegisterScreen.tsx` (M)
+  11. `mobile-app/src/features/auth/screens/__tests__/RegisterScreen.test.tsx` (A)
+  12. `mobile-app/src/features/auth/services/__tests__/authApi.test.ts` (M)
+  13. `mobile-app/src/features/auth/services/authApi.ts` (M)
+  14. `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md` (M)
+- Chưa push.
+- Branch ahead 17 tại thời điểm checkpoint (so với `origin/codex/staging-academic-completion`).
+- Cached area và worktree sạch sau commit.
+
+Test evidence tại thời điểm commit:
+
+Backend:
+- Total: 228 | Pass: 180 | Fail: 0 | Intentional skips: 48
+- build/typecheck/OpenAPI: PASS
+
+Mobile:
+- Suites: 50 | Tests: 301 | Pass: 301 | Fail: 0 | Skipped: 0
+- Targeted 3 suites / 52 tests: PASS
+- lint/typecheck/OpenAPI/export: PASS
+- E2E syntax 19 flows: PASS
+
+Scope:
+- D-08 và D-09 đã triển khai.
+- Cancel public pre-auth, bắt buộc X-Device-ID.
+- Response 204/404/409/422 đúng contract.
+- B1b (unknown-response/expired-pending) chưa triển khai.
+- B2 D-13 keyed fingerprint chưa triển khai.
+- PostgreSQL transaction/concurrency proof chuyển M01-07.
+- Emulator/Maestro proof chuyển M01-08.
+- M01-04 không được tuyên bố COMPLETED.
+
+---
 
 Các mục lịch sử Checkpoint A bên dưới được giữ nguyên để truy vết và không thay thế kết quả B1A hiện tại.
 
