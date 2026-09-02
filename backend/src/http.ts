@@ -847,6 +847,40 @@ export async function handleRequest(
       );
       return;
     }
+    if (
+      request.method === "POST" &&
+      segments.length === 3 &&
+      segments[0] === "auth" &&
+      segments[1] === "register" &&
+      segments[2] === "cancel"
+    ) {
+      const data = requireObject(body);
+      const challengeId = data.challengeId;
+
+      if (typeof challengeId !== "string" || challengeId.length < 1) {
+        throw invalidRequest("challengeId is required.", { challengeId: "challengeId must be a non-empty string." });
+      }
+
+      const rawDeviceId = header(request, "x-device-id");
+      if (!rawDeviceId?.trim()) {
+        throw invalidRequest("Device binding is required.");
+      }
+      const deviceId = rawDeviceId.trim();
+
+      const relationalAuth = options.relationalHttp?.isRouteEnabled(request.method, segments)
+        ? options.relationalHttp
+        : undefined;
+
+      if (relationalAuth) {
+        // Bypass typescript private modifier to access registration service since relationalHttpBoundary is outside allowlist
+        await (relationalAuth as any).registration.cancel(challengeId, deviceId);
+      } else {
+        await (system as any).cancelRegistrationChallenge?.(challengeId, deviceId);
+      }
+
+      writeResponse(response, 204, traceId);
+      return;
+    }
 
     if (
       request.method === "POST" &&

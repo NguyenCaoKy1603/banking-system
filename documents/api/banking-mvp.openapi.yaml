@@ -79,6 +79,30 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '429':
           $ref: '#/components/responses/RateLimited'
+  /auth/register/cancel:
+    post:
+      tags: [Auth]
+      operationId: cancelRegistrationChallenge
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CancelChallengeRequest'
+      responses:
+        '204':
+          description: Registration challenge was successfully cancelled or was already terminal.
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /auth/otp/challenges:
     post:
       tags: [Auth]
@@ -1734,6 +1758,13 @@ components:
         challengeId: { type: string, minLength: 1, writeOnly: true }
         method: { type: string, enum: [EMAIL_OTP] }
         proof: { type: string, minLength: 1, writeOnly: true }
+    CancelChallengeRequest:
+      type: object
+      required: [challengeId]
+      example:
+        challengeId: challenge-example
+      properties:
+        challengeId: { type: string, minLength: 1, writeOnly: true }
     LogoutRequest:
       type: object
       required: [refreshToken]

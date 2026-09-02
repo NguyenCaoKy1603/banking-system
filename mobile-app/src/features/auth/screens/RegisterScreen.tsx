@@ -1,7 +1,8 @@
 import { Link, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
+  BackHandler,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -40,15 +41,22 @@ export function RegisterScreen() {
     register,
     resendRegistrationChallenge,
     verifyRegistrationChallenge,
+    cancelRegistration,
   } = useAuth();
   const [values, setValues] = useState<RegisterFormValues>(initialValues);
   const [errors, setErrors] = useState<RegisterFieldErrors>({});
   const [serverError, setServerError] = useState<string | undefined>();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [registrationChallenge, setRegistrationChallenge] =
     useState<AuthChallengeResponse | null>(null);
   const [registrationOtp, setRegistrationOtp] = useState("");
   const [challengeClock, setChallengeClock] = useState(() => Date.now());
+  const clearRegistrationChallenge = useCallback(() => {
+    setRegistrationChallenge(null);
+    setRegistrationOtp("");
+    setServerError(undefined);
+  }, []);
 
   useEffect(() => {
     if (!registrationChallenge?.resendAfter) return undefined;
@@ -145,7 +153,7 @@ export function RegisterScreen() {
   }
 
   async function handleResendRegistrationChallenge() {
-    if (!registrationChallenge || resendSeconds > 0 || isSubmitting) return;
+    if (!registrationChallenge || resendSeconds > 0 || isSubmitting || isCancelling) return;
     setServerError(undefined);
     try {
       const nextChallenge = await resendRegistrationChallenge(registrationChallenge.challengeId);
@@ -161,6 +169,57 @@ export function RegisterScreen() {
       );
     }
   }
+
+  const handleCancel = useCallback(async () => {
+    if (!registrationChallenge || isSubmitting || isCancelling) return;
+
+    setIsCancelling(true);
+    setServerError(undefined);
+
+    try {
+      if (!cancelRegistration) {
+        setServerError("Không thể hủy yêu cầu đăng ký. Vui lòng thử lại.");
+        return;
+      }
+      await cancelRegistration(registrationChallenge.challengeId);
+      clearRegistrationChallenge();
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.status === 409) {
+        clearRegistrationChallenge();
+        router.replace("/login");
+        return;
+      }
+
+      setServerError(
+        error instanceof ApiError
+          ? error.message
+          : "Không thể hủy yêu cầu đăng ký. Vui lòng thử lại.",
+      );
+    } finally {
+      setIsCancelling(false);
+    }
+  }, [
+    cancelRegistration,
+    clearRegistrationChallenge,
+    isCancelling,
+    isSubmitting,
+    registrationChallenge,
+    router,
+  ]);
+
+  useEffect(() => {
+    if (!registrationChallenge) return undefined;
+
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        void handleCancel();
+        return true;
+      },
+    );
+
+    return () => subscription.remove();
+  }, [handleCancel, registrationChallenge]);
 
   return (
     <Screen>
@@ -271,24 +330,23 @@ export function RegisterScreen() {
                 />
                 <Pressable
                   accessibilityRole="button"
-                  disabled={resendSeconds > 0 || isSubmitting}
+                  disabled={resendSeconds > 0 || isSubmitting || isCancelling}
                   onPress={() => void handleResendRegistrationChallenge()}
                   testID="register-otp-resend"
                 >
-                  <Text style={[styles.link, (resendSeconds > 0 || isSubmitting) && styles.disabledLink]}>
+                  <Text style={[styles.link, (resendSeconds > 0 || isSubmitting || isCancelling) && styles.disabledLink]}>
                     {resendSeconds > 0 ? `Gửi lại mã sau ${resendSeconds}s` : "Gửi lại mã OTP"}
                   </Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() => {
-                    setRegistrationChallenge(null);
-                    setRegistrationOtp("");
-                    setServerError(undefined);
-                  }}
+                  disabled={isSubmitting || isCancelling}
+                  onPress={() => void handleCancel()}
                   testID="register-challenge-cancel"
                 >
-                  <Text style={styles.link}>Thay đổi thông tin đăng ký</Text>
+                  <Text style={[styles.link, (isSubmitting || isCancelling) && styles.disabledLink]}>
+                    {isCancelling ? "Đang hủy yêu cầu..." : "Hủy và thay đổi thông tin"}
+                  </Text>
                 </Pressable>
               </>
             ) : null}
@@ -298,9 +356,11 @@ export function RegisterScreen() {
               </Text>
             ) : null}
             <PrimaryButton
-              disabled={isSubmitting}
+              disabled={isSubmitting || isCancelling}
               label={
-                isSubmitting
+                isCancelling
+                  ? "Đang hủy yêu cầu..."
+                  : isSubmitting
                   ? registrationChallenge
                     ? "Đang xác minh..."
                     : "Đang đăng ký..."
@@ -313,11 +373,26 @@ export function RegisterScreen() {
             />
           </View>
 
-          <Link href="./login" replace asChild>
-            <Pressable accessibilityRole="link" hitSlop={8} style={styles.backLink}>
-              <Text style={styles.link}>Quay về đăng nhập</Text>
+          {registrationChallenge ? (
+            <Pressable
+              accessibilityRole="button"
+              disabled={isSubmitting || isCancelling}
+              hitSlop={8}
+              onPress={() => void handleCancel()}
+              style={styles.backLink}
+              testID="register-back-cancel"
+            >
+              <Text style={[styles.link, (isSubmitting || isCancelling) && styles.disabledLink]}>
+                {isCancelling ? "Đang hủy yêu cầu..." : "Hủy yêu cầu và quay về đăng nhập"}
+              </Text>
             </Pressable>
-          </Link>
+          ) : (
+            <Link href="./login" replace asChild>
+              <Pressable accessibilityRole="link" hitSlop={8} style={styles.backLink}>
+                <Text style={styles.link}>Quay về đăng nhập</Text>
+              </Pressable>
+            </Link>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>

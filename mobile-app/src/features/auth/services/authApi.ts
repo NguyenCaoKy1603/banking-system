@@ -132,6 +132,21 @@ export function resendRegistrationChallenge(
   );
 }
 
+export async function cancelRegistration(
+  challengeId: string,
+  options: AuthRequestOptions,
+): Promise<void> {
+  const body = {
+    challengeId: requireNonEmpty(challengeId, "challengeId"),
+  };
+
+  await requestJson<null>(
+    "/auth/register/cancel",
+    { method: "POST", body, headers: createDeviceHeaders(options) },
+    (payload): payload is null => payload === null,
+  );
+}
+
 export async function refreshSession(
   refreshToken: string,
   options: AuthRequestOptions,
@@ -302,6 +317,7 @@ export const authApi = {
   register,
   verifyRegistrationChallenge,
   resendRegistrationChallenge,
+  cancelRegistration,
   refreshSession,
   revokeSession,
   revokeAllSessions,

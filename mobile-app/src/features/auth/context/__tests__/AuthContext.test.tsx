@@ -8,6 +8,7 @@ import { AppState } from "react-native";
 
 import { AuthProvider, useAuth } from "@/features/auth/context/AuthContext";
 import {
+  cancelRegistration as cancelRegistrationRequest,
   refreshSession as refreshSessionRequest,
   revokeAllSessions,
   revokeSession,
@@ -24,12 +25,14 @@ import { clearTransferIntent } from "@/features/transfers/storage/transferIntent
 import { clearSavingsIntent } from "@/features/savings/storage/savingsIntentStorage";
 import { clearCardPaymentIntentsForUser } from "@/features/credit/storage/cardPaymentIntentStorage";
 import { clearFraudReportIntentsForUser } from "@/features/fraud/storage/fraudReportIntentStorage";
+import { ApiError } from "@/services/api/ApiError";
 
 jest.mock("@/features/auth/services/authApi", () => ({
   login: jest.fn(),
   refreshSession: jest.fn(),
   register: jest.fn(),
   resendRegistrationChallenge: jest.fn(),
+  cancelRegistration: jest.fn(),
   revokeAllSessions: jest.fn(),
   revokeSession: jest.fn(),
   verifyRegistrationChallenge: jest.fn(),
@@ -82,6 +85,7 @@ const logoutRefreshResponse: LoginResponse = {
 };
 
 const refreshSessionRequestMock = jest.mocked(refreshSessionRequest);
+const cancelRegistrationRequestMock = jest.mocked(cancelRegistrationRequest);
 const revokeAllSessionsMock = jest.mocked(revokeAllSessions);
 const revokeSessionMock = jest.mocked(revokeSession);
 const clearAuthSessionMock = jest.mocked(clearAuthSession);
@@ -181,6 +185,39 @@ afterEach(() => {
   expect(clearCardPaymentIntentsForUserMock).not.toHaveBeenCalled();
   expect(clearFraudReportIntentsForUserMock).not.toHaveBeenCalled();
   jest.restoreAllMocks();
+});
+
+describe("AuthProvider registration cancellation", () => {
+  it("exposes a device-bound cancel wrapper without owning registration challenge state", async () => {
+    cancelRegistrationRequestMock.mockResolvedValue(undefined);
+    await renderProvider();
+
+    await act(async () => {
+      await getAuth().cancelRegistration!("registration-challenge");
+    });
+
+    expect(cancelRegistrationRequestMock).toHaveBeenCalledWith(
+      "registration-challenge",
+      { deviceId: "device-id" },
+    );
+    expect(getAuth().deviceId).toBe("device-id");
+    expect("registrationChallenge" in getAuth()).toBe(false);
+  });
+
+  it("propagates cancel ApiError status to the screen", async () => {
+    const error = new ApiError({
+      status: 404,
+      code: "NOT_FOUND",
+      message: "Yêu cầu không tồn tại.",
+      traceId: "trace-redacted",
+    });
+    cancelRegistrationRequestMock.mockRejectedValue(error);
+    await renderProvider();
+
+    await expect(
+      act(async () => getAuth().cancelRegistration!("registration-challenge")),
+    ).rejects.toBe(error);
+  });
 });
 
 describe("AuthProvider logout coordination", () => {

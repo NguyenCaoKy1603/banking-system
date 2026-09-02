@@ -264,6 +264,7 @@ const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete"]);
 const PUBLIC_OPERATIONS = new Set([
   "POST /auth/register",
   "POST /auth/register/verify",
+  "POST /auth/register/cancel",
   "POST /auth/challenges/{challengeId}/resend",
   "POST /auth/login",
   "POST /auth/refresh",
@@ -314,6 +315,7 @@ function resolveParameter(parameter) {
 for (const [method, routePath] of [
   ["post", "/auth/register"],
   ["post", "/auth/register/verify"],
+  ["post", "/auth/register/cancel"],
   ["post", "/auth/login"],
   ["post", "/auth/verify"],
   ["post", "/auth/refresh"],

@@ -181,3 +181,121 @@ test("Begin conflict doesn't map unknown errors", async (t) => {
     (err: any) => err.code === "23505" && err.constraint === "pending_registrations_pkey"
   );
 });
+
+test("Registration cancel with missing challengeId returns 422", async (t) => {
+  const { server, baseUrl } = await startTestServer();
+  t.after(() => server.close());
+
+  const response = await fetch(`${baseUrl}/auth/register/cancel`, {
+    method: "POST",
+    headers: { "X-Device-ID": "test-device" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(response.status, 422);
+  const data = (await response.json()) as any;
+  assert.equal(data.code, "VALIDATION_ERROR");
+});
+
+test("Registration cancel missing X-Device-ID returns 422", async (t) => {
+  const { server, baseUrl } = await startTestServer();
+  t.after(() => server.close());
+
+  const response = await fetch(`${baseUrl}/auth/register/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ challengeId: "test-challenge" }),
+  });
+  assert.equal(response.status, 422);
+  const data = (await response.json()) as any;
+  assert.equal(data.code, "VALIDATION_ERROR");
+});
+
+test("Registration cancel precedence (RelationalRegistrationService)", async (t) => {
+  const { RelationalRegistrationService } = await import("../database/registrationService.js");
+  const { MfaRepository } = await import("../database/repositories/mfaRepository.js");
+  const { CustomerRepository } = await import("../database/repositories/customerRepository.js");
+
+  let mockCompletions: any[] = [];
+  const mockClient = {
+    query: async (queryText: string) => {
+      if (queryText.includes("registration_completions")) return { rows: mockCompletions };
+      return { rows: [] };
+    }
+  } as any;
+  const mockUow = { transaction: async (cb: any) => cb({ client: mockClient }) } as any;
+  const service = new RelationalRegistrationService(mockUow);
+
+  const lockChallengeMock = t.mock.method(MfaRepository.prototype, "lockChallenge");
+  const cancelChallengeMock = t.mock.method(MfaRepository.prototype, "cancelChallenge");
+  const consumePendingMock = t.mock.method(CustomerRepository.prototype, "consumePendingRegistration");
+
+  // 1. Challenge not found -> 404
+  lockChallengeMock.mock.mockImplementation(async () => null);
+  await assert.rejects(service.cancel("c1", "d1"), (err: any) => err.code === "NOT_FOUND");
+
+  // 2. Wrong device/purpose -> 404
+  lockChallengeMock.mock.mockImplementation(async () => ({ device_id: "other", purpose: "REGISTRATION_EMAIL_VERIFY" } as unknown as any));
+  await assert.rejects(service.cancel("c1", "d1"), (err: any) => err.code === "NOT_FOUND");
+  lockChallengeMock.mock.mockImplementation(async () => ({ device_id: "d1", purpose: "OTHER_PURPOSE" } as unknown as any));
+  await assert.rejects(service.cancel("c1", "d1"), (err: any) => err.code === "NOT_FOUND");
+
+  // 3. Completed -> 409
+  lockChallengeMock.mock.mockImplementation(async () => ({ device_id: "d1", purpose: "REGISTRATION_EMAIL_VERIFY", pending_registration_id: "p1", status: "ACTIVE", expires_at: new Date(Date.now() + 100000).toISOString() } as unknown as any));
+  mockCompletions = [{ _dummy: 1 }];
+  await assert.rejects(service.cancel("c1", "d1"), (err: any) => err.code === "REGISTRATION_ALREADY_COMPLETED");
+  mockCompletions = [];
+
+  // 4. Completed but challenge is terminal (should still 409 before mutation)
+  lockChallengeMock.mock.mockImplementation(async () => ({ device_id: "d1", purpose: "REGISTRATION_EMAIL_VERIFY", pending_registration_id: "p1", status: "CONSUMED", expires_at: new Date(Date.now() + 100000).toISOString() } as unknown as any));
+  mockCompletions = [{ _dummy: 1 }];
+  await assert.rejects(service.cancel("c1", "d1"), (err: any) => err.code === "REGISTRATION_ALREADY_COMPLETED");
+  mockCompletions = [];
+
+  // 5. Terminal but not completed -> 204
+  lockChallengeMock.mock.mockImplementation(async () => ({ device_id: "d1", purpose: "REGISTRATION_EMAIL_VERIFY", pending_registration_id: "p1", status: "CANCELLED", expires_at: new Date(Date.now() + 100000).toISOString() } as unknown as any));
+  cancelChallengeMock.mock.mockImplementation(async () => true);
+  consumePendingMock.mock.mockImplementation(async () => true);
+  await service.cancel("c1", "d1");
+  assert.equal(cancelChallengeMock.mock.callCount(), 0);
+  assert.equal(consumePendingMock.mock.callCount(), 1);
+  consumePendingMock.mock.resetCalls();
+  cancelChallengeMock.mock.resetCalls();
+
+  // 6. Expired -> 204
+  lockChallengeMock.mock.mockImplementation(async () => ({ device_id: "d1", purpose: "REGISTRATION_EMAIL_VERIFY", pending_registration_id: "p1", status: "ACTIVE", expires_at: new Date(Date.now() - 10000).toISOString() } as unknown as any));
+  await service.cancel("c1", "d1");
+  assert.equal(cancelChallengeMock.mock.callCount(), 0);
+  assert.equal(consumePendingMock.mock.callCount(), 1);
+  consumePendingMock.mock.resetCalls();
+  cancelChallengeMock.mock.resetCalls();
+
+  // 7. Active -> 204 with mutation
+  lockChallengeMock.mock.mockImplementation(async () => ({ device_id: "d1", purpose: "REGISTRATION_EMAIL_VERIFY", pending_registration_id: "p1", status: "ACTIVE", expires_at: new Date(Date.now() + 100000).toISOString() } as unknown as any));
+  await service.cancel("c1", "d1");
+  assert.equal(cancelChallengeMock.mock.callCount(), 1);
+  assert.equal(consumePendingMock.mock.callCount(), 1);
+  consumePendingMock.mock.resetCalls();
+  cancelChallengeMock.mock.resetCalls();
+
+  // 8. Repeat cancel after cleanup -> 204, no mutation
+  lockChallengeMock.mock.mockImplementation(async () => ({ device_id: "d1", purpose: "REGISTRATION_EMAIL_VERIFY", pending_registration_id: null, status: "CANCELLED", expires_at: new Date(Date.now() + 100000).toISOString() } as unknown as any));
+  await service.cancel("c1", "d1");
+  assert.equal(cancelChallengeMock.mock.callCount(), 0);
+  assert.equal(consumePendingMock.mock.callCount(), 0);
+  consumePendingMock.mock.resetCalls();
+  cancelChallengeMock.mock.resetCalls();
+
+  // 9. VERIFIED but completion failed -> 204, unlinks and deletes pending, no cancelChallenge
+  lockChallengeMock.mock.mockImplementation(async () => ({ device_id: "d1", purpose: "REGISTRATION_EMAIL_VERIFY", pending_registration_id: "p1", status: "VERIFIED", expires_at: new Date(Date.now() + 100000).toISOString() } as unknown as any));
+  await service.cancel("c1", "d1");
+  assert.equal(cancelChallengeMock.mock.callCount(), 0);
+  assert.equal(consumePendingMock.mock.callCount(), 1);
+  consumePendingMock.mock.resetCalls();
+  cancelChallengeMock.mock.resetCalls();
+
+  // 10. Cleanup failure propagation -> Error propagates (this fake test verifies error boundary, actual postgres rollback is covered in M01-07)
+  lockChallengeMock.mock.mockImplementation(async () => ({ device_id: "d1", purpose: "REGISTRATION_EMAIL_VERIFY", pending_registration_id: "p1", status: "ACTIVE", expires_at: new Date(Date.now() + 100000).toISOString() } as unknown as any));
+  consumePendingMock.mock.mockImplementation(async () => { throw new Error("Mock database error"); });
+  await assert.rejects(service.cancel("c1", "d1"), (err: any) => err.message === "Mock database error");
+  consumePendingMock.mock.resetCalls();
+  cancelChallengeMock.mock.resetCalls();
+});

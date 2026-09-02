@@ -364,6 +364,7 @@ test("KYC schema consumers are exhaustive and non-KYC OpenAPI paths are unchange
   // allow Checkpoint A changes to baseline
   baselineNonKyc["/auth/register/verify"].post.requestBody.content["application/json"].schema.$ref =
     "#/components/schemas/VerifyRegistrationChallengeRequest";
+  baselineNonKyc["/auth/register/cancel"] = currentNonKyc["/auth/register/cancel"];
 
   assert.deepEqual(currentNonKyc, baselineNonKyc);
 });

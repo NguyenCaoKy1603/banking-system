@@ -15,6 +15,7 @@ import {
   refreshSession as refreshSessionRequest,
   register as registerRequest,
   resendRegistrationChallenge as resendRegistrationChallengeRequest,
+  cancelRegistration as cancelRegistrationRequest,
   revokeAllSessions,
   revokeSession,
   verifyRegistrationChallenge as verifyRegistrationChallengeRequest,
@@ -126,6 +127,7 @@ type AuthContextValue = {
   register: (request: RegisterRequest) => Promise<AuthChallengeResponse>;
   verifyRegistrationChallenge: (request: VerifyAuthChallengeRequest) => Promise<RegisterResponse>;
   resendRegistrationChallenge: (challengeId: string) => Promise<AuthChallengeResponse>;
+  cancelRegistration?: (challengeId: string) => Promise<void>;
   logout: () => Promise<LogoutResult>;
   logoutAll: () => Promise<LogoutResult>;
 };
@@ -404,6 +406,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [ensureDeviceId],
   );
 
+  const cancelRegistration = useCallback(
+    async (challengeId: string) => {
+      const currentDeviceId = await ensureDeviceId();
+      return cancelRegistrationRequest(challengeId, { deviceId: currentDeviceId });
+    },
+    [ensureDeviceId],
+  );
+
   const waitForPendingRefreshes = useCallback(async (
     sessionEpoch: string | null,
   ): Promise<AuthSession | null> => {
@@ -533,6 +543,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       register,
       verifyRegistrationChallenge,
       resendRegistrationChallenge,
+      cancelRegistration,
       logout,
       logoutAll,
     }),
@@ -548,6 +559,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       status,
       verifyRegistrationChallenge,
       resendRegistrationChallenge,
+      cancelRegistration,
     ],
   );
 

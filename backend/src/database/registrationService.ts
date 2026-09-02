@@ -243,4 +243,46 @@ export class RelationalRegistrationService {
       return { customerId: customer.id, accountId: account.id };
     }, { traceId: input.traceId, maxRetries: 1 });
   }
+
+  async cancel(challengeId: string, deviceId: string): Promise<void> {
+    await this.unitOfWork.transaction(async ({ client }) => {
+      const mfa = new MfaRepository(client);
+      const customers = new CustomerRepository(client);
+
+      const challenge = await mfa.lockChallenge(challengeId);
+      if (!challenge || String(challenge.device_id) !== deviceId || String(challenge.purpose) !== "REGISTRATION_EMAIL_VERIFY") {
+        throw new RelationalNotFoundError("Registration challenge not found or invalid.");
+      }
+
+      if (challenge.pending_registration_id) {
+        const completed = await client.query(
+          `SELECT 1 FROM registration_completions WHERE pending_registration_id = $1`,
+          [challenge.pending_registration_id],
+        );
+        if (completed.rows.length > 0) {
+          throw new RelationalConflictError("REGISTRATION_ALREADY_COMPLETED", "Registration is already completed.");
+        }
+      }
+
+      let needsCancel = false;
+      const status = String(challenge.status);
+      const expiresAt = new Date(String(challenge.expires_at)).getTime();
+
+      if (status === "ACTIVE" && expiresAt > Date.now()) {
+        needsCancel = true;
+      }
+
+      if (challenge.pending_registration_id) {
+        await client.query(
+          `UPDATE auth_challenges SET pending_registration_id = NULL, updated_at = NOW() WHERE pending_registration_id = $1`,
+          [challenge.pending_registration_id],
+        );
+        await customers.consumePendingRegistration(String(challenge.pending_registration_id));
+      }
+
+      if (needsCancel) {
+        await mfa.cancelChallenge(challengeId);
+      }
+    });
+  }
 }

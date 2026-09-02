@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — CHECKPOINT A AWAITING OWNER REVIEW
+Trạng thái: IN_PROGRESS — B1A VERIFIED — AWAITING CHECKPOINT COMMIT
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -603,10 +603,25 @@ Bàn giao bằng tiếng Việt, tối thiểu gồm:
 
 ## 17. Decision result
 
-Trạng thái thực hiện: IN_PROGRESS — CHECKPOINT A BLOCKED — REGRESSION TEST ALLOWLIST REVIEW
+Trạng thái thực hiện: IN_PROGRESS — B1A VERIFIED — AWAITING CHECKPOINT COMMIT
 
 Owner approval date: 2026-09-02 (Asia/Bangkok).
 Scope được phê duyệt với Checkpoint A (D-05, D-06, D-07) và Checkpoint B (D-08, D-09, D-12, D-13) cùng mandatory owner gate giữa hai checkpoint đúng như task hiện tại (xem 11.7).
+
+**Current B1A checkpoint decision result:**
+
+- B1a D-08/D-09 đã đạt local/unit/HTTP fake gates.
+- Backend: 228 total / 180 pass / 0 fail / 48 skipped.
+- Mobile: 50 suites / 301 pass / 0 fail / 0 skipped.
+- Mobile E2E syntax: 19 flows.
+- Backend/Mobile OpenAPI validators: PASS.
+- PostgreSQL transaction/concurrency proof deferred M01-07.
+- Emulator/device proof deferred M01-08.
+- B1b chưa triển khai.
+- B2 chưa triển khai.
+- M01-04 chưa COMPLETED.
+
+Các mục lịch sử Checkpoint A bên dưới được giữ nguyên để truy vết và không thay thế kết quả B1A hiện tại.
 
 **1. Ghi nhận Owner Expansion:**
 - Owner đã cấp phép sửa 3 file test: `kycContract.test.ts`, `http.test.ts`, `savings-http.test.ts` để cập nhật schema (từ VerifyAuthChallengeRequest sang VerifyRegistrationChallengeRequest) và đổi method từ `OTP` sang `EMAIL_OTP` cho luồng Registration.
@@ -664,45 +679,163 @@ Scope được phê duyệt với Checkpoint A (D-05, D-06, D-07) và Checkpoint
 
 Khi task được owner phê duyệt và thực hiện:
 
-- Nếu hoàn thành, đổi trạng thái đầu file thành COMPLETED và ghi timestamp/timezone, CWD, branch, HEAD, status trước/sau, WIP được bảo vệ, file/symbol thực tế, data flow, impact, migration conclusion, toàn bộ command/test/leakage result, phần chưa kiểm chứng và xác nhận không stage/commit/push.
-- Nếu có blocker, đổi trạng thái thành BLOCKED; ghi file/symbol, bằng chứng, tác động, phần đã hoàn thành và quyết định owner cần xác nhận. Không tự mở rộng allowlist.
-- Chỉ được ghi COMPLETED khi toàn bộ acceptance criteria in-scope đạt và mọi phần PostgreSQL/emulator còn thiếu đã gắn rõ M01-07/M01-08.
+- Nếu hoàn thành, đổi trạng thái đầu file thành COMPLETED và ghi rõ timestamp.
+- Nếu có blocker, đổi trạng thái thành BLOCKED và chờ owner giải quyết.
+- Chỉ được ghi COMPLETED khi acceptance criteria in-scope đã đạt.
 
-## 18. Change-surface estimate cho owner
+## 18. CHECKPOINT B REMEDIATION DESIGN
 
-Estimate dựa trên source hiện tại và phải được kiểm tra lại trước implementation:
+**7. B1a Completed-link Evidence (FEASIBLE)**
 
-### Checkpoint A surface
+- **Nguồn lấy thông tin**: Khi `cancel` được gọi, hệ thống load challenge thông qua `mfaRepository.getChallenge(challengeId)`. Challenge này chứa `pending_registration_id` (được lưu tại cột `auth_challenges.pending_registration_id`) và email của user (`destination`).
+- **Completed check**: Trạng thái `COMPLETED` của Registration xảy ra khi hàm `registrationService.complete` được gọi. Hàm này tiêu thụ `pending_registrations` row và gọi `createCustomer`, đồng thời insert ID vào bảng `registration_completions`. ID của Customer (`customerId`) là một UUID mới, hoàn toàn khác với `pendingRegistrationId`.
+- **Reference tồn tại sau khi tiêu thụ**: Mặc dù `pending_registrations` row đã bị xóa bởi `consumePendingRegistration`, bảng `registration_completions` vẫn lưu lại `pending_registration_id` cùng với `customer_id`. Do đó, `cancel` có thể query `registration_completions` bằng khóa `pending_registration_id` có trong challenge.
+- **Phân biệt Verified và Completed**:
+  - `VERIFIED` ở MFA: Chỉ có nghĩa là người dùng điền đúng OTP.
+  - Có trường hợp challenge `VERIFIED` nhưng completion transaction thất bại (VD: lỗi database). Khi đó, `pending_registrations` row vẫn còn, transaction rollback, và `registration_completions` không có dữ liệu.
+- **Kết luận link**: **FEASIBLE**. Việc kiểm tra `COMPLETED` hoàn toàn tách biệt khỏi mutation: chỉ cần `SELECT 1 FROM registration_completions WHERE pending_registration_id = $1`. Nếu có -> trả 409 (Completed). Nếu không có, tiếp tục kiểm tra `pending_registrations` -> nếu mất -> 204. Nếu còn -> Cancel active (xóa bằng `consumePendingRegistration` qua ID và hủy challenge trong cùng 1 UnitOfWork).
 
-- OpenAPI: khoảng 1 file, với thay đổi giới hạn ở Registration operation/schema (D-05, D-06, D-07).
-- Backend: khoảng 2–3 file source — HTTP guard (verify 422), RegistrationService (duplicate 409), PersistentMfaService (method/purpose canonical).
-- Mobile: khoảng 2–3 file source — auth type, flow-specific validator.
-- Test: khoảng 1–2 file — Backend contract test (422/409), Mobile validator test.
+**8. B1b Cleanup expired pending khi retry begin (FEASIBLE NẾU MỞ QUYỀN CUSTOMER_REPOSITORY)**
 
-### Checkpoint B surface (chỉ sau owner GO)
+- **Thiết kế cleanup**:
+  - Thêm một method mới vào `customerRepository` (VD: `findAndLockPendingRegistrationByEmailOrPhone`) bọc trong UnitOfWork.
+  - Tại `begin`, trước khi insert: lock row `pending_registrations` hiện có theo normalized email/phone.
+  - Nếu pending chưa expire: trả 409, không mutation.
+  - Nếu pending đã expire: khóa và cancel challenge liên quan, delete pending cũ, sau đó tạo pending và challenge mới trong cùng một transaction.
+  - Mobile chỉ Retry, Backend tự quyết định đã expire hay chưa (không dựa vào local clock). Không thêm endpoint reconcile, không tự động retry.
+- **Đánh giá**: **FEASIBLE** nếu thêm method lock/delete vào `CustomerRepository`. (PostgreSQL concurrency proof cho unique constraint sẽ chuyển sang M01-07 theo quy tắc không migration).
 
-- OpenAPI: path key /auth/register/cancel nếu chưa có (D-08).
-- Backend: khoảng 2–3 file source — HTTP cancel route, RegistrationService cancel, repository cancel primitive (D-08, D-09).
-- Mobile: khoảng 2–3 file source — API service cancel, AuthContext wrapper, RegisterScreen cancel/recovery UI (D-09, D-12).
-- Test: khoảng 2–3 file — Backend cancel contract test, Mobile API/screen test, D-13 rate-limit test.
-- Restart/recovery feasibility inventory (11.9) phải hoàn tất trước khi sửa source.
+**9. B2 Rate-limit & Audit Keyed Fingerprint (BLOCKED do thiếu quyền wiring)**
 
-### Tổng surface
+- **Owner Decision (D-13)**:
+  - Chỉ dùng `request.socket.remoteAddress`, **TUYỆT ĐỐI BỎ QUA** `x-forwarded-for`. (Đã xóa/đánh dấu REJECTED mọi đề xuất tin x-forwarded-for, tắt rate-limit hay bypass D-13 trước đây).
+  - Nếu `remoteAddress` thiếu, dùng constant internal bucket an toàn để fail closed, không random key.
+  - Bỏ hẳn `rateLimitKey` ở caller payload trước khi truyền vào `AuditRepository` (Không sửa `auditRepository.ts`).
+  - Keyed Fingerprint: HMAC-SHA-256 (domain separation). Key base64 giải mã tối thiểu 32 bytes từ runtime config. Không default/fallback/hard-code. Không log key. Startup fail closed nếu thiếu/sai. Test sinh synthetic key trong memory.
+- **Consumer matrix**:
+  | File/symbol | Input | Domain | Output | Nơi lưu | Dùng để lookup/compare? | Ảnh hưởng rotation | Migration/compatibility policy |
+  |---|---|---|---|---|---|---|---|
+  | Registration rate-limit bucket | `remoteAddress` | `rate_limit_registration` | HMAC hex | Redis | CÓ | Reset bucket cũ. | An toàn (chỉ 10 phút). |
+  | Registration audit payload | - | - | - | - | - | - | Loại bỏ nguyên trường IP, không hash. |
+  | `registrationService.begin` | `email, phone` | `contact_fingerprint` | HMAC hex | Tạm trong hàm | KHÔNG | Challenge mất fingerprint. | An toàn, OTP ngắn hạn. |
+  | `persistentMfaService.createEmailChallenge` | `email, phone` | `request_fingerprint` | HMAC hex | `auth_challenges` | KHÔNG (hiện tại) | Record cũ khác fingerprint. | An toàn, OTP ngắn hạn. |
+  | Các consumer ngoài Registration | - | - | - | - | - | - | Không dùng fallback sang unkeyed hash. Phải truyền explicit key từ wiring. |
+- **Injection-path inventory**:
+  - `runtimeConfig` lấy field `REGISTRATION_FINGERPRINT_KEY`.
+  - `backend/src/server.ts` đọc config truyền vào constructor `RelationalHttpBoundary` (`backend/src/database/relationalHttpBoundary.ts`), sau đó truyền xuống `registrationService`.
+- **Kết luận**: **BLOCKED** vì cần sửa `server.ts` và `relationalHttpBoundary.ts` (các file này không nằm trong allowlist hiện tại).
 
-- Tổng dự kiến: khoảng 12–16 file qua cả hai checkpoint; không bao gồm migration, package, Admin, CI, infrastructure hoặc database.
+**10. Đồng bộ Cancel Precedence**
 
-Rủi ro chính:
+Duy nhất 1 precedence xử lý theo thứ tự:
+1. Validate malformed body/header → 422 trước DB.
+2. Lock/load challenge.
+3. Không tồn tại hoặc sai device/purpose → 404 redact.
+4. Với challenge đúng owner/purpose:
+   - **COMPLETED** (kiểm tra qua `registration_completions` trước mọi mutation/terminal handling) → 409, không mutation.
+   - Chưa completed nhưng terminal/cancelled/expired → 204.
+   - Active → cancel challenge và cleanup pending (bằng `consumePendingRegistration`) trong cùng UnitOfWork → 204.
 
-- VerifyAuthChallengeRequest có consumer dùng chung với /auth/verify; nếu scan cho thấy thay đổi Registration làm vỡ auth flow khác thì phải dùng flow-specific schema hoặc BLOCKED.
-- Cancel precedence (11.8): completed registration phải trả 409 chứ không phải 204 ngay cả khi challenge ở trạng thái terminal. Test phải chứng minh điều này một cách rõ ràng.
-- Cancel/recovery chạm cả HTTP, service, challenge repository và RegisterScreen; cần giữ behavior idempotent và không xóa local state quá sớm.
-- D-13 rate-limit safety (11.10): không được tắt, bypass hoặc hạ threshold. Nếu cần keyed fingerprint thì BLOCKED; không tự thêm secret/config.
-- D-07 race thật không thể kết luận bằng fake test; phải giữ claim ở mức unit/HTTP fake và chuyển proof sang M01-07.
-- Recovery feasibility (11.9): nếu inventory cho thấy cần file/endpoint/storage ngoài allowlist, checkpoint B phải BLOCKED trước khi sửa source. React state unit test không chứng minh cross-restart behavior.
+**11. Mobile Transition Table (B1b/B1a)**
 
-Khuyến nghị: giữ M01-04 là một task cohesive vì cùng một Registration boundary, thực hiện bắt buộc theo hai checkpoint:
+| Current phase | Event/response | Server state | Local action | Next phase | Có được begin lại? |
+|---|---|---|---|---|---|
+| `BEGIN_UNKNOWN` | Response success (2xx) | Tạo pending & MFA challenge | Lưu `challengeId`, update `expiresAt` | `CHALLENGE_RECEIVED` | KHÔNG (đã có challenge). |
+| `BEGIN_UNKNOWN` | Timeout | Unknown | Không xóa metadata, báo lỗi UI | `BEGIN_UNKNOWN` | KHÔNG (tránh spam 409). |
+| Restart trước expiry | Khởi động app | Unknown | Block begin mới, khôi phục UI nếu có challenge | `BEGIN_UNKNOWN` / `CHALLENGE_RECEIVED` | KHÔNG. |
+| Restart sau expiry | Khởi động app | B1b server tự cleanup khi retry | Cho user chọn bắt đầu lại | Trống (cho đến khi begin) | **CÓ** (Server quyết định và cleanup). |
+| `CHALLENGE_RECEIVED` | Cancel 204 | Đã xóa pending & MFA | Xóa metadata | Trống | CÓ. |
+| `CHALLENGE_RECEIVED` | Cancel 409 (Completed) | Đã là Customer | Xóa metadata, sang màn Login | Trống | KHÔNG. |
+| `CHALLENGE_RECEIVED` | Cancel 404 | Không có/Đã xóa | **Không tự động xóa** | `CHALLENGE_RECEIVED` | KHÔNG. |
+| `CHALLENGE_RECEIVED` | Cancel 422 | Không đổi | Không xóa | `CHALLENGE_RECEIVED` | KHÔNG. |
+| `CHALLENGE_RECEIVED` | Cancel Network Timeout | Unknown | Không xóa | `CHALLENGE_RECEIVED` | KHÔNG. |
+| Bất kỳ | SecureStore write failure | Đã mutation ở server | Fallback state in-memory | Tùy write | Tùy. |
+| Bất kỳ | SecureStore delete failure | Server đã xử lý | Cho qua / thử lại | Tùy delete | KHÔNG. |
 
-- Checkpoint A: canonical contract, 422/409 và regression (D-05, D-06, D-07). Sau khi hoàn tất, dừng và chờ owner review.
-- Checkpoint B: cancel, restart/recovery và D-13 (D-08, D-09, D-12, D-13). Chỉ bắt đầu sau owner GO. Phải hoàn tất feasibility inventory trước khi sửa source.
+**12. Exact Allowlist B1a, B1b, B2**
 
-Không tự tạo task mới. Nếu checkpoint A phát hiện shared schema ảnh hưởng Admin/global auth hoặc checkpoint B cần migration/secret/config, dừng BLOCKED và báo owner trước khi tiếp tục.
+**B1a (Cancel UI & Logic)** - *FEASIBLE*:
+- `documents/api/banking-mvp.openapi.yaml`
+- `backend/src/http.ts`
+- `backend/src/database/registrationService.ts`
+- `backend/src/tests/registrationContract.test.ts`
+- `mobile-app/src/features/auth/services/authApi.ts`
+- `mobile-app/src/features/auth/services/__tests__/authApi.test.ts`
+- `mobile-app/src/features/auth/screens/RegisterScreen.tsx`
+- `mobile-app/src/features/auth/screens/__tests__/RegisterScreen.test.tsx`
+- `mobile-app/src/features/auth/context/AuthContext.tsx`
+- `mobile-app/src/features/auth/context/__tests__/AuthContext.test.tsx`
+- `mobile-app/src/features/auth/types/auth.ts`
+- `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md`
+
+*(Quét nguồn xác nhận Không đưa Mobile Storage Adapter hoặc mfaRepository vào B1a. Check completed lấy qua registration_completions thẳng tại service).*
+
+**B1b (Unknown-response recovery)** - *BLOCKED*:
+- Cần thêm `backend/src/database/repositories/customerRepository.ts` để sửa hàm tìm/khóa pending. Đang chờ Owner phê duyệt cấp quyền B1b.
+
+**B2 (D-13 Fingerprint)** - *BLOCKED VÌ WIRING*:
+- *Chấp thuận về nguyên tắc*: `backend/src/security.ts`, `backend/src/runtimeConfig.ts`, `backend/src/server.ts` (chỉ config wiring), `backend/src/database/relationalHttpBoundary.ts` (chỉ constructor), `backend/src/database/registrationService.ts`, `backend/src/mfa/persistentMfaService.ts`, `backend/src/http.ts`, `backend/src/tests/security.test.ts`, `backend/src/tests/runtimeConfig.test.ts`, `backend/src/tests/registrationContract.test.ts`, `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md`.
+- *KHÔNG ĐƯỢC PHÉP SỬA*: `auditRepository.ts` (Caller drops `rateLimitKey`), .env thật, migration, dependency.
+
+## 19. CHECKPOINT B1A — MOBILE VALIDATOR ALLOWLIST (OWNER DECISION 2026-09-02)
+
+Owner decision: cancel remains public pre-auth device-bound. OpenAPI `security: []` is canonical. Do not add fake bearer authentication. Do not add `{}` security alternative.
+
+**Pre-change inventory (trước khi sửa):**
+
+- Exact script `mobile-app/package.json` gọi: `node scripts/validate-openapi.cjs` → `mobile-app/scripts/validate-openapi.cjs`.
+- `PUBLIC_OPERATIONS` chỉ nới rule bearerAuth+deviceBinding (empty `security`); Device ID được enforce ở vòng `requireDeviceId` riêng. Không BLOCKED.
+- Begin/verify/resend: nằm trong `PUBLIC_OPERATIONS` (`security: []`) và (begin/verify/resend) nằm trong vòng bắt buộc `X-Device-ID`.
+- Cancel trước sửa: OpenAPI đã `security: []` + `$ref` DeviceId required; Mobile validator chưa có cancel trong `PUBLIC_OPERATIONS` nên fail private rule: `POST /auth/register/cancel must require bearerAuth and deviceBinding together with no weaker alternative.`
+
+**Thay đổi lượt này (chỉ hai file được phép):**
+
+- `mobile-app/scripts/validate-openapi.cjs`: thêm đúng `POST /auth/register/cancel` vào `PUBLIC_OPERATIONS` và vào vòng `requireDeviceId`. Không wildcard, không đổi default private rule, không skip/catch-ignore, không đổi threshold.
+- File task này: trạng thái + evidence.
+
+Không sửa Backend, OpenAPI, Mobile source trong lượt này. B1b và B2 chưa triển khai. M01-04 không đánh dấu COMPLETED.
+
+**Security evidence (validator nhận):**
+
+- Cancel `security: []`; không `bearerAuth`; không `{}` alternative; `X-Device-ID` required via `#/components/parameters/DeviceId` (`required: true`).
+- Begin/verify/resend giữ `security: []` + DeviceId `$ref`.
+- Private `GET /accounts` vẫn `bearerAuth` + `deviceBinding`, không alternative yếu.
+- Path giả `POST /auth/not-allowlisted` với `security: []` không nằm allowlist → `wouldPass=false`.
+- Backend validator (`backend/scripts/validate-openapi.cjs`) đã có cancel trong cùng hai nhóm; không sửa thêm Backend lượt này. `npm run validate:openapi` Backend PASS.
+
+**Mobile gates (CWD `mobile-app`, Node v24.19.0):**
+
+| Gate | Kết quả |
+| --- | --- |
+| `npm run validate:openapi` | PASS |
+| `npm run lint` | PASS |
+| `npm run typecheck` | PASS |
+| Targeted Jest | 3 suites / 52 tests / 52 pass / 0 fail / 0 skipped |
+| Full Jest `--runInBand` | 50 suites / 301 tests / 301 pass / 0 fail / 0 skipped |
+| `npm run validate:e2e` | PASS, 19 flows |
+| `npm run export:web` | PASS |
+| `git diff --check` | PASS (warning CRLF task file) |
+| Sensitive-data scan | Không có credential/OTP/token plaintext trong validator diff |
+| `git status --short --untracked-files=all` | WIP trước đó giữ nguyên; lượt này thêm `M mobile-app/scripts/validate-openapi.cjs` |
+| `git diff --cached --name-status` | trống (không stage) |
+
+Targeted breakdown: `authApi.test.ts` 1/37/37/0/0; `AuthContext.test.tsx` 1/6/6/0/0; `RegisterScreen.test.tsx` 1/9/9/0/0.
+
+Branch: `codex/staging-academic-completion`. HEAD: `78e2dde71f577161bcd8897c59487d3a5f72199e`.
+
+Staging plan được owner duyệt, chưa thực hiện: chỉ stage đúng 14 file sau; không commit/push:
+
+1. `backend/scripts/validate-openapi.cjs`
+2. `backend/src/database/registrationService.ts`
+3. `backend/src/http.ts`
+4. `backend/src/tests/kycContract.test.ts`
+5. `backend/src/tests/registrationContract.test.ts`
+6. `documents/api/banking-mvp.openapi.yaml`
+7. `mobile-app/scripts/validate-openapi.cjs`
+8. `mobile-app/src/features/auth/context/AuthContext.tsx`
+9. `mobile-app/src/features/auth/context/__tests__/AuthContext.test.tsx`
+10. `mobile-app/src/features/auth/screens/RegisterScreen.tsx`
+11. `mobile-app/src/features/auth/screens/__tests__/RegisterScreen.test.tsx`
+12. `mobile-app/src/features/auth/services/authApi.ts`
+13. `mobile-app/src/features/auth/services/__tests__/authApi.test.ts`
+14. `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md`

@@ -3,6 +3,7 @@ import {
   refreshSession as refreshSessionApi,
   revokeAllSessions,
   register as registerApi,
+  cancelRegistration as cancelRegistrationApi,
   resendRegistrationChallenge as resendRegistrationChallengeApi,
   revokeSession as revokeSessionApi,
 } from "@/features/auth/services/authApi";
@@ -71,6 +72,8 @@ const revokeSession = (refreshToken: string) =>
   revokeSessionApi(refreshToken, DEVICE_OPTIONS);
 const resendRegistrationChallenge = (challengeId: string) =>
   resendRegistrationChallengeApi(challengeId, DEVICE_OPTIONS);
+const cancelRegistration = (challengeId: string) =>
+  cancelRegistrationApi(challengeId, DEVICE_OPTIONS);
 
 const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>();
 const originalFetch = globalThis.fetch;
@@ -322,6 +325,77 @@ describe("authApi", () => {
         headers: expect.objectContaining({ "X-Device-ID": "device-test" }),
       }),
     );
+  });
+
+  it("hủy registration qua đúng POST path, body, device binding và không parse body 204", async () => {
+    const response = createInvalidJsonResponse(204);
+    fetchMock.mockResolvedValueOnce(response);
+
+    await expect(cancelRegistration("registration-challenge-1")).resolves.toBeUndefined();
+
+    expect(response.json).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(
+      API_BASE_URL + "/auth/register/cancel",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ challengeId: "registration-challenge-1" }),
+        headers: expect.objectContaining({
+          "X-Device-ID": "device-test",
+        }),
+      }),
+    );
+  });
+
+  it("không ghi challenge hoặc device identifier ra console khi hủy registration", async () => {
+    const consoleLog = jest.spyOn(console, "log").mockImplementation(() => undefined);
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    fetchMock.mockResolvedValueOnce(createInvalidJsonResponse(204));
+
+    await cancelRegistration("registration-challenge-2");
+
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleLog.mockRestore();
+    consoleError.mockRestore();
+  });
+
+  it.each([404, 409, 422])("propagate cancel HTTP %s without changing status", async (status) => {
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse(
+        {
+          code: "REGISTRATION_CANCEL_ERROR",
+          message: "Yêu cầu đăng ký không thể xử lý.",
+          fieldErrors: null,
+          traceId: "trace-redacted",
+        },
+        status,
+      ),
+    );
+
+    const error = await expectApiError(cancelRegistration("registration-challenge-3"));
+
+    expect(error).toMatchObject({
+      status,
+      code: "REGISTRATION_CANCEL_ERROR",
+      traceId: "trace-redacted",
+    });
+  });
+
+  it("propagate timeout và network error để RegisterScreen quyết định giữ challenge", async () => {
+    const timeoutError = new ApiError({
+      status: null,
+      code: "TIMEOUT",
+      message: "Yêu cầu đến máy chủ đã hết thời gian chờ.",
+    });
+    fetchMock.mockRejectedValueOnce(timeoutError);
+
+    await expect(cancelRegistration("registration-challenge-4")).rejects.toBe(timeoutError);
+  });
+
+  it("fail closed trước network khi challenge hoặc device binding rỗng", async () => {
+    await expect(cancelRegistrationApi(" ", DEVICE_OPTIONS)).rejects.toThrow(TypeError);
+    await expect(cancelRegistrationApi("registration-challenge-5", { deviceId: " " })).rejects.toThrow(TypeError);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("từ chối direct registration success để không có hai state machine", async () => {
