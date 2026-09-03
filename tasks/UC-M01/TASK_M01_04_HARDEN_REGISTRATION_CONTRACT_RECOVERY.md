@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — B2B VERIFIED — AWAITING CHECKPOINT COMMIT
+Trạng thái: COMPLETED
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -467,33 +467,33 @@ Implementation tuân thủ hai checkpoint bắt buộc (xem 11.7). Không đư�
 
 ### Checkpoint A
 
-- [ ] OpenAPI có contract registration canonical; không tự thêm /api/v1 vào OpenAPI.
-- [ ] Toàn bộ $ref consumer của schema liên quan đã được quét; endpoint ngoài Public Registration không đổi contract; Admin runtime/contract không bị sửa.
-- [ ] Registration challenge response và flow validator chỉ nhận EMAIL_OTP và REGISTRATION_EMAIL_VERIFY; global login/recovery/biometric enum không bị thu hẹp ngoài bằng chứng regression được owner chấp nhận.
-- [ ] Verify body malformed, thiếu field, sai kiểu hoặc method không canonical trả 422 trước mọi side effect.
-- [ ] Duplicate registration và fake concurrent conflict trả 409; không tạo completion/customer/account thứ hai trong fake boundary được test.
-- [ ] Test/gate Checkpoint A đã PASS; evidence được ghi với branch, HEAD, lệnh và kết quả.
-- [ ] Trạng thái chuyển IN_PROGRESS — CHECKPOINT A AWAITING OWNER REVIEW trước khi bắt đầu B.
+- [x] OpenAPI có contract registration canonical; không tự thêm /api/v1 vào OpenAPI.
+- [x] Toàn bộ $ref consumer của schema liên quan đã được quét; endpoint ngoài Public Registration không đổi contract; Admin runtime/contract không bị sửa.
+- [x] Registration challenge response và flow validator chỉ nhận EMAIL_OTP và REGISTRATION_EMAIL_VERIFY; global login/recovery/biometric enum không bị thu hẹp ngoài bằng chứng regression được owner chấp nhận.
+- [x] Verify body malformed, thiếu field, sai kiểu hoặc method không canonical trả 422 trước mọi side effect.
+- [x] Duplicate registration và fake concurrent conflict trả 409; không tạo completion/customer/account thứ hai trong fake boundary được test.
+- [x] Test/gate Checkpoint A đã PASS; evidence được ghi với branch, HEAD, lệnh và kết quả.
+- [x] Trạng thái chuyển IN_PROGRESS — CHECKPOINT A AWAITING OWNER REVIEW trước khi bắt đầu B.
 
 ### Checkpoint B (chỉ sau owner GO)
 
-- [ ] Restart/recovery feasibility inventory (11.9) đã hoàn tất và ghi kết quả; nếu không đạt thì đã chuyển BLOCKED.
-- [ ] OpenAPI có path key /auth/register/cancel.
-- [ ] POST /auth/register/cancel yêu cầu challengeId và X-Device-ID, kiểm tra đúng device/purpose, idempotent và có response 204/422/404/409 đúng bảng contract.
-- [ ] Cancel precedence (11.8) được tuân thủ: completed registration trả 409 chứ không phải 204; test chứng minh rõ ràng.
-- [ ] Cancel mismatch không tiết lộ challenge/device/purpose; cancel không ảnh hưởng registration đã hoàn thành.
-- [ ] Mobile không tự begin request mới khi challenge state unknown sau timeout/restart; cancel/reconcile chỉ được gọi theo intent/challenge đã xác định.
-- [ ] Không persist password, OTP hoặc proof; không có secret hoặc raw identifier trong response, log, audit payload, snapshot, test failure output hay Mobile persistence.
-- [ ] D-13 được xử lý bằng loại bỏ identifier hoặc có owner/security decision keyed fingerprint; không có hard-code key, unkeyed hash, secret mới hoặc EXPO_PUBLIC_*.
-- [ ] D-13 rate-limit safety (11.10): rate limiter vẫn enforce sau thay đổi; không tắt, bypass hoặc hạ threshold; không dùng raw identifier, unkeyed hash hoặc hard-coded key.
-- [ ] React state unit test không được dùng để tuyên bố đã chứng minh app restart recovery; emulator restart evidence thuộc M01-08.
+- [x] Restart/recovery feasibility inventory (11.9) đã hoàn tất và ghi kết quả; nếu không đạt thì đã chuyển BLOCKED.
+- [x] OpenAPI có path key /auth/register/cancel.
+- [x] POST /auth/register/cancel yêu cầu challengeId và X-Device-ID, kiểm tra đúng device/purpose, idempotent và có response 204/422/404/409 đúng bảng contract.
+- [x] Cancel precedence (11.8) được tuân thủ: completed registration trả 409 chứ không phải 204; test chứng minh rõ ràng.
+- [x] Cancel mismatch không tiết lộ challenge/device/purpose; cancel không ảnh hưởng registration đã hoàn thành.
+- [x] Mobile không tự begin request mới khi challenge state unknown sau timeout/restart; cancel/reconcile chỉ được gọi theo intent/challenge đã xác định.
+- [x] Không persist password, OTP hoặc proof; không có secret hoặc raw identifier trong response, log, audit payload, snapshot, test failure output hay Mobile persistence.
+- [x] D-13 được xử lý bằng server-side keyed fingerprint theo quyết định Owner; key chỉ đi qua runtime config đã phê duyệt; không có hard-coded key, unkeyed hash, client-side `EXPO_PUBLIC_*` key hoặc production fallback.
+- [x] D-13 rate-limit safety (11.10): rate limiter vẫn enforce sau thay đổi; không tắt, bypass hoặc hạ threshold; không dùng raw identifier, unkeyed hash hoặc hard-coded key.
+- [x] React state unit test không được dùng để tuyên bố đã chứng minh app restart recovery; emulator restart evidence thuộc M01-08.
 
 ### Chung (cả hai checkpoint)
 
-- [ ] Mọi code source thay đổi đều có unit/contract/screen test tương ứng trong allowlist; test kiểm tra behavior và payload thực tế, không chỉ kiểm tra mock đã được gọi.
-- [ ] Không có migration, dependency, config, Admin, CI, infrastructure, worker hoặc scheduler thay đổi.
-- [ ] Backend và Mobile lint/typecheck/build/test/OpenAPI gates phù hợp đều PASS; diff --check PASS.
-- [ ] PostgreSQL disposable/race/transaction/idempotency chưa được tuyên bố trong M01-04 và được gắn M01-07; emulator/Maestro/restart UI chưa được tuyên bố và được gắn M01-08.
+- [x] Mọi code source thay đổi đều có unit/contract/screen test tương ứng trong allowlist; test kiểm tra behavior và payload thực tế, không chỉ kiểm tra mock đã được gọi.
+- [x] Không có migration, dependency, Admin, CI, infrastructure, worker hoặc scheduler thay đổi; config change chỉ giới hạn ở `backend/src/runtimeConfig.ts` và `backend/.env.example` thuộc B2A allowlist đã được Owner phê duyệt.
+- [x] Backend và Mobile lint/typecheck/build/test/OpenAPI gates phù hợp đều PASS; diff --check PASS.
+- [x] PostgreSQL disposable/race/transaction/idempotency chưa được tuyên bố trong M01-04 và được gắn M01-07; emulator/Maestro/restart UI chưa được tuyên bố và được gắn M01-08.
 
 ## 14. Test matrix và negative regression
 
@@ -603,7 +603,7 @@ Bàn giao bằng tiếng Việt, tối thiểu gồm:
 
 ## 17. Decision result
 
-Trạng thái thực hiện: IN_PROGRESS — B2A AWAITING OWNER REVIEW
+Trạng thái thực hiện: COMPLETED
 
 Owner approval date: 2026-09-03 (Asia/Bangkok).
 Scope được phê duyệt với Checkpoint A (D-05, D-06, D-07) và Checkpoint B (D-08, D-09, D-12, D-13) cùng mandatory owner gate giữa hai checkpoint đúng như task hiện tại (xem 11.7).
@@ -793,11 +793,16 @@ Các mục lịch sử Checkpoint A bên dưới được giữ nguyên để tr
 
 **5. Constraint classification (D-07):**
 
-| Phase | File/Symbol | Error class/code | PostgreSQL constraint name | Được map 409? | Unknown error rethrow? | Test fake/unit tương ứng |
-|---|---|---|---|---|---|---|
-| `begin` / `createPendingRegistration` | `registrationService.ts` / `begin` | 23505 | `pending_registrations_email_idx`, `pending_registrations_phone_idx`, `pending_registrations_pkey` | CÓ (`conflict()`) | CÓ | `Begin conflict returns 409` |
-| `complete` / `createCustomer` | `registrationService.ts` / `complete` | 23505 | `customers_email_key`, `customers_phone_number_key`, `customers_email_lower_idx`, `customers_pkey` | CÓ (`RelationalConflictError`) | CÓ | `Complete conflict returns 409` |
-*Ghi chú*: Việc map 409 cho `complete conflict` đã được xử lý. Test đang chạy bằng Fake In-Memory. (PostgreSQL test thuộc gap M01-07/M01-08 theo định hướng task).
+*Lưu ý*: Bảng phân loại ban đầu từng ghi nhận nhầm primary key vào danh sách map 409. Bảng dưới đây là **canonical matrix** đã được chuẩn hóa theo quyết định của Owner và implementation thực tế tại Checkpoint A (đã superseded bảng dự thảo cũ):
+
+| Phase | Constraint | Kết quả |
+|---|---|---|
+| Begin | `pending_registrations_email_idx`, `pending_registrations_phone_idx` | Map 409 |
+| Begin | `pending_registrations_pkey`, unknown constraint/error | Rethrow; không giả thành business conflict |
+| Complete | `customers_email_key`, `customers_phone_number_key`, `customers_email_lower_idx` | Map 409 |
+| Complete | `customers_pkey`, unknown constraint/error | Rethrow; không giả thành business conflict |
+
+*Ghi chú*: Việc map 409 cho duplicate constraint và rethrow cho primary key/unknown errors đã được kiểm chứng qua test suite fake/unit. Bảng này không tuyên bố PostgreSQL thật đã kiểm chứng; runtime proof trên PostgreSQL disposable vẫn thuộc phạm vi M01-07.
 
 **5. Xác minh OpenAPI/Mobile strictness:**
 - `/auth/register/verify` đã được migrate sang dùng schema riêng `VerifyRegistrationChallengeRequest` chỉ chấp nhận method `EMAIL_OTP`.
@@ -2433,3 +2438,132 @@ Khôi phục XFF cho `beginTotpChallenge` (flow non-Registration) giữ nguyên 
 ### 25.10 Deferred
 
 - PostgreSQL runtime/integration verification: vẫn deferred sang M01-07. Chưa tuyên bố đã kiểm chứng.
+
+## 26. B2B CHECKPOINT COMMIT
+
+- Implementation commit: `93fdcb0c876e413bac88d37bb09af0d87915f630`
+- Parent: `08ccd99d02de35d19dfa4a711f25fcdace7ef65b`
+- Message: `fix(registration): apply keyed network fingerprints`
+- Timestamp: Thu Sep 3 21:18:44 2026 +0700 (2026-09-03T21:18:44+07:00)
+- Commit chứa đúng 18 file (toàn bộ modified):
+  1. `backend/src/database/registrationService.ts`
+  2. `backend/src/database/relationalHttpBoundary.ts`
+  3. `backend/src/http.ts`
+  4. `backend/src/server.ts`
+  5. `backend/src/tests/credit-http.test.ts`
+  6. `backend/src/tests/databaseFoundation.test.ts`
+  7. `backend/src/tests/http-security-persistence.test.ts`
+  8. `backend/src/tests/http.test.ts`
+  9. `backend/src/tests/integratedDisposable.test.ts`
+  10. `backend/src/tests/kycContract.test.ts`
+  11. `backend/src/tests/observability.test.ts`
+  12. `backend/src/tests/persistence.test.ts`
+  13. `backend/src/tests/registrationContract.test.ts`
+  14. `backend/src/tests/registrationRelational.test.ts`
+  15. `backend/src/tests/relationalHttpCutover.test.ts`
+  16. `backend/src/tests/runtimeConfig.test.ts`
+  17. `backend/src/tests/savings-http.test.ts`
+  18. `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md`
+- Quality gates verified tại checkpoint:
+  - Targeted registrationContract + http: 70/70 PASS.
+  - B2A targeted (security + runtimeConfig): 22/22 PASS.
+  - Full Backend suite: 273 total / 225 pass / 48 intentional skip / 0 fail.
+  - `npm run typecheck`: PASS (0 error).
+  - `npm run build`: PASS.
+  - `npm run validate:openapi`: PASS (54 paths, 60 guards).
+  - Static database schema validator: PASS (52 table definitions).
+  - T-B2-17 đến T-B2-23: PASS.
+- Data minimization & security contract:
+  - Registration begin và resend dùng socket remoteAddress → HMAC (D-B2-01 đến D-B2-04).
+  - Không dùng XFF cho Registration.
+  - Audit append event `REGISTRATION_STARTED` có `payload: {}` — verified tại B2B.
+  - Audit append event `REGISTRATION_PENDING_CLEANUP` có `payload: {}` — verified tại B1b.
+  - Không lưu raw IP, secret key hoặc keyed network fingerprint trong hai payload đã kiểm chứng; không đưa ra blanket claim cho mọi resend/cancel audit event nếu không có exact event/test evidence.
+  - Năm `as never` test-only harness casts đã được Owner phê duyệt; không có production cast.
+- Commit local, chưa push.
+
+## 27. M01-04 FINAL CLOSURE
+
+M01-04 closure status: COMPLETED
+
+### Completed ownership
+
+- **D-05**: Registration canonical enum (`EMAIL_OTP`, `REGISTRATION_EMAIL_VERIFY`) được phản hồi chính xác tại `/auth/register`.
+- **D-06**: Malformed verify runtime validation trả về 422 Unprocessable Entity (missing challengeId, wrong method).
+- **D-07**: Duplicate business constraint trả về 409 Conflict trước khi thực thi side effect (customer duplicate, active pending duplicate, concurrent conflict).
+- **D-08**: Registration cancel endpoint (`POST /auth/register/cancel`) hoàn chỉnh với router guard và lifecycle handler.
+- **D-09**: Cancellation được ràng buộc chặt chẽ với device ID (`X-Device-ID`), purpose `REGISTRATION_EMAIL_VERIFY`, và idempotent.
+- **D-12**: Quản lý restart/recovery state bền vững trên SecureStore client (CORRUPT/RECOVERY_BLOCKED) và cơ chế server-side expired-pending cleanup reconciliation.
+- **D-13**: Keyed Registration network fingerprint (`registration-rate-limit:v1:${normalizedAddress}` via HMAC-SHA256) và data minimization triệt để trên audit log cho hai event đã kiểm chứng `REGISTRATION_STARTED` và `REGISTRATION_PENDING_CLEANUP` (`payload: {}`).
+
+### Latest verified evidence
+
+**Backend**:
+- Total: 273 tests.
+- Pass: 225 tests.
+- Skip: 48 tests (intentional relational/PostgreSQL skips deferred M01-07).
+- Fail: 0 tests.
+- Typecheck: PASS (`tsc --noEmit`, 0 errors).
+- Build: PASS (`tsc -p tsconfig.build.json`).
+- OpenAPI validator: PASS (54 required paths, 60 exact method/segment guards).
+- Static schema validator: PASS (52 table definitions and column/constraint invariants).
+
+**Mobile evidence tại B1b checkpoint (`b087cbe6161016dd242d66538a73fd0785bb301b`)**:
+- Suites: 51 suites.
+- Tests: 345/345 PASS.
+- Lint, typecheck, OpenAPI validation, E2E syntax (19 flows) và web export: PASS.
+- B2 hoàn toàn không sửa Mobile code nên không tuyên bố đã chạy lại Mobile tại B2B HEAD.
+
+### Explicit deferred evidence
+
+- **M01-07 (PostgreSQL & Relational Verification)**:
+  - PostgreSQL container/service thật.
+  - Transaction isolation, row lock (`FOR UPDATE`), và concurrency races trên live database.
+  - `registrationRelational.test.ts` runtime test.
+  - 48 integration skips trong suite Backend không được tính là PASS cho live DB.
+- **M01-08 (Mobile Device & Process-kill Verification)**:
+  - Android emulator / physical device testing.
+  - Maestro automated UI flows.
+  - Runtime process-kill, OS suspension, và SecureStore persistence verification thực tế.
+
+Các hạng mục deferred trên là task riêng có scope độc lập đã được chốt trong kế hoạch UC-M01, không phải bằng chứng đã hoàn thành trong M01-04.
+
+### Accepted remaining risks
+
+- Năm `as never` chỉ tồn tại trong test harness adapter cho private members; refactor port interface là P2 follow-up task riêng.
+- Spoofable XFF của hai MFA flow ngoài Registration (`beginTotpChallenge`) là pre-existing baseline behavior và được ghi nhận thành security finding riêng sau M01-04.
+- Không tuyên bố toàn bộ hệ thống đã production-ready (academic/reference scope).
+- Không sử dụng tiền thật hay PII thật trong toàn bộ implementation và test vectors.
+
+### Final implementation checkpoint matrix
+
+| Scope | Decisions | Implementation commit | Ancestry verified | Kết luận |
+|---|---|---|---|---|
+| Checkpoint A | D-05, D-06, D-07 | `78e2dde71f577161bcd8897c59487d3a5f72199e` | Yes | Implemented |
+| B1a | D-08, D-09 | `04c6f997f1d36879201d5c9a6a09e76928c25688` | Yes | Implemented |
+| B1b Backend | D-12 backend | `2cb1f5492503da657bfd9ad486dcd18175188a5b` | Yes | Implemented |
+| B1b Mobile | D-12 mobile | `b087cbe6161016dd242d66538a73fd0785bb301b` | Yes | Implemented |
+| B2A | D-13 crypto/config | `097987005b7079dd8b01495c3d9aa8e22596a1a8` | Yes | Implemented |
+| B2B | D-13 runtime/data minimization | `93fdcb0c876e413bac88d37bb09af0d87915f630` | Yes | Implemented |
+
+*Ghi chú về scope expansion và verification*:
+- Cả 6 commit đã được xác minh bằng `git merge-base --is-ancestor <commit> HEAD` trả về `True`, nằm trong linear history của HEAD.
+- B2B allowlist ban đầu 17 file đã được Owner phê duyệt mở rộng thành 18 file.
+- File bổ sung duy nhất là `registrationRelational.test.ts`.
+- Việc cập nhật `registrationRelational.test.ts` chỉ thuần túy phục vụ compile compatibility với constructor/signature mới; runtime verification trên PostgreSQL thật vẫn thuộc M01-07.
+
+### Status reconciliation & audit trail note
+
+- Các câu “M01-04 chưa COMPLETED”, “B2B chưa bắt đầu” hoặc “AWAITING REVIEW” trong các Section lịch sử (Checkpoint A, B1a, B1b, B2A, B2B) chỉ mô tả trạng thái tại thời điểm checkpoint tương ứng nhằm lưu trữ audit trail đầy đủ và bất biến.
+- Chúng không phải current task status.
+- Current source of truth duy nhất cho trạng thái hiện tại của task là Header (`Trạng thái: COMPLETED`), Section 17 (`Trạng thái thực hiện: COMPLETED`) và Section 27 (`M01-04 closure status: COMPLETED`).
+
+### Scope closure
+
+- **M01-04 implementation scope**: Hoàn thành đầy đủ theo các Checkpoint A, B1a, B1b, B2A, B2B.
+- **M01-04 evidence scope**: Hoàn thành trong giới hạn unit/contract/static gates đã phê duyệt.
+- PostgreSQL và device runtime evidence chuyển giao sang M01-07 và M01-08.
+- Use case tổng thể **UC-M01 chưa hoàn thành**.
+- Không tự ý nhận ownership của D-10, D-11, D-14 hoặc D-15.
+- Các task từ M01-05 trở đi vẫn còn phải thực hiện theo kế hoạch.
+- Toàn bộ commit mới chỉ tồn tại ở local branch `codex/staging-academic-completion`, **chưa push**.
