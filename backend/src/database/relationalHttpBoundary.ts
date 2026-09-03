@@ -184,8 +184,8 @@ export class RelationalHttpBoundary {
     return this.auth.loginPasswordOnly(email, password, deviceId);
   }
 
-  beginRegistration(input: RegistrationBeginInput, deviceId: string, mfaService: PersistentMfaService, rateLimitKey?: string): Promise<MfaChallengeResponse> {
-    return this.registration.begin(input, deviceId, mfaService, rateLimitKey);
+  beginRegistration(input: RegistrationBeginInput, deviceId: string, mfaService: PersistentMfaService, networkFingerprint: string): Promise<MfaChallengeResponse> {
+    return this.registration.begin(input, deviceId, mfaService, networkFingerprint);
   }
 
   async verifyRegistration(challengeId: string, proof: string, deviceId: string, mfaService: PersistentMfaService): Promise<{ user: AuthUser }> {

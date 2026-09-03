@@ -7,6 +7,8 @@ import { createPersistentBankingServer } from "../http.js";
 import { RelationalHttpBoundary } from "../database/relationalHttpBoundary.js";
 import type { UnitOfWork } from "../database/unitOfWork.js";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
+
 test("relational-v2 boundary requires every approved customer route group", () => {
   const unitOfWork = {} as UnitOfWork;
   const complete = new RelationalHttpBoundary(unitOfWork, "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud,kyc");
@@ -28,7 +30,7 @@ test("direct relational account route bypasses the legacy state boundary", async
     authenticate: async () => ({ id: "customer-1" }),
     listAccounts: async () => [],
   } as unknown as RelationalHttpBoundary;
-  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp });
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp, registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -78,7 +80,7 @@ test("direct relational control-policy route bypasses legacy state and returns t
     authenticate: async () => ({ id: "customer-1" }),
     getControlPolicy: async () => controlPolicy,
   } as unknown as RelationalHttpBoundary;
-  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp });
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp, registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -116,7 +118,7 @@ test("direct relational command routes bypass the legacy state boundary", async 
       expiresAt: new Date(Date.now() + 300_000).toISOString(),
     }),
   } as unknown as RelationalHttpBoundary;
-  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp });
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp, registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -152,7 +154,7 @@ test("relational-v2 rejects an uncategorized route without invoking withState", 
   const relationalHttp = {
     isRouteEnabled: () => false,
   } as unknown as RelationalHttpBoundary;
-  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp });
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp, registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -202,7 +204,7 @@ test("persistent MFA lifecycle routes bypass the legacy state boundary", async (
       otpauthUri: "otpauth://totp/Reference:mfa@example.test?secret=TEST",
     }),
   } as never;
-  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp, mfaService });
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp, mfaService, registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -267,6 +269,7 @@ test("direct card controls keep emergency lock separate from purpose-bound TOTP 
   const server = createPersistentBankingServer(repository, new BankingSystem(), {
     relationalHttp,
     mfaService,
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());

@@ -8,6 +8,7 @@ import { BankingSystem, type BankingSystemState } from "../bankingSystem.js";
 import { createPersistentBankingServer } from "../http.js";
 import type { RelationalStateOperation } from "../postgresRelationalRepository.js";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
 
 class MemoryStateRepository {
   private state: unknown;
@@ -31,7 +32,7 @@ async function startServer(
   repository: MemoryStateRepository,
   system: BankingSystem,
 ): Promise<{ server: Server; baseUrl: string }> {
-  const server = createPersistentBankingServer(repository, system);
+  const server = createPersistentBankingServer(repository, system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   return {

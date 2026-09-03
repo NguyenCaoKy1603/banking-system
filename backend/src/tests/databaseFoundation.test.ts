@@ -19,6 +19,8 @@ import { hashPasswordAsync } from "../security.js";
 import { createPersistentBankingServer } from "../http.js";
 import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
+
 const databaseUrl =
   process.env.P0_RELATIONAL_DATABASE_URL?.trim() ??
   process.env.RELATIONAL_DATABASE_URL?.trim();
@@ -297,7 +299,7 @@ test("control policy is bootstrapped once and missing policy fails persistent re
   const database = new DatabasePool({ connectionString: databaseUrl, max: 4 });
   const repository = new PostgresRelationalRepository({ connectionString: databaseUrl });
   const relationalHttp = new RelationalHttpBoundary(repository.unitOfWork);
-  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp });
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp, registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

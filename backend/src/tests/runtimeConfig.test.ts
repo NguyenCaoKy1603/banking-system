@@ -10,6 +10,8 @@ import { createBankingServer, createPersistentBankingServer } from "../http.js";
 const TEST_REGISTRATION_FINGERPRINT_KEY =
   "base64:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY_BUFFER = Buffer.alloc(32, 0x42);
+
 const productionEnv = (): NodeJS.ProcessEnv => ({
   NODE_ENV: "production",
   BANKING_ENV: "staging",
@@ -89,6 +91,7 @@ test("startup and version probes expose non-secret release metadata", async (t) 
       commitSha: "0123456789012345678901234567890123456789",
       imageDigest: `sha256:${"b".repeat(64)}`,
     }),
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY_BUFFER,
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
@@ -118,7 +121,7 @@ test("persistent server keeps startup and version probes outside the state trans
       },
     },
     new BankingSystem(),
-    { runtimeMetadata: runtimeMetadata({ releaseId: "persistent-probe-test" }) },
+    { runtimeMetadata: runtimeMetadata({ releaseId: "persistent-probe-test" }), registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY_BUFFER },
   );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());

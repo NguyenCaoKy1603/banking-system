@@ -34,7 +34,7 @@ export class RelationalRegistrationService {
     input: RegistrationBeginInput,
     deviceId: string,
     mfaService: PersistentMfaService,
-    rateLimitKey?: string,
+    networkFingerprint: string,
   ): Promise<MfaChallengeResponse> {
     const fullName = typeof input.fullName === "string" ? input.fullName.trim() : "";
     const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
@@ -54,7 +54,7 @@ export class RelationalRegistrationService {
       const audit = new AuditRepository(client);
 
       const rate = await mfa.atomicRateLimit({
-        bucketKey: `relational-registration:${fingerprint(rateLimitKey?.trim() || `email:${email}`)}`,
+        bucketKey: `relational-registration:${networkFingerprint}`,
         windowSeconds: 600,
         maxAttempts: 5,
       });
@@ -121,7 +121,7 @@ export class RelationalRegistrationService {
         eventType: "REGISTRATION_STARTED",
         resourceId: pendingRegistrationId,
         occurredAt: new Date().toISOString(),
-        payload: { rateLimitKey: rateLimitKey ?? null },
+        payload: {}
       });
     }, { maxRetries: 1 });
 
@@ -133,7 +133,7 @@ export class RelationalRegistrationService {
         destination: email,
         resourceId: pendingRegistrationId,
         requestFingerprint: fingerprint({ email, phoneNumber }),
-        networkFingerprint: rateLimitKey,
+        networkFingerprint,
       });
     } catch (error) {
       await this.unitOfWork.transaction(async ({ client }) => {

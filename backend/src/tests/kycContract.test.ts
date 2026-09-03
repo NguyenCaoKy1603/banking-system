@@ -18,6 +18,8 @@ import {
   RelationalKycService,
 } from "../database/kycService.js";
 import { RelationalConflictError } from "../database/commandErrors.js";
+
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
 import type { RelationalHttpBoundary } from "../database/relationalHttpBoundary.js";
 import { UnitOfWork } from "../database/unitOfWork.js";
 
@@ -262,7 +264,7 @@ test("KYC HTTP GET/save/submit serialize only the public response projection", a
       return publicResponse;
     },
   } as unknown as RelationalHttpBoundary;
-  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp });
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { relationalHttp, registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolveServer) => server.listen(0, "127.0.0.1", resolveServer));
   t.after(() => server.close());
 

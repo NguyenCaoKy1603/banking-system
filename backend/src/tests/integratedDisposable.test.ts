@@ -21,6 +21,8 @@ import { hashOpaqueToken } from "../security.js";
 import { WorkerHealthServer } from "../workers/workerHealth.js";
 import { WorkerRuntime, type WorkerConfig } from "../workers/workerRuntime.js";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
+
 const databaseUrl = process.env.RELATIONAL_DATABASE_URL?.trim();
 if (databaseUrl) assertDisposableDatabaseResetAllowed(databaseUrl, process.env, { targetEnvName: "RELATIONAL_DATABASE_URL" });
 
@@ -91,6 +93,7 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
   const apiServer = createPersistentBankingServer(repository, new BankingSystem(), {
     environment: "test",
     startupReady: true,
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
     mfaService: new PersistentMfaService({
       unitOfWork: repository.unitOfWork,
       encryption: new LocalDevelopmentKeyEncryptionAdapter(Buffer.alloc(32, 7), "integrated-mfa-v1"),

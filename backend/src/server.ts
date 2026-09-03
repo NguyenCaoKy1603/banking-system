@@ -70,6 +70,7 @@ async function start(): Promise<void> {
       moneyMode: runtimeConfig.moneyMode,
     }),
     startupReady: () => startupReady,
+    registrationFingerprintKey: runtimeConfig.registrationFingerprintKey,
   };
   let repository: PostgresRelationalRepository | undefined;
   let server;

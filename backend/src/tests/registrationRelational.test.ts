@@ -103,7 +103,7 @@ test("relational registration persists only OTP digest, uses outbox intent and c
     registration.verify(resent.challengeId, resentCode!, "registration-device", mfa),
   );
   await assert.rejects(
-    registration.begin({ fullName: "Duplicate", email, phoneNumber: `09${randomUUID().replaceAll("-", "").slice(0, 8)}`, password: "Password1!" }, "another-device", mfa),
+    registration.begin({ fullName: "Duplicate", email, phoneNumber: `09${randomUUID().replaceAll("-", "").slice(0, 8)}`, password: "Password1!" }, "another-device", mfa, "a".repeat(64)),
     /already exists/i,
   );
 

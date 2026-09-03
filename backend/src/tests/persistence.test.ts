@@ -13,6 +13,8 @@ import { assertDisposableDatabaseResetAllowed } from "../database/disposableData
 import { createPersistentBankingServer } from "../http.js";
 import { PostgresSnapshotRepository } from "../postgresSnapshotRepository.js";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
+
 const databaseUrl = process.env.DATABASE_URL?.trim();
 
 if (databaseUrl) {
@@ -144,7 +146,7 @@ test("persistent HTTP validates the request body before opening the snapshot tra
   });
   await repository.initialize();
   const system = new BankingSystem({ sandboxOtp: "123456" });
-  const server = createPersistentBankingServer(repository, system);
+  const server = createPersistentBankingServer(repository, system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
     await new Promise<void>((resolve, reject) => {
@@ -180,6 +182,7 @@ test("persistent HTTP fails closed when PostgreSQL is unavailable", async (t) =>
   const server = createPersistentBankingServer(
     repository,
     new BankingSystem({ sandboxOtp: "123456" }),
+    { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY },
   );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
@@ -445,7 +448,7 @@ test("PostgreSQL persistent HTTP server restores state across restart", {
     server: Server;
     baseUrl: string;
   }> => {
-    const server = createPersistentBankingServer(repository, system);
+    const server = createPersistentBankingServer(repository, system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     runningServers.push(server);
     const address = server.address() as AddressInfo;

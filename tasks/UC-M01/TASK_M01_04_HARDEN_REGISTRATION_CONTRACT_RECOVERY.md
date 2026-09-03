@@ -1,6 +1,6 @@
 # TASK M01-04 — Làm cứng Registration contract và recovery
 
-Trạng thái: IN_PROGRESS — B2A COMMITTED — B2B NOT STARTED
+Trạng thái: IN_PROGRESS — B2B VERIFIED — AWAITING CHECKPOINT COMMIT
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -2276,3 +2276,160 @@ IN_PROGRESS — B2A COMMITTED — B2B NOT STARTED
 - M01-04 chưa COMPLETED.
 - Commit chỉ tồn tại local và chưa push.
 - Không ghi raw environment value.
+
+## 25. B2B RUNTIME WIRING EVIDENCE
+
+**Date:** 2026-09-03
+**Trạng thái:** IN_PROGRESS — B2B VERIFIED — AWAITING CHECKPOINT COMMIT
+
+### 25.1 Baseline và phạm vi
+
+- Baseline HEAD: `08ccd99d02de35d19dfa4a711f25fcdace7ef65b` (branch `codex/staging-academic-completion`).
+- B2B là working-tree change; **chưa stage, chưa commit, chưa push**.
+- M01-04 **chưa COMPLETED**.
+- Allowlist chính thức gồm **18 file**:
+
+| # | File | Vai trò B2B |
+|---|------|-------------|
+| 1 | `backend/src/http.ts` | `HttpOptions.registrationFingerprintKey` (required) + keyed fingerprint tại route Registration |
+| 2 | `backend/src/server.ts` | Nối key từ runtime config vào `httpOptions` |
+| 3 | `backend/src/database/relationalHttpBoundary.ts` | `beginRegistration` nhận `networkFingerprint` |
+| 4 | `backend/src/database/registrationService.ts` | Bucket key + audit payload `{}` |
+| 5 | `backend/src/tests/credit-http.test.ts` | Synthetic key fixture |
+| 6 | `backend/src/tests/databaseFoundation.test.ts` | Synthetic key fixture |
+| 7 | `backend/src/tests/http-security-persistence.test.ts` | Synthetic key fixture |
+| 8 | `backend/src/tests/http.test.ts` | Synthetic key fixture + regression test non-Registration XFF |
+| 9 | `backend/src/tests/integratedDisposable.test.ts` | Synthetic key fixture |
+| 10 | `backend/src/tests/kycContract.test.ts` | Synthetic key fixture |
+| 11 | `backend/src/tests/observability.test.ts` | Synthetic key fixture |
+| 12 | `backend/src/tests/persistence.test.ts` | Synthetic key fixture |
+| 13 | `backend/src/tests/registrationContract.test.ts` | Fixture + contract test T-B2-17…T-B2-22 |
+| 14 | `backend/src/tests/relationalHttpCutover.test.ts` | Synthetic key fixture |
+| 15 | `backend/src/tests/runtimeConfig.test.ts` | Synthetic key fixture |
+| 16 | `backend/src/tests/savings-http.test.ts` | Synthetic key fixture |
+| 17 | `tasks/UC-M01/TASK_M01_04_HARDEN_REGISTRATION_CONTRACT_RECOVERY.md` | Evidence này |
+| 18 | `backend/src/tests/registrationRelational.test.ts` | **Chỉ** để tương thích argument bắt buộc mới của service |
+
+- File 18 được Owner duyệt bổ sung riêng: chỉ truyền synthetic opaque network fingerprint làm tham số thứ 4; không thay đổi hành vi được kiểm thử.
+- Không có file nào ngoài allowlist bị sửa.
+
+### 25.2 Wiring chain
+
+`runtimeConfig` (đọc và validate `REGISTRATION_FINGERPRINT_KEY`) → `server.ts` (truyền vào `httpOptions`) → `http.ts` (`HttpOptions.registrationFingerprintKey`, kiểu `Buffer`, **bắt buộc**) → `security.computeRegistrationNetworkFingerprint` (HMAC-SHA256, domain separation `registration-rate-limit:v1:`) → rate limiter / MFA (`relational-registration:${networkFingerprint}`, 5 lần / 600 giây).
+
+- Không còn `= {}` default cho `HttpOptions` tại `runtimeMetadataFor`, `handleRequest`, `createBankingServer`, `createPersistentBankingServer`.
+- **Không có default/fallback key trong production code**: không `Buffer.alloc(...)` làm runtime key, không bypass theo `NODE_ENV`, không đọc `.env` trực tiếp ngoài `runtimeConfig`. Thiếu key là fail closed.
+- `Buffer.alloc(32, 0x42)` chỉ tồn tại trong test file, theo đúng quyết định của Owner.
+
+### 25.3 Data minimization
+
+- Registration chỉ dùng `request.socket.remoteAddress`; **không** fallback `x-forwarded-for`.
+- Audit `REGISTRATION_STARTED` có payload chính xác `{}` — không `rateLimitKey`, không raw IP, không fingerprint, không key material.
+- Không có raw IP, key material hay keyed fingerprint nào xuất hiện trong audit, log hay response body.
+
+### 25.4 XFF consumer inventory (baseline HEAD so với B2B diff)
+
+Baseline có **một** helper `getRateLimitKey(request)` dùng XFF-first và **5 call site**. B2B ban đầu đã chuyển cả 5 sang keyed socket-only, làm **regression** cho 2 flow không thuộc Registration.
+
+| Consumer / route | Registration? | Baseline dùng XFF | Hành vi hiện tại | Kết luận |
+|---|---|---|---|---|
+| `POST /auth/register` — relational path (`http.ts:813`) | Có | Có | `getRateLimitKey(request, key)` — socket-only, keyed HMAC | Đúng yêu cầu D-13 |
+| `POST /auth/register` — in-memory path (`http.ts:815`) | Có | Có | `getRateLimitKey(request, key)` — socket-only, keyed HMAC | Đúng yêu cầu D-13 |
+| `POST /auth/challenges/:id/resend` — pre-auth (`http.ts:1122`) | Có (Registration resend) | Có | `getRateLimitKey(request, key)` — socket-only, keyed HMAC | Đúng yêu cầu D-13 |
+| `POST /auth/challenges/:id/resend` — authenticated (`http.ts:1570`) | Không | Có | `getMfaClientAddress(request)` — giữ nguyên XFF-first như baseline | Regression đã được khắc phục |
+| `POST /auth/otp/challenges` (`http.ts:1637`) | Không | Có | `getMfaClientAddress(request)` — giữ nguyên XFF-first như baseline | Regression đã được khắc phục |
+
+- Kết luận: XFF trước đây **không** chỉ phục vụ Registration, nên không được xóa toàn cục. Đã tách thành hai helper: `getRateLimitKey` (Registration, keyed socket-only) và `getMfaClientAddress` (non-Registration, giữ nguyên derivation của baseline). Không dùng search-replace toàn cục.
+- `x-forwarded-for` hiện chỉ được đọc tại **một** vị trí duy nhất: `http.ts:381`, bên trong `getMfaClientAddress`.
+- Regression test: `backend/src/tests/http.test.ts` — "non-Registration MFA resend keeps its client-address derivation while Registration ignores x-forwarded-for". Trước đó `http.test.ts` có **0** match cho `networkFingerprint|x-forwarded-for|auth/otp/challenges|beginTotpChallenge|resendChallenge`, tức hành vi này chưa có guard nào; đây là lý do mục 3 của Owner ("nếu cần") được kích hoạt.
+
+### 25.5 Loại bỏ cast bị cấm trong diff B2B
+
+- Đã xóa **toàn bộ** `as any` do B2B thêm vào `registrationContract.test.ts`.
+- Thay bằng port type có thật (`FakeUnitOfWorkPort`, `CreateEmailChallengePort`, `ResendRegistrationChallengePort`, `RegistrationBoundaryPort`, `RegistrationBeginInput`, `MfaChallengeResponse`, `PersistentMfaService`), tham số có kiểu tường minh và factory tách riêng một dòng.
+- Số cast legacy tồn tại từ trước: **13 tại baseline → 13 hiện tại**, khớp theo vị trí. Các cast cũ này không nằm trong diff B2B và không được refactor theo đúng chỉ đạo.
+- **Bằng chứng có thể tái lập**: scan thô các dòng `+` trong diff cho ra **13 match `as any`**, tất cả trong `registrationContract.test.ts`, với `added=13` và `removed=13`. Sau khi tách bỏ tham số mới `, TEST_NETWORK_FINGERPRINT` khỏi các dòng `+` rồi so sánh hai tập đã sort, `diff` **rỗng** — tức các dòng này giống hệt nhau từng byte. Kết luận: B2B **không** thêm mới `as any` nào. Chúng hiện ra dưới dạng dòng thêm chỉ vì signature của service có tham số bắt buộc thứ 4.
+- 13 dòng đó chính là các lời gọi P2 `assert.rejects` mang callback `(err: any)` mà Owner đã chỉ đạo **không sửa**.
+- Không có `as unknown as`, `@ts-ignore` hay `@ts-expect-error` nào trên bất kỳ dòng `+` nào.
+- `data as never` tại `http.ts:815` là **pre-existing** (baseline `08ccd99d:backend/src/http.ts:805`), không phải do B2B thêm.
+- Không dùng `@ts-ignore`, `@ts-expect-error`, không sửa `tsconfig`, không làm yếu assertion, không đổi input/thứ tự/hành vi của T-B2-17…T-B2-22, không xóa/skip/đổi tên test.
+
+### 25.6 Contract test
+
+- T-B2-17: XFF giả mạo không đổi rate limit bucket — PASS.
+- T-B2-18: bucket chỉ suy ra từ `socket.remoteAddress`, khớp `computeRegistrationNetworkFingerprint("127.0.0.1", key)` và `/^[0-9a-f]{64}$/` — PASS.
+- T-B2-19: lần thứ 6 trên cùng fingerprint trả 429 `RATE_LIMITED`, `retryAfterSeconds === 600`; cả 6 upsert bind `relational-registration:${fingerprint}` và window 600 — PASS.
+- T-B2-20: audit `REGISTRATION_STARTED` payload chính xác `{}` — PASS.
+- T-B2-21: body của 429 và 409 không rò rỉ raw IP, fingerprint hay key material — PASS.
+- T-B2-22: pre-auth resend dùng cùng keyed fingerprint — PASS.
+- T-B2-23 (consumer ngoài Registration không bị ảnh hưởng) được xác minh bằng full backend suite: Admin, KYC, Transfers đều PASS, cộng thêm regression test ở mục 25.4.
+- Ghi chú kỹ thuật: `RelationalRegistrationService.begin` rate limit qua `MfaRepository.atomicRateLimit` (SQL upsert thật vào `rate_limit_buckets`), **không** qua `mfaService` được inject. Test vì vậy điều khiển kết quả bằng row `rate_limit_buckets` và assert trên tham số bind thật — bằng chứng mạnh hơn mock.
+
+### 25.7 Quality gates (chạy từ `backend/`)
+
+| Gate | Kết quả |
+|------|---------|
+| `npm run typecheck` | PASS (0 error) |
+| `npm run build` | PASS |
+| Targeted 6 file (registrationContract, http, credit-http, savings-http, runtimeConfig, security) | 70 total / 70 pass / 0 fail / 0 skip |
+| B2A targeted (runtimeConfig + security) | 22/22 PASS |
+| `npm test` (full backend) | 273 total / 225 pass / 0 fail / 48 intentional skip |
+| `npm run validate:openapi` | PASS |
+| `node scripts/validate-database-schema.cjs` | PASS (exit 0; live DB check skipped) |
+
+- Không chạy `npm run validate:database`.
+- Không chạy trực tiếp `registrationRelational.test.ts`.
+- Không chạy PostgreSQL integration.
+- Không chạy Mobile/emulator/Maestro.
+- Không đọc hay in giá trị `.env` / raw environment value.
+
+### 25.8 OWNER DECISION — B2B TEST HARNESS CASTS ACCEPTED
+
+Owner chấp nhận đúng 5 `as never` test-harness casts sau đây:
+
+| # | File | Factory | Port type |
+|---|---|---|---|
+| 1 | `registrationContract.test.ts` | `asUnitOfWork` | `FakeUnitOfWorkPort` |
+| 2 | `registrationContract.test.ts` | `asMfaService` | `CreateEmailChallengePort` |
+| 3 | `registrationContract.test.ts` | `asResendMfaService` | `ResendRegistrationChallengePort` |
+| 4 | `registrationContract.test.ts` | `asRelationalHttp` | `RegistrationBoundaryPort` |
+| 5 | `http.test.ts` | `asResendMfaService` | `ResendMfaPort` |
+
+Điều kiện chấp nhận đã thỏa mãn:
+
+- Chỉ tồn tại trong test code. Không có production cast/fallback.
+- Không cho phép thêm cast thứ sáu.
+- Không làm yếu assertion. Không thay đổi test behavior.
+- Không dùng `as any`, `as unknown as`, `@ts-ignore` hoặc `@ts-expect-error` mới.
+- Không refactor production constructors/interfaces trong M01-04.
+- Đây là test-only adapter cho concrete classes có private members.
+- P2 port-interface refactor deferred sang task riêng.
+
+XFF scope decision:
+
+- Registration begin và pre-auth Registration resend: chỉ dùng `request.socket.remoteAddress` rồi HMAC. Không fallback sang XFF.
+- Hai MFA flow ngoài Registration được phép giữ baseline XFF behavior.
+- Spoofable XFF trong MFA step-up được ghi nhận là security follow-up riêng, không mở rộng B2B.
+- Không ảnh hưởng kết luận Registration D-13.
+
+B2B exact allowlist: 18 file.
+
+Quality gates đã verified:
+
+- T-B2-17 đến T-B2-23 PASS.
+- Targeted registrationContract + http: 70/70 PASS.
+- B2A security/runtimeConfig: 22/22 PASS.
+- Full Backend suite: 273 total / 225 pass / 48 skip / 0 fail.
+- `npm run typecheck` / `npm run build` / `npm run validate:openapi` / schema validation PASS.
+- PostgreSQL runtime vẫn deferred M01-07.
+- Không có raw environment value.
+- B2B chưa commit.
+- M01-04 chưa COMPLETED.
+
+### 25.9 Quan sát bảo mật (chỉ báo cáo, không tự xử lý)
+
+Khôi phục XFF cho `beginTotpChallenge` (flow non-Registration) giữ nguyên một giá trị **có thể bị client giả mạo** đi vào bucket step-up `mfa-challenge:network:${fingerprint(networkFingerprint)}` (`persistentMfaService.ts:394-396`). Đây là hành vi baseline và nằm đúng trong phạm vi Owner đã quyết định ("giữ nguyên hành vi cũ cho flow không phải Registration"), nên được bảo toàn. Đề xuất đưa vào một task riêng về sau.
+
+### 25.10 Deferred
+
+- PostgreSQL runtime/integration verification: vẫn deferred sang M01-07. Chưa tuyên bố đã kiểm chứng.

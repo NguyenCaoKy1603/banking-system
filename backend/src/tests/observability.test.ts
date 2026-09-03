@@ -6,12 +6,15 @@ import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer } from "../http.js";
 import { PrometheusRegistry } from "../observability/metrics.js";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
+
 test("HTTP observability normalizes request IDs, propagates W3C context and exports bounded metrics", async (t) => {
   const metrics = new PrometheusRegistry();
   const logs: Array<Record<string, unknown>> = [];
   const server = createBankingServer(new BankingSystem(), {
     metrics,
     logger: { log: (_level, _event, fields = {}) => logs.push(fields) },
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());

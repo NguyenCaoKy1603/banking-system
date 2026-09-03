@@ -5,6 +5,7 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer } from "../http.js";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
 
 async function completeRegistration(
   system: BankingSystem,
@@ -35,7 +36,7 @@ test("HTTP savings flow exposes quote, MFA/idempotency opening and deposit detai
     sandboxOtp: "123456",
     allowUnsafeDirectSandboxStepUp: true,
   });
-  const server = createBankingServer(system);
+  const server = createBankingServer(system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
   const address = server.address() as AddressInfo;

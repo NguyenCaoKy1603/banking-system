@@ -1,4 +1,5 @@
 import test from "node:test";
+import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -7,7 +8,14 @@ import yaml from "yaml";
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer } from "../http.js";
 import { conflict, DomainError } from "../errors.js";
-import type { MfaChallengeResponse } from "../mfa/persistentMfaService.js";
+import { computeRegistrationNetworkFingerprint } from "../security.js";
+import type { MfaChallengeResponse, PersistentMfaService } from "../mfa/persistentMfaService.js";
+import type { RegistrationBeginInput } from "../database/registrationService.js";
+import type { UnitOfWork } from "../database/unitOfWork.js";
+import type { RelationalHttpBoundary } from "../database/relationalHttpBoundary.js";
+
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
+const TEST_NETWORK_FINGERPRINT = "a".repeat(64);
 
 const mockMfaChallengeResponse: MfaChallengeResponse = {
   challengeId: "mock-challenge",
@@ -19,7 +27,7 @@ const mockMfaChallengeResponse: MfaChallengeResponse = {
 
 async function startTestServer() {
   const system = new BankingSystem();
-  const server = createBankingServer(system);
+  const server = createBankingServer(system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as import("node:net").AddressInfo;
   const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
@@ -185,7 +193,8 @@ test("Begin conflict doesn't map unknown errors", async (t) => {
     service.begin(
       { fullName: "Test", email: "a@a.com", phoneNumber: "123", password: "password123" },
       "device",
-      mfaService
+      mfaService,
+      TEST_NETWORK_FINGERPRINT
     ),
     (err: any) => err.code === "23505" && err.constraint === "pending_registrations_pkey"
   );
@@ -392,7 +401,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("rate_limit_buckets")) return { rows: [{ attempts: 1 }] };
       return { rows: [] };
     });
-    await service.begin(input, device, mfaService);
+    await service.begin(input, device, mfaService, TEST_NETWORK_FINGERPRINT);
   });
 
   await t.test("B2 Active pending, both contact match -> 409", async () => {
@@ -401,7 +410,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "1", is_expired: false }] };
       return { rows: [] };
     });
-    await assert.rejects(service.begin(input, device, {} as any), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
+    await assert.rejects(service.begin(input, device, {} as any, TEST_NETWORK_FINGERPRINT), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
   });
 
   await t.test("B3 Active pending, email-only match -> 409", async () => {
@@ -410,7 +419,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "1", is_expired: false }] };
       return { rows: [] };
     });
-    await assert.rejects(service.begin(input, device, {} as any), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
+    await assert.rejects(service.begin(input, device, {} as any, TEST_NETWORK_FINGERPRINT), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
   });
 
   await t.test("B4 Active pending, phone-only match -> 409", async () => {
@@ -419,7 +428,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "1", is_expired: false }] };
       return { rows: [] };
     });
-    await assert.rejects(service.begin(input, device, {} as any), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
+    await assert.rejects(service.begin(input, device, {} as any, TEST_NETWORK_FINGERPRINT), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
   });
 
   await t.test("B5 Expired pending, both match -> cleanup + 202", async () => {
@@ -428,7 +437,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "1", is_expired: true }] };
       return { rows: [] };
     });
-    await service.begin(input, device, { atomicRateLimit: async () => ({ allowed: true }), createEmailChallenge: async () => ({}) } as any);
+    await service.begin(input, device, { atomicRateLimit: async () => ({ allowed: true }), createEmailChallenge: async () => ({}) } as any, TEST_NETWORK_FINGERPRINT);
     const queries = getQueries();
     assert.ok(queries.some(q => q.query.includes("UPDATE auth_challenges") && q.query.includes("CANCELLED")));
     assert.ok(queries.some(q => q.query.includes("DELETE FROM pending_registrations")));
@@ -440,7 +449,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "1", is_expired: true }] };
       return { rows: [] };
     });
-    await service.begin(input, device, { atomicRateLimit: async () => ({ allowed: true }), createEmailChallenge: async () => ({}) } as any);
+    await service.begin(input, device, { atomicRateLimit: async () => ({ allowed: true }), createEmailChallenge: async () => ({}) } as any, TEST_NETWORK_FINGERPRINT);
   });
 
   await t.test("B7 Expired pending, phone-only -> cleanup + 202", async () => {
@@ -449,7 +458,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "1", is_expired: true }] };
       return { rows: [] };
     });
-    await service.begin(input, device, { atomicRateLimit: async () => ({ allowed: true }), createEmailChallenge: async () => ({}) } as any);
+    await service.begin(input, device, { atomicRateLimit: async () => ({ allowed: true }), createEmailChallenge: async () => ({}) } as any, TEST_NETWORK_FINGERPRINT);
   });
 
   await t.test("B8 Expired + completed -> 409, no mutation", async () => {
@@ -459,7 +468,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT 1 FROM registration_completions")) return { rows: [{ "?column?": 1 }] };
       return { rows: [] };
     });
-    await assert.rejects(service.begin(input, device, {} as any), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
+    await assert.rejects(service.begin(input, device, {} as any, TEST_NETWORK_FINGERPRINT), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
     assert.ok(!getQueries().some(q => q.query.includes("DELETE FROM pending_registrations")));
   });
 
@@ -469,7 +478,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "1", is_expired: true }, { id: "2", is_expired: false }] };
       return { rows: [] };
     });
-    await assert.rejects(service.begin(input, device, {} as any), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
+    await assert.rejects(service.begin(input, device, {} as any, TEST_NETWORK_FINGERPRINT), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
     assert.ok(!getQueries().some(q => q.query.includes("DELETE FROM pending_registrations")));
   });
 
@@ -479,7 +488,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "1", is_expired: true }, { id: "2", is_expired: true }, { id: "3", is_expired: false }] };
       return { rows: [] };
     });
-    await assert.rejects(service.begin(input, device, {} as any), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
+    await assert.rejects(service.begin(input, device, {} as any, TEST_NETWORK_FINGERPRINT), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
     assert.ok(!getQueries().some(q => q.query.includes("DELETE FROM pending_registrations")));
   });
 
@@ -491,7 +500,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("UPDATE auth_challenges")) throw new Error("Database error");
       return { rows: [] };
     });
-    await assert.rejects(service.begin(input, device, {} as any), (err: any) => err.message === "Database error");
+    await assert.rejects(service.begin(input, device, {} as any, TEST_NETWORK_FINGERPRINT), (err: any) => err.message === "Database error");
   });
 
   await t.test("B12 Controlled sequential race -> first 202, second 409", async () => {
@@ -505,7 +514,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       }
       return { rows: [] };
     });
-    await assert.rejects(service.begin(input, device, {} as any), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
+    await assert.rejects(service.begin(input, device, {} as any, TEST_NETWORK_FINGERPRINT), (err: any) => err.message === "Registration conflict." && err.code === "CONFLICT");
   });
 
   await t.test("B13 Generic 409 body contains no contact/pendingId/challengeId", async () => {
@@ -516,7 +525,7 @@ test("B1b RegistrationService begin tests", async (t) => {
     });
     let caught: any;
     try {
-      await service.begin(input, device, {} as any);
+      await service.begin(input, device, {} as any, TEST_NETWORK_FINGERPRINT);
     } catch (e) { caught = e; }
     assert.ok(caught);
     assert.equal(caught.message, "Registration conflict.");
@@ -530,7 +539,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT * FROM customers")) return { rows: [{ id: "550e8400-e29b-41d4-a716-446655440000", full_name: "A", email: "a@a.com", phone_number: "123", password_salt: "s", password_digest: "d", created_at: new Date().toISOString() }] };
       return { rows: [] };
     });
-    await assert.rejects(service.begin(input, device, mfaService), (err: DomainError) => err.message === "Registration conflict." && err.code === "CONFLICT");
+    await assert.rejects(service.begin(input, device, mfaService, TEST_NETWORK_FINGERPRINT), (err: DomainError) => err.message === "Registration conflict." && err.code === "CONFLICT");
     assert.ok(!getQueries().some((q) => q.query.includes("SELECT id, expires_at <= NOW() AS is_expired")));
   });
 
@@ -540,7 +549,7 @@ test("B1b RegistrationService begin tests", async (t) => {
       return { rows: [] };
     });
     const mfa = { atomicRateLimit: async () => ({ allowed: true }), createEmailChallenge: async () => { throw new Error("Email delivery failed"); } };
-    await assert.rejects(service.begin(input, device, mfa as any), (err: any) => err.message === "Email delivery failed");
+    await assert.rejects(service.begin(input, device, mfa as any, TEST_NETWORK_FINGERPRINT), (err: any) => err.message === "Email delivery failed");
     const compQueries = getCompensationQueries();
     assert.ok(compQueries.some((q) => q.query.includes("UPDATE auth_challenges") && q.query.includes("CANCELLED")));
     assert.ok(compQueries.some((q) => q.query.includes("DELETE FROM pending_registrations")));
@@ -552,12 +561,308 @@ test("B1b RegistrationService begin tests", async (t) => {
       if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "expired-id", is_expired: true }] };
       return { rows: [] };
     });
-    await service.begin(input, device, mfaService);
+    await service.begin(input, device, mfaService, TEST_NETWORK_FINGERPRINT);
     const queries = getQueries();
     const auditQuery = queries.find((q) => q.query.includes("INSERT INTO audit_events") && q.params[1] === "REGISTRATION_PENDING_CLEANUP");
     assert.ok(auditQuery);
     assert.equal(auditQuery.params[1], "REGISTRATION_PENDING_CLEANUP");
     assert.equal(auditQuery.params[3], "expired-id");
     assert.equal(auditQuery.params[5], "{}");
+  });
+});
+
+test("B2B Registration runtime contract tests", async (t) => {
+  const { RelationalRegistrationService } = await import("../database/registrationService.js");
+
+  type QueryRow = Record<string, unknown>;
+  type QueryResult = { rows: QueryRow[] };
+  type FakeQuery = (queryText: string, params: unknown[]) => Promise<QueryResult>;
+  type FakeUnitOfWorkPort = {
+    transaction<T>(
+      operation: (tx: { client: { query: FakeQuery } }) => Promise<T>,
+      options?: { maxRetries?: number },
+    ): Promise<T>;
+  };
+  type CreateEmailChallengePort = {
+    createEmailChallenge(input: {
+      customerId?: string | null;
+      pendingRegistrationId?: string | null;
+      deviceId: string;
+      purpose: "REGISTRATION_EMAIL_VERIFY" | "EMAIL_CHANGE_VERIFY" | "RECOVERY_EMAIL_VERIFY";
+      destination: string;
+      resourceId?: string | null;
+      requestFingerprint?: string | null;
+      networkFingerprint?: string | null;
+    }): Promise<MfaChallengeResponse>;
+  };
+  type ResendRegistrationChallengePort = {
+    resendRegistrationChallenge(input: {
+      challengeId: string;
+      deviceId: string;
+      networkFingerprint?: string | null;
+    }): Promise<MfaChallengeResponse>;
+  };
+  type RegistrationBoundaryPort = {
+    isRouteEnabled(method: string, segments: string[]): boolean;
+    beginRegistration(
+      input: RegistrationBeginInput,
+      deviceId: string,
+      mfaService: PersistentMfaService,
+      networkFingerprint: string,
+    ): Promise<MfaChallengeResponse>;
+  };
+
+  // UnitOfWork, PersistentMfaService and RelationalHttpBoundary each declare
+  // private members, so TypeScript matches them nominally and a structural fake
+  // cannot be assigned without one unchecked crossing. Each factory below keeps
+  // that crossing on a single line and forces the fake to be checked against the
+  // real public port shape at every call site.
+  function asUnitOfWork(port: FakeUnitOfWorkPort): UnitOfWork {
+    return port as never;
+  }
+
+  function asMfaService(port: CreateEmailChallengePort): PersistentMfaService {
+    return port as never;
+  }
+
+  function asResendMfaService(port: ResendRegistrationChallengePort): PersistentMfaService {
+    return port as never;
+  }
+
+  function asRelationalHttp(port: RegistrationBoundaryPort): RelationalHttpBoundary {
+    return port as never;
+  }
+
+  const SOCKET_ADDRESS = "127.0.0.1";
+  const SOCKET_FINGERPRINT = computeRegistrationNetworkFingerprint(SOCKET_ADDRESS, TEST_REGISTRATION_FINGERPRINT_KEY);
+  const SPOOFED_ADDRESSES = ["203.0.113.9", "198.51.100.7, 192.0.2.5"];
+
+  const input: RegistrationBeginInput = { fullName: "Test", email: "a@a.com", phoneNumber: "123", password: "password123" };
+  const device = "contract-device";
+  const registerBody = JSON.stringify({
+    fullName: "Contract User",
+    email: "contract@example.com",
+    phoneNumber: "+1234567890",
+    password: "password123",
+  });
+  const registrationMfa = asMfaService({ createEmailChallenge: async () => mockMfaChallengeResponse });
+
+  async function listen(server: import("node:http").Server): Promise<string> {
+    await new Promise<void>((resolve) => server.listen(0, SOCKET_ADDRESS, resolve));
+    const address = server.address() as import("node:net").AddressInfo;
+    return `http://${SOCKET_ADDRESS}:${address.port}/api/v1`;
+  }
+
+  // In-memory registration path: captures the fingerprint the HTTP layer derived
+  // from the connection so the tests can assert on what actually reached the
+  // rate limiter.
+  async function startCapturingServer(context: TestContext) {
+    const system = new BankingSystem();
+    const captured: (string | undefined)[] = [];
+    context.mock.method(system, "beginRegistrationAsync", async (_input: RegistrationBeginInput, networkFingerprint?: string) => {
+      captured.push(networkFingerprint);
+      return mockMfaChallengeResponse;
+    });
+    const server = createBankingServer(system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
+    return { server, captured, baseUrl: await listen(server) };
+  }
+
+  function createRegistrationService(queryMock: FakeQuery) {
+    const queries: { query: string; params: unknown[] }[] = [];
+    const rateLimitParams: unknown[][] = [];
+    const recordingQuery: FakeQuery = async (queryText, params) => {
+      queries.push({ query: queryText, params });
+      if (queryText.includes("rate_limit_buckets")) rateLimitParams.push(params);
+      return queryMock(queryText, params);
+    };
+    const unitOfWork = asUnitOfWork({
+      transaction: async (operation) => operation({ client: { query: recordingQuery } }),
+    });
+    return { service: new RelationalRegistrationService(unitOfWork), queries, rateLimitParams };
+  }
+
+  // Relational path over a fake unit of work, wired through the real HTTP route
+  // so error bodies are produced by the genuine writeError serializer. The rate
+  // limit outcome is driven by the rate_limit_buckets row the query mock returns,
+  // because RelationalRegistrationService rate limits through MfaRepository.
+  async function startRelationalServer(queryMock: FakeQuery) {
+    const { service, queries, rateLimitParams } = createRegistrationService(queryMock);
+    const relationalHttp = asRelationalHttp({
+      isRouteEnabled: (method, segments) =>
+        method === "POST" && segments[0] === "auth" && segments[1] === "register",
+      beginRegistration: (beginInput, deviceId, mfaService, networkFingerprint) =>
+        service.begin(beginInput, deviceId, mfaService, networkFingerprint),
+    });
+    const server = createBankingServer(new BankingSystem(), {
+      registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
+      relationalHttp,
+      mfaService: registrationMfa,
+    });
+    return { server, queries, rateLimitParams, baseUrl: await listen(server) };
+  }
+
+  function assertNoNetworkLeak(body: string) {
+    assert.ok(!body.includes(SOCKET_ADDRESS), "response body must not contain the raw socket address");
+    assert.ok(!body.includes(SOCKET_FINGERPRINT), "response body must not contain the keyed fingerprint");
+    assert.ok(!body.includes("rateLimitKey"), "response body must not resurrect the removed rateLimitKey field");
+    assert.ok(!body.includes(TEST_REGISTRATION_FINGERPRINT_KEY.toString("base64")), "response body must not contain key material (base64)");
+    assert.ok(!body.includes(TEST_REGISTRATION_FINGERPRINT_KEY.toString("hex")), "response body must not contain key material (hex)");
+    for (const spoofed of SPOOFED_ADDRESSES) {
+      for (const part of spoofed.split(", ")) {
+        assert.ok(!body.includes(part), "response body must not echo a client-supplied forwarded address");
+      }
+    }
+  }
+
+  await t.test("T-B2-17: spoofed x-forwarded-for does not change the rate limit bucket", async (t) => {
+    const { server, baseUrl, captured } = await startCapturingServer(t);
+    t.after(() => server.close());
+
+    for (const spoofed of SPOOFED_ADDRESSES) {
+      const response = await fetch(`${baseUrl}/auth/register`, {
+        method: "POST",
+        headers: { "X-Device-ID": device, "x-forwarded-for": spoofed },
+        body: registerBody,
+      });
+      assert.equal(response.status, 202);
+    }
+
+    assert.equal(captured.length, 2);
+    assert.equal(captured[0], captured[1], "a spoofed forwarded address must not move the bucket");
+    assert.equal(captured[0], SOCKET_FINGERPRINT);
+    for (const value of captured) {
+      assert.ok(typeof value === "string", "the HTTP layer must always derive a network fingerprint");
+      assert.ok(!value.includes("203.0.113") && !value.includes("198.51.100") && !value.includes("192.0.2"));
+    }
+  });
+
+  await t.test("T-B2-18: rate limit bucket derives only from socket.remoteAddress", async (t) => {
+    const { server, baseUrl, captured } = await startCapturingServer(t);
+    t.after(() => server.close());
+
+    const response = await fetch(`${baseUrl}/auth/register`, {
+      method: "POST",
+      headers: { "X-Device-ID": device },
+      body: registerBody,
+    });
+    assert.equal(response.status, 202);
+
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0], SOCKET_FINGERPRINT);
+    assert.match(captured[0]!, /^[0-9a-f]{64}$/, "bucket key must be lowercase 64-char HMAC hex");
+    assert.ok(!captured[0]!.includes(SOCKET_ADDRESS), "bucket key must not embed the raw address");
+  });
+
+  await t.test("T-B2-19: sixth attempt on one fingerprint is rejected with 429 RATE_LIMITED", async () => {
+    let storedAttempts = 0;
+    const { service, rateLimitParams } = createRegistrationService(async (q: string) => {
+      if (q.includes("rate_limit_buckets")) {
+        storedAttempts += 1;
+        return { rows: [{ attempts: storedAttempts, retry_after: 600 }] };
+      }
+      return { rows: [] };
+    });
+
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      await service.begin(input, device, registrationMfa, SOCKET_FINGERPRINT);
+    }
+
+    await assert.rejects(
+      service.begin(input, device, registrationMfa, SOCKET_FINGERPRINT),
+      (err: DomainError) => err.status === 429 && err.code === "RATE_LIMITED" && err.retryAfterSeconds === 600,
+    );
+
+    assert.equal(rateLimitParams.length, 6);
+    for (const params of rateLimitParams) {
+      assert.equal(params[0], `relational-registration:${SOCKET_FINGERPRINT}`);
+      assert.equal(params[2], 600);
+    }
+  });
+
+  await t.test("T-B2-20: REGISTRATION_STARTED audit payload is exactly {}", async () => {
+    const { service, queries } = createRegistrationService(async (q: string) => {
+      if (q.includes("rate_limit_buckets")) return { rows: [{ attempts: 1 }] };
+      return { rows: [] };
+    });
+
+    await service.begin(input, device, registrationMfa, SOCKET_FINGERPRINT);
+
+    const auditQuery = queries.find((q) => q.query.includes("INSERT INTO audit_events") && q.params[1] === "REGISTRATION_STARTED");
+    assert.ok(auditQuery, "REGISTRATION_STARTED audit event must still be appended");
+    assert.equal(auditQuery.params[5], "{}");
+
+    const serialized = JSON.stringify(auditQuery.params);
+    assert.ok(!serialized.includes("rateLimitKey"));
+    assert.ok(!serialized.includes(SOCKET_ADDRESS));
+    assert.ok(!serialized.includes(SOCKET_FINGERPRINT));
+  });
+
+  await t.test("T-B2-21: rate-limited and conflict bodies leak no raw IP, fingerprint or key", async (t) => {
+    const denied = await startRelationalServer(async (q: string) => {
+      if (q.includes("rate_limit_buckets")) return { rows: [{ attempts: 6, retry_after: 600 }] };
+      return { rows: [] };
+    });
+    t.after(() => denied.server.close());
+
+    const deniedResponse = await fetch(`${denied.baseUrl}/auth/register`, {
+      method: "POST",
+      headers: { "X-Device-ID": device, "x-forwarded-for": SPOOFED_ADDRESSES[0]! },
+      body: registerBody,
+    });
+    assert.equal(deniedResponse.status, 429);
+    assertNoNetworkLeak(await deniedResponse.text());
+    assert.equal(denied.rateLimitParams.length, 1);
+    assert.equal(denied.rateLimitParams[0]![0], `relational-registration:${SOCKET_FINGERPRINT}`);
+
+    const conflicted = await startRelationalServer(async (q: string) => {
+      if (q.includes("rate_limit_buckets")) return { rows: [{ attempts: 1, retry_after: 600 }] };
+      if (q.includes("SELECT id, expires_at <= NOW() AS is_expired")) return { rows: [{ id: "pending-id", is_expired: false }] };
+      return { rows: [] };
+    });
+    t.after(() => conflicted.server.close());
+
+    const conflictResponse = await fetch(`${conflicted.baseUrl}/auth/register`, {
+      method: "POST",
+      headers: { "X-Device-ID": device, "x-forwarded-for": SPOOFED_ADDRESSES[1]! },
+      body: registerBody,
+    });
+    assert.equal(conflictResponse.status, 409);
+    const conflictBody = await conflictResponse.text();
+    assertNoNetworkLeak(conflictBody);
+    assert.ok(!conflictBody.includes("contract@example.com"), "conflict body must not echo the submitted contact");
+    assert.ok(!conflictBody.includes("pending-id"), "conflict body must not echo the pending registration id");
+    assert.equal(conflicted.rateLimitParams[0]![0], `relational-registration:${SOCKET_FINGERPRINT}`);
+  });
+
+  await t.test("T-B2-22: pre-auth resend route applies the same keyed fingerprint", async (t) => {
+    const resendCalls: { challengeId: string; deviceId: string; networkFingerprint?: string | null }[] = [];
+    const mfaService = asResendMfaService({
+      resendRegistrationChallenge: async (call) => {
+        resendCalls.push(call);
+        return mockMfaChallengeResponse;
+      },
+    });
+    const server = createBankingServer(new BankingSystem(), {
+      registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
+      mfaService,
+    });
+    t.after(() => server.close());
+    const baseUrl = await listen(server);
+
+    for (const spoofed of SPOOFED_ADDRESSES) {
+      const response = await fetch(`${baseUrl}/auth/challenges/challenge-1/resend`, {
+        method: "POST",
+        headers: { "X-Device-ID": device, "x-forwarded-for": spoofed },
+        body: JSON.stringify({}),
+      });
+      assert.equal(response.status, 200);
+      assertNoNetworkLeak(await response.text());
+    }
+
+    assert.equal(resendCalls.length, 2);
+    assert.equal(resendCalls[0]!.networkFingerprint, SOCKET_FINGERPRINT);
+    assert.equal(resendCalls[0]!.networkFingerprint, resendCalls[1]!.networkFingerprint);
+    assert.equal(resendCalls[0]!.challengeId, "challenge-1");
+    assert.equal(resendCalls[0]!.deviceId, device);
   });
 });

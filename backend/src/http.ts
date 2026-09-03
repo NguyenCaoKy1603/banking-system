@@ -23,7 +23,7 @@ import { createStructuredLogger, type StructuredLogger } from "./observability/l
 import { collectDatabaseMetrics, PrometheusRegistry, registerBusinessMetrics, registerHttpMetrics, type DatabasePoolMetricSnapshot } from "./observability/metrics.js";
 import type { RelationalHttpBoundary } from "./database/relationalHttpBoundary.js";
 import { DatabaseCommandError } from "./database/commandErrors.js";
-import { fingerprint } from "./security.js";
+import { computeRegistrationNetworkFingerprint, fingerprint } from "./security.js";
 
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 1_000_000;
@@ -58,6 +58,8 @@ export type HttpOptions = {
   customerAccessStatus?: (customerId: string) => Promise<"ACTIVE" | "LOCKED" | null>;
   /** Optional route-scoped direct relational boundary used during cutover. */
   relationalHttp?: RelationalHttpBoundary;
+  /** HMAC key for registration network fingerprint; required at all runtimes. */
+  registrationFingerprintKey: Buffer;
 };
 
 type RequestStateDisposition =
@@ -230,7 +232,7 @@ function writeError(
   });
 }
 
-function runtimeMetadataFor(options: HttpOptions = {}): RuntimeMetadata & { storage: string } {
+function runtimeMetadataFor(options: HttpOptions): RuntimeMetadata & { storage: string } {
   if (options.runtimeMetadata) {
     return {
       ...options.runtimeMetadata,
@@ -367,7 +369,15 @@ function requireDeviceId(request: IncomingMessage): string {
   return deviceId.trim();
 }
 
-function getRateLimitKey(request: IncomingMessage): string {
+function getRateLimitKey(request: IncomingMessage, registrationFingerprintKey: Buffer): string {
+  return computeRegistrationNetworkFingerprint(request.socket.remoteAddress, registrationFingerprintKey);
+}
+
+// Registration must never fall back to x-forwarded-for, because that header is
+// client-spoofable; it derives its bucket solely from the socket address through
+// the keyed HMAC. The authenticated MFA flows predate that hardening and keep
+// their original derivation so B2B does not change non-Registration behavior.
+function getMfaClientAddress(request: IncomingMessage): string {
   const forwardedFor = header(request, "x-forwarded-for")?.split(",")[0]?.trim();
   return forwardedFor || request.socket.remoteAddress || "unknown-client";
 }
@@ -645,7 +655,7 @@ export async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   system: BankingSystem,
-  options: HttpOptions = {},
+  options: HttpOptions,
   parsedBody?: unknown,
   bodyAlreadyRead = false,
   stateBoundary?: RequestStateBoundary,
@@ -800,9 +810,9 @@ export async function handleRequest(
             data as never,
             requireDeviceId(request),
             options.mfaService,
-            getRateLimitKey(request),
+            getRateLimitKey(request, options.registrationFingerprintKey),
           )
-          : await system.beginRegistrationAsync(data as never, getRateLimitKey(request), requireDeviceId(request)),
+          : await system.beginRegistrationAsync(data as never, getRateLimitKey(request, options.registrationFingerprintKey), requireDeviceId(request)),
       );
       return;
     }
@@ -1109,7 +1119,7 @@ export async function handleRequest(
       writeResponse(response, 200, traceId, await options.mfaService.resendRegistrationChallenge({
         challengeId: segments[2]!,
         deviceId: requireDeviceId(request),
-        networkFingerprint: getRateLimitKey(request),
+        networkFingerprint: getRateLimitKey(request, options.registrationFingerprintKey),
       }));
       return;
     }
@@ -1557,7 +1567,7 @@ export async function handleRequest(
         customerId: userId,
         deviceId: requireDeviceId(request),
         destination: user.email,
-        networkFingerprint: getRateLimitKey(request),
+        networkFingerprint: getMfaClientAddress(request),
       }));
       return;
     }
@@ -1624,7 +1634,7 @@ export async function handleRequest(
           purpose,
           resourceId,
           requestFingerprint,
-          networkFingerprint: getRateLimitKey(request),
+          networkFingerprint: getMfaClientAddress(request),
         });
         writeResponse(response, 201, traceId, {
           challengeId: challenge.challengeId,
@@ -2245,7 +2255,7 @@ export async function handleRequest(
 
 export function createBankingServer(
   system = new BankingSystem(),
-  options: HttpOptions = {},
+  options: HttpOptions,
 ): Server {
   const metrics = options.metrics ?? new PrometheusRegistry();
   registerHttpMetrics(metrics);
@@ -2279,7 +2289,7 @@ export function createPersistentBankingServer(
     customerAccessStatus?: (customerId: string) => Promise<"ACTIVE" | "LOCKED" | null>;
   },
   system = new BankingSystem(),
-  options: HttpOptions = {},
+  options: HttpOptions,
 ): Server {
   const resolvedOptions: HttpOptions = {
     ...options,
