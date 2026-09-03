@@ -1,6 +1,6 @@
 # TASK M01-05 — Hoàn thiện KYC lifecycle, Mobile UI states và error handling
 
-Trạng thái: IN_PROGRESS — CHECKPOINT A VERIFIED — AWAITING CHECKPOINT COMMIT
+Trạng thái: IN_PROGRESS — CHECKPOINT A COMMITTED — CHECKPOINT B NOT STARTED
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -378,21 +378,21 @@ Khi xử lý `saveDraft` và `submit` trên Backend (`backend/src/database/kycSe
 ## 11. Tiêu chí nghiệm thu quan sát được (Acceptance Criteria)
 
 ### Checkpoint A (Backend)
-- [ ] Route-level POST `/kyc/application` và `/kyc/application/submit` với payload thiếu trường hoặc không hợp lệ trả về HTTP 422 `VALIDATION_ERROR` kèm đúng cấu trúc `fieldErrors: Record<string, string>`.
-- [ ] Tạo application mới hợp lệ (`saveDraft`) trả về HTTP 200, status `DRAFT`, `version = 1`.
-- [ ] Application ở `NEEDS_MORE_INFO` khi gọi `saveDraft` giữ nguyên status `NEEDS_MORE_INFO`, giữ ID cũ, tăng version +1, trả về HTTP 200.
-- [ ] Application ở `NEEDS_MORE_INFO` khi gọi `submit` chuyển sang status `SUBMITTED`, giữ ID cũ, tăng version +1, gán `submitted_at = NOW()`, trả về HTTP 201.
-- [ ] Application ở `REJECTED` khi gọi `saveDraft` tạo application mới ở `DRAFT` với UUID mới, `version = 1`, trả về HTTP 200.
-- [ ] Application ở `REJECTED` khi gọi `submit` trực tiếp tạo application mới ở `SUBMITTED` với UUID mới, `version = 1`, trả về HTTP 201.
-- [ ] Gửi lại `submit` với cùng payload khi đang `SUBMITTED` hoặc `UNDER_REVIEW` trả về HTTP 201 Created (idempotent replay), giữ nguyên application ID, status, version và không tạo thêm notification, outbox hay audit side effect.
-- [ ] Toàn bộ trường quan trọng (`status`, `decision_reason_code`, `version`, timestamps) của bản ghi `REJECTED` cũ không bị thay đổi sau khi tạo application mới.
-- [ ] Khi request bỏ `identityNumber` và không có open application, hệ thống kế thừa từ `REJECTED` application gần nhất theo thứ tự deterministic `created_at DESC, id ASC`.
-- [ ] Khi request cung cấp `identityNumber` hợp lệ mới, giá trị mới luôn thắng (override) identity kế thừa.
-- [ ] Khi request bỏ `identityNumber` mà không có nguồn kế thừa hợp lệ (không có open và không có rejected), trả về HTTP 422 `VALIDATION_ERROR` kèm `fieldErrors: { identityNumber: "identityNumber must contain between 6 and 24 digits." }` (không leak submitted value).
-- [ ] Customer từng có bất kỳ application nào `APPROVED` khi gọi `saveDraft` hoặc `submit` đều nhận generic 409 Conflict, không tạo mới và không mutate; kiểm tra APPROVED recheck chạy sau lockOpen xử lý deterministic scenario khi open row chuyển APPROVED trong lúc chờ khóa (T-KYC-BE-16 chứng minh query ordering bằng test double; runtime concurrency proof thuộc M01-07).
-- [ ] Xung đột mã lỗi 23505 trên `kyc_applications_customer_open_idx` được map thành generic 409 Conflict.
-- [ ] Lỗi primary key hoặc lỗi database không xác định được rethrow nguyên trạng.
-- [ ] Phản hồi và thông báo lỗi tuyệt đối không để lộ số định danh đầy đủ.
+- [x] Route-level POST `/kyc/application` và `/kyc/application/submit` với payload thiếu trường hoặc không hợp lệ trả về HTTP 422 `VALIDATION_ERROR` kèm đúng cấu trúc `fieldErrors: Record<string, string>`.
+- [x] Tạo application mới hợp lệ (`saveDraft`) trả về HTTP 200, status `DRAFT`, `version = 1`.
+- [x] Application ở `NEEDS_MORE_INFO` khi gọi `saveDraft` giữ nguyên status `NEEDS_MORE_INFO`, giữ ID cũ, tăng version +1, trả về HTTP 200.
+- [x] Application ở `NEEDS_MORE_INFO` khi gọi `submit` chuyển sang status `SUBMITTED`, giữ ID cũ, tăng version +1, gán `submitted_at = NOW()`, trả về HTTP 201.
+- [x] Application ở `REJECTED` khi gọi `saveDraft` tạo application mới ở `DRAFT` với UUID mới, `version = 1`, trả về HTTP 200.
+- [x] Application ở `REJECTED` khi gọi `submit` trực tiếp tạo application mới ở `SUBMITTED` với UUID mới, `version = 1`, trả về HTTP 201.
+- [x] Gửi lại `submit` với cùng payload khi đang `SUBMITTED` hoặc `UNDER_REVIEW` trả về HTTP 201 Created (idempotent replay), giữ nguyên application ID, status, version và không tạo thêm notification, outbox hay audit side effect.
+- [x] Toàn bộ trường quan trọng (`status`, `decision_reason_code`, `version`, timestamps) của bản ghi `REJECTED` cũ không bị thay đổi sau khi tạo application mới.
+- [x] Khi request bỏ `identityNumber` và không có open application, hệ thống kế thừa từ `REJECTED` application gần nhất theo thứ tự deterministic `created_at DESC, id ASC`.
+- [x] Khi request cung cấp `identityNumber` hợp lệ mới, giá trị mới luôn thắng (override) identity kế thừa.
+- [x] Khi request bỏ `identityNumber` mà không có nguồn kế thừa hợp lệ (không có open và không có rejected), trả về HTTP 422 `VALIDATION_ERROR` kèm `fieldErrors: { identityNumber: "identityNumber must contain between 6 and 24 digits." }` (không leak submitted value).
+- [x] Customer từng có bất kỳ application nào `APPROVED` khi gọi `saveDraft` hoặc `submit` đều nhận generic 409 Conflict, không tạo mới và không mutate; kiểm tra APPROVED recheck chạy sau lockOpen xử lý deterministic scenario khi open row chuyển APPROVED trong lúc chờ khóa (T-KYC-BE-16 chứng minh query ordering bằng test double; runtime concurrency proof thuộc M01-07).
+- [x] Xung đột mã lỗi 23505 trên `kyc_applications_customer_open_idx` được map thành generic 409 Conflict.
+- [x] Lỗi primary key hoặc lỗi database không xác định được rethrow nguyên trạng.
+- [x] Phản hồi và thông báo lỗi tuyệt đối không để lộ số định danh đầy đủ.
 
 ### Checkpoint B (Mobile)
 - [ ] Các known field errors từ Backend 422 được map chính xác vào các TextField tương ứng; unknown error keys bị bỏ qua an toàn.
@@ -483,7 +483,7 @@ Khi xử lý `saveDraft` và `submit` trên Backend (`backend/src/database/kycSe
 - **M01-05**: Chưa COMPLETED.
 - **Quyền Git**: Không push.
 
-Trạng thái thực hiện: IN_PROGRESS — CHECKPOINT A VERIFIED — AWAITING CHECKPOINT COMMIT
+Trạng thái thực hiện: IN_PROGRESS — CHECKPOINT A COMMITTED — CHECKPOINT B NOT STARTED
 
 ## 15. CHECKPOINT A BACKEND EVIDENCE
 
@@ -591,4 +591,40 @@ Khi request bỏ trống `identityNumber` và không có nguồn kế thừa h�
 - Source hash của `backend/src/database/kycService.ts` trước và sau follow-up: `6ae200105253c5e81c1a965746b0bbaddc8c1de0` (không thay đổi một byte nào).
 - Checkpoint B (Mobile) chưa bắt đầu.
 - Task M01-05 chưa hoàn thành (`COMPLETED`).
-- Giữ nguyên trạng thái: `IN_PROGRESS — CHECKPOINT A AWAITING OWNER REVIEW`.
+- Trạng thái Checkpoint A: `IN_PROGRESS — CHECKPOINT A COMMITTED — CHECKPOINT B NOT STARTED`.
+
+### 15.6 CHECKPOINT A IMPLEMENTATION COMMIT
+
+- **Full implementation commit SHA**: `bd7d8ec2dd8e85721b1ba87af4f3763bff362713`
+- **Parent SHA**: `eb1ea7ddfe549d5e3280b96460e5812309eab024`
+- **Commit message**: `fix(kyc): enforce terminal application lifecycle`
+- **AuthorDate**: `Fri Sep 4 02:46:09 2026 +0700`
+- **CommitDate**: `Fri Sep 4 02:46:09 2026 +0700`
+- **Exact 3 files**:
+  1. `M backend/src/database/kycService.ts`
+  2. `M backend/src/tests/kycContract.test.ts`
+  3. `M tasks/UC-M01/TASK_M01_05_COMPLETE_KYC_LIFECYCLE_UI_ERRORS.md`
+- **Commit stat**: `3 files changed, 1154 insertions(+), 52 deletions(-)`
+- **D-10 và D-11 implementation conclusion**:
+  - D-10: Hoàn tất trọn vẹn terminal lifecycle enforcement và identity inheritance logic trên Backend service.
+  - D-11: Cấu trúc hóa đầy đủ contract test suite bao phủ toàn bộ 16 kịch bản chuyển đổi và validation.
+- **Canonical lifecycle**:
+  - `NEEDS_MORE_INFO` + `saveDraft`: Giữ nguyên status `NEEDS_MORE_INFO`, giữ ID, tăng `version: +1`.
+  - `REJECTED` + `saveDraft` hoặc `submit`: Tạo application mới với UUID mới, `version: 1`; row `REJECTED` cũ hoàn toàn không bị mutate.
+  - `APPROVED` precedence: Khi đã có row `APPROVED`, mọi request `saveDraft`/`submit` đều bị từ chối với generic 409 Conflict trước khi normalize hay insert.
+  - Idempotent submit replay: Trả về application hiện có kèm HTTP 201, 0 side effect lặp lại.
+- **Deterministic identity inheritance**: Omitted identity được kế thừa từ `REJECTED` row gần nhất (`ORDER BY created_at DESC, id ASC LIMIT 1`).
+- **Exact open-index conflict mapping**: Chỉ mã lỗi `23505` trên `kyc_applications_customer_open_idx` được map sang generic 409 Conflict; lỗi pkey và unknown database errors được rethrow nguyên trạng.
+- **Kiểm thử Checkpoint A**:
+  - `T-KYC-BE-01…16`: 16/16 **PASS**.
+  - Targeted test count: 28/28 **PASS** (12 tests gốc + 16 tests mới).
+  - Full Backend suite: 289 total / 241 pass / 48 intentional skip / 0 fail.
+  - Typecheck, build, OpenAPI validator (54 paths / 60 guards), database schema static validator (52 tables): Tất cả đều **PASS**.
+- **Privacy test bao phủ 7 surfaces** (`T-KYC-BE-14`): Public HTTP response body, DomainError message, fieldErrors, audit event payload, outbox event payload, notification title/body, và console logging spy.
+- **Ranh giới URL và OpenAPI**: OpenAPI path `/kyc/application/submit` phân biệt rõ ràng với runtime mounted URL `/api/v1/kyc/application/submit` (tiền tố `API_PREFIX = "/api/v1"`).
+- **Ranh giới Concurrency**: `T-KYC-BE-16` chứng minh query sequence / decision ordering bằng test double; PostgreSQL runtime concurrency và row-lock interleaving thực tế được deferred chính thức sang **M01-07**.
+- **Trạng thái quy trình**:
+  - Checkpoint A đã committed.
+  - Checkpoint B chưa bắt đầu.
+  - Task M01-05 chưa hoàn thành (`COMPLETED`).
+  - Commit thực hiện hoàn toàn local, chưa push.
