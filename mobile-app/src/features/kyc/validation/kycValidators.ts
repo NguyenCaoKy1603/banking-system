@@ -20,8 +20,23 @@ export function validateKycDraft(
     errors.fullName = "Họ tên phải có ít nhất 2 ký tự.";
   }
 
-  if ((identityRequired || identityNumber.length > 0) && !/^\d{6,24}$/.test(identityNumber)) {
-    errors.identityNumber = "Số định danh mô phỏng gồm 6–24 chữ số.";
+  if (identityRequired) {
+    if (
+      identityNumber.length === 0 ||
+      identityNumber.includes("•") ||
+      !/^\d{6,24}$/.test(identityNumber)
+    ) {
+      errors.identityNumber = "Số định danh mô phỏng gồm 6–24 chữ số.";
+    }
+  } else {
+    // When existing identity is unchanged, empty string is valid.
+    // If the user enters a value, it must be 6-24 digits and not contain masked characters.
+    if (
+      identityNumber.length > 0 &&
+      (identityNumber.includes("•") || !/^\d{6,24}$/.test(identityNumber))
+    ) {
+      errors.identityNumber = "Số định danh mô phỏng gồm 6–24 chữ số.";
+    }
   }
 
   if (address.length < 5) {

@@ -20,8 +20,13 @@ export function requireDraft(
     documentUri: draft.documentUri.trim(),
     syntheticDataConfirmed: draft.syntheticDataConfirmed,
   };
-  if (options.includeIdentityNumber !== false) {
-    request.identityNumber = draft.identityNumber.trim();
+  const trimmedIdentity = draft.identityNumber.trim();
+  if (
+    options.includeIdentityNumber !== false &&
+    trimmedIdentity.length > 0 &&
+    !trimmedIdentity.includes("•")
+  ) {
+    request.identityNumber = trimmedIdentity;
   }
   return request;
 }

@@ -1,6 +1,6 @@
 # TASK M01-05 — Hoàn thiện KYC lifecycle, Mobile UI states và error handling
 
-Trạng thái: IN_PROGRESS — CHECKPOINT A COMMITTED — CHECKPOINT B NOT STARTED
+Trạng thái: IN_PROGRESS — CHECKPOINT B VERIFIED — AWAITING CHECKPOINT COMMIT
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -625,6 +625,147 @@ Khi request bỏ trống `identityNumber` và không có nguồn kế thừa h�
 - **Ranh giới Concurrency**: `T-KYC-BE-16` chứng minh query sequence / decision ordering bằng test double; PostgreSQL runtime concurrency và row-lock interleaving thực tế được deferred chính thức sang **M01-07**.
 - **Trạng thái quy trình**:
   - Checkpoint A đã committed.
-  - Checkpoint B chưa bắt đầu.
+  - Checkpoint B đã hoàn thành implementation và vượt qua toàn bộ quality gates; chờ Owner review.
   - Task M01-05 chưa hoàn thành (`COMPLETED`).
   - Commit thực hiện hoàn toàn local, chưa push.
+
+### 15.7 CHECKPOINT B MOBILE EVIDENCE AND VERIFICATION
+
+- **Thời điểm hoàn thành**: 2026-09-04.
+- **Baseline commit**: `736e55ebc4ca4a71cb54221551f3d5a4a03b5e08` (`docs(uc-m01): record KYC lifecycle checkpoint`).
+- **Exact allowlist (7 files)**:
+  1. `mobile-app/src/features/kyc/screens/KycScreen.tsx`
+  2. `mobile-app/src/features/kyc/screens/__tests__/KycScreen.test.tsx`
+  3. `mobile-app/src/features/kyc/services/kycApi.ts`
+  4. `mobile-app/src/features/kyc/services/__tests__/kycApi.test.ts`
+  5. `mobile-app/src/features/kyc/validation/kycValidators.ts`
+  6. `mobile-app/src/features/kyc/validation/__tests__/kycValidators.test.ts`
+  7. `tasks/UC-M01/TASK_M01_05_COMPLETE_KYC_LIFECYCLE_UI_ERRORS.md`
+- **Zero file thứ tám**: Không có bất kỳ file nào ngoài 7 file trên bị thay đổi.
+- **Chi tiết triển khai kỹ thuật**:
+  - **State Machine hoàn chỉnh**:
+    - `INITIAL_LOADING`: Hiển thị `ActivityIndicator`, không hiển thị empty form khi chưa nạp xong.
+    - `LOAD_ERROR`: Khi initial load thất bại (`initialLoadFailed && !application`), hiển thị card lỗi chuyên biệt với testID `kyc-load-error-card` và nút testID `kyc-retry-load`. Nút retry bị disabled trong lúc đang tải lại (`disabled={isLoading}`) để chặn triệt để double-press; tuyệt đối không tự động submit hay save.
+    - `EMPTY_EDITABLE`: Form trống cho khách hàng chưa từng tạo hồ sơ (`application === null`).
+    - `DRAFT_EDITABLE`: Form cho hồ sơ `DRAFT`, hiển thị masked identity `••••<last4>`, nút "Lưu bản nháp" và "Gửi hồ sơ eKYC".
+    - `NEEDS_MORE_INFO_EDITABLE`: Banner cảnh báo riêng (vàng cam, testID `kyc-needs-more-info-banner`), copy nêu rõ ngân hàng yêu cầu bổ sung thông tin trên hồ sơ hiện tại, nút "Gửi cập nhật hồ sơ". Tuyệt đối không dùng wording của `REJECTED`.
+    - `REJECTED_NEW_APPLICATION`: Banner cảnh báo riêng (đỏ, testID `kyc-rejected-banner`), copy giải thích rõ ràng hồ sơ trước đó đã bị từ chối và lần lưu/nộp tiếp theo sẽ tạo một hồ sơ định danh mới. Tuyệt đối không giả vờ chỉnh sửa trên row cũ.
+    - `SUBMITTED_READ_ONLY` & `UNDER_REVIEW_READ_ONLY`: Giao diện chỉ đọc, tóm tắt thông tin hồ sơ và số định danh masked, ghi chú chờ duyệt `kyc-pending-entitlement-note`, nút làm mới trạng thái `kyc-refresh-status`. Không hiển thị nút Save Draft hay Submit.
+    - `APPROVED_READ_ONLY`: Giao diện chỉ đọc hoàn toàn, tiêu đề "Đã duyệt", mô tả "Hồ sơ định danh đã được phê duyệt.", hiển thị masked last4. Không hiển thị bất kỳ nút điều khiển chỉnh sửa/lưu/nộp nào.
+  - **Fallback an toàn cho `rejectionReason`**:
+    - Helper `getRejectionReasonText` loại bỏ trailing dots thừa (`.replace(/\.+$/, "")`), loại bỏ whitespace.
+    - Fallback cho `NEEDS_MORE_INFO`: "Cần cập nhật và hoàn thiện hồ sơ định danh".
+    - Fallback cho `REJECTED`: "Thông tin định danh chưa đáp ứng tiêu chuẩn đối chiếu".
+    - Tuyệt đối không render `undefined`, `null`, hay dấu hai chấm đơn độc `:` khi backend trả về lý do rỗng.
+  - **Ánh xạ lỗi 422 từ Backend an toàn (Allowlisted Field-Error Mapping)**:
+    - Chỉ map 5 trường allowlisted: `fullName`, `identityNumber`, `address`, `documentUri`, `syntheticDataConfirmed`.
+    - Mọi field không nằm trong allowlist bị loại bỏ, không bao giờ spread arbitrary fieldErrors vào state.
+    - Hiển thị lỗi tương ứng dưới từng trường nhập liệu và hiển thị banner thông báo tổng thể.
+    - Khi người dùng tương tác chỉnh sửa trường nào, lỗi của trường đó được xóa ngay lập tức.
+  - **Xử lý lỗi mạng, quá thời gian và phiên làm việc**:
+    - `NETWORK_ERROR`: Thông báo "Không thể kết nối đến máy chủ. Vui lòng kiểm tra đường truyền." và cho phép retry thủ công.
+    - `TIMEOUT`: Thông báo "Yêu cầu đến máy chủ đã hết thời gian chờ. Vui lòng thử lại sau.", không tự động resubmit.
+    - `401 / UNAUTHORIZED`: Thông báo "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại." tuân thủ contract auth hiện hành.
+  - **Xử lý xung đột 409 Conflict (Concurrency UX)**:
+    - Khi nhận 409 từ save/submit: không tin vào local state hiện tại, lập tức gọi `getKycApplication(auth)` để nạp canonical application từ server.
+    - Chặn các thao tác trùng lặp trong lúc reload.
+    - Tự động chuyển sang chế độ read-only nếu canonical status là `SUBMITTED`, `UNDER_REVIEW`, hoặc `APPROVED`.
+    - Nếu reload thất bại: hiển thị thông báo lỗi retryable, không tự động submit lại, không xóa và không ghi log số định danh người dùng đang nhập.
+  - **Bảo mật và quyền riêng tư định danh (Identity Privacy UX)**:
+    - Hồ sơ mới: yêu cầu bắt buộc nhập số định danh 6–24 chữ số; client validation chặn trước API nếu không hợp lệ.
+    - Hồ sơ hiện có giữ nguyên định danh: ô nhập liệu trống, hiển thị `••••<last4>`; request body omit hoàn toàn thuộc tính `identityNumber`.
+    - Hồ sơ hiện có thay đổi định danh: bắt buộc nhập 6–24 chữ số mới; gửi full synthetic value; từ chối chuỗi masked (`••••...`) hoặc last4-only (`9012`).
+    - Sau khi save/submit thành công: lập tức xóa sạch số định danh đầy đủ khỏi React state (`draft.identityNumber = ""`), chỉ hiển thị `••••<last4>`.
+    - Tuyệt đối không lưu full identity vào SecureStore, AsyncStorage, hay tệp tin; không ghi log console chứa identity.
+    - Không chứa bất kỳ TypeScript escape cấm nào (`any`, `as any`, `as unknown as`, `as never`, `@ts-ignore`, `@ts-expect-error`).
+- **Bộ kiểm thử Mobile đã thực hiện (`T-KYC-FE-01` đến `T-KYC-FE-10`)**:
+  - **Per-file targeted counts (3 test suites, 26 tests, 26 PASS, 0 FAIL)**:
+    1. `mobile-app/src/features/kyc/screens/__tests__/KycScreen.test.tsx`:
+       - Baseline: 4 tests.
+       - Added: 10 tests (`T-KYC-FE-01` đến `T-KYC-FE-10`).
+       - Removed: 0. Renamed/gộp: 0.
+       - Current: 14 tests (14 PASS, 0 FAIL, 0 SKIP).
+       - Discovered tests:
+         * `renders an existing identity as masked last4 and never renders the full identity`
+         * `omits identityNumber for an unchanged existing identity update`
+         * `sends a newly entered full identity only after the user changes identity`
+         * `blocks a new application without identity before calling the service`
+         * `T-KYC-FE-01: Known 422 field errors map to inputs while unknown keys are safely ignored`
+         * `T-KYC-FE-02: Initial load failure renders dedicated error view with retry, and prevents double retry`
+         * `T-KYC-FE-03: Renders distinct UI for REJECTED, NEEDS_MORE_INFO, and APPROVED states`
+         * `T-KYC-FE-04: Null or empty rejectionReason uses semantic safe fallback text`
+         * `T-KYC-FE-05: Handles NETWORK_ERROR, TIMEOUT, and 401 with appropriate user messages`
+         * `T-KYC-FE-06: New application blocks missing/invalid identity, while existing unchanged identity is omitted`
+         * `T-KYC-FE-07: Changed identity sends full new value and rejects masked or last4-only values`
+         * `T-KYC-FE-08: 409 Conflict triggers canonical reload, and reload failure does not auto-submit`
+         * `T-KYC-FE-09: Save and submit success immediately clears full identity from React state`
+         * `T-KYC-FE-10: Read-only states (SUBMITTED, UNDER_REVIEW, APPROVED) hide action controls`
+    2. `mobile-app/src/features/kyc/services/__tests__/kycApi.test.ts`:
+       - Baseline: 2 tests.
+       - Added: 2 tests.
+       - Removed: 0. Renamed/gộp: 0.
+       - Current: 4 tests (4 PASS, 0 FAIL, 0 SKIP).
+       - Discovered tests:
+         * `sends the full identity when creating or explicitly changing identity`
+         * `omits identityNumber completely when an existing identity is unchanged`
+         * `omits identityNumber when draft has empty or whitespace identity`
+         * `omits identityNumber when draft contains a masked identity value`
+    3. `mobile-app/src/features/kyc/validation/__tests__/kycValidators.test.ts`:
+       - Baseline: 5 tests.
+       - Added: 3 tests (thuộc describe `context-aware identity validation`).
+       - Removed: 0. Renamed/gộp: 0.
+       - Current: 8 tests (8 PASS, 0 FAIL, 0 SKIP).
+       - Discovered tests:
+         * `accepts a complete simulated KYC draft`
+         * `reports identity and document errors before submit`
+         * `uses the canonical identity boundary and document URI schemes`
+         * `allows an existing application update to omit an unchanged identity`
+         * `requires syntheticDataConfirmed to be exactly boolean true`
+         * `new application context (identityRequired: true): requires 6-24 digits and rejects empty, masked, or last4-only`
+         * `existing unchanged context (identityRequired: false): allows empty identity`
+         * `existing changed context (identityRequired: false): enforces 6-24 digits and rejects masked or last4-only when entered`
+    - **Tổng số targeted tests**: 14 + 4 + 8 = **26 tests** (3 suites, 26 passed, 0 failed, 0 skipped).
+    - **Delta so với full suite baseline**:
+      - Full suite baseline trước Checkpoint B: 51 suites / 345 tests / 345 pass / 0 fail.
+      - Full suite current sau Checkpoint B: 51 suites / 360 tests / 360 pass / 0 fail.
+      - Delta: đúng +15 tests (10 tests tại KycScreen.test.tsx + 2 tests tại kycApi.test.ts + 3 tests tại kycValidators.test.ts = +15 tests).
+      - Zero test bị xóa, skip hoặc đổi tên.
+  - **Cơ chế Bounded Async-Wait (`waitForAssertion`)**:
+    - Sử dụng helper `waitForAssertion(assertion: () => void, timeoutMs = 2000, stepMs = 20)`:
+      * Chờ điều kiện observable UI/call thông qua assertion lambda.
+      * Giới hạn timeout hữu hạn 2000ms; khi vượt quá sẽ throw lỗi cụ thể kèm stack trace của assertion cuối cùng.
+      * Không polling vô hạn; bước thăm dò 20ms bên trong `act(async () => ...)`.
+      * Trong các test mới `T-KYC-FE-01..10`, không dùng số lượng `Promise.resolve()` tick cố định để đợi render/network.
+- **Kết quả Quality Gates Mobile**:
+  - `npm run lint`: **PASS** (0 errors, 0 warnings).
+  - `npm run typecheck`: **PASS** (0 type errors, Expo Router types generated).
+  - `npx jest --runInBand src/features/kyc/...`: **PASS** (3 test suites, 26 tests, 0 failures).
+  - `npm test -- --runInBand`: **PASS** (51 test suites, 360 tests, 0 failures).
+  - `npm run validate:openapi`: **PASS** (46 required paths).
+  - `npm run validate:e2e`: **PASS** (19 Maestro flows valid).
+  - `npm run export:web`: **PASS** (36 static routes exported to dist).
+  - Backend sanity check (`npm test` và `npm run test:critical`): **PASS** (241 passed / 48 skipped / 0 failed).
+- **Trạng thái Git**:
+  - Working tree chỉ chứa đúng 7 file allowlisted.
+  - Cached area hoàn toàn sạch (0 staged files).
+  - Không commit, không push, không tag, không amend.
+  - Sẵn sàng bàn giao Owner review gói Checkpoint B.
+
+### 15.8 OWNER REVIEW & APPROVAL RECORD — CHECKPOINT B VERIFIED
+
+- **Thời điểm phê duyệt**: 2026-09-04.
+- **Baseline HEAD**: `736e55ebc4ca4a71cb54221551f3d5a4a03b5e08` (`docs(uc-m01): record KYC lifecycle checkpoint`).
+- **Owner Review & Chấp thuận**:
+  - **Targeted test count**: 3 suites, 26/26 **PASS** (100%).
+  - **Per-file breakdown**:
+    * `KycScreen.test.tsx`: 14/14 PASS (4 baseline + 10 Checkpoint B).
+    * `kycApi.test.ts`: 4/4 PASS (2 baseline + 2 Checkpoint B).
+    * `kycValidators.test.ts`: 8/8 PASS (5 baseline + 3 Checkpoint B).
+  - **Full Mobile test suite**: 51 suites, 360/360 **PASS**.
+  - **Delta xác minh**: Đúng $+15$ tests từ baseline (345 $\rightarrow$ 360), tuyệt đối không xóa/đổi tên/skip bất kỳ test cũ nào.
+  - **Bounded async-wait**: Helper `waitForAssertion` tuân thủ timeout hữu hạn 2000 ms, bước thăm dò 20 ms bọc trong `act`, không polling vô hạn, không cố định số tick `Promise.resolve()`.
+  - **Toàn bộ Quality Gates Mobile**: `npm run lint`, `npm run typecheck`, `npm test`, `npm run validate:openapi`, `npm run validate:e2e`, `npm run export:web` đều **PASS**.
+  - **Ranh giới công việc**:
+    * Task **M01-07** (PostgreSQL runtime concurrency & disposable database test) và **M01-08** (Device / Staging E2E) vẫn được hoãn lại (deferred) chính thức.
+    * Task **M01-05** chưa `COMPLETED` tại bước staging; chỉ chuyển sang trạng thái chờ commit Checkpoint B.
+  - **Trạng thái quy trình**: `IN_PROGRESS — CHECKPOINT B VERIFIED — AWAITING CHECKPOINT COMMIT`.

@@ -7,11 +7,10 @@ const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>();
 const originalFetch = globalThis.fetch;
 
 function createJsonResponse(payload: unknown, status = 200): Response {
-  return {
-    ok: status >= 200 && status < 300,
+  return new Response(JSON.stringify(payload), {
     status,
-    json: jest.fn().mockResolvedValue(payload),
-  } as unknown as Response;
+    headers: { "content-type": "application/json" },
+  });
 }
 
 const draft = {
@@ -81,5 +80,23 @@ describe("KYC API request contract", () => {
       documentUri: draft.documentUri,
       syntheticDataConfirmed: true,
     }));
+  });
+
+  it("omits identityNumber when draft has empty or whitespace identity", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(response));
+
+    await saveKycDraft({ ...draft, identityNumber: "" }, auth, { includeIdentityNumber: true });
+
+    const body = requestBody();
+    expect(Object.prototype.hasOwnProperty.call(body, "identityNumber")).toBe(false);
+  });
+
+  it("omits identityNumber when draft contains a masked identity value", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(response));
+
+    await saveKycDraft({ ...draft, identityNumber: "••••9012" }, auth, { includeIdentityNumber: true });
+
+    const body = requestBody();
+    expect(Object.prototype.hasOwnProperty.call(body, "identityNumber")).toBe(false);
   });
 });
