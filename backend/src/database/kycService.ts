@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+﻿import { randomUUID } from "node:crypto";
 
 import { conflict, invalidRequest, notFound } from "../errors.js";
 import { fingerprint } from "../security.js";
@@ -76,9 +76,6 @@ export function normalizeInput(
   }
   const address = textField(input.address, "address", 5, 300);
   const documentUri = textField(input.documentUri, "documentUri", 1, 300);
-  // The reference app accepts synthetic fixture URIs only.  This prevents a
-  // browser client from accidentally turning this endpoint into a document
-  // upload/PII store before a real KYC provider and retention policy exist.
   if (!/^(mock|synthetic):\/\//.test(documentUri)) {
     throw invalidRequest("documentUri must reference a synthetic fixture.", {
       documentUri: "Use a mock:// or synthetic:// fixture URI in this sandbox.",
@@ -146,7 +143,15 @@ export function publicApplication(row: Record<string, unknown>): CustomerKycAppl
 const SELECT_COLUMNS = `id, customer_id, status, applicant_label, request_fingerprint,
   decision_reason_code, version, synthetic_payload, submitted_at, created_at, updated_at`;
 
-/** Persistent customer KYC workflow for the reference relational-v2 runtime. */
+function isOpenIndexConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const err = error as Record<string, unknown>;
+  return (
+    err["code"] === "23505" &&
+    err["constraint"] === "kyc_applications_customer_open_idx"
+  );
+}
+
 export class RelationalKycService {
   constructor(private readonly unitOfWork: UnitOfWork) {}
 
@@ -166,36 +171,91 @@ export class RelationalKycService {
     assertUuid(customerId, "customerId");
     return this.unitOfWork.transaction(async ({ client }) => {
       const current = await this.lockOpen(client, customerId);
+
+      const approvedCheck = await client.query(
+        `SELECT id FROM kyc_applications
+          WHERE customer_id = $1 AND status = 'APPROVED'
+          LIMIT 1 FOR SHARE`,
+        [customerId],
+      );
+      if (approvedCheck.rows.length > 0) {
+        throw conflict("KYC application has already been approved.");
+      }
+
       if (current && ["SUBMITTED", "UNDER_REVIEW"].includes(String(current.status))) {
         throw conflict("KYC hồ sơ đã được gửi và đang chờ xử lý.");
       }
-      const normalized = normalizeInput(input, current ? payload(current).identityNumber : undefined);
+
+      let existingIdentityNumber: string | undefined;
+      if (current) {
+        existingIdentityNumber = payload(current).identityNumber || undefined;
+      } else {
+        const rejectedResult = await client.query(
+          `SELECT synthetic_payload FROM kyc_applications
+            WHERE customer_id = $1 AND status = 'REJECTED'
+            ORDER BY created_at DESC, id ASC LIMIT 1`,
+          [customerId],
+        );
+        if (rejectedResult.rows[0]) {
+          const rejectedPayload = payload(rejectedResult.rows[0] as Record<string, unknown>);
+          existingIdentityNumber = rejectedPayload.identityNumber || undefined;
+        }
+      }
+
+      const normalized = normalizeInput(input, existingIdentityNumber);
       const requestFingerprint = fingerprint(normalized);
-      const row = current
-        ? (await client.query(
-          `UPDATE kyc_applications
-              SET status = 'DRAFT', synthetic_payload = $2::jsonb,
-                  request_fingerprint = $3, decision_reason_code = NULL,
-                  submitted_at = NULL, version = version + 1, updated_at = NOW()
-            WHERE id = $1 RETURNING ${SELECT_COLUMNS}`,
-          [current.id, JSON.stringify(normalized), requestFingerprint],
-        )).rows[0]
-        : (await client.query(
-          `INSERT INTO kyc_applications
-             (id, customer_id, status, applicant_label, request_fingerprint, synthetic_payload, version, created_at, updated_at)
-           VALUES ($1, $2, 'DRAFT', 'Synthetic KYC applicant', $3, $4::jsonb, 1, NOW(), NOW())
-           RETURNING ${SELECT_COLUMNS}`,
-          [randomUUID(), customerId, requestFingerprint, JSON.stringify(normalized)],
-        )).rows[0];
+
+      let row: Record<string, unknown> | undefined;
+      if (current) {
+        const currentStatus = String(current.status);
+        if (currentStatus === "NEEDS_MORE_INFO") {
+          const updateResult = await client.query(
+            `UPDATE kyc_applications
+                SET synthetic_payload = $2::jsonb,
+                    request_fingerprint = $3,
+                    version = version + 1, updated_at = NOW()
+              WHERE id = $1 RETURNING ${SELECT_COLUMNS}`,
+            [current.id, JSON.stringify(normalized), requestFingerprint],
+          );
+          row = updateResult.rows[0] as Record<string, unknown> | undefined;
+        } else {
+          const updateResult = await client.query(
+            `UPDATE kyc_applications
+                SET status = 'DRAFT', synthetic_payload = $2::jsonb,
+                    request_fingerprint = $3, decision_reason_code = NULL,
+                    submitted_at = NULL, version = version + 1, updated_at = NOW()
+              WHERE id = $1 RETURNING ${SELECT_COLUMNS}`,
+            [current.id, JSON.stringify(normalized), requestFingerprint],
+          );
+          row = updateResult.rows[0] as Record<string, unknown> | undefined;
+        }
+      } else {
+        try {
+          const insertResult = await client.query(
+            `INSERT INTO kyc_applications
+               (id, customer_id, status, applicant_label, request_fingerprint, synthetic_payload, version, created_at, updated_at)
+             VALUES ($1, $2, 'DRAFT', 'Synthetic KYC applicant', $3, $4::jsonb, 1, NOW(), NOW())
+             RETURNING ${SELECT_COLUMNS}`,
+            [randomUUID(), customerId, requestFingerprint, JSON.stringify(normalized)],
+          );
+          row = insertResult.rows[0] as Record<string, unknown> | undefined;
+        } catch (insertError: unknown) {
+          if (isOpenIndexConflict(insertError)) {
+            throw conflict("KYC application is already open.");
+          }
+          throw insertError;
+        }
+      }
+
       if (!row) throw new RelationalConflictError("KYC_WRITE_FAILED", "KYC draft could not be persisted.");
       await new AuditRepository(client).append({
         id: randomUUID(),
         eventType: "KYC_DRAFT_SAVED",
         actorCustomerId: customerId,
         resourceId: String(row.id),
-        payload: { status: "DRAFT" },
+        payload: { status: String(row.status) },
       });
-      return publicApplication(row as Record<string, unknown>);
+      return publicApplication(row);
     }, { maxRetries: 1 });
   }
 
@@ -203,36 +263,75 @@ export class RelationalKycService {
     assertUuid(customerId, "customerId");
     return this.unitOfWork.transaction(async ({ client }) => {
       const current = await this.lockOpen(client, customerId);
-      const normalized = normalizeInput(input, current ? payload(current).identityNumber : undefined);
+
+      const approvedCheck = await client.query(
+        `SELECT id FROM kyc_applications
+          WHERE customer_id = $1 AND status = 'APPROVED'
+          LIMIT 1 FOR SHARE`,
+        [customerId],
+      );
+      if (approvedCheck.rows.length > 0) {
+        throw conflict("KYC application has already been approved.");
+      }
+
+      let existingIdentityNumber: string | undefined;
+      if (current) {
+        existingIdentityNumber = payload(current).identityNumber || undefined;
+      } else {
+        const rejectedResult = await client.query(
+          `SELECT synthetic_payload FROM kyc_applications
+            WHERE customer_id = $1 AND status = 'REJECTED'
+            ORDER BY created_at DESC, id ASC LIMIT 1`,
+          [customerId],
+        );
+        if (rejectedResult.rows[0]) {
+          const rejectedPayload = payload(rejectedResult.rows[0] as Record<string, unknown>);
+          existingIdentityNumber = rejectedPayload.identityNumber || undefined;
+        }
+      }
+
+      const normalized = normalizeInput(input, existingIdentityNumber);
       const requestFingerprint = fingerprint(normalized);
+
       if (current && ["SUBMITTED", "UNDER_REVIEW"].includes(String(current.status))) {
-        // Retrying the same submit is safe and returns the already committed
-        // application; a changed payload is rejected instead of silently
-        // replacing data that a reviewer may already be looking at.
         if (String(current.request_fingerprint) !== requestFingerprint) {
           throw conflict("KYC hồ sơ đang được xử lý; không thể thay đổi dữ liệu.");
         }
         return publicApplication(current);
       }
+
       const submittedAt = new Date().toISOString();
-      const row = current
-        ? (await client.query(
+      let row: Record<string, unknown> | undefined;
+      if (current) {
+        const updateResult = await client.query(
           `UPDATE kyc_applications
               SET status = 'SUBMITTED', synthetic_payload = $2::jsonb,
                   request_fingerprint = $3, decision_reason_code = NULL,
                   submitted_at = $4::timestamptz, version = version + 1, updated_at = NOW()
             WHERE id = $1 RETURNING ${SELECT_COLUMNS}`,
           [current.id, JSON.stringify(normalized), requestFingerprint, submittedAt],
-        )).rows[0]
-        : (await client.query(
-          `INSERT INTO kyc_applications
-             (id, customer_id, status, applicant_label, request_fingerprint, synthetic_payload, submitted_at, version, created_at, updated_at)
-           VALUES ($1, $2, 'SUBMITTED', 'Synthetic KYC applicant', $3, $4::jsonb, $5::timestamptz, 1, NOW(), NOW())
-           RETURNING ${SELECT_COLUMNS}`,
-          [randomUUID(), customerId, requestFingerprint, JSON.stringify(normalized), submittedAt],
-        )).rows[0];
+        );
+        row = updateResult.rows[0] as Record<string, unknown> | undefined;
+      } else {
+        try {
+          const insertResult = await client.query(
+            `INSERT INTO kyc_applications
+               (id, customer_id, status, applicant_label, request_fingerprint, synthetic_payload, submitted_at, version, created_at, updated_at)
+             VALUES ($1, $2, 'SUBMITTED', 'Synthetic KYC applicant', $3, $4::jsonb, $5::timestamptz, 1, NOW(), NOW())
+             RETURNING ${SELECT_COLUMNS}`,
+            [randomUUID(), customerId, requestFingerprint, JSON.stringify(normalized), submittedAt],
+          );
+          row = insertResult.rows[0] as Record<string, unknown> | undefined;
+        } catch (insertError: unknown) {
+          if (isOpenIndexConflict(insertError)) {
+            throw conflict("KYC application is already open.");
+          }
+          throw insertError;
+        }
+      }
+
       if (!row) throw new RelationalConflictError("KYC_WRITE_FAILED", "KYC application could not be persisted.");
-      const application = publicApplication(row as Record<string, unknown>);
+      const application = publicApplication(row);
       const notificationId = randomUUID();
       await client.query(
         `INSERT INTO notifications

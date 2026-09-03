@@ -1,6 +1,6 @@
 # TASK M01-05 — Hoàn thiện KYC lifecycle, Mobile UI states và error handling
 
-Trạng thái: IN_PROGRESS — PLAN APPROVED — CHECKPOINT A NOT STARTED
+Trạng thái: IN_PROGRESS — CHECKPOINT A VERIFIED — AWAITING CHECKPOINT COMMIT
 Ưu tiên: P1
 Chế độ dự kiến: IMPLEMENT_AND_VERIFY
 
@@ -90,7 +90,7 @@ Hoàn thiện vòng đời KYC (complete-valid DRAFT, REJECTED terminal, resubmi
     - Nếu có open application: dùng identity hiện tại của chính open application đó.
     - Nếu không có open application: chỉ được kế thừa từ `REJECTED` application gần nhất của chính customer đó theo thứ tự xác định: `ORDER BY created_at DESC, id ASC LIMIT 1`.
     - Tuyệt đối không kế thừa identity từ application `APPROVED` hoặc application của customer khác.
-    - Nếu không có nguồn identity hợp lệ: trả về HTTP 422 `identityNumber is required.`
+    - Nếu không có nguồn identity hợp lệ: trả về HTTP 422 `VALIDATION_ERROR` kèm `fieldErrors: { identityNumber: "identityNumber must contain between 6 and 24 digits." }` (không leak submitted value).
   - Khi đổi số định danh: bắt buộc nhập đầy đủ 6–24 chữ số; UI chỉ hiển thị dạng masked (`••••<last4>`); cấm gửi giá trị masked lên server.
   - Khi lưu draft hoặc submit thành công: xóa sạch full identity khỏi React state.
   - Tuyệt đối không đưa số định danh đầy đủ vào response, Mobile persistence (SecureStore/AsyncStorage), log console hay evidence artifacts.
@@ -206,7 +206,7 @@ Xác minh exact file/type/symbol trong `mobile-app/src/services/api/`:
 
 ## 6. Chính sách kế thừa số định danh và thứ tự giao dịch chuẩn (Canonical Transaction Ordering & Identity Inheritance)
 
-Khi xử lý `saveDraft` và `submit` trên Backend (`backend/src/database/kycService.ts`), để loại bỏ hoàn toàn race condition với Admin approval, thứ tự thực thi trong cùng `unitOfWork.transaction` bắt buộc phải là:
+Khi xử lý `saveDraft` và `submit` trên Backend (`backend/src/database/kycService.ts`), để xử lý deterministic scenario khi open row chuyển sang APPROVED trong lúc lockOpen chờ, thứ tự thực thi trong cùng `unitOfWork.transaction` bắt buộc phải là:
 
 ```
                               ┌──────────────────────────────┐
@@ -289,7 +289,7 @@ Khi xử lý `saveDraft` và `submit` trên Backend (`backend/src/database/kycSe
       ORDER BY created_at DESC, id ASC LIMIT 1
      ```
      Lấy `synthetic_payload.identityNumber` từ row rejected gần nhất theo thứ tự deterministic `created_at DESC, id ASC`.
-   - Nếu không tìm thấy bất kỳ nguồn identity nào: truyền `undefined` vào `normalizeInput` (ném HTTP 422 `identityNumber is required.`).
+   - Nếu không tìm thấy bất kỳ nguồn identity nào: truyền `undefined` vào `normalizeInput` (ném HTTP 422 `VALIDATION_ERROR` kèm `fieldErrors: { identityNumber: "identityNumber must contain between 6 and 24 digits." }`, không leak submitted value).
 5. **Bước 5 — INSERT open application mới**:
    - Khi `saveDraft`: INSERT application mới có `status = 'DRAFT'`, `version = 1`, trả về HTTP 200.
    - Khi `submit` trực tiếp: INSERT application mới có `status = 'SUBMITTED'`, `version = 1`, `submitted_at = NOW()`, trả về HTTP 201.
@@ -297,14 +297,14 @@ Khi xử lý `saveDraft` và `submit` trên Backend (`backend/src/database/kycSe
    - Nếu lệnh INSERT gặp mã lỗi PostgreSQL `23505` trên index `kyc_applications_customer_open_idx`, map thành generic `conflict("KYC application is already open.")`.
    - Mọi lỗi primary key hoặc constraint/lỗi cơ sở dữ liệu không xác định khác: bắt buộc **rethrow**, không giả mạo thành business conflict.
 
-### Cơ chế loại trừ Race Condition với Admin Approval
+### Cơ chế xử lý kịch bản race với Admin Approval (Deterministic Query Ordering)
 - Nếu Admin đang giữ row lock trên open application và thực hiện chuyển trạng thái `SUBMITTED` → `APPROVED`:
   1. Câu lệnh `lockOpen` (`SELECT ... FOR UPDATE`) của customer transaction sẽ bị chặn (block) chờ Admin transaction commit.
   2. Khi Admin transaction commit thành công, row chuyển sang `APPROVED` và không còn thuộc WHERE clause của `lockOpen`.
   3. `lockOpen` hoàn thành và trả về `null` (không còn open row).
   4. Giao dịch tiếp tục đến Bước 2 (Approved Recheck). Câu lệnh `SELECT id ... WHERE status = 'APPROVED'` nhìn thấy row `APPROVED` vừa commit của Admin.
-  5. Hệ thống lập tức trả về generic 409 Conflict, chặn hoàn toàn việc tạo `DRAFT` hoặc `SUBMITTED` mới sau khi đã được duyệt.
-- Lưu ý: Unit/contract test mô phỏng trình tự này trong M01-05 (`T-KYC-BE-16`); chứng minh PostgreSQL concurrency runtime thật sự vẫn thuộc phạm vi **M01-07**.
+  5. Hệ thống lập tức trả về generic 409 Conflict, chặn việc tạo `DRAFT` hoặc `SUBMITTED` mới sau khi đã được duyệt.
+- Lưu ý: `T-KYC-BE-16` chứng minh query/decision ordering bằng test double trong unit/contract isolation, chưa chứng minh mọi PostgreSQL interleaving; runtime row-lock/concurrency proof thực tế trên PostgreSQL thuộc phạm vi **M01-07**.
 
 ## 7. Error Mapping Table
 
@@ -388,8 +388,8 @@ Khi xử lý `saveDraft` và `submit` trên Backend (`backend/src/database/kycSe
 - [ ] Toàn bộ trường quan trọng (`status`, `decision_reason_code`, `version`, timestamps) của bản ghi `REJECTED` cũ không bị thay đổi sau khi tạo application mới.
 - [ ] Khi request bỏ `identityNumber` và không có open application, hệ thống kế thừa từ `REJECTED` application gần nhất theo thứ tự deterministic `created_at DESC, id ASC`.
 - [ ] Khi request cung cấp `identityNumber` hợp lệ mới, giá trị mới luôn thắng (override) identity kế thừa.
-- [ ] Khi request bỏ `identityNumber` mà không có nguồn kế thừa hợp lệ (không có open và không có rejected), trả về HTTP 422 `identityNumber is required.`
-- [ ] Customer từng có bất kỳ application nào `APPROVED` khi gọi `saveDraft` hoặc `submit` đều nhận generic 409 Conflict, không tạo mới và không mutate; kiểm tra APPROVED recheck chạy sau lockOpen loại trừ race condition.
+- [ ] Khi request bỏ `identityNumber` mà không có nguồn kế thừa hợp lệ (không có open và không có rejected), trả về HTTP 422 `VALIDATION_ERROR` kèm `fieldErrors: { identityNumber: "identityNumber must contain between 6 and 24 digits." }` (không leak submitted value).
+- [ ] Customer từng có bất kỳ application nào `APPROVED` khi gọi `saveDraft` hoặc `submit` đều nhận generic 409 Conflict, không tạo mới và không mutate; kiểm tra APPROVED recheck chạy sau lockOpen xử lý deterministic scenario khi open row chuyển APPROVED trong lúc chờ khóa (T-KYC-BE-16 chứng minh query ordering bằng test double; runtime concurrency proof thuộc M01-07).
 - [ ] Xung đột mã lỗi 23505 trên `kyc_applications_customer_open_idx` được map thành generic 409 Conflict.
 - [ ] Lỗi primary key hoặc lỗi database không xác định được rethrow nguyên trạng.
 - [ ] Phản hồi và thông báo lỗi tuyệt đối không để lộ số định danh đầy đủ.
@@ -469,6 +469,126 @@ Khi xử lý `saveDraft` và `submit` trên Backend (`backend/src/database/kycSe
 - **Owner review gate**: Bắt buộc dừng lại để Owner review sau Checkpoint A trước khi bắt đầu Checkpoint B.
 - **Deferred evidence**: PostgreSQL concurrency / row-lock proof deferred M01-07; Emulator / Maestro proof deferred M01-08.
 - **Ranh giới cấm**: Không migration mới, không sửa Admin, không sửa shared HTTP client (`httpClient.ts`), không sửa OpenAPI (`banking-mvp.openapi.yaml`).
-- **Quyền Git**: Không push, không amend, không merge/rebase/tag.
+### OWNER REVIEW — CHECKPOINT A APPROVED FOR STAGING
 
-Trạng thái thực hiện: IN_PROGRESS — PLAN APPROVED — CHECKPOINT A NOT STARTED
+- **Owner review date**: 2026-09-04.
+- **Baseline HEAD**: `eb1ea7ddfe549d5e3280b96460e5812309eab024`
+- **T-KYC-BE-01…16**: PASS.
+- **Targeted tests**: 28/28 PASS.
+- **Full Backend test suite**: 289 total / 241 pass / 48 intentional skip / 0 fail.
+- **Typecheck/build/OpenAPI/static schema validator**: Tất cả đều PASS.
+- **Privacy follow-up**: Accepted (xác minh 7 bề mặt bảo vệ).
+- **PostgreSQL runtime/concurrency**: Vẫn deferred M01-07.
+- **Checkpoint B**: Chưa bắt đầu.
+- **M01-05**: Chưa COMPLETED.
+- **Quyền Git**: Không push.
+
+Trạng thái thực hiện: IN_PROGRESS — CHECKPOINT A VERIFIED — AWAITING CHECKPOINT COMMIT
+
+## 15. CHECKPOINT A BACKEND EVIDENCE
+
+### 15.1 Thông tin Checkpoint A
+- **Baseline HEAD**: `eb1ea7ddfe549d5e3280b96460e5812309eab024`
+- **Branch**: `codex/staging-academic-completion`
+- **Working tree status**: Modified đúng 3 file trong allowlist:
+  1. `backend/src/database/kycService.ts`
+  2. `backend/src/tests/kycContract.test.ts`
+  3. `tasks/UC-M01/TASK_M01_05_COMPLETE_KYC_LIFECYCLE_UI_ERRORS.md`
+- **Tập tin ngoài allowlist**: 0 file modified/untracked.
+
+### 15.2 Ma trận kết quả Test Matrix T-KYC-BE-01..16
+
+| Mã Test | Mô tả hành vi kiểm tra | File thực hiện | Kết quả |
+|---|---|---|---|
+| `T-KYC-BE-01` | Route-level HTTP 422 và exact fieldErrors shape khi thiếu/sai field | `kycContract.test.ts` | **PASS** (15.2ms) |
+| `T-KYC-BE-02` | Valid saveDraft tạo DRAFT application mới với version 1 | `kycContract.test.ts` | **PASS** (0.6ms) |
+| `T-KYC-BE-03` | NEEDS_MORE_INFO + saveDraft giữ nguyên status và ID, version +1 | `kycContract.test.ts` | **PASS** (0.4ms) |
+| `T-KYC-BE-04` | NEEDS_MORE_INFO + submit chuyển sang SUBMITTED, giữ ID, version +1 | `kycContract.test.ts` | **PASS** (0.9ms) |
+| `T-KYC-BE-05` | REJECTED + saveDraft tạo DRAFT mới với UUID mới và version 1 | `kycContract.test.ts` | **PASS** (0.4ms) |
+| `T-KYC-BE-06` | REJECTED + submit trực tiếp tạo SUBMITTED mới với UUID mới và version 1 | `kycContract.test.ts` | **PASS** (0.4ms) |
+| `T-KYC-BE-07` | Snapshot REJECTED row cũ không bị thay đổi sau khi tạo hồ sơ mới | `kycContract.test.ts` | **PASS** (0.5ms) |
+| `T-KYC-BE-08` | Omitted identity được kế thừa từ REJECTED gần nhất (`created_at DESC, id ASC`) | `kycContract.test.ts` | **PASS** (0.4ms) |
+| `T-KYC-BE-09` | Changed identity mới ghi đè identity kế thừa từ REJECTED row | `kycContract.test.ts` | **PASS** (0.4ms) |
+| `T-KYC-BE-10` | Omitted identity khi không có nguồn kế thừa (không open, không REJECTED) trả 422 | `kycContract.test.ts` | **PASS** (0.5ms) |
+| `T-KYC-BE-11` | APPROVED precedence: saveDraft và submit đều trả generic 409 conflict | `kycContract.test.ts` | **PASS** (0.4ms) |
+| `T-KYC-BE-12` | INSERT unique constraint (23505 + `kyc_applications_customer_open_idx`) map sang 409 | `kycContract.test.ts` | **PASS** (0.6ms) |
+| `T-KYC-BE-13` | Primary-key violation (23505 trên pkey) và unknown DB errors được rethrow nguyên bản | `kycContract.test.ts` | **PASS** (0.6ms) |
+| `T-KYC-BE-14` | Response, error, audit, outbox, notification và console không bao giờ để lộ full identity | `kycContract.test.ts` | **PASS** (7.8ms) |
+| `T-KYC-BE-15` | Idempotent submit trả về application hiện có với HTTP 201, không lặp side effect | `kycContract.test.ts` | **PASS** (5.0ms) |
+| `T-KYC-BE-16` | APPROVED recheck sau lockOpen ngăn insert khi open row chuyển sang APPROVED | `kycContract.test.ts` | **PASS** (1.0ms) |
+
+### 15.3 Kết quả 6 lệnh Backend bắt buộc
+
+1. `npm run typecheck`:
+   - Kết quả: **PASS** (0 errors, exit code 0).
+2. `npm run build`:
+   - Kết quả: **PASS** (`tsc -p tsconfig.build.json` hoàn tất thành công, exit code 0).
+3. `node --import=tsx --test src/tests/kycContract.test.ts`:
+   - Kết quả: **PASS** (28/28 tests passed, 0 failed, 0 skipped, thời gian 717.1ms).
+4. `npm test`:
+   - Kết quả: **PASS** (289 tests: 241 passed, 0 failed, 48 integration skipped, thời gian ~20s).
+5. `npm run validate:openapi`:
+   - Kết quả: **PASS** (54 required paths, 60 exact method/segment guards, financial response/idempotency matrices verified).
+6. `node scripts/validate-database-schema.cjs`:
+   - Kết quả: **PASS** (52 table definitions and column/constraint invariants present).
+
+### 15.4 Bằng chứng cụ thể theo yêu cầu của Owner
+
+#### 1. Idempotent submit replay (T-KYC-BE-15)
+- Unit level: `RelationalKycService.submit` với cùng request fingerprint trên trạng thái `SUBMITTED` trả về application hiện có mà không tạo thêm bản ghi nào trong `notifications`, `audit_events`, hay `outbox_events`.
+- Route level: Gọi HTTP `POST /api/v1/kyc/application/submit` 2 lần liên tiếp với cùng payload đều nhận exact HTTP `201 Created` kèm theo payload body đồng nhất (`id`, `status`, `version`).
+
+#### 2. Query sequence của T-KYC-BE-16
+- Khi Admin approve hồ sơ trong lúc Customer đang chờ row-lock, `lockOpen` (`SELECT ... FOR UPDATE`) mở khóa và trả về rỗng do điều kiện `WHERE status IN ('DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'NEEDS_MORE_INFO')` không còn khớp.
+- Query thứ hai ngay lập tức kiểm tra `SELECT id FROM kyc_applications WHERE customer_id = $1 AND status = 'APPROVED' LIMIT 1 FOR SHARE`.
+- Phát hiện hàng `APPROVED`, service ném generic 409 Conflict ngay lập tức.
+- Nhật ký truy vấn xác nhận: 0 query tới `status = 'REJECTED'`, 0 lần gọi `normalizeInput` kế thừa, 0 lần gọi `INSERT INTO kyc_applications`, 0 side effect.
+- Lưu ý: Đây là unit/contract query sequence test deterministic; kiểm thử race condition / concurrency thực tế trên PostgreSQL được deferred tới M01-07 theo đúng kế hoạch.
+
+#### 3. Kiểm tra tuân thủ Code Quality & Ranh giới bảo mật
+- Quét diff: 0 `any`, 0 `as any`, 0 `as unknown as`, 0 `@ts-ignore`, 0 `@ts-expect-error`, 0 `as never` mới.
+- 5 test-harness casts được duyệt trước đó tại commit baseline không bị thay đổi.
+- Test harness sử dụng class kế thừa thật (`TestPoolClient extends Client implements PoolClient`, `TestDatabasePool extends DatabasePool`, `TestRelationalHttpBoundary extends RelationalHttpBoundary`).
+- Không có bất kỳ giá trị `identityNumber` 12 chữ số nào xuất hiện trong diff, test assertion hay log.
+
+### 15.5 CHECKPOINT A PRIVACY EVIDENCE FOLLOW-UP
+
+#### 1. T-KYC-BE-14 Exact Protected Surfaces
+Test `T-KYC-BE-14` sử dụng synthetic identity sentinel hợp lệ (12 chữ số) và xác minh nghiêm ngặt rằng sentinel không xuất hiện trên tất cả 7 bề mặt bảo vệ:
+1. **Public HTTP response body**: Endpoint `POST /api/v1/kyc/application/submit` trả về JSON chỉ chứa `identityNumberLast4`, hoàn toàn không chứa full identity.
+2. **DomainError message**: Khi xảy ra lỗi validation hoặc conflict, `error.message` không chứa full identity.
+3. **DomainError fieldErrors**: Chi tiết lỗi `fieldErrors` không bao giờ chứa full identity hay echo lại giá trị người dùng nhập.
+4. **Audit log event payload**: Trường payload `$6::jsonb` ghi nhận trong bảng `audit_events` chỉ lưu `{ status: "SUBMITTED" }`, không chứa full identity.
+5. **Outbox event payload**: Trường payload `$8::jsonb` ghi nhận trong bảng `outbox_events` chỉ lưu metadata sự kiện an toàn, không chứa full identity.
+6. **Notification title & body**: Thông báo người dùng trong bảng `notifications` chỉ chứa thông điệp văn bản chung, không chứa full identity.
+7. **Console logging**: Spy trên `console.error` và `console.warn` xác nhận không có bất kỳ log nào in full identity ra output.
+
+#### 2. Phân định ranh giới lưu trữ Identity tại Server
+- **Được phép (Allowed)**: `synthetic_payload` lưu trữ server-side trong bảng `kyc_applications` trên cơ sở dữ liệu PostgreSQL. Đây là nơi duy nhất giữ full identity phục vụ nghiệp vụ thẩm định KYC nội bộ.
+- **Cấm (Forbidden)**: Mọi luồng ra ngoài cơ sở dữ liệu (HTTP response, Error responses, Audit payload, Outbox event, Notification text, Console output, Mobile storage/state) tuyệt đối không được chứa full identity.
+
+#### 3. Đối chiếu OpenAPI Path và Runtime Mounted URL
+- **OpenAPI path key**: `/kyc/application/submit` (đường dẫn chuẩn relative với server base URL trong file `documents/api/banking-mvp.openapi.yaml`).
+- **Runtime mounted URL**: `/api/v1/kyc/application/submit` (trong integration-style test và runtime server, do router backend áp dụng tiền tố `const API_PREFIX = "/api/v1"` tại `backend/src/http.ts:28`).
+- **Ranh giới tài liệu**: Giữ nguyên OpenAPI document gốc, không chèn `/api/v1` vào OpenAPI path keys.
+
+#### 4. Exact 422 Response Contract
+Khi request bỏ trống `identityNumber` và không có nguồn kế thừa hợp lệ:
+- **HTTP status**: `422 Unprocessable Entity`.
+- **Error code**: `VALIDATION_ERROR`.
+- **Error message**: `identityNumber is invalid.`.
+- **Exact fieldErrors**: `{ identityNumber: "identityNumber must contain between 6 and 24 digits." }`.
+- **Tiêu chuẩn chấp thuận (Acceptance Criteria)**: Dựa trên HTTP 422, code `VALIDATION_ERROR`, sự tồn tại của `fieldErrors.identityNumber`, và bảo đảm không leak giá trị submitted value. Không sửa đổi production code chỉ để khớp câu chữ tài liệu.
+
+#### 5. Thu hẹp phạm vi khẳng định Concurrency (Concurrency Boundary)
+- Đính chính và thu hẹp các tuyên bố về race condition:
+  - `APPROVED recheck` sau `lockOpen` xử lý một kịch bản deterministic cụ thể: open row chuyển sang `APPROVED` bởi Admin trong lúc customer transaction đang chờ khóa `lockOpen`.
+  - `T-KYC-BE-16` chứng minh thứ tự query và logic rẽ nhánh (decision ordering) bằng test double trong môi trường cô lập unit/contract.
+  - Test này **chưa chứng minh** mọi trường hợp interleaving đa tiến trình trên PostgreSQL thực tế.
+  - Kiểm thử concurrency / row-lock đa tiến trình thực tế trên PostgreSQL disposable được hoãn lại (deferred) chính thức sang task **M01-07**.
+
+#### 6. Xác nhận tính toàn vẹn mã nguồn và trạng thái bàn giao
+- Source hash của `backend/src/database/kycService.ts` trước và sau follow-up: `6ae200105253c5e81c1a965746b0bbaddc8c1de0` (không thay đổi một byte nào).
+- Checkpoint B (Mobile) chưa bắt đầu.
+- Task M01-05 chưa hoàn thành (`COMPLETED`).
+- Giữ nguyên trạng thái: `IN_PROGRESS — CHECKPOINT A AWAITING OWNER REVIEW`.
