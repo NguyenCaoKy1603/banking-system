@@ -1,8 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A1 VERIFIED — AWAITING CHECKPOINT COMMIT
-- Ưu tiên: P1
-- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- Trạng thái: IN_PROGRESS — M07-A1 COMMITTED — M07-A2 REMEDIATION NOT STARTED
+- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 EVIDENCE HARNESS GAP; M07-A2 NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
@@ -51,7 +50,7 @@ Task này là kế hoạch xác minh cho dữ liệu tổng hợp và tiền ả
   - Non-cooperative adapter: Adapter không tự hủy chỉ chứng minh orchestration trả về `fail-closed` theo đúng deadline; không chứng minh underlying runtime I/O đã bị dừng.
 - Ngữ nghĩa sự kiện tiến trình (Fatal Events & Exit Code Seam):
   - Cả 4 fatal process events (`SIGINT`, `SIGTERM`, `uncaughtException`, `unhandledRejection`) đều được kiểm tra qua fake process seam; `processFacade.exitCode` được thiết lập thành 1 (khác 0), không gọi `process.exit()` trực tiếp, không có unawaited background promise.
-- Ranh giới an toàn tuyệt đối:
+- Ranh giới an toàn:
   - Hoàn toàn KHÔNG có PostgreSQL, Docker, container, DNS/network hoặc child process thật nào được chạy trong M07-A1.
   - Không có bất kỳ tuyên bố an toàn ở cấp độ runtime (no runtime safety claim).
   - Task M01-07 và Use Case UC-M01 CHƯA HOÀN THÀNH.
@@ -1010,3 +1009,42 @@ PLAN APPROVED — M07-A1 NOT STARTED — DATABASE EXECUTION REMAINS BLOCKED UNTI
   - Trạng thái: `IN_PROGRESS — M07-A1 AWAITING OWNER REVIEW`
   - Chế độ hiện tại: `IMPLEMENT_AND_VERIFY — M07-A1 NO DB`
   - Tiêu chí nghiệm thu: Giữ nguyên `[x]` cho M07-A1 pure guard tests, giữ nguyên `[ ]` cho Owner review M07-A1, không đánh dấu M01-07 hoặc UC-M01 hoàn thành.
+## 27. M07-A1 CHECKPOINT COMMIT
+
+### 27.1 Commit Metadata và Exact Inventory
+- **Full Commit SHA**: `bf384d4cec756e123340353703c1d60cc3206620`
+- **Parent SHA**: `0a351b1fa835430d8ce6cab464b16a00fe9e24f5`
+- **Commit Message**: `test(database): harden disposable PostgreSQL safety guard`
+- **Author Timestamp**: `2026-09-04T16:07:56+07:00`
+- **Committer Timestamp**: `2026-09-04T16:07:56+07:00`
+- **Trạng thái Commit**: Commit local trên branch `codex/staging-academic-completion`, chưa push lên remote.
+- **Danh mục 4 file committed**:
+  1. `backend/scripts/run-disposable-postgres-test.ts` (blob `7378b1da32530d13fc3f500d47f54467a1b81670`)
+  2. `backend/src/database/disposableDatabaseGuard.ts` (blob `297cc81d58f10270fc7034c3b2bc227dc96258b4`)
+  3. `backend/src/tests/disposableDatabaseGuard.test.ts` (blob `fe20b94ebbcd1da7adb2065f106d5ff3e1569414`)
+  4. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md` (blob `c066c9664b4bdde8f82e73a1a2784755395441e1`)
+
+### 27.2 Bằng chứng Chất lượng Gắn Liền với Committed Snapshot
+- **Typecheck**: `npm run typecheck` — PASS (0 lỗi TypeScript, 0 prohibited bypasses).
+- **Build**: `npm run build` — PASS.
+- **Targeted Guard & Runner Tests**: `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts` — PASS (32/32 tests, 0 fail, 0 skip, ~379ms).
+- **Quy chuẩn an toàn SAFE-R01..SAFE-R11**: Được chấp thuận ở mức pure guard và orchestration unit evidence.
+- **Bounded Cooperative Cancellation**: Đã unit-test mô hình hủy phối hợp có giới hạn với lifecycle state, AbortSignal, và phase-by-phase cancellation checks.
+- **Late-completion Protection**: Late child completion không chạy command kế tiếp; late cleanup completion không chạy phase hủy diệt tiếp theo.
+- **Fail-closed Result**: Non-cooperative adapter và timeout luôn trả về kết quả fail-closed.
+- **Fatal Process Events**: `SIGINT`, `SIGTERM`, `uncaughtException`, `unhandledRejection` đặt exit code khác 0 qua process facade seam.
+- **Ranh giới thực thi**: Không chạy PostgreSQL, Docker, network, migration hoặc real child process nào trong Checkpoint M07-A1.
+
+### 27.3 Giới hạn và Nguyên tắc Bằng chứng
+- Không tuyên bố PostgreSQL runtime verified.
+- Không tuyên bố connection hay query thực tế đã được cancellation trên socket database engine.
+- Không tuyên bố database hoặc container cleanup runtime đã được chứng minh.
+- Non-cooperative adapter chỉ được chứng minh rằng orchestration dừng phase kế tiếp và trả fail-closed; không chứng minh underlying runtime I/O của bên thứ ba đã bị hủy nếu không hỗ trợ AbortSignal.
+
+### 27.4 Bốn Blocker M07-A2 Giữ Nguyên Trạng
+1. Chưa có assertion exact 40 migration history rows.
+2. Chưa có rerun invariant giữ nguyên 40 rows.
+3. Chưa có runtime checksum mismatch refusal test.
+4. Chưa có post-drop catalog verification runtime.
+
+Checkpoint M07-A2 cần một Owner directive riêng về remediation allowlist trước khi có thể chạy database. Checkpoint M07-A2 chưa sẵn sàng và chưa được cấp quyền (NOT AUTHORIZED). Task M01-07 và Use Case UC-M01 tiếp tục ở trạng thái chưa hoàn thành.
