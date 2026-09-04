@@ -1,9 +1,9 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — PLAN APPROVED — M07-A1 NOT STARTED
+- Trạng thái: IN_PROGRESS — M07-A1 VERIFIED — AWAITING CHECKPOINT COMMIT
 - Ưu tiên: P1
-- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
-- An toàn thực thi database: BLOCKED — DISPOSABLE DATABASE SAFETY NOT ESTABLISHED
+- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- An toàn thực thi database: BLOCKED — M07-A2 EVIDENCE HARNESS GAP; M07-A2 NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
@@ -28,6 +28,47 @@ Task này là kế hoạch xác minh cho dữ liệu tổng hợp và tiền ả
 - Quyết định: Phê duyệt kế hoạch thực thi M01-07 (Plan v4). Kế hoạch xác lập 11 quy tắc an toàn fail-closed, mô hình chia checkpoint tuần tự (M07-A1, M07-A2, M07-B, M07-C, M07-D, M07-E), ma trận kiểm thử Registration & KYC, cùng phân định trách nhiệm rõ ràng.
 - Ghi nhận 4 khoảng trống harness M07-A2: Nhận diện rõ 4 harness gap tại Checkpoint M07-A2 (`BLOCKED — M07-A2 EVIDENCE HARNESS GAP`), giữ nguyên modification allowlist cho A2 là chỉ duy nhất 1 file task. Bất kỳ mở rộng harness nào phải chờ quyết định và cấp quyền riêng từ Owner.
 - Cảnh báo an toàn: Phê duyệt kế hoạch KHÔNG đồng nghĩa với việc cho phép khởi chạy database hoặc chuyển sang checkpoint thực thi code. Checkpoint M07-A1 CHƯA bắt đầu. Toàn bộ lệnh thực thi database tiếp tục bị chặn (`BLOCKED — DISPOSABLE DATABASE SAFETY NOT ESTABLISHED`) cho đến khi hoàn thành cổng an toàn M07-A1 và có phê duyệt riêng của Owner.
+
+## OWNER APPROVAL — M07-A1 UNIT SAFETY GATE ACCEPTED
+
+- Ngày phê duyệt: 2026-09-04
+- Baseline commit: `0a351b1fa835430d8ce6cab464b16a00fe9e24f5`
+- Quyết định Owner: Chấp thuận Checkpoint M07-A1 Guard & Runner Hardening ở mức unit/test-double. Checkpoint M07-A2 KHÔNG ĐƯỢC CẤP QUYỀN trong lượt này.
+- Danh mục 4 file checkpoint M07-A1:
+  1. `backend/scripts/run-disposable-postgres-test.ts`
+  2. `backend/src/database/disposableDatabaseGuard.ts`
+  3. `backend/src/tests/disposableDatabaseGuard.test.ts`
+  4. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`
+- Kết quả kiểm thử được chấp thuận:
+  - Typecheck: PASS (`npm run typecheck`, 0 lỗi TypeScript, 0 prohibited TypeScript bypasses).
+  - Build: PASS (`npm run build`).
+  - Targeted tests: `32/32 PASS`, `0 fail`, `0 cancelled`, `0 skipped` (`node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`, ~379ms).
+  - Quy chuẩn an toàn `SAFE-R01` đến `SAFE-R11`: Đạt đầy đủ unit/test-double evidence.
+- Bounded Cooperative Cancellation:
+  - Cơ chế timeout chuyển đổi hoàn toàn từ `Promise.race` sang mô hình hủy phối hợp có giới hạn, sử dụng typed lifecycle state (`"IDLE" | "RUNNING" | "STOPPING" | "TIMED_OUT" | "COMPLETED" | "FAILED"`), `AbortController`, và kiểm tra hủy trước từng phase (`checkCancellation`).
+  - Late child completion: Fake child hoàn thành muộn sau timeout không làm thay đổi kết quả fail-closed và không chạy command kế tiếp.
+  - Late cleanup completion: Phase dọn dẹp hoàn tất muộn sau deadline không chạy phase hủy diệt tiếp theo (`pg_terminate_backend`, `DROP DATABASE`, post-drop catalog check, container removal đều có đúng 0 lượt gọi).
+  - Non-cooperative adapter: Adapter không tự hủy chỉ chứng minh orchestration trả về `fail-closed` theo đúng deadline; không chứng minh underlying runtime I/O đã bị dừng.
+- Ngữ nghĩa sự kiện tiến trình (Fatal Events & Exit Code Seam):
+  - Cả 4 fatal process events (`SIGINT`, `SIGTERM`, `uncaughtException`, `unhandledRejection`) đều được kiểm tra qua fake process seam; `processFacade.exitCode` được thiết lập thành 1 (khác 0), không gọi `process.exit()` trực tiếp, không có unawaited background promise.
+- Ranh giới an toàn tuyệt đối:
+  - Hoàn toàn KHÔNG có PostgreSQL, Docker, container, DNS/network hoặc child process thật nào được chạy trong M07-A1.
+  - Không có bất kỳ tuyên bố an toàn ở cấp độ runtime (no runtime safety claim).
+  - Task M01-07 và Use Case UC-M01 CHƯA HOÀN THÀNH.
+
+Giới hạn và điểm chưa chứng minh ở runtime:
+- Chưa chứng minh PostgreSQL 16 container thật (chưa chứng minh ephemeral container descriptor và loopback port binding).
+- Chưa chứng minh connection/query cancellation thật trên socket PostgreSQL.
+- Chưa chứng minh ownership marker comment thật trong `pg_shdescription`.
+- Chưa chứng minh `pg_terminate_backend`, `DROP DATABASE`, hay catalog verification sau drop thật trên PostgreSQL.
+- Chưa chứng minh container removal thật bằng Docker client / daemon.
+- Sơ đồ lifecycle chỉ là tài liệu minh họa, không thay thế test/runtime evidence.
+
+Bốn blocker M07-A2 được giữ nguyên vẹn:
+1. Exact 40 migration history rows (`001_initial_schema.sql` đến `040_add_admin_and_staff_audit_events.sql`).
+2. Rerun migration tuần tự trên DB đã migrate phải giữ nguyên 40 rows.
+3. Runtime checksum mismatch refusal: Sửa đổi 1 byte checksum phải bị từ chối rõ ràng.
+4. Post-drop catalog verification: Truy vấn `pg_database` xác minh DB target đã biến mất hoàn toàn.
 
 
 ## 1. Repository verification và quyền phiên này
@@ -703,8 +744,8 @@ Các lệnh dưới đây chỉ là kế hoạch tương lai được cấu trú
 
 M01-07 chỉ được đổi thành `COMPLETED` sau khi toàn bộ tiêu chí sau được tích chọn hoàn tất:
 
-- [ ] M07-A1 pure guard/orchestration tests PASS, tuyệt đối không kết nối database.
-- [ ] Owner review M07-A1 hoàn tất trước khi kích hoạt M07-A2.
+- [x] M07-A1 pure guard/orchestration tests PASS, tuyệt đối không kết nối database.
+- [x] Owner review M07-A1 hoàn tất trước khi kích hoạt M07-A2.
 - [ ] A2 xác minh exact ephemeral container identity, loopback-only binding và không có persistent volume.
 - [ ] Database rỗng migrate tuần tự 001–040; có đúng 40 history rows trong catalog.
 - [ ] Rerun migration giữ nguyên history; checksum mismatch bị từ chối rõ ràng.
@@ -783,3 +824,189 @@ Gói bàn giao kế hoạch v4 gửi Owner:
 12. **Tuân thủ Phạm vi Documentation-only**: Giảm thiểu rủi ro theo thiết kế fail-closed; không chạy Docker, PostgreSQL, migration runner hoặc test suite; chỉ commit duy nhất file tài liệu kế hoạch.
 
 PLAN APPROVED — M07-A1 NOT STARTED — DATABASE EXECUTION REMAINS BLOCKED UNTIL M07-A1 SAFETY GATE PASSES
+
+## 24. M07-A1 GUARD & RUNNER HARDENING EVIDENCE
+
+### 24.1 Baseline & Quyền thực thi
+- Baseline commit: `0a351b1fa835430d8ce6cab464b16a00fe9e24f5` (`docs(uc-m01): approve disposable PostgreSQL verification plan`)
+- Parent commit: `1bded79c8575c7958f3920cc021878e050225aed`
+- Chế độ thực thi: `IMPLEMENT_AND_VERIFY — M07-A1 ONLY — NO DATABASE`
+- Không có bất kỳ kết nối PostgreSQL, Docker, hay container runtime nào được khởi tạo.
+- Không stage, commit, push, amend, merge, rebase hoặc tag.
+
+### 24.2 Exact Four-file Modification Inventory
+1. `backend/src/database/disposableDatabaseGuard.ts`: Bổ sung toàn bộ guard helpers, type definitions, container descriptor validator, marker builder/parser/validator, timeout policy, safe quoting, log sanitizer, catalog checks, và testable runner orchestration (`runDisposablePostgresTest`).
+2. `backend/scripts/run-disposable-postgres-test.ts`: Hardened CLI wrapper với `isMain` guard, bảo đảm không chạy code hoặc đăng ký handler khi import; re-export orchestration types.
+3. `backend/src/tests/disposableDatabaseGuard.test.ts`: Bảo toàn nguyên vẹn 5 unit test cũ, bổ sung 12 test mới bao phủ toàn bộ `SAFE-R01..SAFE-R11` cùng import safety test với 100% test-doubles/fakes, 0 database/docker connections.
+4. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`: Cập nhật trạng thái M07-A1, tick duy nhất criterion M07-A1, và bổ sung bằng chứng hoàn thành.
+
+### 24.3 Mapping Implementation & Test Matrix (SAFE-R01..SAFE-R11)
+| Rule | Implementation trong Guard / Runner | Unit Test trong disposableDatabaseGuard.test.ts | Kết quả |
+| :--- | :--- | :--- | :--- |
+| `SAFE-R01` | `sanitizeLogOutput`: che connection URL và 32-hex run ID | `SAFE-R01: redaction sanitizes synthetic credentials, connection URLs and run IDs` | PASS |
+| `SAFE-R02` | `isNumericLoopback`, loopback host check cho 127.0.0.1 và ::1 | `SAFE-R02: accepts numeric loopback addresses and allows injected localhost resolution` | PASS |
+| `SAFE-R03` | `assertProtectedDatabaseNameNotTargeted`, case-insensitive rejection | `SAFE-R03: rejects protected database names case-insensitively and fails closed on non-loopback hosts` | PASS |
+| `SAFE-R04` | `generateDisposableRunId`, `RUN_ID_PATTERN`, `STRICT_DATABASE_NAME_PATTERN` | `SAFE-R04: enforces exact 32-hex run ID, strict database name, and container patterns` | PASS |
+| `SAFE-R05` | `preCreateClassificationCheck`, `validateContainerDescriptor` | `SAFE-R05: pre-create classification rejects existing targets and invalid container descriptors` | PASS |
+| `SAFE-R06` | `buildOwnershipMarker`, `parseOwnershipMarker`, `assertOwnershipMarkerMatches` | `SAFE-R06: marker builder and parser enforce exact key-value structure and fail-closed` | PASS |
+| `SAFE-R07` | `preCleanupRevalidationCheck`, comment verification trước cleanup | `SAFE-R07: pre-cleanup revalidation blocks destructive operations on marker mismatch or missing comment` | PASS |
+| `SAFE-R08` | `quoteDatabaseIdentifier`, `assertApprovedTestPath`, no arbitrary commands | `SAFE-R08: destructive commands scope strictly to verified target and enforce approved test paths` | PASS |
+| `SAFE-R09` | `DISPOSABLE_TIMEOUTS` tập trung (60s, 5s, 5s, 30s, 30s, 180s, 30s) | `SAFE-R09: enforces exact finite timeout policy with no infinite defaults` | PASS |
+| `SAFE-R10` | Awaited one-shot cleanup trong `finally`, `ProcessInterruptionEmitter` seam | `SAFE-R10: awaited one-shot cleanup executes on success, child failure, and simulated interruption` | PASS |
+| `SAFE-R11` | `postDropCatalogCheck`, verify catalog sau DROP | `SAFE-R11: post-drop catalog check fails closed if database remains in catalog` | PASS |
+| `IMPORT` | `isMain` guard trong runner module, không spawn/connect/listen on import | `import safety: importing runner does not spawn processes, connect to DB, or register global handlers` | PASS |
+
+### 24.4 Kết quả ba Quality Gates
+1. **Gate 1 — Typecheck**:
+   ```powershell
+   npm run typecheck
+   # Output: tsc --noEmit (Exit code: 0)
+   ```
+2. **Gate 2 — Build**:
+   ```powershell
+   npm run build
+   # Output: tsc -p tsconfig.build.json (Exit code: 0)
+   ```
+3. **Gate 3 — Targeted Guard Test**:
+   ```powershell
+   node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts
+   # ℹ tests 17 | pass 17 | fail 0 | cancelled 0 | skipped 0 | duration_ms ~532ms
+   ```
+
+### 24.5 Giới hạn & Điểm chưa chứng minh ở Runtime
+- Bằng chứng tại M07-A1 là **pure guard logic & orchestration test-double evidence**.
+- Chưa chứng minh container identity thật, database marker trên PostgreSQL thật, SQL session termination thật, drop database thật hay catalog postcondition thật.
+- Bốn khoảng trống harness (`BLOCKED — M07-A2 EVIDENCE HARNESS GAP`) được giữ nguyên vẹn, chờ quyết định riêng của Owner trước M07-A2.
+- Tuyệt đối không chạy database, Docker, migration script, hay broad test suites.
+- Trạng thái an toàn thực thi database vẫn giữ: `BLOCKED — DISPOSABLE DATABASE SAFETY NOT ESTABLISHED`.
+- Task M01-07 và Use Case UC-M01 vẫn ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**.
+
+## 25. M07-A1 SAFETY EVIDENCE FOLLOW-UP
+
+### 25.1 Baseline & File Hashes (Before vs After Follow-up)
+- Baseline commit: `0a351b1fa835430d8ce6cab464b16a00fe9e24f5`
+- Chế độ thực thi: `IMPLEMENT_AND_VERIFY — M07-A1 FOLLOW-UP ONLY — NO DATABASE`
+
+| File | SHA256 Trước Follow-up | SHA256 Sau Follow-up |
+| :--- | :--- | :--- |
+| `backend/scripts/run-disposable-postgres-test.ts` | `68F6CF6DB32EAD4F93E28B35131C63908CB7F77F65BE1C60845DC863C634BD3C` | `FE1846E3F0AD0005BE7266C7ED01AC8A62ACD4D56B4DEF3B71C00FAD852A0F2D` |
+| `backend/src/database/disposableDatabaseGuard.ts` | `DCD0FEBEB7AA19446D0FCDFCBE9A165EAE6944C7866B2BD552B70488E400C719` | `0072E8940B1585536D9A9CE8955987179C52712727B3CF826B6F8466DC220D3B` |
+| `backend/src/tests/disposableDatabaseGuard.test.ts` | `31638BC11578F58EE46A16779DE33C4847CB9BFA4416238E84BC9F91B12B97E1` | `81F01254924235707BAB846BFD317184FFBF2E67389207333E86EC2447C269C4` |
+
+### 25.2 Xử lý Bốn Khoảng trống Bằng chứng An toàn (Items 3.1..3.4)
+1. **Child-command Timeout Enforcement (3.1)**:
+   - Đã bổ sung cơ chế truyền và áp đặt timeout `commandTimeoutMs` vào `runCmd` (mặc định 180s, hỗ trợ test injection).
+   - Test deterministic `SAFE-R09-E1`: Giả lập child command timeout mà không chờ thời gian thật, xác minh chuyển sang failure, awaited cleanup chạy một lần, không tiếp tục execution.
+2. **Cleanup Timeout Enforcement & Fail-closed (3.2)**:
+   - Đã đóng gói toàn bộ thao tác cleanup trong `performCleanup` với `Promise.race` áp đặt giới hạn `cleanupTimeoutMs` (30s).
+   - Test deterministic `SAFE-R09-E2`:
+     - Khi cleanup treo vô hạn: Runner kết thúc ở trạng thái `FAILED / FAIL-CLOSED` với lỗi cleanup timeout, không bao giờ báo success.
+     - Khi child command đã fail trước đó: Lỗi gốc được bảo toàn nguyên vẹn làm primary error, lỗi cleanup timeout được đính kèm vào `.cause` và `cleanupError`, không swallow lỗi gốc.
+3. **Fatal Process Events Coverage (3.3)**:
+   - Đã triển khai đầy đủ bộ handler cho cả 4 fatal events: `SIGINT`, `SIGTERM`, `uncaughtException`, `unhandledRejection` thông qua `ProcessInterruptionEmitter` test seam.
+   - Tests `SAFE-R10`, `SAFE-R10-E1`, `SAFE-R10-E2`: Xác minh cleanup được kích hoạt một lần duy nhất, kết quả trả về failure (`success === false`), listener tự động được gỡ bỏ trong `finally`, và không can thiệp vào global `process` thật.
+4. **Destructive-action & Target-identity Boundaries (3.4)**:
+   - Test `SAFE-R04-E1`: Xác minh environment hay CLI không thể override target database name; runner luôn sinh tên từ 32-hex run ID.
+   - Test `SAFE-R08-E1`: Xác minh child invocation chỉ sử dụng mảng tham số (`argv array`), không dùng shell interpolation và `shell` không được bật.
+   - Test `SAFE-R08-E2`: Xác minh marker mismatch hoặc container descriptor mismatch làm cho số lượt gọi terminate, drop và container-remove bằng đúng 0.
+   - Test `SAFE-R10-E3`: Xác minh primary failure luôn được giữ nguyên khi cleanup cũng gặp lỗi.
+   - Test `SAFE-R01-E1`: Mở rộng redaction sanitizes synthetic credentials, bearer tokens, standalone passwords, child errors và cleanup errors.
+
+### 25.3 Exact Test Counts và Kết quả Quality Gates
+- **Tổng số test**: **26 tests** (17 test cũ bảo toàn verbatim + 9 test mới).
+- **Trạng thái**: **26 pass, 0 fail, 0 cancelled, 0 skipped**.
+- **Ba Quality Gates**:
+  1. `npm run typecheck`: **PASS** (Exit code 0).
+  2. `npm run build`: **PASS** (Exit code 0).
+  3. `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`: **PASS** (26/26 tests passed in ~365ms).
+
+### 25.4 Bảo toàn Ranh giới Thực thi
+- Toàn bộ 26 tests vận hành 100% in-memory qua test-doubles/fakes.
+- Không có bất kỳ kết nối socket, PostgreSQL port, Docker daemon, migration runner thật, hay child process thật nào được khởi tạo trong quá trình kiểm thử.
+- Bốn khoảng trống harness (`BLOCKED — M07-A2 EVIDENCE HARNESS GAP`) được giữ nguyên vẹn.
+- An toàn thực thi database tiếp tục bị chặn: `BLOCKED — DISPOSABLE DATABASE SAFETY NOT ESTABLISHED`.
+- Task M01-07 và Use Case UC-M01 vẫn ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**.
+## 26. M07-A1 BOUNDED CANCELLATION FOLLOW-UP
+
+### 26.1 Baseline & File Hashes (Before vs After Bounded Cancellation Follow-up)
+- Baseline commit: `0a351b1fa835430d8ce6cab464b16a00fe9e24f5`
+- Chế độ thực thi: `IMPLEMENT_AND_VERIFY — M07-A1 BOUNDED CORRECTION ONLY — NO DATABASE`
+
+| File | SHA256 Trước Bounded Correction | SHA256 Sau Bounded Correction |
+| :--- | :--- | :--- |
+| `backend/scripts/run-disposable-postgres-test.ts` | `FE1846E3F0AD0005BE7266C7ED01AC8A62ACD4D56B4DEF3B71C00FAD852A0F2D` | `3542BBD70B6B094A4E5938A5F432456E246CD69CF2980592EDE4671818FDDBCB` |
+| `backend/src/database/disposableDatabaseGuard.ts` | `0072E8940B1585536D9A9CE8955987179C52712727B3CF826B6F8466DC220D3B` | `6EB7E501394CE34BAB1293151D2A570985B10147573B03F27FA6477877AE8241` |
+| `backend/src/tests/disposableDatabaseGuard.test.ts` | `81F01254924235707BAB846BFD317184FFBF2E67389207333E86EC2447C269C4` | `A54B141D95748311FE8548416F1AA25BF49139798BE2DB353E8D380A5D8116D0` |
+
+### 26.2 Phân tích: Vì sao bare `Promise.race` không tương đương Cancellation
+1. **Bản chất của `Promise.race`**:
+   - `Promise.race` chỉ giải quyết (resolve hoặc reject) promise bọc ngoài khi một promise con cán đích trước.
+   - Khi timeout timer kết thúc trước tác vụ I/O hay child process, `Promise.race` giải phóng caller nhưng **hoàn toàn không dừng** promise hay tiến trình bất đồng bộ đang chạy ngầm bên dưới.
+2. **Rủi ro đối với Disposable Database Runner**:
+   - Nếu child command timeout nhưng tiếp tục chạy ngầm, nó có thể ghi đè dữ liệu hoặc xung đột với thao tác cleanup đang diễn ra.
+   - Nguy hiểm hơn, nếu phase cleanup (như truy vấn marker hoặc terminate backend) bị timeout nhưng runner vẫn tiếp tục bước sau, hoặc nếu promise phase trước hoàn thành muộn sau khi runner đã timeout, nó có thể thực hiện `pg_terminate_backend`, `DROP DATABASE` hoặc xóa container ngoài tầm kiểm soát (late destructive side effects).
+3. **Yêu cầu Bounded Cooperative Cancellation**:
+   - Phải có trạng thái vòng đời tường minh (`RunnerLifecycleState`: `"IDLE" | "RUNNING" | "STOPPING" | "TIMED_OUT" | "COMPLETED" | "FAILED"`).
+   - Phải kích hoạt `AbortController` và truyền `AbortSignal` xuống từng phase và child adapter.
+   - Trước mỗi thao tác hủy diệt (destructive phase), phải kiểm tra tín hiệu hủy (`checkCancellation`). Nếu đã timeout/aborted, phải từ chối thực hiện ngay lập tức với 0 lượt gọi.
+   - Toàn bộ timer phải được thu hồi trong khối `finally`.
+
+### 26.3 Kiến trúc Bounded Cancellation & Fatal Exit Semantics
+1. **Child Command Timeout & Abort Propagation**:
+   - Runner sử dụng hàm điều phối `executeChildCommandWithTimeout` bọc `runCmd`.
+   - Khi timeout xảy ra, `lifecycleState` chuyển thành `TIMED_OUT`, `commandAbortController.abort()` và `childAbortController.abort()` được kích hoạt đồng thời.
+   - Tín hiệu abort được lắng nghe bởi adapter để hủy tác vụ cấp dưới và từ chối mọi lệnh tiếp theo.
+2. **Phase-by-Phase Cleanup Cancellation**:
+   - Mọi phase trong `performCleanup` (`pre-cleanup-revalidation`, `terminate-sessions`, `drop-database`, `post-drop-catalog-check`, `container-removal`) đều được bảo vệ bởi hàm `checkCancellation()`.
+   - Nếu `cleanupTimeoutMs` phát hỏa:
+     - `cleanupAbortController.abort()` được kích hoạt ngay lập tức.
+     - `lifecycleState` chuyển sang `TIMED_OUT`.
+     - Bất kỳ phase nào đang pending nếu hoàn thành muộn sẽ gặp kiểm tra hủy ở phase kế tiếp và bị chặn đứng.
+     - Các phase hủy diệt tiếp theo được đảm bảo có đúng **0 lượt gọi**.
+3. **Fatal Events & Process Facade Exit Semantics**:
+   - Hỗ trợ cả 4 sự kiện tiến trình: `SIGINT`, `SIGTERM`, `uncaughtException`, `unhandledRejection`.
+   - Các listener trên `ProcessInterruptionEmitter` đồng bộ kích hoạt `interruptionPromise` (đang race trực tiếp với `mainExecution`), gán `processFacade.exitCode = 1`, chuyển `lifecycleState = "STOPPING"`, abort child controller và kích hoạt cleanup.
+   - Tuyệt đối không gọi `process.exit()` trực tiếp; không tạo unhandled/unawaited async promise trong EventEmitter callback.
+   - Toàn bộ listener được tháo bỏ trong khối `finally`.
+
+### 26.4 Kết quả Kiểm thử Late Completion, Non-Cooperative Adapter & Fatal Exit
+Đã bổ sung 6 test deterministic chuyên biệt bảo vệ các ranh giới:
+1. **Late Child Completion (`SAFE-R10-E4`)**:
+   - Giả lập child command bị timeout, kích hoạt abort signal.
+   - Sau khi runner đã trả kết quả thất bại, chủ động kích hoạt resolve lệnh child muộn.
+   - Kết quả: Runner vẫn giữ nguyên trạng thái thất bại (`success === false`), không phát sinh lệnh con tiếp theo (`secondCommandInvoked === false`), cleanup chỉ chạy đúng 1 lần duy nhất.
+2. **Late Cleanup Continuation (`SAFE-R10-E5`)**:
+   - Giả lập Phase 1 (truy vấn comment kiểm tra marker) bị treo vượt quá deadline cleanup.
+   - Runner kết thúc ở trạng thái fail-closed do timeout.
+   - Sau đó giải phóng Phase 1 muộn.
+   - Kết quả xác minh: Số lượt gọi đến `pg_terminate_backend` = 0, `DROP DATABASE` = 0, `post-drop catalog check` = 0, `container-removal` = 0. Hoàn toàn ngăn chặn late destructive continuation.
+3. **Non-Cooperative Cleanup Adapter (`SAFE-R10-E6`)**:
+   - Adapter cố tình bỏ qua `signal.aborted` và không bao giờ tự settle.
+   - Kết quả: Runner kết thúc fail-closed đúng theo deadline `cleanupTimeoutMs`, các phase hủy diệt kế tiếp bị chặn đứng (0 calls), runner không bao giờ báo success.
+4. **Primary Failure Ordering (`SAFE-R10-E7`)**:
+   - Child error trước, cleanup error sau -> Child error là primary error, cleanup error đính kèm vào `.cause`.
+   - Fatal event trước, child error sau -> Fatal event là primary error.
+   - Cleanup-only error -> Cleanup error là primary error.
+5. **Fatal Events Exit Code Seam (`SAFE-R10-E8`)**:
+   - Kiểm tra độc lập cả 4 fatal events (`SIGINT`, `SIGTERM`, `uncaughtException`, `unhandledRejection`).
+   - Kết quả: `processFacade.exitCode` luôn được thiết lập thành 1, `result.success === false`, lỗi tương ứng được ghi nhận rõ ràng.
+6. **Timer & Listener Disposal (`SAFE-R10-E9`)**:
+   - Toàn bộ event listeners trên emitter được gỡ bỏ hoàn toàn sau mọi luồng thực thi (thành công, thất bại, timeout, gián đoạn).
+
+### 26.5 Exact Test Counts & Ba Quality Gates
+- **Tổng số test**: **32 tests** (toàn bộ 26 tests cũ bảo toàn verbatim + 6 tests bounded cancellation mới).
+- **Trạng thái**: **32 pass, 0 fail, 0 cancelled, 0 skipped, duration ~367ms**.
+- **Ba Quality Gates bắt buộc**:
+  1. `npm run typecheck`: **PASS** (Exit code 0, 0 lỗi TypeScript, 0 prohibited casts/suppressions).
+  2. `npm run build`: **PASS** (Exit code 0, build thành công `dist/`).
+  3. `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`: **PASS** (32/32 tests pass).
+
+### 26.6 Ranh giới An toàn & Giới hạn Thực thi
+- **Unit/Test-double Boundary**: Toàn bộ 32 tests chạy 100% in-memory thông qua test doubles, fake emitters, và fake schedulers.
+- **Giới hạn Adapter**: Đối với adapter không hợp tác (non-cooperative), runner chỉ có thể đảm bảo tiến trình điều phối của runner không thực hiện các phase tiếp theo; nó không thể đảm bảo một socket hay process bên ngoài của bên thứ ba tự dừng nếu thư viện đó không hỗ trợ AbortSignal.
+- **Bốn Khoảng trống Harness M07-A2**: 4 harness gaps (`BLOCKED — M07-A2 EVIDENCE HARNESS GAP`) được giữ nguyên vẹn.
+- **An toàn thực thi database**: Tiếp tục bị chặn nghiêm ngặt: `BLOCKED — DISPOSABLE DATABASE SAFETY NOT ESTABLISHED`.
+- **Trạng thái bàn giao**:
+  - Trạng thái: `IN_PROGRESS — M07-A1 AWAITING OWNER REVIEW`
+  - Chế độ hiện tại: `IMPLEMENT_AND_VERIFY — M07-A1 NO DB`
+  - Tiêu chí nghiệm thu: Giữ nguyên `[x]` cho M07-A1 pure guard tests, giữ nguyên `[ ]` cho Owner review M07-A1, không đánh dấu M01-07 hoặc UC-M01 hoàn thành.
