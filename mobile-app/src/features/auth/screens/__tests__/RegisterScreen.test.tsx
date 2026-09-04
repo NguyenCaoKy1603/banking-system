@@ -568,6 +568,9 @@ describe("R17 – no auto-begin on mount", () => {
     });
     const renderer = await renderScreen();
     expect(registerMock).not.toHaveBeenCalled();
+    expect(verifyRegistrationChallengeMock).not.toHaveBeenCalled();
+    expect(resendRegistrationChallengeMock).not.toHaveBeenCalled();
+    expect(cancelRegistrationMock).not.toHaveBeenCalled();
     act(() => renderer.unmount());
   });
 });
@@ -778,6 +781,250 @@ describe("RegisterScreen registration cancellation", () => {
 
     expect(cancelRegistrationMock).toHaveBeenCalledTimes(1);
     expect(renderer.root.findAllByProps({ testID: "register-otp" })).toHaveLength(0);
+
+    act(() => renderer.unmount());
+  });
+});
+
+// ─── M01-06: Coverage gap closures ───────────────────────────────────────────
+
+describe("M01-06 – Registration coverage gap closures", () => {
+  it("T-REG-FE-VAL-01: blocks registration submission when form fields are invalid without calling API or storage", async () => {
+    loadMock.mockResolvedValue({ kind: "EMPTY" });
+    const renderer = await renderScreen();
+
+    await act(async () => {
+      await byTestId(renderer, "register-submit").props.onPress();
+    });
+
+    expect(saveMock).not.toHaveBeenCalled();
+    expect(registerMock).not.toHaveBeenCalled();
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain("Họ và tên là bắt buộc.");
+    expect(json).toContain("Số điện thoại là bắt buộc.");
+    expect(json).toContain("Email là bắt buộc.");
+    expect(json).toContain("Mật khẩu là bắt buộc.");
+    expect(renderer.root.findAllByProps({ testID: "register-otp" })).toHaveLength(0);
+
+    act(() => renderer.unmount());
+  });
+
+  it("T-REG-FE-ERR-422: displays server field errors on HTTP 422 and does not auto-retry", async () => {
+    loadMock.mockResolvedValue({ kind: "EMPTY" });
+    registerMock.mockRejectedValue(
+      new ApiError({
+        status: 422,
+        code: "VALIDATION_ERROR",
+        message: "Dữ liệu đăng ký không hợp lệ.",
+        fieldErrors: {
+          email: "Email đã được sử dụng.",
+          phoneNumber: "Số điện thoại không hợp lệ.",
+        },
+        traceId: "trace-422",
+      }),
+    );
+    const renderer = await renderScreen();
+    await beginRegistrationChallenge(renderer);
+
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    expect(registerMock).toHaveBeenCalledTimes(1);
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain("Email đã được sử dụng.");
+    expect(json).toContain("Số điện thoại không hợp lệ.");
+    expect(json).toContain("Dữ liệu đăng ký không hợp lệ.");
+    expect(byTestId(renderer, "register-submit").props.disabled).toBe(false);
+    expect(renderer.root.findAllByProps({ testID: "register-otp" })).toHaveLength(0);
+
+    act(() => renderer.unmount());
+  });
+
+  it("T-REG-FE-ERR-409: displays conflict error message on HTTP 409 without retrying", async () => {
+    loadMock.mockResolvedValue({ kind: "EMPTY" });
+    registerMock.mockRejectedValue(
+      new ApiError({
+        status: 409,
+        code: "CONFLICT",
+        message: "Số điện thoại hoặc email đã được đăng ký.",
+        traceId: "trace-409",
+      }),
+    );
+    const renderer = await renderScreen();
+    await beginRegistrationChallenge(renderer);
+
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    expect(registerMock).toHaveBeenCalledTimes(1);
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain("Số điện thoại hoặc email đã được đăng ký.");
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(byTestId(renderer, "register-submit").props.disabled).toBe(false);
+    expect(renderer.root.findAllByProps({ testID: "register-otp" })).toHaveLength(0);
+
+    act(() => renderer.unmount());
+  });
+
+  it("T-REG-FE-ERR-401: displays error message on HTTP 401 without auto-retry or wrong navigation", async () => {
+    // Registration begin là public pre-auth; đây chỉ là defensive UI test nếu upstream trả 401, không tuyên bố bearer authentication là bắt buộc.
+    loadMock.mockResolvedValue({ kind: "EMPTY" });
+    registerMock.mockRejectedValue(
+      new ApiError({
+        status: 401,
+        code: "UNAUTHORIZED",
+        message: "Phiên làm việc không hợp lệ.",
+        traceId: "trace-401",
+      }),
+    );
+    const renderer = await renderScreen();
+    await beginRegistrationChallenge(renderer);
+
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    expect(registerMock).toHaveBeenCalledTimes(1);
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain("Phiên làm việc không hợp lệ.");
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(byTestId(renderer, "register-submit").props.disabled).toBe(false);
+    expect(renderer.root.findAllByProps({ testID: "register-otp" })).toHaveLength(0);
+
+    act(() => renderer.unmount());
+  });
+
+  it("T-REG-FE-ERR-NETWORK: displays connection error on NETWORK_ERROR without second request", async () => {
+    loadMock.mockResolvedValue({ kind: "EMPTY" });
+    registerMock.mockRejectedValue(
+      new ApiError({
+        status: null,
+        code: "NETWORK_ERROR",
+        message: "Không thể kết nối đến máy chủ. Vui lòng kiểm tra đường truyền mạng.",
+        traceId: "trace-net",
+      }),
+    );
+    const renderer = await renderScreen();
+    await beginRegistrationChallenge(renderer);
+
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    expect(registerMock).toHaveBeenCalledTimes(1);
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain("Không thể kết nối đến máy chủ. Vui lòng kiểm tra đường truyền mạng.");
+    expect(byTestId(renderer, "register-submit").props.disabled).toBe(false);
+    expect(renderer.root.findAllByProps({ testID: "register-otp" })).toHaveLength(0);
+
+    act(() => renderer.unmount());
+  });
+
+  it("T-REG-FE-ERR-TIMEOUT: displays timeout error on TIMEOUT without second request", async () => {
+    loadMock.mockResolvedValue({ kind: "EMPTY" });
+    registerMock.mockRejectedValue(
+      new ApiError({
+        status: null,
+        code: "TIMEOUT",
+        message: "Yêu cầu đến máy chủ đã hết thời gian chờ. Vui lòng thử lại sau.",
+        traceId: "trace-timeout",
+      }),
+    );
+    const renderer = await renderScreen();
+    await beginRegistrationChallenge(renderer);
+
+    expect(saveMock).toHaveBeenCalledTimes(1);
+    expect(registerMock).toHaveBeenCalledTimes(1);
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain("Yêu cầu đến máy chủ đã hết thời gian chờ. Vui lòng thử lại sau.");
+    expect(byTestId(renderer, "register-submit").props.disabled).toBe(false);
+    expect(renderer.root.findAllByProps({ testID: "register-otp" })).toHaveLength(0);
+
+    act(() => renderer.unmount());
+  });
+
+  it("T-REG-FE-DBL-01: disables submit button and ignores duplicate press while registration begin is pending", async () => {
+    loadMock.mockResolvedValue({ kind: "EMPTY" });
+    const deferred = createDeferred<AuthChallengeResponse>();
+    registerMock.mockReturnValue(deferred.promise);
+
+    const renderer = await renderScreen();
+
+    await act(async () => {
+      for (const [testID, value] of [
+        ["register-full-name", validRegistrationValues.fullName],
+        ["register-email", validRegistrationValues.email],
+        ["register-phone", validRegistrationValues.phoneNumber],
+        ["register-password", validRegistrationValues.password],
+        ["register-confirm-password", validRegistrationValues.confirmPassword],
+      ] as const) {
+        byTestId(renderer, testID).props.onChangeText(value);
+      }
+    });
+
+    act(() => {
+      byTestId(renderer, "register-submit").props.onPress();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const submitButton = byTestId(renderer, "register-submit");
+    expect(submitButton.props.disabled).toBe(true);
+    expect(submitButton.props.label).toBe("Đang đăng ký...");
+
+    if (!submitButton.props.disabled) {
+      submitButton.props.onPress();
+    }
+
+    expect(registerMock).toHaveBeenCalledTimes(1);
+    expect(saveMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      deferred.resolve(registrationChallenge);
+      await deferred.promise;
+    });
+
+    act(() => renderer.unmount());
+  });
+
+  it("T-REG-FE-OTP-01: blocks OTP verification when proof is less than 6 digits without calling API", async () => {
+    loadMock.mockResolvedValue({ kind: "EMPTY" });
+    const renderer = await renderScreen();
+    await beginRegistrationChallenge(renderer);
+
+    expect(byTestId(renderer, "register-otp")).toBeDefined();
+
+    await act(async () => {
+      byTestId(renderer, "register-otp").props.onChangeText("123");
+    });
+
+    await act(async () => {
+      await byTestId(renderer, "register-submit").props.onPress();
+    });
+
+    expect(verifyRegistrationChallengeMock).not.toHaveBeenCalled();
+    expect(deleteMock).not.toHaveBeenCalled();
+    const json = JSON.stringify(renderer.toJSON());
+    expect(json).toContain("Mã OTP phải gồm 6 chữ số.");
+    expect(byTestId(renderer, "register-otp")).toBeDefined();
+
+    act(() => renderer.unmount());
+  });
+
+  it("T-REG-FE-REC-01: recovery reset from BEGIN_UNKNOWN deletes stored session and returns to form without calling cancelRegistration", async () => {
+    // Local BEGIN_UNKNOWN không có challengeId; trạng thái server chưa xác định và request trước có thể đã thành công hoặc thất bại.
+    loadMock.mockResolvedValue({
+      kind: "VALID",
+      session: {
+        schemaVersion: 1,
+        phase: "BEGIN_UNKNOWN",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    const renderer = await renderScreen();
+    expect(byTestId(renderer, "register-recovery-reset")).toBeDefined();
+
+    await act(async () => {
+      await byTestId(renderer, "register-recovery-reset").props.onPress();
+    });
+
+    expect(deleteMock).toHaveBeenCalledTimes(1);
+    expect(cancelRegistrationMock).not.toHaveBeenCalled();
+    expect(registerMock).not.toHaveBeenCalled();
+    expect(verifyRegistrationChallengeMock).not.toHaveBeenCalled();
+    expect(resendRegistrationChallengeMock).not.toHaveBeenCalled();
+    expect(byTestId(renderer, "register-full-name")).toBeDefined();
 
     act(() => renderer.unmount());
   });

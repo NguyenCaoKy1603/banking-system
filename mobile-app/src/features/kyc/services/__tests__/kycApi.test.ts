@@ -1,7 +1,9 @@
 import {
+  getKycApplication,
   saveKycDraft,
   submitKycApplication,
 } from "@/features/kyc/services/kycApi";
+import { ApiError } from "@/services/api/ApiError";
 
 const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>();
 const originalFetch = globalThis.fetch;
@@ -98,5 +100,23 @@ describe("KYC API request contract", () => {
 
     const body = requestBody();
     expect(Object.prototype.hasOwnProperty.call(body, "identityNumber")).toBe(false);
+  });
+
+  it("T-KYC-API-VAL-01: rejects with INVALID_RESPONSE when server returns malformed KYC application body", async () => {
+    const malformedResponse = {
+      application: {
+        ...response.application,
+        status: "UNKNOWN",
+      },
+    };
+    fetchMock.mockResolvedValueOnce(createJsonResponse(malformedResponse, 200));
+
+    const rejection = await getKycApplication(auth).catch((err: unknown) => err);
+    expect(rejection).toBeInstanceOf(ApiError);
+    expect(rejection).toMatchObject({
+      code: "INVALID_RESPONSE",
+      status: 200,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

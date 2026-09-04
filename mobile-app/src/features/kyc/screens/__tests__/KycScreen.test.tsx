@@ -1,5 +1,5 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { Text } from "react-native";
+import { ActivityIndicator, Text } from "react-native";
 
 import { KycScreen } from "@/features/kyc/screens/KycScreen";
 import {
@@ -524,5 +524,36 @@ describe("KycScreen identity contract", () => {
 
       act(() => renderer.unmount());
     }
+  });
+
+  it("T-KYC-FE-GAP-01: renders loading indicator and hides form while initial application load is pending", async () => {
+    let resolveApp!: (value: KycApplication | null) => void;
+    const pendingPromise = new Promise<KycApplication | null>((resolve) => {
+      resolveApp = resolve;
+    });
+    getKycApplicationMock.mockReturnValue(pendingPromise);
+
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<KycScreen />);
+    });
+
+    expect(renderer.root.findByType(ActivityIndicator)).toBeDefined();
+    expect(queryByTestId(renderer, "kyc-full-name")).toBeNull();
+    expect(queryByTestId(renderer, "kyc-save-draft")).toBeNull();
+    expect(queryByTestId(renderer, "kyc-submit")).toBeNull();
+    expect(saveKycDraftMock).not.toHaveBeenCalled();
+    expect(submitKycApplicationMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveApp(null);
+    });
+
+    await waitForAssertion(() => {
+      expect(renderer.root.findAllByType(ActivityIndicator)).toHaveLength(0);
+      expect(byTestId(renderer, "kyc-full-name")).toBeDefined();
+    });
+
+    act(() => renderer.unmount());
   });
 });

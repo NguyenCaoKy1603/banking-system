@@ -46,4 +46,18 @@ describe("KYC response validators", () => {
     expect(isKycApplication({ ...validApplication, version: 0 })).toBe(false);
     expect(isKycApplication({ ...validApplication, version: 1 })).toBe(true);
   });
+
+  it("T-KYC-VAL-GAP-01: rejects an application response with an invalid status enum", () => {
+    expect(isKycApplication({ ...validApplication, status: "PENDING" })).toBe(false);
+    expect(isKycApplication({ ...validApplication, status: "UNKNOWN" })).toBe(false);
+    expect(isKycApplication({ ...validApplication, status: "IN_PROGRESS" })).toBe(false);
+  });
+
+  it("T-KYC-VAL-GAP-02: rejects an application response missing required fields userId or updatedAt", () => {
+    const { userId: _userId, ...withoutUserId } = validApplication;
+    expect(isKycApplication(withoutUserId)).toBe(false);
+
+    const { updatedAt: _updatedAt, ...withoutUpdatedAt } = validApplication;
+    expect(isKycApplication(withoutUpdatedAt)).toBe(false);
+  });
 });
