@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 TMPFS REMEDIATION COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
-- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 TMPFS EVIDENCE CONTRACT VERIFIED — AWAITING CHECKPOINT COMMIT
+- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
@@ -2206,7 +2206,7 @@ evidence Docker/PostgreSQL thực tế.
 - Runner và runtime test không nằm trong exact three-file commit inventory và
   được bảo toàn byte-for-byte.
 
-### 40.4 Metadata hiện hành
+### 40.4 Metadata tại documentation checkpoint trước remediation
 
 - Trạng thái: `IN_PROGRESS — M07-A2 TMPFS REMEDIATION COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION`.
 - Chế độ hiện tại: `DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY`.
@@ -2218,3 +2218,161 @@ evidence Docker/PostgreSQL thực tế.
   tmpfs vẫn cần Owner authorization riêng.
 
 Kết luận checkpoint: `M07-A2 TMPFS HARNESS RECORDED — RUNTIME RETRY REQUIRES SEPARATE OWNER AUTHORIZATION`.
+
+## 41. M07-A2 TMPFS INSPECT-EVIDENCE CONTRACT REMEDIATION
+
+### 41.1 Phạm vi và trạng thái hiện hành
+
+Phiên này thực hiện remediation ở mức source và unit/test-double, đúng ranh giới
+`NO-DATABASE`. Chỉ ba file được phép thay đổi:
+
+1. `backend/src/database/disposableDatabaseGuard.ts`
+2. `backend/src/tests/disposableDatabaseGuard.test.ts`
+3. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`
+
+Các thay đổi chính trong `disposableDatabaseGuard.ts`:
+
+- `validateDockerInspectOutput` bắt buộc `HostConfig.Tmpfs` là object có đúng một
+  destination canonical và option semantic canonical.
+- Top-level `.Mounts` chấp nhận đúng hai representation: mảng rỗng đã được quan
+  sát với cú pháp legacy `--tmpfs`, hoặc đúng một entry `tmpfs` khớp destination,
+  source, `RW` và propagation. Bind, volume, named volume, anonymous volume và
+  mount bổ sung đều bị từ chối.
+- Port, host bind, privileged mode và added capabilities vẫn bị kiểm tra theo
+  isolation contract.
+- `buildDockerExecMountinfoArgs` tạo argv cố định dùng exact launched container ID:
+  `exec`, container ID, `cat`, `/proc/self/mountinfo`.
+- `realDockerAdapter.attestMountNamespace` thực hiện lệnh đọc mountinfo với
+  timeout và AbortSignal; không đưa raw mountinfo vào lỗi hoặc log.
+- `validateMountNamespaceAttestation` là pure validator: yêu cầu đúng một record
+  ở `/var/lib/postgresql/data`, filesystem `tmpfs`, read-write, `nosuid`,
+  `noexec`, size đúng 512 MiB và mode đúng 0700; cho phép option kernel không
+  mâu thuẫn như `nodev`, `relatime` và `inode64`.
+- `runCanonicalEvidenceSequence` chạy attestation ngay sau inspect validation và
+  trước readiness, tạo database, query, migration hoặc child action. Thiếu, sai,
+  timeout hoặc cancellation đều fail-closed và đi qua exact cleanup một lần.
+
+### 41.2 Đối chiếu hai probe đã quan sát
+
+Hai probe container-only trước đó đều quan sát được các điểm sau:
+
+- `.Mounts` là mảng rỗng trên Docker Desktop/Engine hiện tại.
+- `HostConfig.Tmpfs` có đúng destination và canonical options:
+  `/var/lib/postgresql/data:rw,noexec,nosuid,size=512m,mode=0700`.
+- Không phát sinh Docker volume attributable to probe; inventory được ghi nhận
+  không đổi ở mức `48 total / 37 dangling` trước và sau cleanup.
+- Probe running chứng minh container thực sự ở trạng thái `RUNNING`, nhưng đây
+  chỉ là evidence của probe đã được Owner chấp nhận, không phải M07-A2 runtime
+  retry của phiên này.
+
+Finding còn lại phải được giữ nguyên: kiểm tra probe-only exact name không đạt,
+dù container đã được cleanup thành công. Vì vậy không tuyên bố name-binding PASS
+từ probe đó. Exact name/label/container-ID binding vẫn phải được kiểm tra lại ở
+preflight hoặc lần runtime riêng được Owner cấp quyền.
+
+`.Mounts=[]` không được diễn giải là “không có tmpfs”. Evidence hiện được phân
+thành hai lớp:
+
+- Docker configuration proof: `HostConfig.Tmpfs`, Binds, port và isolation fields
+  được kiểm tra bởi inspect validator.
+- Runtime mount-namespace proof: `docker exec` đọc `/proc/self/mountinfo` trên
+  exact launched ID và pure validator kiểm tra filesystem/flags/size/mode.
+
+Implementation và test-double cho lớp thứ hai đã hoàn tất trong phiên này; runtime
+mount-namespace proof chưa được chạy vì Docker/daemon bị cấm trong execution mode.
+
+### 41.3 Test coverage đã bổ sung
+
+`backend/src/tests/disposableDatabaseGuard.test.ts` bổ sung và cập nhật coverage:
+
+- `M07-A2-TMPFS-09`: fixture `.Mounts=[]` chỉ pass cùng canonical
+  `HostConfig.Tmpfs` và attestation hợp lệ.
+- `M07-A2-TMPFS-10`: thiếu hoặc sai `HostConfig.Tmpfs` bị từ chối.
+- `M07-A2-TMPFS-11`: missing, duplicate, malformed hoặc sai destination trong
+  mountinfo bị từ chối.
+- `M07-A2-TMPFS-12`: sai filesystem, flag, option đối nghịch, size hoặc mode bị
+  từ chối.
+- `M07-A2-TMPFS-13`: option kernel không mâu thuẫn được chấp nhận.
+- `M07-A2-TMPFS-14`: `docker exec` dùng exact ID và fixed argv.
+- `M07-A2-TMPFS-15`: attestation lỗi dừng trước readiness/DB, không retry và
+  cleanup đúng một lần.
+- `M07-A2-TMPFS-16`: raw mountinfo marker không xuất hiện trong log capture.
+- `M07-A2R-21`: xác nhận thứ tự attestation trước readiness và mọi database action.
+
+### 41.4 Quality gates và ranh giới bằng chứng
+
+- `npm run typecheck`: `PASS`.
+- `npm run build`: `PASS`.
+- `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`:
+  `97 tests`, `97 pass`, `0 fail`, `0 cancelled`, `0 skipped`.
+- `git diff --check`: phải được chạy sau cùng và không được có lỗi.
+- Static scan trên dòng mới không phát hiện TypeScript bypass, sensitive material,
+  concrete endpoint/variable value hoặc personal data mới.
+- Không chạy Docker CLI/daemon, PostgreSQL, database socket, migration,
+  `disposableMigrationRuntime.test.ts`, M07-A2 runtime command hoặc integration
+  test trong phiên này.
+- Không thay đổi runner, runtime test, migration, config hoặc dependency.
+
+### 41.5 Metadata và quyết định bàn giao
+
+- M07-A2 inspect-evidence contract remediation: `IMPLEMENTED AND VERIFIED` ở
+  mức source/unit/test-double.
+- M07-A2 runtime retry: `NOT AUTHORIZED`.
+- Không tuyên bố tmpfs runtime, PostgreSQL runtime, migration runtime hoặc
+  cleanup runtime đã được chứng minh trong phiên này.
+- M01-07 vẫn `INCOMPLETE`; UC-M01 vẫn `INCOMPLETE`.
+- M07-B, M07-C và M07-D chưa bắt đầu.
+- Không stage, commit, push hoặc amend.
+
+Kết luận bàn giao: `READY FOR M07-A2 TMPFS EVIDENCE CONTRACT OWNER REVIEW`.
+
+## 42. OWNER APPROVAL — M07-A2 TMPFS EVIDENCE CONTRACT ACCEPTED
+
+### 42.1 Phạm vi chấp thuận
+
+- Approval date: `2026-09-04`.
+- Baseline HEAD của remediation: `d3bd0752e8c394fb585f6174b9e3c7a3e7873f4f`.
+- Owner chấp nhận remediation ở phạm vi unit/test-double: `.Mounts=[]` chỉ
+  được chấp nhận khi `HostConfig.Tmpfs` canonical hợp lệ; runtime mountinfo
+  attestation vẫn bắt buộc và phải chạy trước readiness, database, migration.
+- Lỗi attestation phải fail-closed và cleanup exact container đúng một lần.
+- Approval này chỉ áp dụng cho remediation `NO-DATABASE`; không cấp quyền chạy
+  M07-A2 runtime retry.
+
+### 42.2 Evidence được ghi nhận
+
+- Typecheck: `PASS`.
+- Build: `PASS`.
+- Targeted unit suite: `97/97 PASS`, `0 fail`, `0 skip`.
+- Delta so với baseline `89` tests: thêm đúng tám test mới
+  `M07-A2-TMPFS-09` đến `M07-A2-TMPFS-16`; không xóa, rename hoặc skip test cũ.
+- Runtime behavior mới của mount-namespace attestation chưa được chứng minh.
+- Probe exact-name anomaly vẫn mở; không dùng probe đó để tuyên bố
+  name-binding PASS.
+- M07-A2 runtime retry: `NOT AUTHORIZED`.
+- M01-07 và UC-M01 vẫn `INCOMPLETE`.
+- M07-B, M07-C và M07-D chưa bắt đầu.
+
+### 42.3 Metadata hiện hành
+
+- Trạng thái: `IN_PROGRESS — M07-A2 TMPFS EVIDENCE CONTRACT VERIFIED — AWAITING CHECKPOINT COMMIT`.
+- Chế độ hiện tại: `DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY`.
+- An toàn thực thi database: `BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED`.
+- Không tick runtime acceptance criteria và không tuyên bố PostgreSQL runtime,
+  mount namespace runtime hoặc cleanup runtime đã verified.
+
+### 42.4 Exact staging scope và dừng phiên
+
+Chỉ stage ba file đã thay đổi trong checkpoint:
+
+1. `backend/src/database/disposableDatabaseGuard.ts`
+2. `backend/src/tests/disposableDatabaseGuard.test.ts`
+3. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`
+
+Không stage runner, runtime test, migration, config, dependency hoặc file khác.
+Không chạy lại test/build/Docker/PostgreSQL trong phiên staging. Không commit,
+push hoặc amend.
+
+Proposed commit message: `fix(database): attest disposable PostgreSQL tmpfs mount`.
+
+Kết luận: `READY FOR M07-A2 TMPFS EVIDENCE CONTRACT CHECKPOINT COMMIT`.

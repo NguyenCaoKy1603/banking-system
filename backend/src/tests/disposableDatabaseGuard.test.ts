@@ -24,6 +24,7 @@ import {
   assertEvidencePhase,
   assertOwnershipMarkerMatches,
   buildCleanChildEnvironment,
+  buildDockerExecMountinfoArgs,
   buildDockerImageInspectArgs,
   buildDockerInspectArgs,
   buildDockerRmArgs,
@@ -57,6 +58,7 @@ import {
   CANONICAL_TMPFS_DESTINATION,
   CANONICAL_TMPFS_OPTIONS,
   CANONICAL_TMPFS_FLAG_VALUE,
+  validateMountNamespaceAttestation,
   validateTmpfsOptions,
 } from "../database/disposableDatabaseGuard.js";
 
@@ -67,6 +69,14 @@ const validEnvironment = {
   ALLOW_DATABASE_TEST_RESET: "1",
 };
 const validUrl = "postgresql://banking:secret@localhost:5432/banking_test_guard";
+const makeMountInfo = (
+  destination = CANONICAL_TMPFS_DESTINATION,
+  mountOptions = "rw,nosuid,noexec,relatime",
+  filesystemType = "tmpfs",
+  superOptions = "rw,size=524288k,mode=0700",
+  mountId = "100",
+): string => `${mountId} 50 0:1 / ${destination} ${mountOptions} - ${filesystemType} tmpfs ${superOptions}`;
+const validMountInfoFixture = makeMountInfo();
 
 // ============================================================================
 // Original 5 Pre-existing Tests (Preserved verbatim)
@@ -1873,6 +1883,7 @@ test("M07-A2R-21: Canonical 19-step sequence ordering with test doubles", async 
   const fixedRunId = "1234567890abcdef1234567890abcdef";
   const fixedContainerId = "e".repeat(64);
   const fixedContainerName = `banking_test_container_${fixedRunId}`;
+  const sequenceEvents: string[] = [];
 
   const mockDocker: DockerAdapter = {
     async inspectImage() { return JSON.stringify([{ Id: "sha256:" + "0".repeat(64), RepoTags: ["postgres:16"] }]); },
@@ -1887,13 +1898,21 @@ test("M07-A2R-21: Canonical 19-step sequence ordering with test doubles", async 
         HostConfig: { Binds: [], Tmpfs: { "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700" } },
       }]);
     },
+    async attestMountNamespace(containerId: string) {
+      sequenceEvents.push("attest");
+      assert.equal(containerId, fixedContainerId);
+      return validMountInfoFixture;
+    },
     async removeContainer() {},
-    async waitForReady() {},
+    async waitForReady() {
+      sequenceEvents.push("ready");
+    },
   };
 
   const poolQueries: string[] = [];
   const mockPool: DisposablePoolClient = {
     async query(sql: string) {
+      sequenceEvents.push("db");
       poolQueries.push(sql);
       if (sql.includes("COUNT(*)")) {
         return { rows: [{ count: 0 }] };
@@ -1931,7 +1950,10 @@ test("M07-A2R-21: Canonical 19-step sequence ordering with test doubles", async 
     },
     {
       dockerAdapter: mockDocker,
-      createPoolFn: () => mockPool,
+      createPoolFn: () => {
+        sequenceEvents.push("pool");
+        return mockPool;
+      },
       runCommandFn: mockRunCmd,
       runIdGenerator: () => fixedRunId,
     },
@@ -1939,6 +1961,9 @@ test("M07-A2R-21: Canonical 19-step sequence ordering with test doubles", async 
 
   assert.equal(result.success, true);
   assert.equal(result.containerId, fixedContainerId);
+  assert.ok(sequenceEvents.indexOf("attest") >= 0, "Mount namespace attestation must run");
+  assert.ok(sequenceEvents.indexOf("attest") < sequenceEvents.indexOf("ready"), "Attestation must precede readiness");
+  assert.ok(sequenceEvents.indexOf("attest") < sequenceEvents.indexOf("db"), "Attestation must precede every database action");
   assert.deepEqual(result.completedSteps, [
     "1_VERIFY_LOCAL_IMAGE",
     "2_CREATE_EPHEMERAL_CONTAINER",
@@ -1980,6 +2005,10 @@ test("M07-A2R-22: Restoration verify-only failure fails closed and triggers clea
         Mounts: [{ Type: "tmpfs", Source: "", Destination: "/var/lib/postgresql/data", RW: true }],
         HostConfig: { Binds: [], Tmpfs: { "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700" } },
       }]);
+    },
+    async attestMountNamespace(containerId: string) {
+      assert.equal(containerId, fixedContainerId);
+      return validMountInfoFixture;
     },
     async removeContainer() {},
     async waitForReady() {},
@@ -2226,6 +2255,9 @@ test("M07-A2R-FU-12: Sequence fails before DB creation and cleans up launch ID o
         NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
         Mounts: [],
       }]);
+    },
+    async attestMountNamespace() {
+      return validMountInfoFixture;
     },
     async removeContainer(id: string) {
       removedContainerIds.push(id);
@@ -2862,6 +2894,264 @@ test("M07-A2-TMPFS-02: Exact tmpfs accepted in inspect record", () => {
   assert.equal(validated.runId, runId);
 });
 
+test("M07-A2-TMPFS-09: Observed empty Mounts requires canonical HostConfig and namespace attestation", () => {
+  const runId = "99999999999999999999999999999999";
+  const containerName = `banking_test_container_${runId}`;
+  const containerId = "9".repeat(64);
+  const imageId = "sha256:" + "9".repeat(64);
+  const inspectJson = JSON.stringify([{
+    Id: containerId,
+    Name: `/${containerName}`,
+    Image: imageId,
+    Config: {
+      Image: "postgres:16",
+      Labels: { banking_test_run_id: runId },
+    },
+    NetworkSettings: {
+      Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] },
+    },
+    Mounts: [],
+    HostConfig: {
+      Binds: [],
+      Tmpfs: { [CANONICAL_TMPFS_DESTINATION]: CANONICAL_TMPFS_OPTIONS },
+    },
+  }]);
+
+  assert.doesNotThrow(() => validateDockerInspectOutput(
+    inspectJson,
+    containerName,
+    runId,
+    imageId,
+    containerId,
+  ));
+  assert.doesNotThrow(() => validateMountNamespaceAttestation(validMountInfoFixture));
+});
+
+test("M07-A2-TMPFS-10: Empty Mounts without exact HostConfig.Tmpfs fails closed", () => {
+  const runId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab";
+  const containerName = `banking_test_container_${runId}`;
+  const containerId = "a".repeat(64);
+  const baseRecord = {
+    Id: containerId,
+    Name: `/${containerName}`,
+    Image: "sha256:" + "a".repeat(64),
+    Config: {
+      Image: "postgres:16",
+      Labels: { banking_test_run_id: runId },
+    },
+    NetworkSettings: {
+      Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] },
+    },
+    Mounts: [],
+  };
+
+  assert.throws(
+    () => validateDockerInspectOutput(JSON.stringify([baseRecord]), containerName, runId),
+    /missing HostConfig\.Tmpfs object/,
+  );
+  assert.throws(
+    () => validateDockerInspectOutput(
+      JSON.stringify([{
+        ...baseRecord,
+        HostConfig: {
+          Binds: [],
+          Tmpfs: { [CANONICAL_TMPFS_DESTINATION]: "rw,noexec,nosuid,size=256m,mode=0700" },
+        },
+      }]),
+      containerName,
+      runId,
+    ),
+    /expected 512m/,
+  );
+});
+
+test("M07-A2-TMPFS-11: Mount-namespace validator rejects missing, duplicate, or wrong destination", () => {
+  assert.throws(
+    () => validateMountNamespaceAttestation(""),
+    /empty or invalid/,
+  );
+  assert.throws(
+    () => validateMountNamespaceAttestation(makeMountInfo("/var/lib/postgresql/other")),
+    /exactly one canonical destination record; found 0/,
+  );
+  assert.throws(
+    () => validateMountNamespaceAttestation(`${makeMountInfo()}\n${makeMountInfo(CANONICAL_TMPFS_DESTINATION, "rw,nosuid,noexec", "tmpfs", "rw,size=512m,mode=0700", "101")}`),
+    /exactly one canonical destination record; found 2/,
+  );
+  assert.throws(
+    () => validateMountNamespaceAttestation("not a mountinfo record"),
+    /malformed record/,
+  );
+});
+
+test("M07-A2-TMPFS-12: Mount-namespace validator enforces tmpfs, flags, size, and mode", () => {
+  assert.throws(
+    () => validateMountNamespaceAttestation(makeMountInfo(CANONICAL_TMPFS_DESTINATION, "rw,nosuid,noexec", "ext4")),
+    /filesystem type must be tmpfs/,
+  );
+  assert.throws(
+    () => validateMountNamespaceAttestation(makeMountInfo(CANONICAL_TMPFS_DESTINATION, "ro,nosuid,noexec")),
+    /not read-write|contradictory ro option/,
+  );
+  assert.throws(
+    () => validateMountNamespaceAttestation(makeMountInfo(CANONICAL_TMPFS_DESTINATION, "rw,noexec")),
+    /missing nosuid option/,
+  );
+  assert.throws(
+    () => validateMountNamespaceAttestation(makeMountInfo(CANONICAL_TMPFS_DESTINATION, "rw,nosuid")),
+    /missing noexec option/,
+  );
+  assert.throws(
+    () => validateMountNamespaceAttestation(makeMountInfo(CANONICAL_TMPFS_DESTINATION, "rw,nosuid,noexec,ro,suid,exec")),
+    /contradictory ro option/,
+  );
+  assert.throws(
+    () => validateMountNamespaceAttestation(makeMountInfo(CANONICAL_TMPFS_DESTINATION, "rw,nosuid,noexec", "tmpfs", "rw,size=256m,mode=0700")),
+    /size must be exactly 512 MiB/,
+  );
+  assert.throws(
+    () => validateMountNamespaceAttestation(makeMountInfo(CANONICAL_TMPFS_DESTINATION, "rw,nosuid,noexec", "tmpfs", "rw,size=512m,mode=0755")),
+    /mode must be exactly 0700/,
+  );
+});
+
+test("M07-A2-TMPFS-13: Kernel-generated non-conflicting options are accepted", () => {
+  assert.doesNotThrow(() => validateMountNamespaceAttestation(
+    makeMountInfo(
+      CANONICAL_TMPFS_DESTINATION,
+      "rw,nosuid,noexec,relatime,nodev",
+      "tmpfs",
+      "rw,size=536870912,mode=0700,inode64",
+    ),
+  ));
+});
+
+test("M07-A2-TMPFS-14: docker exec attestation uses exact launched ID and fixed argv", () => {
+  const containerId = "b".repeat(64);
+  assert.deepEqual(
+    buildDockerExecMountinfoArgs(containerId),
+    ["exec", containerId, "cat", "/proc/self/mountinfo"],
+  );
+  assert.throws(
+    () => buildDockerExecMountinfoArgs("not-a-container"),
+    /exact 64 lowercase hex/,
+  );
+});
+
+test("M07-A2-TMPFS-15: Missing or failed attestation stops before readiness/DB and cleans once", async () => {
+  const fixedRunId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const launchId = "b".repeat(64);
+  const fixedContainerName = `banking_test_container_${fixedRunId}`;
+  const localImageId = "sha256:" + "b".repeat(64);
+  const events: string[] = [];
+  let attestationCalls = 0;
+  const removedContainerIds: string[] = [];
+
+  const inspectJson = JSON.stringify([{
+    Id: launchId,
+    Name: `/${fixedContainerName}`,
+    Image: localImageId,
+    Config: { Image: "postgres:16", Labels: { banking_test_run_id: fixedRunId } },
+    NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+    Mounts: [],
+    HostConfig: { Binds: [], Tmpfs: { [CANONICAL_TMPFS_DESTINATION]: CANONICAL_TMPFS_OPTIONS } },
+  }]);
+  const mockDocker: DockerAdapter = {
+    async inspectImage() { return JSON.stringify([{ Id: localImageId, RepoTags: ["postgres:16"] }]); },
+    async runContainer() { return launchId; },
+    async inspectContainer() { return inspectJson; },
+    async attestMountNamespace(containerId: string) {
+      events.push("attest");
+      attestationCalls++;
+      assert.equal(containerId, launchId);
+      throw new Error("bounded mount attestation timeout");
+    },
+    async removeContainer(containerId: string) {
+      events.push("cleanup");
+      removedContainerIds.push(containerId);
+    },
+    async waitForReady() {
+      events.push("ready");
+    },
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: mockDocker,
+      createPoolFn: () => {
+        events.push("pool");
+        throw new Error("database action must not run");
+      },
+      runCommandFn: async () => {
+        events.push("child");
+        throw new Error("child action must not run");
+      },
+      runIdGenerator: () => fixedRunId,
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(attestationCalls, 1, "Attestation must not retry");
+  assert.deepEqual(removedContainerIds, [launchId], "Cleanup must target the exact launch ID once");
+  assert.deepEqual(events, ["attest", "cleanup"]);
+  assert.match(result.error?.message ?? "", /bounded mount attestation timeout/);
+});
+
+test("M07-A2-TMPFS-16: Attestation failures are not logged with raw mountinfo", async () => {
+  const fixedRunId = "cccccccccccccccccccccccccccccccd";
+  const launchId = "c".repeat(64);
+  const fixedContainerName = `banking_test_container_${fixedRunId}`;
+  const localImageId = "sha256:" + "c".repeat(64);
+  const rawMarker = "mountinfo-sensitive-marker";
+  const loggedErrors: string[] = [];
+  const mockDocker: DockerAdapter = {
+    async inspectImage() { return JSON.stringify([{ Id: localImageId, RepoTags: ["postgres:16"] }]); },
+    async runContainer() { return launchId; },
+    async inspectContainer() {
+      return JSON.stringify([{
+        Id: launchId,
+        Name: `/${fixedContainerName}`,
+        Image: localImageId,
+        Config: { Image: "postgres:16", Labels: { banking_test_run_id: fixedRunId } },
+        NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+        Mounts: [],
+        HostConfig: { Binds: [], Tmpfs: { [CANONICAL_TMPFS_DESTINATION]: CANONICAL_TMPFS_OPTIONS } },
+      }]);
+    },
+    async attestMountNamespace() {
+      return rawMarker;
+    },
+    async removeContainer() {},
+    async waitForReady() {
+      throw new Error("readiness must not run");
+    },
+  };
+
+  const facade: ProcessFacade = { exitCode: 0 };
+  const result = await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    { PATH: "C:\\Windows\\System32" },
+    {
+      processFacade: facade,
+      canonicalDeps: {
+        dockerAdapter: mockDocker,
+        createPoolFn: () => {
+          throw new Error("database action must not run");
+        },
+        runCommandFn: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+        runIdGenerator: () => fixedRunId,
+      },
+      logErrorFn: (message) => loggedErrors.push(message),
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.ok(loggedErrors.length > 0);
+  assert.doesNotMatch(loggedErrors.join("\n"), new RegExp(rawMarker));
+  assert.doesNotMatch(loggedErrors.join("\n"), /mountinfo-sensitive/);
+});
+
 test("M07-A2-TMPFS-03: Anonymous and named volumes rejected", () => {
   const runId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
   const containerName = `banking_test_container_${runId}`;
@@ -3234,6 +3524,9 @@ test("M07-A2-TMPFS-07: Inspect failure stops sequence, cleans up with -v, and fa
         },
       ]);
     },
+    async attestMountNamespace() {
+      return validMountInfoFixture;
+    },
     async removeContainer(containerId: string) {
       removedContainerIds.push(containerId);
     },
@@ -3326,6 +3619,10 @@ test("M07-A2-TMPFS-08: Success and cancellation hygiene", async () => {
         },
       ]);
     },
+    async attestMountNamespace(containerId: string) {
+      assert.equal(containerId, launchId);
+      return validMountInfoFixture;
+    },
     async removeContainer(containerId: string) {
       normalRemovedContainers.push(containerId);
     },
@@ -3380,6 +3677,9 @@ test("M07-A2-TMPFS-08: Success and cancellation hygiene", async () => {
     async inspectContainer() {
       // Simulate cooperative cancellation during inspect phase
       throw new Error("Cooperative cancellation triggered during inspection");
+    },
+    async attestMountNamespace() {
+      return validMountInfoFixture;
     },
     async removeContainer(containerId: string) {
       cancelRemovedContainers.push(containerId);

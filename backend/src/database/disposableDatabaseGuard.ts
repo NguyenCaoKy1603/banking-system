@@ -958,6 +958,13 @@ export function buildDockerInspectArgs(containerIdOrName: string): readonly stri
   return ["inspect", containerIdOrName];
 }
 
+export function buildDockerExecMountinfoArgs(containerId: string): readonly string[] {
+  if (!CONTAINER_ID_64_HEX_PATTERN.test(containerId)) {
+    throw new Error("Invalid container ID for mount-namespace attestation: expected exact 64 lowercase hex.");
+  }
+  return ["exec", containerId, "cat", "/proc/self/mountinfo"];
+}
+
 export function buildDockerRmArgs(containerId: string): readonly string[] {
   if (!/^[a-f0-9]{64}$/.test(containerId)) {
     throw new Error(`Invalid container ID for removal: '${containerId}'. Must be exact 64 lowercase hex.`);
@@ -995,6 +1002,8 @@ export interface DockerInspectRecord {
   readonly HostConfig?: {
     readonly Binds?: readonly unknown[];
     readonly Tmpfs?: Record<string, string>;
+    readonly Privileged?: boolean;
+    readonly CapAdd?: readonly string[] | null;
   };
 }
 
@@ -1192,8 +1201,12 @@ export function validateDockerInspectOutput(
   if (!ports || typeof ports !== "object") {
     throw new Error("Docker inspect missing NetworkSettings.Ports");
   }
+  const unexpectedPortKeys = Object.keys(ports).filter((key) => key !== "5432/tcp");
+  if (unexpectedPortKeys.length > 0) {
+    throw new Error("Docker inspect contains port bindings outside the exact loopback PostgreSQL contract");
+  }
   const bindings = ports["5432/tcp"];
-  if (!Array.isArray(bindings) || bindings.length === 0) {
+  if (!Array.isArray(bindings) || bindings.length !== 1) {
     throw new Error("Docker inspect missing port 5432/tcp binding");
   }
   const firstBinding = bindings[0];
@@ -1214,32 +1227,41 @@ export function validateDockerInspectOutput(
     throw new Error("Docker inspect shows host binds, which are strictly prohibited");
   }
 
+  if (record.HostConfig?.Privileged === true) {
+    throw new Error("Docker inspect shows privileged mode, which is strictly prohibited");
+  }
+  if (Array.isArray(record.HostConfig?.CapAdd) && record.HostConfig.CapAdd.length > 0) {
+    throw new Error("Docker inspect shows added capabilities, which are strictly prohibited");
+  }
+
   const mounts = record.Mounts;
-  if (!Array.isArray(mounts) || mounts.length === 0) {
-    throw new Error("Docker inspect shows persistent/shared mounts, which are strictly prohibited: missing or empty approved tmpfs mount");
+  if (!Array.isArray(mounts)) {
+    throw new Error("Docker inspect Mounts must be an array");
   }
   if (mounts.length > 1) {
     throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: expected exactly one tmpfs mount, found ${mounts.length}`);
   }
 
-  const mount = mounts[0];
-  if (!mount || typeof mount !== "object") {
-    throw new Error("Docker inspect mount entry is not an object");
-  }
-  if (mount.Type !== "tmpfs") {
-    throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: mount Type '${String(mount.Type)}' is not approved 'tmpfs'`);
-  }
-  if (mount.Destination !== CANONICAL_TMPFS_DESTINATION) {
-    throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: mount Destination '${String(mount.Destination)}' does not match exact approved '${CANONICAL_TMPFS_DESTINATION}'`);
-  }
-  if (mount.Source !== undefined && mount.Source !== "") {
-    throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: tmpfs mount Source must be empty string, got '${String(mount.Source)}'`);
-  }
-  if (mount.RW !== true) {
-    throw new Error("Docker inspect tmpfs mount RW flag must be true (read/write)");
-  }
-  if (mount.Propagation !== undefined && mount.Propagation !== "") {
-    throw new Error(`Docker inspect tmpfs mount Propagation must be empty, got '${String(mount.Propagation)}'`);
+  if (mounts.length === 1) {
+    const mount = mounts[0];
+    if (!mount || typeof mount !== "object") {
+      throw new Error("Docker inspect mount entry is not an object");
+    }
+    if (mount.Type !== "tmpfs") {
+      throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: mount Type '${String(mount.Type)}' is not approved 'tmpfs'`);
+    }
+    if (mount.Destination !== CANONICAL_TMPFS_DESTINATION) {
+      throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: mount Destination '${String(mount.Destination)}' does not match exact approved '${CANONICAL_TMPFS_DESTINATION}'`);
+    }
+    if (mount.Source !== "") {
+      throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: tmpfs mount Source must be empty string, got '${String(mount.Source)}'`);
+    }
+    if (mount.RW !== true) {
+      throw new Error("Docker inspect tmpfs mount RW flag must be true (read/write)");
+    }
+    if (mount.Propagation !== undefined && mount.Propagation !== "") {
+      throw new Error(`Docker inspect tmpfs mount Propagation must be empty, got '${String(mount.Propagation)}'`);
+    }
   }
 
   const hostTmpfs = record.HostConfig?.Tmpfs;
@@ -1263,6 +1285,107 @@ export function validateDockerInspectOutput(
     bindHost: "127.0.0.1",
     runId: expectedRunId,
   };
+}
+
+export interface MountNamespaceAttestationRecord {
+  readonly mountPoint: string;
+  readonly mountOptions: readonly string[];
+  readonly filesystemType: string;
+  readonly superOptions: readonly string[];
+}
+
+function decodeMountInfoField(value: string): string {
+  return value.replace(/\\([0-7]{3})/g, (_match, octal: string) => String.fromCharCode(parseInt(octal, 8)));
+}
+
+function splitMountInfoOptions(value: string): readonly string[] {
+  return value.split(",").map((option) => option.trim()).filter(Boolean);
+}
+
+function parseMountInfoLine(line: string, lineNumber: number): MountNamespaceAttestationRecord {
+  const separatorIndex = line.indexOf(" - ");
+  if (separatorIndex <= 0 || separatorIndex !== line.lastIndexOf(" - ")) {
+    throw new Error(`Mount namespace attestation contains malformed record at line ${lineNumber}`);
+  }
+
+  const left = line.slice(0, separatorIndex).trim().split(/\s+/);
+  const right = line.slice(separatorIndex + 3).trim().split(/\s+/);
+  if (left.length < 6 || right.length < 3) {
+    throw new Error(`Mount namespace attestation contains incomplete record at line ${lineNumber}`);
+  }
+
+  return {
+    mountPoint: decodeMountInfoField(left[4]),
+    mountOptions: splitMountInfoOptions(left[5]),
+    filesystemType: right[0],
+    superOptions: splitMountInfoOptions(right[2]),
+  };
+}
+
+function parseMountInfoSizeBytes(optionValue: string): bigint | undefined {
+  const match = /^size=(\d+)([kmg]?)$/i.exec(optionValue);
+  if (!match) return undefined;
+  const raw = BigInt(match[1]);
+  const unit = match[2].toLowerCase();
+  const multiplier = unit === "k"
+    ? 1024n
+    : unit === "m"
+      ? 1024n * 1024n
+      : unit === "g"
+        ? 1024n * 1024n * 1024n
+        : 1n;
+  return raw * multiplier;
+}
+
+function parseMountInfoMode(optionValue: string): number | undefined {
+  const match = /^mode=([0-7]+)$/.exec(optionValue);
+  return match ? parseInt(match[1], 8) : undefined;
+}
+
+/**
+ * Validate the read-only mount-namespace attestation returned by docker exec.
+ * The raw mountinfo payload is intentionally never included in an error.
+ */
+export function validateMountNamespaceAttestation(mountInfo: string): MountNamespaceAttestationRecord {
+  if (typeof mountInfo !== "string" || mountInfo.trim() === "") {
+    throw new Error("Mount namespace attestation is empty or invalid");
+  }
+
+  const records = mountInfo
+    .split(/\r?\n/)
+    .map((line, index) => ({ line: line.trim(), lineNumber: index + 1 }))
+    .filter(({ line }) => line.length > 0)
+    .map(({ line, lineNumber }) => parseMountInfoLine(line, lineNumber));
+  const matches = records.filter((record) => record.mountPoint === CANONICAL_TMPFS_DESTINATION);
+  if (matches.length !== 1) {
+    throw new Error(`Mount namespace attestation must contain exactly one canonical destination record; found ${matches.length}`);
+  }
+
+  const [record] = matches;
+  if (record.filesystemType !== "tmpfs") {
+    throw new Error("Mount namespace attestation filesystem type must be tmpfs");
+  }
+
+  const allOptions = [...record.mountOptions, ...record.superOptions];
+  const has = (option: string) => allOptions.includes(option);
+  if (!has("rw")) throw new Error("Mount namespace attestation is not read-write");
+  if (has("ro")) throw new Error("Mount namespace attestation contains contradictory ro option");
+  if (!has("nosuid")) throw new Error("Mount namespace attestation is missing nosuid option");
+  if (has("suid")) throw new Error("Mount namespace attestation contains contradictory suid option");
+  if (!has("noexec")) throw new Error("Mount namespace attestation is missing noexec option");
+  if (has("exec")) throw new Error("Mount namespace attestation contains contradictory exec option");
+
+  const sizeTokens = allOptions.filter((option) => option.startsWith("size="));
+  if (sizeTokens.length !== 1 || parseMountInfoSizeBytes(sizeTokens[0]) !== 512n * 1024n * 1024n) {
+    throw new Error("Mount namespace attestation size must be exactly 512 MiB");
+  }
+
+  const modeTokens = allOptions.filter((option) => option.startsWith("mode="));
+  if (modeTokens.length !== 1 || parseMountInfoMode(modeTokens[0]) !== 0o700) {
+    throw new Error("Mount namespace attestation mode must be exactly 0700");
+  }
+
+  return record;
 }
 
 export interface CleanChildEnvOptions {
@@ -1526,6 +1649,7 @@ export interface DockerAdapter {
   inspectImage(image: string, signal?: AbortSignal, timeoutMs?: number): Promise<string>;
   runContainer(args: readonly string[], signal?: AbortSignal, timeoutMs?: number): Promise<string>;
   inspectContainer(containerNameOrId: string, signal?: AbortSignal, timeoutMs?: number): Promise<string>;
+  attestMountNamespace(containerId: string, signal?: AbortSignal, timeoutMs?: number): Promise<string>;
   removeContainer(containerId: string, signal?: AbortSignal, timeoutMs?: number): Promise<void>;
   waitForReady(host: string, port: number, timeoutMs?: number, signal?: AbortSignal): Promise<void>;
 }
@@ -1639,6 +1763,15 @@ export const realDockerAdapter: DockerAdapter = {
     if (result.exitCode !== 0) {
       const sanitizedErr = sanitizeLogOutput(result.stderr || result.stdout);
       throw new Error(`docker inspect failed with exit code ${result.exitCode}: ${sanitizedErr}`);
+    }
+    return result.stdout;
+  },
+
+  async attestMountNamespace(containerId: string, signal?: AbortSignal, timeoutMs = 30_000): Promise<string> {
+    const args = buildDockerExecMountinfoArgs(containerId);
+    const result = await executeCommandWithOutput("docker", args, process.env, timeoutMs, signal);
+    if (result.exitCode !== 0) {
+      throw new Error("docker exec mount-namespace attestation failed");
     }
     return result.stdout;
   },
@@ -1818,6 +1951,16 @@ export async function runCanonicalEvidenceSequence(
       approvedLocalImageId,
       launchedContainerId,
     );
+
+    // Mounts=[] is a valid Docker Desktop representation for legacy --tmpfs,
+    // so the exact launched container must attest its mount namespace before
+    // readiness, database creation, or a migration action.
+    const mountInfo = await docker.attestMountNamespace(
+      launchedContainerId,
+      childAbortController.signal,
+      commandTimeoutMs,
+    );
+    validateMountNamespaceAttestation(mountInfo);
 
     // Step 4: Wait readiness
     recordStep("4_WAIT_READINESS");
