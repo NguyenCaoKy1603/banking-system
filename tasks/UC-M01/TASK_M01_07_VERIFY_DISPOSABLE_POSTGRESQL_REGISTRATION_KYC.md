@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 CLI WIRING VERIFIED — AWAITING CHECKPOINT COMMIT
-- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 CLI WIRING COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
+- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
@@ -196,6 +196,43 @@ Giữ nguyên chưa hoàn thành và tiếp tục là ranh giới bắt buộc:
   - Độ lệch read-only Docker trong phiên trước (`docker ps -a` kiểm tra rò rỉ container sau failure) đã được ghi nhận; tuân thủ ranh giới NO-DATABASE trong phiên: không chạy lệnh Docker nào trong toàn bộ phiên correction hiện tại.
   - Việc chạy lại M07-A2 runtime (runtime retry) bắt buộc phải có chỉ thị riêng từ Owner (`M07-A2 RUNTIME RETRY NOT AUTHORIZED`).
   - Task M01-07 và Use Case UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**.
+
+## M07-A2 CLI WIRING IMPLEMENTATION COMMIT
+
+### Commit identity
+- **Full Implementation SHA**: `2776681dd5eda81e319d193cfa560e69a6d0de70`
+- **Parent SHA**: `5b985badb4d187955eeaf49664b78b12ace7677a`
+- **Exact Commit Message**: `fix(database): route disposable runtime through canonical harness`
+- **AuthorDate**: `2026-09-04T20:19:03+07:00`
+- **CommitDate**: `2026-09-04T20:19:03+07:00`
+- **Committed Files (Exact Four)**:
+  - `M backend/scripts/run-disposable-postgres-test.ts`
+  - `M backend/src/database/disposableDatabaseGuard.ts`
+  - `M backend/src/tests/disposableDatabaseGuard.test.ts`
+  - `M tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`
+- **Exact Commit Stat**: `4 files changed, 640 insertions(+), 16 deletions(-)`
+- **Commit-Tree Blob Hashes**:
+  - `backend/scripts/run-disposable-postgres-test.ts`: `25c0dae7c64fcbe3ad5db43b7682b2acde786974`
+  - `backend/src/database/disposableDatabaseGuard.ts`: `1366b27c5c9b4319ff1fcf95d97ea593ef3fbded`
+  - `backend/src/tests/disposableDatabaseGuard.test.ts`: `40d03d432bb0bce329efe6c3f4ddd3d4bd8985a0`
+  - `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`: `7e888d12f62ee0d317cefc46bf6fa002f26101b2`
+
+### Accepted implementation evidence
+- **Typecheck**: PASS (`npm run typecheck`, 0 lỗi TypeScript, 0 prohibited bypasses: 0 `any`, 0 `as any`, 0 `as unknown as`, 0 `as never`, 0 `@ts-ignore`, 0 `@ts-expect-error`).
+- **Build**: PASS (`npm run build`, biên dịch `dist/` thành công).
+- **Targeted Unit Suite**: `81/81 PASS` (`0 fail`, `0 cancelled`, `0 skipped`, ~372ms).
+- **Exact Four-Branch Dispatch Contract**:
+  - Branch 1: Exact single canonical argument (`src/tests/disposableMigrationRuntime.test.ts`) → `runCanonicalEvidenceSequence` (`handled: "CANONICAL"`).
+  - Branch 2: Exact canonical target kết hợp đối số bổ sung → fail-closed trước cả hai runner (`handled: "REJECTED"`, `exitCode = 1`, 0 runner calls).
+  - Branch 3: Reserved canonical aliases/candidates (`isReservedCanonicalRuntimeCandidate`) → fail-closed trước cả hai runner (`handled: "REJECTED"`, `exitCode = 1`, `canonicalCalls = 0`, `legacyCalls = 0`).
+  - Branch 4: Genuine legacy targets hợp lệ → `runDisposablePostgresTest` (`handled: "LEGACY"`).
+- **Reserved Aliases Chặn Trước Cả Hai Runners**:
+  - Toàn bộ 11 biến thể non-canonical (whitespace, relative `./` và `.\`, Windows backslash `\`, absolute path, `..`, case variants, prefix, suffix) được xác minh chặn hoàn toàn, không rơi sang legacy runner hay canonical runner (`canonicalCalls === 0`, `legacyCalls === 0`).
+- **Frozen Runtime Test Hash**:
+  - `backend/src/tests/disposableMigrationRuntime.test.ts` (SHA-256: `890511a6d95a75b59cda04ebac737379f6c3c55c2e8003d3b7844e6b6834eb04`).
+- **Ranh giới Thực thi**:
+  - Tuân thủ ranh giới NO-DATABASE trong phiên: không có lệnh Docker, PostgreSQL, database socket, migration hay runtime test nào được thực thi trong phiên commit.
+  - Commit hiện tại được lưu trữ hoàn toàn ở local, chưa push lên remote.
 
 ## 1. Repository verification và quyền phiên này
 
