@@ -1,10 +1,10 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 TMPFS EVIDENCE CONTRACT VERIFIED — AWAITING CHECKPOINT COMMIT
-- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 TMPFS EVIDENCE CONTRACT COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
+- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
-- Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
-- Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
+- M01-07: INCOMPLETE
+- UC-M01: INCOMPLETE
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
 
 Baseline được xác nhận khi soạn task:
@@ -2376,3 +2376,45 @@ push hoặc amend.
 Proposed commit message: `fix(database): attest disposable PostgreSQL tmpfs mount`.
 
 Kết luận: `READY FOR M07-A2 TMPFS EVIDENCE CONTRACT CHECKPOINT COMMIT`.
+
+## 43. OWNER ACCEPTANCE — RECORD M07-A2 TMPFS EVIDENCE CONTRACT CHECKPOINT
+
+### 43.1 Implementation checkpoint được ghi nhận
+
+- Implementation commit: `c8f46892c2e8a41eb39826abd6a5c2bab4993573`.
+- Parent: `d3bd0752e8c394fb585f6174b9e3c7a3e7873f4f`.
+- Message: `fix(database): attest disposable PostgreSQL tmpfs mount`.
+- Timestamp: `2026-09-05T01:02:32+07:00` cho AuthorDate và CommitDate.
+- Stat: `3 files changed, 627 insertions(+), 26 deletions(-)`.
+- Exact three-file inventory và commit-tree blob SHA-1:
+
+| File | Commit-tree blob SHA-1 |
+| ---- | ---------------------- |
+| `backend/src/database/disposableDatabaseGuard.ts` | `02a8b61475c2a0262a48b8ef4ddff6890ff754a7` |
+| `backend/src/tests/disposableDatabaseGuard.test.ts` | `a2295fe0c3a0e5f9641e7e20f652ea3344e3283b` |
+| `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md` | `c87826d556b5cb3c6c8e35206a4701d7e3275f19` |
+
+### 43.2 Evidence được Owner chấp nhận
+
+- Typecheck: `PASS`.
+- Build: `PASS`.
+- Targeted unit suite: `97/97 PASS`, `0 fail`, `0 skip`.
+- Delta `89 → 97` gồm đúng các test mới `M07-A2-TMPFS-09` đến
+  `M07-A2-TMPFS-16`; không xóa, rename hoặc skip test cũ.
+- Evidence trên chỉ chứng minh contract ở mức unit/test-double.
+- Runtime mountinfo attestation, PostgreSQL runtime và cleanup runtime mới chưa
+  được thực thi trong checkpoint này.
+- Historical probe exact-name anomaly vẫn chưa được tuyên bố PASS.
+- Implementation commit là local, chưa push.
+
+### 43.3 Metadata sau khi ghi nhận checkpoint
+
+- Trạng thái: `IN_PROGRESS — M07-A2 TMPFS EVIDENCE CONTRACT COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION`.
+- Chế độ hiện tại: `DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY`.
+- An toàn thực thi database: `BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED`.
+- M01-07: `INCOMPLETE`.
+- UC-M01: `INCOMPLETE`.
+- Không tuyên bố PostgreSQL runtime, mount namespace runtime hoặc cleanup runtime
+  đã verified.
+
+Kết luận: `M07-A2 TMPFS EVIDENCE CONTRACT RECORDED — RUNTIME RETRY REQUIRES SEPARATE OWNER AUTHORIZATION`.
