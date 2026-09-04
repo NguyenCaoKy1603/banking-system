@@ -1,8 +1,8 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2R COMMITTED — M07-A2 NOT STARTED
-- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
-- An toàn thực thi database: BLOCKED — M07-A2 NOT AUTHORIZED; RUNTIME DATABASE EXECUTION NOT STARTED
+- Trạng thái: IN_PROGRESS — M07-A2 COMMAND RECONCILED — AWAITING RUNTIME AUTHORIZATION
+- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION ONLY
+- An toàn thực thi database: BLOCKED — M07-A2 RUNTIME NOT YET AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
@@ -594,7 +594,7 @@ Khi xảy ra lỗi ở bất kỳ bước nào:
 | Kịch bản | Bảng / Index / Schema | Service / Component | Test hiện tại | Khoảng trống bằng chứng | Rủi ro | Checkpoint xử lý |
 | -------- | --------------------- | ------------------- | ------------- | ----------------------- | ------ | ---------------- |
 | An toàn database runner | Marker, host, target name | `disposableDatabaseGuard.ts` | `disposableDatabaseGuard.test.ts` | Thiếu unit test cho 11 quy tắc SAFE-R | Xóa nhầm preview DB | **M07-A1** (NO DB) |
-| Migrate từ rỗng | 001–040, `reference_schema_migrations` | `apply-migration.cjs` | `migrationFingerprint.test.ts` | Chưa chạy 001-040 trên DB rỗng | Schema không tái hiện được | **M07-A2** |
+| Migrate từ rỗng | 001–040, `reference_schema_migrations` | `apply-migration.cjs` | `disposableMigrationRuntime.test.ts` | Chưa chạy 001-040 trên DB rỗng | Schema không tái hiện được | **M07-A2** |
 | Rerun / Checksum | Checksum, history | `apply-migration.cjs` | Checksum unit tests | Chưa có evidence rerun an toàn | Drift hoặc ghi đè schema | **M07-A2** |
 | Concurrent begin email | Unique `pending_registrations_email_idx` | `registrationService.ts` | `registrationRelational.test.ts` | Race 2 tiến trình chưa có DB proof | Nhân đôi pending | **M07-B** |
 | Concurrent begin phone | Unique `pending_registrations_phone_idx` | `registrationService.ts` | `registrationRelational.test.ts` | Race 2 tiến trình chưa có DB proof | Nhân đôi pending | **M07-B** |
@@ -631,7 +631,7 @@ Mục tiêu: Sau khi M07-A1 đạt và được Owner phê duyệt riêng, khở
 Fixed Allowlist:
 - `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`
 
-*(Ghi chú: `backend/scripts/apply-migration.cjs` và `backend/src/tests/migrationFingerprint.test.ts` chỉ được đọc và chạy theo snapshot đã commit, không được sửa. Nếu M07-A2 phát hiện cần sửa runner hoặc test, phải dừng với thông báo `BLOCKED — M07-A2 REQUIRES SEPARATE REMEDIATION ALLOWLIST` và chờ Owner quyết định).*
+*(Ghi chú: `backend/scripts/apply-migration.cjs` và `backend/src/tests/disposableMigrationRuntime.test.ts` chỉ được đọc và chạy theo snapshot đã commit, không được sửa. Nếu M07-A2 phát hiện cần sửa runner hoặc test, phải dừng với thông báo `BLOCKED — M07-A2 REQUIRES SEPARATE REMEDIATION ALLOWLIST` và chờ Owner quyết định).*
 
 Gate hoàn thành: Toàn bộ 40 migration áp dụng thành công; history table có đúng 40 bản ghi; rerun migration không thay đổi history; target database được drop và xác nhận dọn dẹp sạch sẽ khỏi catalog.
 
@@ -775,7 +775,7 @@ Các lệnh dưới đây chỉ là kế hoạch tương lai được cấu trú
 - **Database Use**: `EPHEMERAL DB` (Chạy trên ephemeral container PostgreSQL 16 loopback).
 - **Candidate Command**:
   ```powershell
-  node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/migrationFingerprint.test.ts
+  node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/disposableMigrationRuntime.test.ts
   ```
 - **Timeout**: Tối đa 180 giây.
 - **Cleanup Expectation**: Runner tạo database đích theo pattern `^banking_test_[a-f0-9]{32}$`, ghi comment ownership, áp dụng migration 001–040, và trong khối `finally` thực hiện ngắt kết nối đích danh rồi `DROP DATABASE`, tái xác thực catalog.
@@ -1155,7 +1155,7 @@ Checkpoint M07-A2 cần một Owner directive riêng về remediation allowlist 
   - `backend/src/tests/disposableDatabaseGuard.test.ts`
   - `backend/scripts/apply-migration.cjs`
   - `backend/scripts/migration-fingerprint.cjs`
-  - `backend/src/tests/migrationFingerprint.test.ts`
+  - `backend/src/tests/disposableMigrationRuntime.test.ts`
   - `backend/scripts/migration-content.cjs`, `backend/scripts/postgres-ssl.cjs`
   - `backend/src/database/pool.ts`, `backend/src/database/unitOfWork.ts`
   - Thư mục migration: `backend/database/` (chứa đúng 40 file SQL `001_banking_mvp.sql` .. `040_card_security_and_suspense_retry.sql`)
@@ -1592,3 +1592,20 @@ Parent runner điều phối luồng thực thi tuần tự gồm 19 bước:
 - Tuyệt đối không chạy Docker CLI, Docker daemon, PostgreSQL instance, mở TCP socket, hay chạy migration thật. File `disposableMigrationRuntime.test.ts` không bị thực thi trực tiếp.
 - Checkpoint M07-A2 tiếp tục ở trạng thái **CHƯA ĐƯỢC CẤP QUYỀN (NOT AUTHORIZED)**.
 - Task M01-07 và Use Case UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**.
+
+## 32. M07-A2 PRE-RUNTIME ENVIRONMENT AND COMMAND RECONCILIATION
+
+- **Baseline HEAD**: `996fa4687aad4bec8e6022cdb5450728aff19de5`
+- **Docker Context**: `desktop-linux`, endpoint classification `local-npipe` (`npipe:////./pipe/dockerDesktopLinuxEngine`).
+- **Docker Daemon**: Linux/amd64 reachable (Docker Desktop native engine).
+- **Local Image `postgres:16`**: Exact tag `postgres:16` present, immutable ID format `^sha256:[0-9a-f]{64}$` PASS, Linux/amd64; không thực hiện pull qua mạng.
+- **Leftover M01 Containers**: Đúng 0 container (khớp pattern `^banking_test_container_[a-f0-9]{32}$`).
+- **Preflight Helpers Hygiene**: Toàn bộ temporary agent-runtime helper scripts đã được dọn sạch; không có bất kỳ artifact hay scratch file nào tồn tại trong repository.
+- **Bounded Timeout Enforcement**: Toàn bộ các kiểm tra Docker read-only đã được tái xác minh với timeout hữu hạn 15 giây cho từng child process.
+- **Exact Candidate Command**:
+  ```powershell
+  node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/disposableMigrationRuntime.test.ts
+  ```
+- **Working Directory**: `C:\Projects\banking-system\backend`
+- **Xác nhận chưa chạy**: Lệnh runtime trên chưa được chạy.
+- **Trạng thái cấp quyền**: Checkpoint M07-A2 vẫn CHƯA ĐƯỢC CẤP QUYỀN (NOT YET AUTHORIZED) trong lượt cập nhật tài liệu này.
