@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 TMPFS REMEDIATION VERIFIED — AWAITING CHECKPOINT COMMIT
-- Chế độ hiện tại: DOCUMENTATION CORRECTION AND CHECKPOINT STAGING ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 TMPFS REMEDIATION COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
+- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
@@ -2132,3 +2132,89 @@ Sau staging phải báo chính xác:
 - Không commit, push, amend, rebase, merge hoặc tag trong phiên này.
 - Không retry runtime M07-A2.
 - Kết luận packet: `READY FOR M07-A2 TMPFS HARNESS CHECKPOINT COMMIT`.
+
+## 40. M07-A2 TMPFS HARNESS IMPLEMENTATION COMMIT
+
+Checkpoint implementation local đã được ghi nhận sau khi Owner chấp thuận
+remediation. Section này không cấp quyền runtime retry và không thay thế
+evidence Docker/PostgreSQL thực tế.
+
+- Full implementation SHA: `e16c0d49f27ce79aeb408dfd9763e54913913b4a`.
+- Parent SHA: `1343f7120441ac359a598b59153a8f3634602f35`.
+- Exact commit message: `fix(database): use tmpfs for disposable PostgreSQL data`.
+- Timestamp: `2026-09-04T22:39:31+07:00` cho cả AuthorDate và CommitDate.
+- Exact three-file inventory:
+  1. `backend/src/database/disposableDatabaseGuard.ts`
+  2. `backend/src/tests/disposableDatabaseGuard.test.ts`
+  3. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`
+- Commit stat: `3 files changed, 1129 insertions(+), 20 deletions(-)`.
+- Commit-tree blob SHA-1:
+
+| File | Commit-tree blob SHA-1 |
+| ---- | ---------------------- |
+| `backend/src/database/disposableDatabaseGuard.ts` | `bf1aeafdd73d8a03a14b11721b6bb9e9250b2aa9` |
+| `backend/src/tests/disposableDatabaseGuard.test.ts` | `eb2dc91f4f0638dcfd7590505d17feeb0ea5258e` |
+| `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md` | `846072100fb3c157cc5ed71fdf6d76993c223a62` |
+
+### 40.1 Evidence được chấp thuận và ranh giới
+
+- Typecheck: `PASS`.
+- Build: `PASS`.
+- Targeted unit suite: `89/89 PASS`, `0 fail`, `0 cancelled`, `0 skipped`.
+- Các kết quả trên là evidence đã được Owner chấp thuận từ snapshot đóng băng;
+  không chạy lại test/build trong phiên documentation commit.
+- Exact tmpfs argument:
+
+      /var/lib/postgresql/data:rw,noexec,nosuid,size=512m,mode=0700
+
+- Inspect contract chỉ chấp nhận đúng một mount `tmpfs`, source rỗng, đúng
+  destination, `RW=true`, propagation rỗng và đúng option semantic set.
+- Cleanup contract: `docker rm -f -v <exact-launched-container-id>`.
+- Volume correction: trước cleanup `49/38` (total/dangling), đúng một candidate
+  M07-A2; sau cleanup `48/37`, candidate đó đã được xóa.
+- Không xóa failed-run hoặc orphan-volume audit trail.
+- Không có Docker/database/runtime execution trong phiên commit này.
+- Commit là local, chưa push.
+
+### 40.2 Exact TMPFS-01 đến TMPFS-08 coverage
+
+| Test ID | Coverage được Owner chấp thuận |
+| ------- | ------------------------------ |
+| TMPFS-01 | Launch args chứa exact `--tmpfs` pair, không chứa `-v`, `--volume` hoặc broad mount input |
+| TMPFS-02 | Inspect record có đúng một tmpfs mount chuẩn và được chấp nhận |
+| TMPFS-03 | Anonymous volume và named volume bị từ chối fail-closed |
+| TMPFS-04 | Bind mount, sai destination, source không rỗng và mount thứ hai bị từ chối |
+| TMPFS-05 | Option mismatch bị từ chối; permutation/size/mode representation hợp lệ được xử lý đúng |
+| TMPFS-06 | Cleanup dùng exact container ID với `-f` và `-v`; wildcard/prune/ID sai bị cấm |
+| TMPFS-07 | Inspect mount không hợp lệ dừng phase, không có DB query và await cleanup đúng một lần |
+| TMPFS-08 | Success/cancel cleanup không prune hoặc xóa volume riêng lẻ và không cho caller override tmpfs options |
+
+### 40.3 Hash classification và freeze binding
+
+- SHA-256 là digest đúng 64 ký tự hexadecimal.
+- Git blob SHA-1 là mã đúng 40 ký tự hexadecimal.
+- Working-tree hash và Git blob có thể khác do representation/line-ending; các
+  blob ở mục 40 chỉ được gọi là Git blob SHA-1.
+- Frozen SHA-256 guard:
+  `e1f50a04f2e776d8f0d339339ae7df187239afc6451d1e134c1e3aaee6970ca8`.
+- Frozen SHA-256 guard test:
+  `f7b137e96cc895123bcfdff995dfbf4fceffb77718facc9d09a0cc5a1c30e047`.
+- Frozen SHA-256 runner:
+  `a004b060df96cee3c11fb2069f03393338e60f1eb7094ab4fed95ba5b126ac60`.
+- Frozen SHA-256 runtime test:
+  `890511a6d95a75b59cda04ebac737379f6c3c55c2e8003d3b7844e6b6834eb04`.
+- Runner và runtime test không nằm trong exact three-file commit inventory và
+  được bảo toàn byte-for-byte.
+
+### 40.4 Metadata hiện hành
+
+- Trạng thái: `IN_PROGRESS — M07-A2 TMPFS REMEDIATION COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION`.
+- Chế độ hiện tại: `DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY`.
+- An toàn thực thi database: `BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED`.
+- Tiến độ task: `M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)`.
+- Tiến độ use case: `UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)`.
+- Không tick runtime acceptance criteria.
+- Không tuyên bố tmpfs runtime đã được chứng minh; hành vi Docker runtime của
+  tmpfs vẫn cần Owner authorization riêng.
+
+Kết luận checkpoint: `M07-A2 TMPFS HARNESS RECORDED — RUNTIME RETRY REQUIRES SEPARATE OWNER AUTHORIZATION`.
