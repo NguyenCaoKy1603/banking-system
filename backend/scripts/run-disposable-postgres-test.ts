@@ -3,14 +3,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  runDisposablePostgresTest,
-  sanitizeLogOutput,
+  runCliMain,
 } from "../src/database/disposableDatabaseGuard.js";
 
 export {
   type CanonicalSequenceDependencies,
   type CanonicalSequenceExecutionResult,
   type CanonicalSequenceStep,
+  type CliDispatcherDependencies,
+  type CliDispatchResult,
   type ContainerRemovalFunction,
   type CreatePoolFunction,
   type DisposablePoolClient,
@@ -23,9 +24,14 @@ export {
   type RunCommandWithOutputFunction,
   type RunnerExecutionResult,
   type RunnerLifecycleState,
+  CANONICAL_RUNTIME_TEST_PATH,
+  dispatchCliRun,
   executeCommandWithOutput,
+  isCanonicalRuntimePath,
+  isReservedCanonicalRuntimeCandidate,
   realDockerAdapter,
   runCanonicalEvidenceSequence,
+  runCliMain,
   runDisposablePostgresTest,
 } from "../src/database/disposableDatabaseGuard.js";
 
@@ -33,15 +39,7 @@ export {
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
 if (isMain) {
-  const testFiles = process.argv.slice(2).filter((value) => value.trim().length > 0);
-  runDisposablePostgresTest(testFiles, process.env, { processFacade: process }).then((result) => {
-    if (!result.success) {
-      if (result.error) console.error(sanitizeLogOutput(result.error.message));
-      if (result.cleanupError) console.error(sanitizeLogOutput(result.cleanupError.message));
-      process.exitCode = 1;
-    }
-  }).catch((err: unknown) => {
-    console.error(err instanceof Error ? sanitizeLogOutput(err.message) : "[REDACTED_ERROR]");
+  runCliMain(process.argv, process.env, { processFacade: process }).catch(() => {
     process.exitCode = 1;
   });
 }

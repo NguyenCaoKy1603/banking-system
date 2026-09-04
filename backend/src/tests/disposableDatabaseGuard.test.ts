@@ -11,6 +11,7 @@ import {
   type ProcessFacade,
   type DisposablePoolClient,
   type DisposableQueryResult,
+  type RunnerExecutionResult,
   DISPOSABLE_TIMEOUTS,
   type EvidencePhase,
   type ProcessInterruptionEmitter,
@@ -48,6 +49,11 @@ import {
   assertRuntimeDatabaseOwnership,
   type DockerAdapter,
   runCanonicalEvidenceSequence,
+  CANONICAL_RUNTIME_TEST_PATH,
+  dispatchCliRun,
+  isCanonicalRuntimePath,
+  isReservedCanonicalRuntimeCandidate,
+  runCliMain,
 } from "../database/disposableDatabaseGuard.js";
 
 
@@ -2473,4 +2479,284 @@ test("M07-A2R-FU-21: canonical DISPOSABLE_TEST_PHASE strips all inherited casing
 
   // Arbitrary secret discarded
   assert.equal(clean.AWS_SECRET_KEY, undefined);
+});
+
+// ============================================================================
+// M07-A2 CLI Entrypoint Dispatcher Remediation Tests (CLI-01 .. CLI-05)
+// ============================================================================
+
+const mockLegacySuccessResult: RunnerExecutionResult = {
+  success: true,
+  runId: "00000000000000000000000000000099",
+  databaseName: "banking_test_00000000000000000000000000000099",
+  lifecycleState: "COMPLETED",
+};
+
+test("M07-A2-CLI-01: canonical runtime target dispatches into canonical runner without calling legacy runner", async () => {
+  let canonicalCalls = 0;
+  let legacyCalls = 0;
+  let passedEnv: NodeJS.ProcessEnv | undefined;
+
+  const mockFacade: ProcessFacade = { exitCode: 0 };
+
+  const resSuccess = await dispatchCliRun(
+    ["node", "scripts/run-disposable-postgres-test.ts", CANONICAL_RUNTIME_TEST_PATH],
+    {
+      // Note: DATABASE_TEST_ADMIN_URL is purposely omitted to prove canonical sequence does not require it
+      NODE_ENV: "test",
+    },
+    {
+      processFacade: mockFacade,
+      canonicalRunnerFn: async (hostEnv) => {
+        canonicalCalls++;
+        passedEnv = hostEnv;
+        return {
+          success: true,
+          runId: "00000000000000000000000000000001",
+          databaseName: "banking_test_00000000000000000000000000000001",
+          completedSteps: ["1_VERIFY_LOCAL_IMAGE", "19_VALIDATE_COMPLETION"],
+        };
+      },
+      legacyRunnerFn: async () => {
+        legacyCalls++;
+        return mockLegacySuccessResult;
+      },
+    },
+  );
+
+  assert.equal(resSuccess.handled, "CANONICAL");
+  assert.equal(resSuccess.success, true);
+  assert.equal(canonicalCalls, 1);
+  assert.equal(legacyCalls, 0);
+  assert.equal(mockFacade.exitCode, 0);
+  assert.equal(passedEnv?.NODE_ENV, "test");
+  assert.equal(passedEnv?.DATABASE_TEST_ADMIN_URL, undefined);
+
+  // Failure path
+  const mockFailFacade: ProcessFacade = { exitCode: 0 };
+  const resFail = await dispatchCliRun(
+    ["node", "scripts/run-disposable-postgres-test.ts", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: mockFailFacade,
+      canonicalRunnerFn: async () => {
+        return {
+          success: false,
+          runId: "00000000000000000000000000000002",
+          databaseName: "banking_test_00000000000000000000000000000002",
+          completedSteps: ["1_VERIFY_LOCAL_IMAGE"],
+          error: new Error("Canonical verification aborted"),
+        };
+      },
+      legacyRunnerFn: async () => {
+        legacyCalls++;
+        return mockLegacySuccessResult;
+      },
+    },
+  );
+
+  assert.equal(resFail.handled, "CANONICAL");
+  assert.equal(resFail.success, false);
+  assert.equal(resFail.error?.message, "Canonical verification aborted");
+  assert.equal(mockFailFacade.exitCode, 1);
+  assert.equal(legacyCalls, 0);
+});
+
+test("M07-A2-CLI-02: non-canonical path variants (whitespace, relative, Windows backslash, absolute, case variants, suffix) are rejected from canonical selection", async () => {
+  const rejectedVariants = [
+    " src/tests/disposableMigrationRuntime.test.ts",
+    "src/tests/disposableMigrationRuntime.test.ts ",
+    "./src/tests/disposableMigrationRuntime.test.ts",
+    "src\\tests\\disposableMigrationRuntime.test.ts",
+    ".\\src\\tests\\disposableMigrationRuntime.test.ts",
+    "C:/Projects/banking-system/backend/src/tests/disposableMigrationRuntime.test.ts",
+    "src/tests/../tests/disposableMigrationRuntime.test.ts",
+    "src/tests/DisposableMigrationRuntime.test.ts",
+    "SRC/TESTS/DISPOSABLEMIGRATIONRUNTIME.TEST.TS",
+    "src/tests/disposableMigrationRuntime.test.ts.bak",
+    "prefix_src/tests/disposableMigrationRuntime.test.ts",
+  ];
+
+  for (const variant of rejectedVariants) {
+    // 1. Predicate must reject variant as canonical and flag as reserved candidate
+    assert.equal(isCanonicalRuntimePath(variant), false, `Variant '${variant}' must not be recognized as canonical path`);
+    assert.equal(isReservedCanonicalRuntimeCandidate(variant), true, `Variant '${variant}' must be identified as reserved candidate`);
+
+    // 2. Dispatch must never invoke canonical runner or legacy runner for reserved variant
+    let canonicalCalls = 0;
+    let legacyCalls = 0;
+    const facade: ProcessFacade = { exitCode: 0 };
+
+    const res = await dispatchCliRun(
+      ["node", "scripts/run-disposable-postgres-test.ts", variant],
+      {},
+      {
+        processFacade: facade,
+        canonicalRunnerFn: async () => {
+          canonicalCalls++;
+          return {
+            success: true,
+            runId: "00000000000000000000000000000003",
+            databaseName: "banking_test_00000000000000000000000000000003",
+            completedSteps: ["19_VALIDATE_COMPLETION"],
+          };
+        },
+        legacyRunnerFn: async () => {
+          legacyCalls++;
+          return mockLegacySuccessResult;
+        },
+      },
+    );
+
+    assert.equal(canonicalCalls, 0, `Canonical runner must never be called for non-canonical variant '${variant}'`);
+    assert.equal(legacyCalls, 0, `Legacy runner must never be called for reserved variant '${variant}'`);
+    assert.equal(facade.exitCode, 1, `Process exitCode must be set to 1 for variant '${variant}'`);
+    assert.equal(res.handled, "REJECTED", `Reserved variant '${variant}' must be handled as REJECTED`);
+    assert.equal(res.success, false, `Reserved variant '${variant}' must return success=false`);
+    assert.ok(res.error, `Reserved variant '${variant}' must return an error`);
+    const sanitized = sanitizeLogOutput(res.error.message);
+    assert.doesNotMatch(sanitized, /password|secret/i);
+  }
+});
+
+test("M07-A2-CLI-03: multiple arguments containing canonical target fail closed without invoking any runner", async () => {
+  const multipleArgScenarios = [
+    ["node", "scripts/run-disposable-postgres-test.ts", CANONICAL_RUNTIME_TEST_PATH, "src/tests/registrationRelational.test.ts"],
+    ["node", "scripts/run-disposable-postgres-test.ts", "src/tests/workerOutbox.test.ts", CANONICAL_RUNTIME_TEST_PATH],
+    ["node", "scripts/run-disposable-postgres-test.ts", "--flag", CANONICAL_RUNTIME_TEST_PATH],
+    ["node", "scripts/run-disposable-postgres-test.ts", CANONICAL_RUNTIME_TEST_PATH, "--extra"],
+  ];
+
+  for (const argv of multipleArgScenarios) {
+    let canonicalCalls = 0;
+    let legacyCalls = 0;
+    const facade: ProcessFacade = { exitCode: 0 };
+
+    const res = await dispatchCliRun(
+      argv,
+      {},
+      {
+        processFacade: facade,
+        canonicalRunnerFn: async () => {
+          canonicalCalls++;
+          return {
+            success: true,
+            runId: "00000000000000000000000000000004",
+            databaseName: "banking_test_00000000000000000000000000000004",
+            completedSteps: [],
+          };
+        },
+        legacyRunnerFn: async () => {
+          legacyCalls++;
+          return mockLegacySuccessResult;
+        },
+      },
+    );
+
+    assert.equal(res.handled, "REJECTED");
+    assert.equal(res.success, false);
+    assert.equal(canonicalCalls, 0, `Canonical runner must not be called for multiple args: ${argv.join(" ")}`);
+    assert.equal(legacyCalls, 0, `Legacy runner must not be called for multiple args: ${argv.join(" ")}`);
+    assert.equal(facade.exitCode, 1, `Process exitCode must be set to 1 for multiple args: ${argv.join(" ")}`);
+    assert.match(res.error?.message ?? "", /cannot be combined/i);
+  }
+});
+
+test("M07-A2-CLI-04: legacy/non-canonical targets dispatch into runDisposablePostgresTest without calling canonical runner", async () => {
+  let canonicalCalls = 0;
+  let legacyCalls = 0;
+  let passedTestFiles: readonly string[] = [];
+
+  const facade: ProcessFacade = { exitCode: 0 };
+
+  const res = await dispatchCliRun(
+    ["node", "scripts/run-disposable-postgres-test.ts", "src/tests/registrationRelational.test.ts"],
+    { DATABASE_TEST_ADMIN_URL: "postgresql://postgres:secret@localhost:5432/postgres" },
+    {
+      processFacade: facade,
+      canonicalRunnerFn: async () => {
+        canonicalCalls++;
+        return {
+          success: true,
+          runId: "00000000000000000000000000000005",
+          databaseName: "banking_test_00000000000000000000000000000005",
+          completedSteps: [],
+        };
+      },
+      legacyRunnerFn: async (testFiles) => {
+        legacyCalls++;
+        passedTestFiles = testFiles;
+        return mockLegacySuccessResult;
+      },
+    },
+  );
+
+  assert.equal(res.handled, "LEGACY");
+  assert.equal(res.success, true);
+  assert.equal(canonicalCalls, 0);
+  assert.equal(legacyCalls, 1);
+  assert.deepEqual(passedTestFiles, ["src/tests/registrationRelational.test.ts"]);
+  assert.equal(facade.exitCode, 0);
+});
+
+test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam runCliMain handles failure, redacting error output", async () => {
+  // 1. Verify side-effect-free module import
+  const initialExitCode = process.exitCode;
+  const runnerModulePath = "../../scripts/run-disposable-postgres-test.js";
+  const runnerModule = await import(runnerModulePath);
+  assert.equal(process.exitCode, initialExitCode, "Importing runner module must not mutate process.exitCode");
+  assert.equal(typeof runnerModule.runCliMain, "function", "runner script must export runCliMain");
+  assert.equal(typeof runnerModule.dispatchCliRun, "function", "runner script must export dispatchCliRun");
+  assert.equal(typeof runnerModule.isCanonicalRuntimePath, "function", "runner script must export isCanonicalRuntimePath");
+  assert.equal(typeof runnerModule.isReservedCanonicalRuntimeCandidate, "function", "runner script must export isReservedCanonicalRuntimeCandidate");
+  assert.equal(runnerModule.CANONICAL_RUNTIME_TEST_PATH, "src/tests/disposableMigrationRuntime.test.ts");
+
+  // 2. Canonical sequence failure sets exitCode=1, redacts sensitive error messages, and does not fallback or retry
+  let canonicalCalls = 0;
+  let legacyCalls = 0;
+  const loggedErrors: string[] = [];
+
+  const facade: ProcessFacade = { exitCode: 0 };
+  const sensitiveError = new Error(
+    "Connection failed postgresql://postgres:super_secret_password@127.0.0.1:54321/banking_test_00000000000000000000000000000007 with password = test_password_123",
+  );
+
+  const res = await runnerModule.runCliMain(
+    ["node", "scripts/run-disposable-postgres-test.ts", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: facade,
+      logErrorFn: (msg: string) => {
+        loggedErrors.push(msg);
+      },
+      canonicalRunnerFn: async () => {
+        canonicalCalls++;
+        return {
+          success: false,
+          runId: "00000000000000000000000000000007",
+          databaseName: "banking_test_00000000000000000000000000000007",
+          completedSteps: ["1_VERIFY_LOCAL_IMAGE"],
+          error: sensitiveError,
+        };
+      },
+      legacyRunnerFn: async () => {
+        legacyCalls++;
+        return mockLegacySuccessResult;
+      },
+    },
+  );
+
+  assert.equal(res.handled, "CANONICAL");
+  assert.equal(res.success, false);
+  assert.equal(canonicalCalls, 1, "Canonical runner must be called exactly once");
+  assert.equal(legacyCalls, 0, "Legacy runner must never be called as fallback or retry on canonical failure");
+  assert.equal(facade.exitCode, 1, "Production main seam must set process facade exitCode to 1 on failure");
+  assert.ok(res.error);
+
+  assert.ok(loggedErrors.length > 0, "runCliMain must log the redacted error");
+  const combinedLog = loggedErrors.join("\n");
+  assert.doesNotMatch(combinedLog, /super_secret_password/);
+  assert.doesNotMatch(combinedLog, /test_password_123/);
+  assert.match(combinedLog, /\[REDACTED_URL\]/);
+  assert.match(combinedLog, /\[REDACTED_SECRET\]/);
 });

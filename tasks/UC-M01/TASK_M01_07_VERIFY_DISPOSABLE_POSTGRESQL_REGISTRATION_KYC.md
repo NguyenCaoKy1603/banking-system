@@ -1,8 +1,8 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 COMMAND RECONCILED — AWAITING RUNTIME AUTHORIZATION
-- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION ONLY
-- An toàn thực thi database: BLOCKED — M07-A2 RUNTIME NOT YET AUTHORIZED
+- Trạng thái: IN_PROGRESS — M07-A2 CLI WIRING VERIFIED — AWAITING CHECKPOINT COMMIT
+- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
@@ -162,6 +162,40 @@ Giữ nguyên chưa hoàn thành và tiếp tục là ranh giới bắt buộc:
 4. Post-drop `pg_database` catalog verification trên PostgreSQL disposable thật.
 5. Ephemeral container identity, loopback binding, và không-volume mount verification từ Docker daemon thật.
 6. Ownership marker comment trong `pg_shdescription` và cleanup xác nhận trên PostgreSQL thật.
+
+## OWNER APPROVAL — M07-A2 CLI WIRING REMEDIATION ACCEPTED
+
+- Ngày phê duyệt: 2026-09-04
+- Baseline HEAD: `5b985badb4d187955eeaf49664b78b12ace7677a`
+- Quyết định Owner: Chấp thuận kết quả hiệu chỉnh M07-A2 CLI wiring remediation trong phạm vi unit/static evidence.
+- Danh mục 4 file checkpoint M07-A2 CLI wiring:
+  1. `backend/scripts/run-disposable-postgres-test.ts`
+  2. `backend/src/database/disposableDatabaseGuard.ts`
+  3. `backend/src/tests/disposableDatabaseGuard.test.ts`
+  4. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`
+- Quy tắc điều phối 4 nhánh (Production Dispatch Trace):
+  - Exact single canonical argument (`src/tests/disposableMigrationRuntime.test.ts`) → chạy canonical sequence (`runCanonicalEvidenceSequence`).
+  - Exact canonical kết hợp với bất kỳ argument nào khác → bị từ chối fail-closed trước cả hai runner (`handled: "REJECTED"`, `exitCode = 1`).
+  - Reserved canonical alias hoặc non-exact candidate (`isReservedCanonicalRuntimeCandidate`) → bị từ chối fail-closed trước cả hai runner (`handled: "REJECTED"`, `exitCode = 1`, `canonicalCalls = 0`, `legacyCalls = 0`).
+  - Chỉ các test target legacy hợp lệ còn lại mới chuyển sang legacy runner (`runDisposablePostgresTest`).
+- Ma trận 5 unit tests hiệu chỉnh (`M07-A2-CLI-01` .. `M07-A2-CLI-05`):
+  - `M07-A2-CLI-01`: Exact single canonical target điều phối canonical runner đúng 1 lần, 0 legacy runner calls.
+  - `M07-A2-CLI-02`: Đóng documented alias-bypass trong dispatch contract đã kiểm thử trên 11 biến thể (whitespace, relative `./` và `.\`, Windows backslash `\`, absolute path, `..`, case variants, prefix, suffix); xác minh `isCanonicalRuntimePath = false`, `isReservedCanonicalRuntimeCandidate = true`, `canonicalCalls = 0`, `legacyCalls = 0`, `facade.exitCode = 1`, `handled = "REJECTED"`, thông điệp lỗi được sanitize.
+  - `M07-A2-CLI-03`: Exact canonical kết hợp đối số bổ sung fail-closed an toàn (`handled = "REJECTED"`, `exitCode = 1`, 0 runner calls).
+  - `M07-A2-CLI-04`: Genuine legacy test target điều phối legacy runner đúng 1 lần (`legacyCalls = 1`, 0 canonical calls).
+  - `M07-A2-CLI-05`: Production main seam (`runCliMain`), runner import an toàn side-effect-free, xuất khẩu `isReservedCanonicalRuntimeCandidate`, redaction của error output và không retry/fallback khi canonical failure.
+- Kết quả kiểm thử và Quality Gates được chấp thuận:
+  - Typecheck: PASS (`npm run typecheck`, 0 lỗi, 0 prohibited bypasses: 0 `any`, 0 `as any`, 0 `as unknown as`, 0 `as never`, 0 `@ts-ignore`, 0 `@ts-expect-error`).
+  - Build: PASS (`npm run build`, biên dịch `dist/` thành công).
+  - Targeted unit suite: `81/81 PASS`, `0 fail`, `0 cancelled`, `0 skipped` (`node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`, ~372ms).
+- Kiểm tra tính toàn vẹn file đóng băng (Frozen runtime test):
+  - File: `backend/src/tests/disposableMigrationRuntime.test.ts`
+  - SHA-256: `890511a6d95a75b59cda04ebac737379f6c3c55c2e8003d3b7844e6b6834eb04` (khớp 100% baseline).
+- Ranh giới an toàn và ghi nhận độ lệch (Evidence Boundary & Ledger):
+  - Tuân thủ ranh giới NO-DATABASE trong phiên: không có bất kỳ bằng chứng runtime hay database thật nào được tạo ra.
+  - Độ lệch read-only Docker trong phiên trước (`docker ps -a` kiểm tra rò rỉ container sau failure) đã được ghi nhận; tuân thủ ranh giới NO-DATABASE trong phiên: không chạy lệnh Docker nào trong toàn bộ phiên correction hiện tại.
+  - Việc chạy lại M07-A2 runtime (runtime retry) bắt buộc phải có chỉ thị riêng từ Owner (`M07-A2 RUNTIME RETRY NOT AUTHORIZED`).
+  - Task M01-07 và Use Case UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**.
 
 ## 1. Repository verification và quyền phiên này
 
@@ -1607,5 +1641,126 @@ Parent runner điều phối luồng thực thi tuần tự gồm 19 bước:
   node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/disposableMigrationRuntime.test.ts
   ```
 - **Working Directory**: `C:\Projects\banking-system\backend`
-- **Xác nhận chưa chạy**: Lệnh runtime trên chưa được chạy.
-- **Trạng thái cấp quyền**: Checkpoint M07-A2 vẫn CHƯA ĐƯỢC CẤP QUYỀN (NOT YET AUTHORIZED) trong lượt cập nhật tài liệu này.
+- **Xác nhận chưa chạy**: Lệnh runtime trên chưa được chạy (trước lượt cấp quyền này).
+- **Trạng thái cấp quyền**: Checkpoint M07-A2 đã được Owner cấp quyền thực thi đúng 1 lần tại phiên hiện tại.
+
+## 33. M07-A2 RUNTIME EXECUTION EVIDENCE
+
+### 33.1 Bối cảnh Thực thi và Thông số Lệnh
+- **Baseline HEAD**: `5b985badb4d187955eeaf49664b78b12ace7677a`
+- **Thời điểm thực thi**: 2026-09-04 19:23:40 +07:00
+- **Lệnh thực thi duy nhất**:
+  ```powershell
+  node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/disposableMigrationRuntime.test.ts
+  ```
+- **Working Directory**: `C:\Projects\banking-system\backend`
+- **Docker Context**: `desktop-linux` (endpoint class: `local-npipe`, `npipe:////./pipe/dockerDesktopLinuxEngine`).
+- **Số lần thực thi**: Đúng 1 lần duy nhất (tuyệt đối không retry).
+
+### 33.2 Kết quả Tổng thể và Phân tích Lỗi (Failure Analysis)
+- **Overall Exit Code**: `1` (FAIL)
+- **Thời gian thực thi (Duration)**: ~745ms (fail-closed lập tức).
+- **Thông điệp đầu ra (Redacted Output)**:
+  `DATABASE_TEST_ADMIN_URL is required. Point it at a local postgres/template1 database; never use the preview database.`
+- **Phân tích nguyên nhân gốc rễ (Root Cause Analysis)**:
+  - File CLI entrypoint `backend/scripts/run-disposable-postgres-test.ts` (được đóng băng byte-for-byte trong Checkpoint M07-A2R) hiện tại vẫn gọi hàm điều phối cũ `runDisposablePostgresTest(testFiles, process.env, ...)` (thiết kế từ M07-A1).
+  - Hàm `runDisposablePostgresTest` yêu cầu biến môi trường `DATABASE_TEST_ADMIN_URL` để kết nối vào maintenance database hiện có từ bên ngoài.
+  - Trong khi đó, toàn bộ harness tạo ephemeral Docker container tự động và chạy chuỗi kiểm thử chuẩn mực (`runCanonicalEvidenceSequence`) đã được triển khai và unit-test đầy đủ trong `backend/src/database/disposableDatabaseGuard.ts`, nhưng chưa được wire vào CLI entrypoint `run-disposable-postgres-test.ts` khi truyền `src/tests/disposableMigrationRuntime.test.ts`.
+  - Kết quả: Runner fail-closed ngay lập tức tại bước kiểm tra cấu hình tiền thực thi, không mở kết nối, không khởi chạy container.
+
+### 33.3 Trạng thái Từng Phase và Ranh giới An toàn
+- **Container Creation / Ephemeral Binding**: Không khởi tạo (bị chặn trước khi gọi Docker).
+- **Target Database Creation & Ownership Marker**: Không tạo.
+- **Migration Runs (Run 1 / Rerun 2)**: Chưa chạy.
+- **Checksum Mismatch / Restoration**: Chưa chạy.
+- **Cleanup & Post-Drop Catalog**: Không có tài nguyên rò rỉ.
+- **Leftover M01 Container Count**: **0 container** (đã xác thực qua `docker ps -a` ngay sau khi tiến trình kết thúc).
+- **Tính toàn vẹn Git**: Repository hoàn toàn sạch (0 staged, 0 untracked).
+
+### 33.4 Trạng thái Checkpoint
+- Checkpoint M07-A2: **BLOCKED — RUNTIME CLI ENTRYPOINT WIRING GAP**
+- Không đánh dấu bất kỳ acceptance criteria runtime nào là PASS.
+- Dừng toàn bộ tiến trình, chờ quyết định và allowlist khắc phục từ Owner.
+
+## 34. M07-A2 CLI ENTRYPOINT WIRING REMEDIATION EVIDENCE
+
+### 34.1 Phân tích Nguyên nhân Gốc và Sơ đồ Điều phối Bốn Nhánh (Exact 4-Branch Dispatch Policy)
+- **Nguyên nhân gốc (Root Cause)**: File CLI entrypoint `backend/scripts/run-disposable-postgres-test.ts` trước đó gọi vô điều kiện hàm legacy `runDisposablePostgresTest(testFiles, process.env, ...)`. Hàm legacy này bắt buộc `DATABASE_TEST_ADMIN_URL`, dẫn đến việc lệnh canonical M07-A2 (`node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/disposableMigrationRuntime.test.ts`) bị fail-closed ngay tại tiền điều kiện khi không có external admin URL.
+- **Nguy cơ Bypass Bí danh (Alias Bypass Risk)**: Nếu chỉ dùng `isCanonicalRuntimePath = (arg === CANONICAL_RUNTIME_TEST_PATH)` mà cho các argument khác rơi vào legacy branch, thì trên Windows hoặc POSIX, các biến thể đường dẫn như `src\tests\disposableMigrationRuntime.test.ts`, `./src/tests/...`, `.\src\tests\...`, absolute path hoặc case variant vẫn có thể trỏ tới cùng file vật lý runtime test, dẫn đến việc bypass canonical container/ownership/evidence sequence và rơi vào legacy runner.
+- **Sơ đồ Điều phối Bốn Nhánh Phân biệt (4-Branch Dispatch Order)**:
+```text
+Exact single canonical ("src/tests/disposableMigrationRuntime.test.ts")
+  │
+  ├── [Branch 1: Single exact canonical argument]
+  │   └──► runCanonicalEvidenceSequence() [handled: "CANONICAL"]
+  │
+  ├── [Branch 2: Exact canonical + extra arguments]
+  │   └──► Fail-closed lập tức [handled: "REJECTED", exitCode = 1, 0 runners called]
+  │
+  ├── [Branch 3: Reserved canonical alias / non-exact candidate (isReservedCanonicalRuntimeCandidate)]
+  │   └──► Fail-closed lập tức [handled: "REJECTED", exitCode = 1, 0 runners called]
+  │
+  └── [Branch 4: Genuine legacy targets (không chứa canonical target hay alias)]
+      └──► runDisposablePostgresTest() [handled: "LEGACY"]
+```
+
+- **Hợp đồng Điều phối và Helper Phát hiện Bí danh**:
+  - Hằng số canonical duy nhất: `CANONICAL_RUNTIME_TEST_PATH = "src/tests/disposableMigrationRuntime.test.ts"`.
+  - Hàm kiểm tra canonical chính xác: `isCanonicalRuntimePath(testPath) = (testPath === CANONICAL_RUNTIME_TEST_PATH)`. Exact equality là điều kiện DUY NHẤT để cấp quyền canonical.
+  - Helper nhận diện bí danh reserved candidate: `isReservedCanonicalRuntimeCandidate(arg)` chuẩn hoá gạch chéo, khoảng trắng và chữ hoa/thường để nhận diện mọi argument chứa `disposablemigrationruntime.test.ts` hoặc `disposablemigrationruntime`. Helper này CHỈ DÙNG ĐỂ TỪ CHỐI (fail-closed), tuyệt đối không dùng để cấp quyền canonical.
+  - Production main seam: Export hàm `runCliMain(argv, env, deps)` và để khối `if (isMain)` trong `scripts/run-disposable-postgres-test.ts` gọi trực tiếp seam này. Script import hoàn toàn side-effect-free.
+
+### 34.2 Bảng Phân loại Đầu vào và Xử lý Bốn Nhánh (Accepted vs Rejected Path Matrix)
+
+| Đầu vào (CLI Argument) | Nhánh điều phối | Phân loại | Kết quả xử lý | Gọi Canonical Runner | Gọi Legacy Runner | Exit Code |
+| :--- | :--- | :--- | :--- | :---: | :---: | :---: |
+| `src/tests/disposableMigrationRuntime.test.ts` | Branch 1 | Single exact canonical | APPROVED FOR CANONICAL SEQUENCE | 1 | 0 | 0 (success) / 1 (fail) |
+| `src/tests/disposableMigrationRuntime.test.ts` + extra args | Branch 2 | Exact canonical combined with extra arguments | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| ` src/tests/disposableMigrationRuntime.test.ts` (leading space) | Branch 3 | Leading whitespace alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `src/tests/disposableMigrationRuntime.test.ts ` (trailing space) | Branch 3 | Trailing whitespace alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `./src/tests/disposableMigrationRuntime.test.ts` | Branch 3 | Relative POSIX prefix alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `src\tests\disposableMigrationRuntime.test.ts` | Branch 3 | Windows backslash alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `.\src\tests\disposableMigrationRuntime.test.ts` | Branch 3 | Windows relative backslash alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `C:/Projects/.../disposableMigrationRuntime.test.ts` | Branch 3 | Drive-qualified absolute path alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `src/tests/../tests/disposableMigrationRuntime.test.ts` | Branch 3 | Path traversal (`..`) alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `src/tests/DisposableMigrationRuntime.test.ts` | Branch 3 | Mixed-case alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `SRC/TESTS/DISPOSABLEMIGRATIONRUNTIME.TEST.TS` | Branch 3 | Uppercase alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `src/tests/disposableMigrationRuntime.test.ts.bak` | Branch 3 | Suffix variant alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `prefix_src/tests/disposableMigrationRuntime.test.ts` | Branch 3 | Prefix variant alias | REJECTED BEFORE BOTH RUNNERS | 0 | 0 | 1 |
+| `src/tests/registrationRelational.test.ts` | Branch 4 | Genuine legacy test target | ALLOWED LEGACY DISPATCH | 0 | 1 | Theo kết quả legacy runner |
+
+### 34.3 Bằng chứng Ma trận 5 Unit Tests Hiệu chỉnh (M07-A2-CLI-01 .. M07-A2-CLI-05)
+- `M07-A2-CLI-01`: Exact single canonical argument (`src/tests/disposableMigrationRuntime.test.ts`) điều phối canonical runner đúng 1 lần (`canonicalCalls = 1`), legacy runner 0 lần (`legacyCalls = 0`), không cần và không đọc `DATABASE_TEST_ADMIN_URL`, exit code 0 khi thành công và 1 khi thất bại.
+- `M07-A2-CLI-02`: Boundary test xác minh với 11 biến thể non-canonical (whitespace leading/trailing, relative `./` và `.\`, Windows backslash `\`, absolute path, path chứa `..`, case variants, prefix, suffix):
+  - `isCanonicalRuntimePath(variant) === false`
+  - `isReservedCanonicalRuntimeCandidate(variant) === true`
+  - `canonicalCalls === 0` (không gọi canonical runner)
+  - `legacyCalls === 0` (đóng documented alias-bypass trong dispatch contract đã kiểm thử)
+  - `facade.exitCode === 1`
+  - `res.handled === "REJECTED"`
+  - `res.success === false`
+  - Thông điệp lỗi được sanitize an toàn, không chứa thông tin nhạy cảm.
+- `M07-A2-CLI-03`: Exact canonical argument đi cùng bất kỳ argument/path bổ sung nào đều fail-closed trước mọi runner call (`canonicalCalls = 0`, `legacyCalls = 0`, `facade.exitCode = 1`, `res.handled === "REJECTED"`, message `/cannot be combined/i`).
+- `M07-A2-CLI-04`: Genuine legacy allowlisted target (`src/tests/registrationRelational.test.ts`) điều phối vào legacy runner đúng 1 lần (`legacyCalls = 1`, `canonicalCalls = 0`, `res.handled === "LEGACY"`).
+- `M07-A2-CLI-05`: Import runner script không tạo side effect; xuất khẩu đầy đủ `runCliMain`, `dispatchCliRun`, `isCanonicalRuntimePath`, `isReservedCanonicalRuntimeCandidate`, `CANONICAL_RUNTIME_TEST_PATH`; gọi exported production main seam `runCliMain` với injected dependencies; canonical failure đặt `facade.exitCode = 1`; không fallback, không retry (`legacyCalls = 0`); thông tin nhạy cảm trong error output được redact đầy đủ (`[REDACTED_URL]`, `[REDACTED_SECRET]`).
+
+### 34.4 Đối chiếu Docker Command Ledger
+- **Lệnh trong phiên remediation trước**: Lệnh `docker ps -a --filter "name=banking_test_container" --format "{{.ID}} {{.Names}} {{.Status}}"` đã được chạy dưới dạng read-only để xác nhận không còn container rò rỉ sau runtime attempt bị lỗi. Đây là một read-only process-boundary deviation. Kết quả xác nhận đúng 0 container, hoàn toàn không có Docker mutation.
+- **Lệnh trong các phiên follow-up**: Tuân thủ ranh giới NO-DATABASE trong phiên: không chạy bất kỳ lệnh Docker nào (kể cả read-only); đúng 0 process Docker được khởi tạo.
+
+### 34.5 Phân định Timeline Git
+- **Pre-remediation baseline**: Tại HEAD commit `5b985badb4d187955eeaf49664b78b12ace7677a`, chỉ có đúng 1 file modified là `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md` (ghi nhận bằng chứng Section 33 của lần chạy runtime thất bại). Cached area hoàn toàn sạch.
+- **Post-remediation state**: Đúng 4 file trong fixed allowlist được chỉnh sửa (`backend/scripts/run-disposable-postgres-test.ts`, `backend/src/database/disposableDatabaseGuard.ts`, `backend/src/tests/disposableDatabaseGuard.test.ts`, `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`). Cached area hoàn toàn sạch, đúng 0 untracked files.
+
+### 34.6 Kết quả Quality Gates
+- **Typecheck Gate**: `npm run typecheck` trong `backend/` -> **PASS** (0 lỗi TypeScript, 0 prohibited bypasses: 0 `any`, 0 `as any`, 0 `as unknown as`, 0 `as never`, 0 `@ts-ignore`, 0 `@ts-expect-error`).
+- **Build Gate**: `npm run build` (`tsc -p tsconfig.build.json`) trong `backend/` -> **PASS** (0 lỗi biên dịch, không vi phạm `rootDir: "src"`).
+- **Targeted Unit Test Gate**: `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts` -> **81/81 PASS** (0 fail, 0 cancelled, 0 skipped, thời gian thực thi ~518ms).
+- **Git Whitespace Gate**: `git diff --check` -> **PASS** (0 lỗi format, 0 trailing whitespace).
+
+### 34.7 Khẳng định Ranh giới Không Chạy Database và Trạng thái Hiện tại
+- Tuân thủ ranh giới NO-DATABASE trong phiên: không chạy Docker CLI/daemon, PostgreSQL container/instance, TCP socket hay migration thật trong toàn bộ phiên remediation và follow-up.
+- Không tự ý retry lệnh runtime M07-A2.
+- File đóng băng `backend/src/tests/disposableMigrationRuntime.test.ts` được bảo toàn toàn vẹn byte-for-byte (SHA-256: `890511a6d95a75b59cda04ebac737379f6c3c55c2e8003d3b7844e6b6834eb04`).
+- Checkpoint M07-A2 runtime tiếp tục ở trạng thái **CHƯA ĐƯỢC CẤP QUYỀN (NOT AUTHORIZED)** cho lần chạy lại.
+- Task M01-07 và Use Case UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**, sẵn sàng để Owner tái thẩm định (re-review).

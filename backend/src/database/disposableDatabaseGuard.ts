@@ -1846,3 +1846,188 @@ export async function runCanonicalEvidenceSequence(
     completedSteps,
   };
 }
+
+export const CANONICAL_RUNTIME_TEST_PATH = "src/tests/disposableMigrationRuntime.test.ts";
+
+export function isCanonicalRuntimePath(testPath: string): boolean {
+  return testPath === CANONICAL_RUNTIME_TEST_PATH;
+}
+
+export function isReservedCanonicalRuntimeCandidate(arg: string): boolean {
+  const normalized = arg.trim().replace(/\\/g, "/").toLowerCase();
+  return (
+    normalized.includes("disposablemigrationruntime.test.ts") ||
+    normalized.includes("disposablemigrationruntime")
+  );
+}
+
+export interface CliDispatcherDependencies {
+  readonly processFacade?: ProcessFacade;
+  readonly canonicalRunnerFn?: (
+    hostEnv?: NodeJS.ProcessEnv,
+    deps?: CanonicalSequenceDependencies,
+  ) => Promise<CanonicalSequenceExecutionResult>;
+  readonly legacyRunnerFn?: (
+    testFiles: readonly string[],
+    env?: NodeJS.ProcessEnv,
+    deps?: DisposableRunnerDependencies,
+  ) => Promise<RunnerExecutionResult>;
+  readonly canonicalDeps?: CanonicalSequenceDependencies;
+  readonly legacyDeps?: DisposableRunnerDependencies;
+  readonly logErrorFn?: (message: string) => void;
+}
+
+export interface CliDispatchResult {
+  readonly handled: "CANONICAL" | "LEGACY" | "REJECTED";
+  readonly success: boolean;
+  readonly error?: Error;
+  readonly cleanupError?: Error;
+}
+
+export async function dispatchCliRun(
+  argv: readonly string[],
+  hostEnv: NodeJS.ProcessEnv = process.env,
+  deps: CliDispatcherDependencies = {},
+): Promise<CliDispatchResult> {
+  const testFiles = argv.slice(2);
+  const facade = deps.processFacade;
+
+  const hasCanonical = testFiles.some(isCanonicalRuntimePath);
+
+  // Branch 1 & 2: Exact canonical target present
+  if (hasCanonical) {
+    if (testFiles.length !== 1) {
+      // Branch 2: Exact canonical combined with other arguments -> fail-closed before both runners
+      const err = new Error(
+        `Canonical runtime test target '${CANONICAL_RUNTIME_TEST_PATH}' cannot be combined with additional arguments.`,
+      );
+      if (facade) {
+        facade.exitCode = 1;
+      }
+      return {
+        handled: "REJECTED",
+        success: false,
+        error: err,
+      };
+    }
+
+    // Branch 1: Exact single canonical target -> execute canonical sequence
+    const runner = deps.canonicalRunnerFn ?? runCanonicalEvidenceSequence;
+    const canonicalDeps: CanonicalSequenceDependencies = {
+      processFacade: facade,
+      ...(deps.canonicalDeps ?? {}),
+    };
+
+    try {
+      const result = await runner(hostEnv, canonicalDeps);
+      if (!result.success) {
+        if (facade) {
+          facade.exitCode = 1;
+        }
+        return {
+          handled: "CANONICAL",
+          success: false,
+          error: result.error,
+          cleanupError: result.cleanupError,
+        };
+      }
+      return {
+        handled: "CANONICAL",
+        success: true,
+      };
+    } catch (err) {
+      if (facade) {
+        facade.exitCode = 1;
+      }
+      const caughtError = err instanceof Error ? err : new Error(String(err));
+      return {
+        handled: "CANONICAL",
+        success: false,
+        error: caughtError,
+      };
+    }
+  }
+
+  // Branch 3: Any non-exact argument that has indication of being canonical runtime target or alias -> fail-closed before both runners
+  const reservedCandidate = testFiles.find(isReservedCanonicalRuntimeCandidate);
+  if (reservedCandidate) {
+    const err = new Error(
+      `Non-exact canonical runtime alias '${sanitizeLogOutput(reservedCandidate)}' is rejected; only exact '${CANONICAL_RUNTIME_TEST_PATH}' may execute canonical evidence sequence.`,
+    );
+    if (facade) {
+      facade.exitCode = 1;
+    }
+    return {
+      handled: "REJECTED",
+      success: false,
+      error: err,
+    };
+  }
+
+  // Branch 4: Genuine legacy targets -> legacy runner
+  const legacyRunner = deps.legacyRunnerFn ?? runDisposablePostgresTest;
+  const legacyDeps: DisposableRunnerDependencies = {
+    processFacade: facade,
+    ...(deps.legacyDeps ?? {}),
+  };
+
+  try {
+    const result = await legacyRunner(testFiles, hostEnv, legacyDeps);
+    if (!result.success) {
+      if (facade) {
+        facade.exitCode = 1;
+      }
+      return {
+        handled: "LEGACY",
+        success: false,
+        error: result.error,
+        cleanupError: result.cleanupError,
+      };
+    }
+    return {
+      handled: "LEGACY",
+      success: true,
+    };
+  } catch (err) {
+    if (facade) {
+      facade.exitCode = 1;
+    }
+    const caughtError = err instanceof Error ? err : new Error(String(err));
+    return {
+      handled: "LEGACY",
+      success: false,
+      error: caughtError,
+    };
+  }
+}
+
+export async function runCliMain(
+  argv: readonly string[] = process.argv,
+  hostEnv: NodeJS.ProcessEnv = process.env,
+  deps: CliDispatcherDependencies = {},
+): Promise<CliDispatchResult> {
+  const facade = deps.processFacade ?? process;
+  const logError = deps.logErrorFn ?? console.error;
+
+  try {
+    const result = await dispatchCliRun(argv, hostEnv, { ...deps, processFacade: facade });
+    if (!result.success) {
+      if (result.error) {
+        logError(sanitizeLogOutput(result.error.message));
+      }
+      if (result.cleanupError) {
+        logError(sanitizeLogOutput(result.cleanupError.message));
+      }
+      facade.exitCode = 1;
+    }
+    return result;
+  } catch (err: unknown) {
+    logError(err instanceof Error ? sanitizeLogOutput(err.message) : "[REDACTED_ERROR]");
+    facade.exitCode = 1;
+    return {
+      handled: "REJECTED",
+      success: false,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+  }
+}
