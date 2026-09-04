@@ -8,16 +8,24 @@ import {
 } from "../src/database/disposableDatabaseGuard.js";
 
 export {
+  type CanonicalSequenceDependencies,
+  type CanonicalSequenceExecutionResult,
+  type CanonicalSequenceStep,
   type ContainerRemovalFunction,
   type CreatePoolFunction,
   type DisposablePoolClient,
   type DisposableQueryResult,
   type DisposableRunnerDependencies,
+  type DockerAdapter,
   type ProcessFacade,
   type ProcessInterruptionEmitter,
   type RunCommandFunction,
+  type RunCommandWithOutputFunction,
   type RunnerExecutionResult,
   type RunnerLifecycleState,
+  executeCommandWithOutput,
+  realDockerAdapter,
+  runCanonicalEvidenceSequence,
   runDisposablePostgresTest,
 } from "../src/database/disposableDatabaseGuard.js";
 

@@ -1,3 +1,4 @@
+import net from "node:net";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -63,6 +64,7 @@ export const APPROVED_TEST_PATHS = [
   "src/tests/migrationFingerprint.test.ts",
   "src/tests/registrationRelational.test.ts",
   "src/tests/kycRelational.test.ts",
+  "src/tests/disposableMigrationRuntime.test.ts",
 ] as const;
 
 export type ApprovedTestPath = (typeof APPROVED_TEST_PATHS)[number];
@@ -422,7 +424,7 @@ export interface ProcessInterruptionEmitter {
 }
 
 export interface ProcessFacade {
-  exitCode?: number;
+  exitCode?: number | null | string;
 }
 
 export type ContainerRemovalFunction = (
@@ -885,4 +887,962 @@ export async function runDisposablePostgresTest(
       lifecycleState: "COMPLETED",
     };
   }
+}
+
+
+// ============================================================================
+// M07-A2R Evidence Harness & Verification Helpers
+// ============================================================================
+
+export const AUTHORIZED_EVIDENCE_PHASES = [
+  "INITIAL_HISTORY",
+  "RERUN_HISTORY",
+  "INJECT_CHECKSUM_MISMATCH",
+  "RESTORE_CHECKSUM",
+] as const;
+export type EvidencePhase = (typeof AUTHORIZED_EVIDENCE_PHASES)[number];
+
+export function assertEvidencePhase(phase: string | undefined): EvidencePhase {
+  if (!phase || !AUTHORIZED_EVIDENCE_PHASES.includes(phase as EvidencePhase)) {
+    throw new Error(`Invalid or missing evidence phase '${phase}'. Must be one of: ${AUTHORIZED_EVIDENCE_PHASES.join(", ")}`);
+  }
+  return phase as EvidencePhase;
+}
+
+export function buildDockerImageInspectArgs(image = "postgres:16"): readonly string[] {
+  return ["image", "inspect", image];
+}
+
+export interface DockerRunOptions {
+  readonly containerName: string;
+  readonly runId: string;
+  readonly password?: string;
+  readonly image?: string;
+}
+
+export function buildDockerRunArgs(options: DockerRunOptions): readonly string[] {
+  if (!CONTAINER_NAME_PATTERN.test(options.containerName)) {
+    throw new Error(`Invalid container name: '${options.containerName}'. Must match ${CONTAINER_NAME_PATTERN.source}`);
+  }
+  if (!RUN_ID_PATTERN.test(options.runId)) {
+    throw new Error(`Invalid runId: '${options.runId}'. Must match ${RUN_ID_PATTERN.source}`);
+  }
+  const image = options.image ?? "postgres:16";
+  const password = options.password ?? "banking_test_secret";
+  return [
+    "run",
+    "-d",
+    "--pull=never",
+    "--name",
+    options.containerName,
+    "-e",
+    `POSTGRES_PASSWORD=${password}`,
+    "-p",
+    "127.0.0.1::5432",
+    "-l",
+    `banking_test_run_id=${options.runId}`,
+    image,
+  ];
+}
+
+export function buildDockerInspectArgs(containerIdOrName: string): readonly string[] {
+  if (!containerIdOrName || typeof containerIdOrName !== "string") {
+    throw new Error("Invalid container identifier for inspect.");
+  }
+  return ["inspect", containerIdOrName];
+}
+
+export function buildDockerRmArgs(containerId: string): readonly string[] {
+  if (!/^[a-f0-9]{64}$/.test(containerId)) {
+    throw new Error(`Invalid container ID for removal: '${containerId}'. Must be exact 64 lowercase hex.`);
+  }
+  return ["rm", "-f", containerId];
+}
+
+export interface DockerInspectPortBinding {
+  readonly HostIp: string;
+  readonly HostPort: string;
+}
+
+export interface DockerInspectRecord {
+  readonly Id?: string;
+  readonly Name?: string;
+  readonly Image?: string;
+  readonly Config?: {
+    readonly Image?: string;
+    readonly Labels?: Record<string, string>;
+    readonly Env?: readonly string[];
+  };
+  readonly NetworkSettings?: {
+    readonly Ports?: Record<string, readonly DockerInspectPortBinding[] | null>;
+  };
+  readonly Mounts?: readonly unknown[];
+  readonly HostConfig?: {
+    readonly Binds?: readonly unknown[];
+  };
+}
+
+export interface ValidatedContainerInfo {
+  readonly containerId: string;
+  readonly containerName: string;
+  readonly hostPort: number;
+  readonly bindHost: string;
+  readonly runId: string;
+}
+
+export interface DockerImageInspectRecord {
+  readonly Id?: string;
+  readonly RepoTags?: readonly string[];
+}
+
+export const IMMUTABLE_IMAGE_ID_PATTERN = /^sha256:[0-9a-f]{64}$/;
+export const CONTAINER_ID_64_HEX_PATTERN = /^[0-9a-f]{64}$/;
+
+export function validateDockerImageInspectOutput(inspectJson: string, expectedTag = "postgres:16"): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(inspectJson);
+  } catch {
+    throw new Error("Docker image inspect returned malformed JSON");
+  }
+
+  if (!Array.isArray(parsed) || parsed.length !== 1) {
+    throw new Error(`Docker image inspect must return an array with exactly one record, got ${Array.isArray(parsed) ? parsed.length : "non-array"}`);
+  }
+
+  const record = parsed[0] as DockerImageInspectRecord;
+  if (!record || typeof record !== "object") {
+    throw new Error("Docker image inspect record is not an object");
+  }
+
+  const id = record.Id;
+  if (!id || typeof id !== "string" || !IMMUTABLE_IMAGE_ID_PATTERN.test(id)) {
+    throw new Error("Docker image inspect missing or invalid immutable image ID format (expected sha256:<64-hex>)");
+  }
+
+  const repoTags = record.RepoTags;
+  if (!Array.isArray(repoTags) || !repoTags.includes(expectedTag)) {
+    throw new Error(`Docker image inspect RepoTags does not contain exact tag '${expectedTag}'`);
+  }
+
+  return id;
+}
+
+export function parseAndValidateLaunchedContainerId(stdout: string): string {
+  const trimmed = stdout.trim();
+  if (!CONTAINER_ID_64_HEX_PATTERN.test(trimmed) || stdout.includes("\n") || stdout.includes("\r")) {
+    throw new Error("docker run returned invalid container ID format: expected exactly one single-line 64 lowercase hex string");
+  }
+  return trimmed;
+}
+
+export function validateDockerInspectOutput(
+  inspectJson: string,
+  expectedContainerName: string,
+  expectedRunId: string,
+  approvedLocalImageId?: string,
+  expectedContainerId?: string,
+): ValidatedContainerInfo {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(inspectJson);
+  } catch {
+    throw new Error("Docker inspect returned malformed JSON");
+  }
+
+  if (!Array.isArray(parsed) || parsed.length !== 1) {
+    throw new Error(`Docker inspect must return an array with exactly one record, got ${Array.isArray(parsed) ? parsed.length : "non-array"}`);
+  }
+
+  const record = parsed[0] as DockerInspectRecord;
+  if (!record || typeof record !== "object") {
+    throw new Error("Docker inspect record is not an object");
+  }
+
+  const id = record.Id;
+  if (!id || typeof id !== "string" || !CONTAINER_ID_64_HEX_PATTERN.test(id)) {
+    throw new Error("Docker inspect container ID must be exact 64 lowercase hexadecimal characters");
+  }
+
+  if (expectedContainerId && id !== expectedContainerId) {
+    throw new Error(`Docker inspect container ID '${id}' does not match launched container ID '${expectedContainerId}'`);
+  }
+
+  const name = record.Name;
+  if (!name || typeof name !== "string") {
+    throw new Error("Docker inspect container Name is missing");
+  }
+  const normalizedName = name.startsWith("/") ? name.slice(1) : name;
+  if (normalizedName !== expectedContainerName) {
+    throw new Error(`Docker inspect container Name '${normalizedName}' does not match expected '${expectedContainerName}'`);
+  }
+
+  const runLabel = record.Config?.Labels?.banking_test_run_id;
+  if (!runLabel || runLabel !== expectedRunId) {
+    throw new Error("Docker inspect missing or mismatched banking_test_run_id label");
+  }
+
+  // Exact immutable image reference binding (Correction A: strictly === 'postgres:16', no prefix/substring)
+  const configImage = record.Config?.Image;
+  if (configImage !== "postgres:16") {
+    throw new Error(`Docker inspect Config.Image '${configImage}' is not exact approved 'postgres:16'`);
+  }
+
+  if (approvedLocalImageId) {
+    const inspectImageId = record.Image;
+    if (inspectImageId !== approvedLocalImageId) {
+      throw new Error(`Docker inspect container Image '${inspectImageId}' does not match approved local immutable image ID '${approvedLocalImageId}'`);
+    }
+  }
+
+  const mounts = record.Mounts;
+  if (Array.isArray(mounts) && mounts.length > 0) {
+    throw new Error("Docker inspect shows persistent/shared mounts, which are strictly prohibited");
+  }
+  const binds = record.HostConfig?.Binds;
+  if (Array.isArray(binds) && binds.length > 0) {
+    throw new Error("Docker inspect shows host binds, which are strictly prohibited");
+  }
+
+  const ports = record.NetworkSettings?.Ports;
+  if (!ports || typeof ports !== "object") {
+    throw new Error("Docker inspect missing NetworkSettings.Ports");
+  }
+  const bindings = ports["5432/tcp"];
+  if (!Array.isArray(bindings) || bindings.length === 0) {
+    throw new Error("Docker inspect missing port 5432/tcp binding");
+  }
+  const firstBinding = bindings[0];
+  if (!firstBinding || typeof firstBinding !== "object") {
+    throw new Error("Docker inspect invalid port binding entry");
+  }
+  const hostIp = firstBinding.HostIp;
+  if (hostIp !== "127.0.0.1") {
+    throw new Error(`Docker inspect bound host IP '${hostIp}' is not numeric loopback (127.0.0.1)`);
+  }
+  const hostPort = parseInt(firstBinding.HostPort, 10);
+  if (Number.isNaN(hostPort) || hostPort <= 0 || hostPort > 65535) {
+    throw new Error(`Docker inspect invalid host port: '${firstBinding.HostPort}'`);
+  }
+
+  return {
+    containerId: id,
+    containerName: normalizedName,
+    hostPort,
+    bindHost: "127.0.0.1",
+    runId: expectedRunId,
+  };
+}
+
+export interface CleanChildEnvOptions {
+  readonly databaseUrl: string;
+  readonly databaseName: string;
+  readonly runId: string;
+  readonly phase?: EvidencePhase;
+  readonly targetEnvVar?: string;
+}
+
+const ALLOWED_OS_ENV_KEYS = new Set([
+  "PATH",
+  "Path",
+  "SystemRoot",
+  "SYSTEMROOT",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "HOME",
+  "USERPROFILE",
+  "COMSPEC",
+  "PATHEXT",
+  "windir",
+  "WINDIR",
+]);
+
+export const PROTECTED_CHILD_ENV_KEYS_UPPERCASE = new Set([
+  "DATABASE_URL",
+  "DATABASE_TEST_RUN_ID",
+  "DISPOSABLE_TEST_PHASE",
+  "DATABASE_TEST_PHASE",
+  "DATABASE_TEST_DISPOSABLE",
+  "DATABASE_TEST_DATABASE_NAME",
+  "ALLOW_DATABASE_TEST_RESET",
+  "RELEASE_ID",
+  "BUILD_COMMIT_SHA",
+  "IMAGE_DIGEST",
+  "DEV_DATABASE_URL",
+  "DEVELOPMENT_DATABASE_URL",
+  "PREVIEW_DATABASE_URL",
+  "BANKING_PREVIEW_DATABASE_URL",
+  "P0_PREVIEW_DATABASE_URL",
+  "RELATIONAL_DATABASE_URL",
+  "P0_RELATIONAL_DATABASE_URL",
+  "WORKER_DATABASE_URL",
+  "ADMIN_DATABASE_URL",
+  "ALLOW_DISPOSABLE_DATABASE_RUNNER",
+]);
+
+export function buildCleanChildEnvironment(
+  options: CleanChildEnvOptions,
+  hostEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const cleanEnv: Record<string, string> = {};
+
+  for (const key of Object.keys(hostEnv)) {
+    // Case-insensitive filtering of all protected keys (Correction D)
+    if (PROTECTED_CHILD_ENV_KEYS_UPPERCASE.has(key.toUpperCase())) {
+      continue;
+    }
+    if (ALLOWED_OS_ENV_KEYS.has(key)) {
+      const val = hostEnv[key];
+      if (val !== undefined) {
+        cleanEnv[key] = val;
+      }
+    }
+  }
+
+  cleanEnv.NODE_ENV = "test";
+  cleanEnv.BANKING_ENV = "test";
+  cleanEnv.ALLOW_DATABASE_TEST_RESET = "1";
+  cleanEnv.DATABASE_TEST_DISPOSABLE = "1";
+  cleanEnv.DATABASE_TEST_RUN_ID = options.runId;
+  cleanEnv.DATABASE_TEST_DATABASE_NAME = options.databaseName;
+
+  const targetVar = options.targetEnvVar ?? "DATABASE_URL";
+  cleanEnv[targetVar] = options.databaseUrl;
+
+  if (options.phase) {
+    cleanEnv.DISPOSABLE_TEST_PHASE = options.phase;
+  }
+
+  cleanEnv.RELEASE_ID = "local-disposable-test";
+  cleanEnv.BUILD_COMMIT_SHA = "test";
+  cleanEnv.IMAGE_DIGEST = "unknown";
+
+  return cleanEnv;
+}
+
+export interface TargetDatabaseVerificationQuery {
+  readonly currentDatabase: string;
+  readonly comment: string;
+}
+
+export function assertRuntimeDatabaseOwnership(
+  catalogInfo: TargetDatabaseVerificationQuery,
+  expectedRunId: string,
+): void {
+  const expectedDbName = `banking_test_${expectedRunId}`;
+  if (catalogInfo.currentDatabase !== expectedDbName) {
+    throw new Error("Runtime database ownership verification failed: current_database does not match expected target");
+  }
+  if (!catalogInfo.comment || catalogInfo.comment.trim() === "") {
+    throw new Error("Runtime database ownership verification failed: missing database ownership comment");
+  }
+  assertOwnershipMarkerMatches(catalogInfo.comment, expectedRunId);
+}
+
+export function mutateChecksumOneNibble(checksum: string): string {
+  if (!/^[a-f0-9]{64}$/.test(checksum)) {
+    throw new Error("Invalid checksum: must be exactly 64 lowercase hexadecimal characters.");
+  }
+  const firstChar = checksum[0];
+  const mutatedFirstChar = firstChar === "0" ? "1" : "0";
+  const mutated = mutatedFirstChar + checksum.slice(1);
+  if (mutated.length !== 64 || mutated === checksum) {
+    throw new Error("Checksum mutation invariant violated.");
+  }
+  return mutated;
+}
+
+export interface MigrationRecord {
+  readonly migration_key: string;
+  readonly checksum: string;
+  readonly status: string;
+}
+
+export function computeCanonicalMigrationInventory(databaseDir: string): Map<string, string> {
+  const fsModule = createRequire(import.meta.url)("node:fs") as typeof import("node:fs");
+  const cryptoModule = createRequire(import.meta.url)("node:crypto") as typeof import("node:crypto");
+  const pathModule = createRequire(import.meta.url)("node:path") as typeof import("node:path");
+
+  const files = fsModule.readdirSync(databaseDir)
+    .filter((fileName: string) => /^\d+_.+\.sql$/i.test(fileName))
+    .sort((left: string, right: string) => left.localeCompare(right, "en", { numeric: true }));
+
+  const inventory = new Map<string, string>();
+  for (const fileName of files) {
+    const filePath = pathModule.join(databaseDir, fileName);
+    const sql = fsModule.readFileSync(filePath, "utf8");
+    const canonicalSql = sql.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const hash = cryptoModule.createHash("sha256").update(canonicalSql, "utf8").digest("hex");
+    const key = fileName.replace(/\.sql$/i, "");
+    inventory.set(key, hash);
+  }
+  return inventory;
+}
+
+export function validateMigrationHistoryRecords(
+  records: readonly MigrationRecord[],
+  canonicalKeys: readonly string[],
+  canonicalChecksums?: ReadonlyMap<string, string>,
+): void {
+  if (records.length !== 40) {
+    throw new Error(`Expected exactly 40 migration records, got ${records.length}`);
+  }
+  if (canonicalKeys.length !== 40) {
+    throw new Error(`Expected exactly 40 canonical keys, got ${canonicalKeys.length}`);
+  }
+  const seenKeys = new Set<string>();
+  const expectedKeySet = new Set(canonicalKeys);
+
+  for (let i = 0; i < records.length; i++) {
+    const rec = records[i];
+    if (rec.status !== "APPLIED") {
+      throw new Error(`Migration ${rec.migration_key} has status '${rec.status}', expected 'APPLIED'`);
+    }
+    if (!/^[a-f0-9]{64}$/.test(rec.checksum)) {
+      throw new Error(`Migration ${rec.migration_key} has invalid checksum format`);
+    }
+    if (seenKeys.has(rec.migration_key)) {
+      throw new Error(`Duplicate migration key in history: ${rec.migration_key}`);
+    }
+    seenKeys.add(rec.migration_key);
+    if (!expectedKeySet.has(rec.migration_key)) {
+      throw new Error(`Unexpected migration key in history: ${rec.migration_key}`);
+    }
+    if (canonicalChecksums) {
+      const expected = canonicalChecksums.get(rec.migration_key);
+      if (expected && rec.checksum !== expected) {
+        throw new Error(`Checksum mismatch for ${rec.migration_key} against canonical file`);
+      }
+    }
+  }
+  for (const key of canonicalKeys) {
+    if (!seenKeys.has(key)) {
+      throw new Error(`Missing expected migration key in history: ${key}`);
+    }
+  }
+}
+
+export interface CommandExecutionOutput {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+export function isExpectedChecksumMismatchRefusal(
+  output: CommandExecutionOutput,
+  targetKey?: string,
+): boolean {
+  if (output.exitCode !== 1) {
+    return false;
+  }
+  const combined = `${output.stdout}\n${output.stderr}`;
+  const hasMismatchClassification = /Migration checksum mismatch/i.test(combined);
+  if (!hasMismatchClassification) {
+    return false;
+  }
+  if (targetKey && !combined.includes(targetKey)) {
+    return false;
+  }
+  if (combined.includes("ECONNREFUSED") || combined.includes("SyntaxError") || combined.includes("ENOENT")) {
+    return false;
+  }
+  return true;
+}
+
+export async function verifyDatabaseDroppedInCatalog(
+  pool: DisposablePoolClient,
+  targetName: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const result = await pool.query(
+    "SELECT COUNT(*)::int AS count FROM pg_database WHERE datname = $1",
+    [targetName],
+    signal,
+  );
+  const row = result.rows?.[0] as { count?: number | string } | undefined;
+  const count = Number(row?.count ?? -1);
+  if (count !== 0) {
+    throw new Error(`Post-drop verification failed: target database still present in pg_database (count = ${count}).`);
+  }
+}
+
+export const CANONICAL_SEQUENCE_STEPS = [
+  "1_VERIFY_LOCAL_IMAGE",
+  "2_CREATE_EPHEMERAL_CONTAINER",
+  "3_INSPECT_VALIDATE_CONTAINER",
+  "4_WAIT_READINESS",
+  "5_CREATE_TARGET_DATABASE_AND_MARKER",
+  "6_APPLY_MIGRATIONS_RUN_1",
+  "7_CHILD_TEST_INITIAL_HISTORY",
+  "8_APPLY_MIGRATIONS_RUN_2",
+  "9_CHILD_TEST_RERUN_HISTORY",
+  "10_VERIFY_ONLY_PRE_MISMATCH",
+  "11_CHILD_TEST_INJECT_CHECKSUM_MISMATCH",
+  "12_VERIFY_ONLY_EXPECT_REFUSAL",
+  "13_CHILD_TEST_RESTORE_CHECKSUM",
+  "14_VERIFY_ONLY_POST_RESTORE_SUCCESS",
+  "15_CLOSE_TARGET_CONNECTIONS",
+  "16_CLEANUP_TARGET_DATABASE",
+  "17_PARENT_POST_DROP_CATALOG_CHECK",
+  "18_REMOVE_CONTAINER",
+  "19_VALIDATE_COMPLETION",
+] as const;
+export type CanonicalSequenceStep = (typeof CANONICAL_SEQUENCE_STEPS)[number];
+
+
+export interface DockerAdapter {
+  inspectImage(image: string, signal?: AbortSignal, timeoutMs?: number): Promise<string>;
+  runContainer(args: readonly string[], signal?: AbortSignal, timeoutMs?: number): Promise<string>;
+  inspectContainer(containerNameOrId: string, signal?: AbortSignal, timeoutMs?: number): Promise<string>;
+  removeContainer(containerId: string, signal?: AbortSignal, timeoutMs?: number): Promise<void>;
+  waitForReady(host: string, port: number, timeoutMs?: number, signal?: AbortSignal): Promise<void>;
+}
+
+export type RunCommandWithOutputFunction = (
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  timeoutMs?: number,
+  signal?: AbortSignal,
+) => Promise<CommandExecutionOutput>;
+
+/**
+ * Execute command with argv array (no shell) capturing stdout/stderr and handling timeout and abort signal.
+ */
+export async function executeCommandWithOutput(
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+  timeoutMs: number = DISPOSABLE_TIMEOUTS.commandTimeoutMs,
+  signal?: AbortSignal,
+): Promise<CommandExecutionOutput> {
+  return new Promise<CommandExecutionOutput>((resolve, reject) => {
+    let timer: NodeJS.Timeout | undefined;
+    let abortListener: (() => void) | undefined;
+
+    const child = spawn(command, [...args], {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      if (signal && abortListener) signal.removeEventListener("abort", abortListener);
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        child.kill("SIGTERM");
+        reject(new Error(`Command '${path.basename(command)}' was aborted before execution.`));
+        return;
+      }
+      abortListener = () => {
+        child.kill("SIGTERM");
+        cleanup();
+        reject(new Error(`Command '${path.basename(command)}' aborted: ${String(signal.reason)}`));
+      };
+      signal.addEventListener("abort", abortListener, { once: true });
+    }
+
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        cleanup();
+        reject(new Error(`Command '${path.basename(command)}' timed out after ${timeoutMs}ms.`));
+      }, timeoutMs);
+    }
+
+    child.once("error", (err) => {
+      cleanup();
+      reject(err);
+    });
+
+    child.once("close", (code) => {
+      cleanup();
+      resolve({
+        exitCode: code ?? 1,
+        stdout,
+        stderr,
+      });
+    });
+  });
+}
+
+/**
+ * Real production Docker CLI adapter using explicit argv arrays, no shell, with timeout and cancellation.
+ */
+export const realDockerAdapter: DockerAdapter = {
+  async inspectImage(image: string, signal?: AbortSignal, timeoutMs = 30_000): Promise<string> {
+    const args = buildDockerImageInspectArgs(image);
+    const result = await executeCommandWithOutput("docker", args, process.env, timeoutMs, signal);
+    if (result.exitCode !== 0) {
+      throw new Error(`Required Docker image '${image}' not found locally. Implicit image pulling is strictly prohibited.`);
+    }
+    return result.stdout;
+  },
+
+  async runContainer(args: readonly string[], signal?: AbortSignal, timeoutMs = 60_000): Promise<string> {
+    const result = await executeCommandWithOutput("docker", args, process.env, timeoutMs, signal);
+    if (result.exitCode !== 0) {
+      const sanitizedErr = sanitizeLogOutput(result.stderr || result.stdout);
+      throw new Error(`docker run failed with exit code ${result.exitCode}: ${sanitizedErr}`);
+    }
+    return result.stdout.trim();
+  },
+
+  async inspectContainer(containerNameOrId: string, signal?: AbortSignal, timeoutMs = 30_000): Promise<string> {
+    const args = buildDockerInspectArgs(containerNameOrId);
+    const result = await executeCommandWithOutput("docker", args, process.env, timeoutMs, signal);
+    if (result.exitCode !== 0) {
+      const sanitizedErr = sanitizeLogOutput(result.stderr || result.stdout);
+      throw new Error(`docker inspect failed with exit code ${result.exitCode}: ${sanitizedErr}`);
+    }
+    return result.stdout;
+  },
+
+  async removeContainer(containerId: string, signal?: AbortSignal, timeoutMs = 30_000): Promise<void> {
+    const args = buildDockerRmArgs(containerId);
+    const result = await executeCommandWithOutput("docker", args, process.env, timeoutMs, signal);
+    if (result.exitCode !== 0) {
+      const sanitizedErr = sanitizeLogOutput(result.stderr || result.stdout);
+      throw new Error(`docker rm failed with exit code ${result.exitCode}: ${sanitizedErr}`);
+    }
+  },
+
+  async waitForReady(host: string, port: number, timeoutMs = 60_000, signal?: AbortSignal): Promise<void> {
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      if (signal?.aborted) {
+        throw new Error(`Readiness wait aborted: ${String(signal.reason)}`);
+      }
+      const isReady = await new Promise<boolean>((resolve) => {
+        const socket = net.createConnection({ host, port });
+        socket.setTimeout(2000);
+        socket.once("connect", () => {
+          socket.destroy();
+          resolve(true);
+        });
+        socket.once("error", () => {
+          socket.destroy();
+          resolve(false);
+        });
+        socket.once("timeout", () => {
+          socket.destroy();
+          resolve(false);
+        });
+      });
+      if (isReady) return;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    throw new Error(`PostgreSQL container port ${port} did not become ready within ${timeoutMs}ms.`);
+  },
+};
+
+export interface CanonicalSequenceDependencies {
+  readonly dockerAdapter?: DockerAdapter;
+  readonly runCommandFn?: RunCommandWithOutputFunction;
+  readonly createPoolFn?: CreatePoolFunction;
+  readonly runIdGenerator?: () => string;
+  readonly processEmitter?: ProcessInterruptionEmitter;
+  readonly processFacade?: ProcessFacade;
+  readonly commandTimeoutMs?: number;
+  readonly cleanupTimeoutMs?: number;
+}
+
+export interface CanonicalSequenceExecutionResult {
+  readonly success: boolean;
+  readonly runId: string;
+  readonly databaseName: string;
+  readonly containerId?: string;
+  readonly completedSteps: readonly CanonicalSequenceStep[];
+  readonly error?: Error;
+  readonly cleanupError?: Error;
+}
+
+/**
+ * Coordinate canonical 19-step evidence sequence orchestration.
+ */
+export async function runCanonicalEvidenceSequence(
+  hostEnv: NodeJS.ProcessEnv = process.env,
+  deps: CanonicalSequenceDependencies = {},
+): Promise<CanonicalSequenceExecutionResult> {
+  const completedSteps: CanonicalSequenceStep[] = [];
+  const runId = (deps.runIdGenerator ?? generateDisposableRunId)();
+  const containerName = `banking_test_container_${runId}`;
+  const databaseName = `banking_test_${runId}`;
+  const docker = deps.dockerAdapter ?? realDockerAdapter;
+  const runCmd = deps.runCommandFn ?? executeCommandWithOutput;
+  const commandTimeoutMs = deps.commandTimeoutMs ?? DISPOSABLE_TIMEOUTS.commandTimeoutMs;
+  const cleanupTimeoutMs = deps.cleanupTimeoutMs ?? DISPOSABLE_TIMEOUTS.cleanupTimeoutMs;
+  const facade = deps.processFacade;
+  const backendRoot = path.resolve(import.meta.dirname, "../..");
+
+  let approvedLocalImageId: string | undefined;
+  let launchedContainerId: string | undefined;
+  let adminPool: DisposablePoolClient | undefined;
+  let targetUrl: string | undefined;
+  let mainError: Error | undefined;
+  let cleanupError: Error | undefined;
+
+  const childAbortController = new AbortController();
+
+  const recordStep = (step: CanonicalSequenceStep) => {
+    completedSteps.push(step);
+  };
+
+  const performCanonicalCleanup = async (): Promise<void> => {
+    const cleanupAbortController = new AbortController();
+    let cleanupTimer: NodeJS.Timeout | undefined;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      cleanupTimer = setTimeout(() => {
+        const err = new Error(`Canonical cleanup timed out after ${cleanupTimeoutMs}ms.`);
+        cleanupAbortController.abort(err);
+        reject(err);
+      }, cleanupTimeoutMs);
+    });
+
+    const cleanupActions = async (): Promise<void> => {
+      // 1. Close target connections
+      recordStep("15_CLOSE_TARGET_CONNECTIONS");
+
+      // 2. Drop target database via admin pool
+      if (adminPool && targetUrl) {
+        try {
+          recordStep("16_CLEANUP_TARGET_DATABASE");
+          await adminPool.query(`DROP DATABASE IF EXISTS ${quoteDatabaseIdentifier(databaseName)} WITH (FORCE)`, undefined, cleanupAbortController.signal);
+        } catch (err) {
+          if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
+        }
+
+        // 3. Post-drop catalog assertion
+        try {
+          recordStep("17_PARENT_POST_DROP_CATALOG_CHECK");
+          await verifyDatabaseDroppedInCatalog(adminPool, databaseName, cleanupAbortController.signal);
+        } catch (err) {
+          if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
+        }
+      }
+
+      // 4. Remove exact launched container (NEVER untrusted inspect ID, Correction B)
+      if (launchedContainerId) {
+        try {
+          recordStep("18_REMOVE_CONTAINER");
+          await docker.removeContainer(launchedContainerId, cleanupAbortController.signal, cleanupTimeoutMs);
+        } catch (err) {
+          if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
+        }
+      }
+
+      // 5. Close admin pool
+      if (adminPool) {
+        try {
+          await adminPool.end();
+        } catch {
+          // Best effort pool close
+        }
+      }
+    };
+
+    try {
+      await Promise.race([cleanupActions(), timeoutPromise]);
+    } catch (err) {
+      if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
+    } finally {
+      if (cleanupTimer) clearTimeout(cleanupTimer);
+    }
+  };
+
+  try {
+    // Step 1: Verify local image and capture immutable image ID (Correction A)
+    recordStep("1_VERIFY_LOCAL_IMAGE");
+    const imageInspectJson = await docker.inspectImage("postgres:16", childAbortController.signal);
+    approvedLocalImageId = validateDockerImageInspectOutput(imageInspectJson, "postgres:16");
+
+    // Step 2: Create ephemeral container and validate launched container ID (Correction B)
+    recordStep("2_CREATE_EPHEMERAL_CONTAINER");
+    const runArgs = buildDockerRunArgs({ containerName, runId });
+    const runStdout = await docker.runContainer(runArgs, childAbortController.signal);
+    launchedContainerId = parseAndValidateLaunchedContainerId(runStdout);
+
+    // Step 3: Inspect & validate container using exact launched container ID & approved local image ID
+    recordStep("3_INSPECT_VALIDATE_CONTAINER");
+    const inspectJson = await docker.inspectContainer(launchedContainerId, childAbortController.signal);
+    const validated = validateDockerInspectOutput(
+      inspectJson,
+      containerName,
+      runId,
+      approvedLocalImageId,
+      launchedContainerId,
+    );
+
+    // Step 4: Wait readiness
+    recordStep("4_WAIT_READINESS");
+    await docker.waitForReady(validated.bindHost, validated.hostPort, 60_000, childAbortController.signal);
+
+    // Step 5: Create target database & ownership marker
+    recordStep("5_CREATE_TARGET_DATABASE_AND_MARKER");
+    const adminUrl = `postgresql://postgres:banking_test_secret@${validated.bindHost}:${validated.hostPort}/postgres`;
+    adminPool = deps.createPoolFn
+      ? deps.createPoolFn(adminUrl, undefined)
+      : new Pool({
+          connectionString: adminUrl,
+          max: 1,
+          connectionTimeoutMillis: DISPOSABLE_TIMEOUTS.poolConnectionMs,
+        });
+
+    await adminPool.query(`CREATE DATABASE ${quoteDatabaseIdentifier(databaseName)}`, undefined, childAbortController.signal);
+    const marker = buildOwnershipMarker({
+      runId,
+      owner: "m01_runner",
+      createdAt: Date.now(),
+    });
+    await adminPool.query(`COMMENT ON DATABASE ${quoteDatabaseIdentifier(databaseName)} IS '${marker}'`, undefined, childAbortController.signal);
+
+    targetUrl = `postgresql://postgres:banking_test_secret@${validated.bindHost}:${validated.hostPort}/${databaseName}`;
+    const childEnv = buildCleanChildEnvironment(
+      {
+        databaseUrl: targetUrl,
+        databaseName,
+        runId,
+      },
+      hostEnv,
+    );
+
+    const applyMigrationScript = path.join(backendRoot, "scripts", "apply-migration.cjs");
+    const tsxCli = path.join(backendRoot, "node_modules", "tsx", "dist", "cli.mjs");
+    const runtimeTestPath = path.join(backendRoot, "src", "tests", "disposableMigrationRuntime.test.ts");
+
+    // Helper to execute child Node command with clean env
+    const executeChild = async (
+      args: readonly string[],
+      envOverrides: NodeJS.ProcessEnv = {},
+    ): Promise<CommandExecutionOutput> => {
+      const execEnv: NodeJS.ProcessEnv = {
+        ...childEnv,
+        ...envOverrides,
+      };
+      return runCmd(process.execPath, args, execEnv, commandTimeoutMs, childAbortController.signal);
+    };
+
+    // Step 6: Apply migrations run 1
+    recordStep("6_APPLY_MIGRATIONS_RUN_1");
+    const m1Res = await executeChild([applyMigrationScript]);
+    if (m1Res.exitCode !== 0) {
+      throw new Error(`Initial migration apply failed with exit code ${m1Res.exitCode}: ${sanitizeLogOutput(m1Res.stderr)}`);
+    }
+
+    // Step 7: Child test phase INITIAL_HISTORY
+    recordStep("7_CHILD_TEST_INITIAL_HISTORY");
+    const t1Res = await executeChild(
+      [tsxCli, "--test", "--test-concurrency=1", runtimeTestPath],
+      { DISPOSABLE_TEST_PHASE: "INITIAL_HISTORY" },
+    );
+    if (t1Res.exitCode !== 0) {
+      throw new Error(`INITIAL_HISTORY runtime test failed with exit code ${t1Res.exitCode}: ${sanitizeLogOutput(t1Res.stderr)}`);
+    }
+
+    // Step 8: Apply migrations run 2 (rerun)
+    recordStep("8_APPLY_MIGRATIONS_RUN_2");
+    const m2Res = await executeChild([applyMigrationScript]);
+    if (m2Res.exitCode !== 0) {
+      throw new Error(`Rerun migration apply failed with exit code ${m2Res.exitCode}: ${sanitizeLogOutput(m2Res.stderr)}`);
+    }
+
+    // Step 9: Child test phase RERUN_HISTORY
+    recordStep("9_CHILD_TEST_RERUN_HISTORY");
+    const t2Res = await executeChild(
+      [tsxCli, "--test", "--test-concurrency=1", runtimeTestPath],
+      { DISPOSABLE_TEST_PHASE: "RERUN_HISTORY" },
+    );
+    if (t2Res.exitCode !== 0) {
+      throw new Error(`RERUN_HISTORY runtime test failed with exit code ${t2Res.exitCode}: ${sanitizeLogOutput(t2Res.stderr)}`);
+    }
+
+    // Step 10: Verify-only pre-mismatch
+    recordStep("10_VERIFY_ONLY_PRE_MISMATCH");
+    const v1Res = await executeChild([applyMigrationScript, "--verify-only"]);
+    if (v1Res.exitCode !== 0) {
+      throw new Error(`Pre-mismatch verify-only failed with exit code ${v1Res.exitCode}: ${sanitizeLogOutput(v1Res.stderr)}`);
+    }
+
+    // Step 11: Child test phase INJECT_CHECKSUM_MISMATCH
+    recordStep("11_CHILD_TEST_INJECT_CHECKSUM_MISMATCH");
+    const t3Res = await executeChild(
+      [tsxCli, "--test", "--test-concurrency=1", runtimeTestPath],
+      { DISPOSABLE_TEST_PHASE: "INJECT_CHECKSUM_MISMATCH" },
+    );
+    if (t3Res.exitCode !== 0) {
+      throw new Error(`INJECT_CHECKSUM_MISMATCH runtime test failed with exit code ${t3Res.exitCode}: ${sanitizeLogOutput(t3Res.stderr)}`);
+    }
+
+    // Step 12: Verify-only expect refusal
+    recordStep("12_VERIFY_ONLY_EXPECT_REFUSAL");
+    const v2Res = await executeChild([applyMigrationScript, "--verify-only"]);
+    if (!isExpectedChecksumMismatchRefusal(v2Res, "001_banking_mvp")) {
+      throw new Error(`Expected checksum mismatch refusal was not met: exitCode=${v2Res.exitCode}, stderr=${sanitizeLogOutput(v2Res.stderr)}`);
+    }
+
+    // Step 13: Child test phase RESTORE_CHECKSUM
+    recordStep("13_CHILD_TEST_RESTORE_CHECKSUM");
+    const t4Res = await executeChild(
+      [tsxCli, "--test", "--test-concurrency=1", runtimeTestPath],
+      { DISPOSABLE_TEST_PHASE: "RESTORE_CHECKSUM" },
+    );
+    if (t4Res.exitCode !== 0) {
+      throw new Error(`RESTORE_CHECKSUM runtime test failed with exit code ${t4Res.exitCode}: ${sanitizeLogOutput(t4Res.stderr)}`);
+    }
+
+    // Step 14: Verify-only post-restore success
+    recordStep("14_VERIFY_ONLY_POST_RESTORE_SUCCESS");
+    const v3Res = await executeChild([applyMigrationScript, "--verify-only"]);
+    if (v3Res.exitCode !== 0) {
+      throw new Error(`Post-restore verify-only failed with exit code ${v3Res.exitCode}: ${sanitizeLogOutput(v3Res.stderr)}`);
+    }
+
+    recordStep("19_VALIDATE_COMPLETION");
+  } catch (err) {
+    mainError = err instanceof Error ? err : new Error(String(err));
+    if (facade && !facade.exitCode) {
+      facade.exitCode = 1;
+    }
+  } finally {
+    await performCanonicalCleanup();
+  }
+
+  const finalError = mainError ?? cleanupError;
+  if (finalError) {
+    if (facade && !facade.exitCode) {
+      facade.exitCode = 1;
+    }
+    return {
+      success: false,
+      runId,
+      databaseName,
+      containerId: launchedContainerId,
+      completedSteps,
+      error: finalError,
+      cleanupError,
+    };
+  }
+
+  return {
+    success: true,
+    runId,
+    databaseName,
+    containerId: launchedContainerId,
+    completedSteps,
+  };
 }

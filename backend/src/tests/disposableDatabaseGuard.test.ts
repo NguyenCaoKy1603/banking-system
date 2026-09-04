@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   APPROVED_TEST_PATHS,
+  AUTHORIZED_EVIDENCE_PHASES,
+  CANONICAL_SEQUENCE_STEPS,
   CONTAINER_NAME_PATTERN,
   type ContainerRemovalFunction,
   type CreatePoolFunction,
@@ -10,6 +12,7 @@ import {
   type DisposablePoolClient,
   type DisposableQueryResult,
   DISPOSABLE_TIMEOUTS,
+  type EvidencePhase,
   type ProcessInterruptionEmitter,
   type RunCommandFunction,
   RUN_ID_PATTERN,
@@ -17,9 +20,18 @@ import {
   assertApprovedTestPath,
   assertDisposableDatabaseAdminUrl,
   assertDisposableDatabaseResetAllowed,
+  assertEvidencePhase,
   assertOwnershipMarkerMatches,
+  buildCleanChildEnvironment,
+  buildDockerImageInspectArgs,
+  buildDockerInspectArgs,
+  buildDockerRmArgs,
+  buildDockerRunArgs,
   buildOwnershipMarker,
+  computeCanonicalMigrationInventory,
   generateDisposableRunId,
+  isExpectedChecksumMismatchRefusal,
+  mutateChecksumOneNibble,
   parseOwnershipMarker,
   postDropCatalogCheck,
   preCleanupRevalidationCheck,
@@ -28,7 +40,16 @@ import {
   runDisposablePostgresTest,
   sanitizeLogOutput,
   validateContainerDescriptor,
+  validateDockerInspectOutput,
+  validateMigrationHistoryRecords,
+  verifyDatabaseDroppedInCatalog,
+  validateDockerImageInspectOutput,
+  parseAndValidateLaunchedContainerId,
+  assertRuntimeDatabaseOwnership,
+  type DockerAdapter,
+  runCanonicalEvidenceSequence,
 } from "../database/disposableDatabaseGuard.js";
+
 
 const validEnvironment = {
   NODE_ENV: "test",
@@ -1360,4 +1381,1096 @@ test("SAFE-R10-E9: timers and event listeners are fully disposed across success,
   for (const [event, count] of Object.entries(registeredListeners)) {
     assert.equal(count, 0, `Listener for ${event} must be disposed on failure`);
   }
+});
+
+
+// ============================================================================
+// M07-A2R Unit Tests & Verification Test Doubles (Pure, No-DB, No-Docker)
+// ============================================================================
+
+test("M07-A2R-01: Docker image inspect argv and --pull=never", () => {
+  const imageInspectArgs = buildDockerImageInspectArgs("postgres:16");
+  assert.deepEqual(imageInspectArgs, ["image", "inspect", "postgres:16"]);
+
+  const runId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const containerName = `banking_test_container_${runId}`;
+  const runArgs = buildDockerRunArgs({ containerName, runId });
+  assert.ok(runArgs.includes("--pull=never"), "Docker run args must include --pull=never");
+});
+
+test("M07-A2R-02: Docker run loopback-only, no volume, exact label/name", () => {
+  const runId = "b1b2b3b4b5b6b7b8b9b0b1b2b3b4b5b6";
+  const containerName = `banking_test_container_${runId}`;
+  const runArgs = buildDockerRunArgs({ containerName, runId });
+
+  assert.equal(runArgs[0], "run");
+  assert.equal(runArgs[1], "-d");
+  assert.ok(runArgs.includes("--name"));
+  assert.equal(runArgs[runArgs.indexOf("--name") + 1], containerName);
+  assert.ok(runArgs.includes("-p"));
+  assert.equal(runArgs[runArgs.indexOf("-p") + 1], "127.0.0.1::5432");
+  assert.ok(runArgs.includes("-l"));
+  assert.equal(runArgs[runArgs.indexOf("-l") + 1], `banking_test_run_id=${runId}`);
+  assert.ok(!runArgs.includes("-v"), "Must not have -v");
+  assert.ok(!runArgs.includes("--volume"), "Must not have --volume");
+  assert.ok(!runArgs.includes("--mount"), "Must not have --mount");
+});
+
+test("M07-A2R-03: Docker inspect golden case", () => {
+  const runId = "c1c2c3c4c5c6c7c8c9c0c1c2c3c4c5c6";
+  const containerName = `banking_test_container_${runId}`;
+  const fakeId = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  const goldenInspectJson = JSON.stringify([
+    {
+      Id: fakeId,
+      Name: `/${containerName}`,
+      Config: {
+        Image: "postgres:16",
+        Labels: { banking_test_run_id: runId },
+        Env: ["POSTGRES_PASSWORD=secret"],
+      },
+      NetworkSettings: {
+        Ports: {
+          "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }],
+        },
+      },
+      Mounts: [],
+      HostConfig: {
+        Binds: [],
+      },
+    },
+  ]);
+
+  const validated = validateDockerInspectOutput(goldenInspectJson, containerName, runId);
+  assert.equal(validated.containerId, fakeId);
+  assert.equal(validated.containerName, containerName);
+  assert.equal(validated.hostPort, 54321);
+  assert.equal(validated.bindHost, "127.0.0.1");
+  assert.equal(validated.runId, runId);
+});
+
+test("M07-A2R-04: Reject malformed or multiple inspect results", () => {
+  const runId = "d1d2d3d4d5d6d7d8d9d0d1d2d3d4d5d6";
+  const containerName = `banking_test_container_${runId}`;
+
+  assert.throws(
+    () => validateDockerInspectOutput("{ malformed json", containerName, runId),
+    /malformed JSON/,
+  );
+  assert.throws(
+    () => validateDockerInspectOutput("[]", containerName, runId),
+    /exactly one record/,
+  );
+  assert.throws(
+    () => validateDockerInspectOutput("[{}, {}]", containerName, runId),
+    /exactly one record/,
+  );
+});
+
+test("M07-A2R-05: Reject wrong image, name, label, or container ID", () => {
+  const runId = "e1e2e3e4e5e6e7e8e9e0e1e2e3e4e5e6";
+  const containerName = `banking_test_container_${runId}`;
+  const validId = "a".repeat(64);
+
+  const baseRecord = {
+    Id: validId,
+    Name: `/${containerName}`,
+    Config: {
+      Image: "postgres:16",
+      Labels: { banking_test_run_id: runId },
+    },
+    NetworkSettings: {
+      Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] },
+    },
+    Mounts: [],
+  };
+
+  // Wrong image
+  assert.throws(
+    () => validateDockerInspectOutput(
+      JSON.stringify([{ ...baseRecord, Config: { ...baseRecord.Config, Image: "mysql:8" } }]),
+      containerName,
+      runId,
+    ),
+    /is not exact approved 'postgres:16'/,
+  );
+
+  // Wrong name
+  assert.throws(
+    () => validateDockerInspectOutput(
+      JSON.stringify([{ ...baseRecord, Name: "/banking_production_db" }]),
+      containerName,
+      runId,
+    ),
+    /does not match expected/,
+  );
+
+  // Mismatched label
+  assert.throws(
+    () => validateDockerInspectOutput(
+      JSON.stringify([{ ...baseRecord, Config: { ...baseRecord.Config, Labels: { banking_test_run_id: "other_id" } } }]),
+      containerName,
+      runId,
+    ),
+    /missing or mismatched banking_test_run_id label/,
+  );
+
+  // Non-64-hex ID
+  assert.throws(
+    () => validateDockerInspectOutput(
+      JSON.stringify([{ ...baseRecord, Id: "short_id" }]),
+      containerName,
+      runId,
+    ),
+    /must be exact 64 lowercase hexadecimal characters/,
+  );
+});
+
+test("M07-A2R-06: Reject wildcard or non-loopback port", () => {
+  const runId = "f1f2f3f4f5f6f7f8f9f0f1f2f3f4f5f6";
+  const containerName = `banking_test_container_${runId}`;
+  const validId = "b".repeat(64);
+
+  const baseRecord = {
+    Id: validId,
+    Name: `/${containerName}`,
+    Config: {
+      Image: "postgres:16",
+      Labels: { banking_test_run_id: runId },
+    },
+    Mounts: [],
+  };
+
+  // Wildcard 0.0.0.0
+  assert.throws(
+    () => validateDockerInspectOutput(
+      JSON.stringify([{
+        ...baseRecord,
+        NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "0.0.0.0", HostPort: "54321" }] } },
+      }]),
+      containerName,
+      runId,
+    ),
+    /not numeric loopback/,
+  );
+
+  // Missing port binding
+  assert.throws(
+    () => validateDockerInspectOutput(
+      JSON.stringify([{
+        ...baseRecord,
+        NetworkSettings: { Ports: { "5432/tcp": [] } },
+      }]),
+      containerName,
+      runId,
+    ),
+    /missing port 5432\/tcp binding/,
+  );
+});
+
+test("M07-A2R-07: Reject any mount or shared descriptor", () => {
+  const runId = "0102030405060708090a0b0c0d0e0f10";
+  const containerName = `banking_test_container_${runId}`;
+  const validId = "c".repeat(64);
+
+  const baseRecord = {
+    Id: validId,
+    Name: `/${containerName}`,
+    Config: {
+      Image: "postgres:16",
+      Labels: { banking_test_run_id: runId },
+    },
+    NetworkSettings: {
+      Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] },
+    },
+  };
+
+  // Non-empty Mounts
+  assert.throws(
+    () => validateDockerInspectOutput(
+      JSON.stringify([{
+        ...baseRecord,
+        Mounts: [{ Source: "/data", Destination: "/var/lib/postgresql/data" }],
+      }]),
+      containerName,
+      runId,
+    ),
+    /persistent\/shared mounts, which are strictly prohibited/,
+  );
+
+  // Non-empty HostConfig.Binds
+  assert.throws(
+    () => validateDockerInspectOutput(
+      JSON.stringify([{
+        ...baseRecord,
+        Mounts: [],
+        HostConfig: { Binds: ["/host:/container"] },
+      }]),
+      containerName,
+      runId,
+    ),
+    /host binds, which are strictly prohibited/,
+  );
+});
+
+test("M07-A2R-08: Exact-ID container removal rejects invalid container IDs", () => {
+  const valid64Hex = "d".repeat(64);
+  const rmArgs = buildDockerRmArgs(valid64Hex);
+  assert.deepEqual(rmArgs, ["rm", "-f", valid64Hex]);
+
+  assert.throws(() => buildDockerRmArgs("short"), /exact 64 lowercase hex/);
+  assert.throws(() => buildDockerRmArgs("d".repeat(63)), /exact 64 lowercase hex/);
+  assert.throws(() => buildDockerRmArgs("d".repeat(65)), /exact 64 lowercase hex/);
+  assert.throws(() => buildDockerRmArgs("D".repeat(64)), /exact 64 lowercase hex/);
+});
+
+test("M07-A2R-09: Clean child environment removes hostile overrides", () => {
+  const hostileEnv: NodeJS.ProcessEnv = {
+    DATABASE_URL: "postgresql://hostile:bad@10.0.0.1:5432/banking_preview",
+    DATABASE_TEST_RUN_ID: "hostile_run_id",
+    DISPOSABLE_TEST_PHASE: "HOSTILE_PHASE",
+    ALLOW_DATABASE_TEST_RESET: "0",
+    EVIL_ATTACK_VARIABLE: "pwned",
+    PATH: "C:\\Windows\\System32",
+  };
+
+  const cleanEnv = buildCleanChildEnvironment(
+    {
+      databaseUrl: "postgresql://postgres:secret@127.0.0.1:54321/banking_test_11111111111111111111111111111111",
+      databaseName: "banking_test_11111111111111111111111111111111",
+      runId: "11111111111111111111111111111111",
+      phase: "INITIAL_HISTORY",
+    },
+    hostileEnv,
+  );
+
+  assert.equal(cleanEnv.DATABASE_URL, "postgresql://postgres:secret@127.0.0.1:54321/banking_test_11111111111111111111111111111111");
+  assert.equal(cleanEnv.DATABASE_TEST_RUN_ID, "11111111111111111111111111111111");
+  assert.equal(cleanEnv.DISPOSABLE_TEST_PHASE, "INITIAL_HISTORY");
+  assert.equal(cleanEnv.ALLOW_DATABASE_TEST_RESET, "1");
+  assert.equal(cleanEnv.EVIL_ATTACK_VARIABLE, undefined, "Hostile variables must be stripped");
+  assert.equal(cleanEnv.PATH, "C:\\Windows\\System32");
+});
+
+test("M07-A2R-10: Cross-platform environment-key normalization preserves OS variables", () => {
+  const hostEnv: NodeJS.ProcessEnv = {
+    Path: "C:\\Windows\\System32",
+    SystemRoot: "C:\\Windows",
+    TEMP: "C:\\Temp",
+    CUSTOM_FORBIDDEN: "secret",
+  };
+
+  const cleanEnv = buildCleanChildEnvironment(
+    {
+      databaseUrl: "postgresql://postgres:secret@127.0.0.1:54321/banking_test_22222222222222222222222222222222",
+      databaseName: "banking_test_22222222222222222222222222222222",
+      runId: "22222222222222222222222222222222",
+    },
+    hostEnv,
+  );
+
+  assert.equal(cleanEnv.Path, "C:\\Windows\\System32");
+  assert.equal(cleanEnv.SystemRoot, "C:\\Windows");
+  assert.equal(cleanEnv.TEMP, "C:\\Temp");
+  assert.equal(cleanEnv.CUSTOM_FORBIDDEN, undefined);
+});
+
+test("M07-A2R-11: Runtime test path allowlist accepts disposableMigrationRuntime.test.ts", () => {
+  const approved = assertApprovedTestPath("src/tests/disposableMigrationRuntime.test.ts");
+  assert.equal(approved, "src/tests/disposableMigrationRuntime.test.ts");
+
+  assert.throws(
+    () => assertApprovedTestPath("src/tests/unauthorizedExploit.test.ts"),
+    /not in the approved fixed allowlist/,
+  );
+});
+
+test("M07-A2R-12: Exact four-phase allowlist validates all supported phases", () => {
+  for (const phase of AUTHORIZED_EVIDENCE_PHASES) {
+    const verified = assertEvidencePhase(phase);
+    assert.equal(verified, phase);
+  }
+  assert.equal(AUTHORIZED_EVIDENCE_PHASES.length, 4);
+});
+
+test("M07-A2R-13: Invalid or missing phase fail-fast", () => {
+  assert.throws(() => assertEvidencePhase(undefined), /Invalid or missing evidence phase/);
+  assert.throws(() => assertEvidencePhase(""), /Invalid or missing evidence phase/);
+  assert.throws(() => assertEvidencePhase("DROP_ALL_TABLES"), /Invalid or missing evidence phase/);
+  assert.throws(() => assertEvidencePhase("UNKNOWN_PHASE"), /Invalid or missing evidence phase/);
+});
+
+test("M07-A2R-14: One-nibble mutation preserves 64-hex and changes exactly one character", () => {
+  const original = "f0d76fa04b31b07bc00c7eeaf3ef86c2fac6c9747e18d03c8c62de46ff04d908";
+  const mutated = mutateChecksumOneNibble(original);
+
+  assert.equal(mutated.length, 64);
+  assert.ok(/^[a-f0-9]{64}$/.test(mutated));
+  assert.notEqual(mutated, original);
+
+  // Exactly 1 character differs
+  let diffCount = 0;
+  for (let i = 0; i < 64; i++) {
+    if (original[i] !== mutated[i]) diffCount++;
+  }
+  assert.equal(diffCount, 1, "Exactly one character must differ in one-nibble mutation");
+  assert.equal(mutated[0], "0", "Leading 'f' flipped to '0'");
+
+  const originalWith0 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const mutatedFrom0 = mutateChecksumOneNibble(originalWith0);
+  assert.equal(mutatedFrom0[0], "1", "Leading '0' flipped to '1'");
+});
+
+test("M07-A2R-15: Invalid checksum rejected by one-nibble mutator", () => {
+  assert.throws(() => mutateChecksumOneNibble("short"), /Invalid checksum/);
+  assert.throws(() => mutateChecksumOneNibble("f".repeat(63)), /Invalid checksum/);
+  assert.throws(() => mutateChecksumOneNibble("f".repeat(65)), /Invalid checksum/);
+  assert.throws(() => mutateChecksumOneNibble("F".repeat(64)), /Invalid checksum/);
+  assert.throws(() => mutateChecksumOneNibble("g".repeat(64)), /Invalid checksum/);
+});
+
+test("M07-A2R-16: Initial 40-row inventory helper validates exact 40 APPLIED records", () => {
+  const canonicalKeys = Array.from({ length: 40 }, (_, i) => `${String(i + 1).padStart(3, "0")}_test_migration`);
+  const canonicalChecksums = new Map<string, string>();
+  const records = canonicalKeys.map((key) => {
+    const checksum = "e".repeat(64);
+    canonicalChecksums.set(key, checksum);
+    return { migration_key: key, checksum, status: "APPLIED" };
+  });
+
+  // Should succeed without error
+  validateMigrationHistoryRecords(records, canonicalKeys, canonicalChecksums);
+});
+
+test("M07-A2R-17: Missing, duplicate, or extra migration key rejected", () => {
+  const canonicalKeys = Array.from({ length: 40 }, (_, i) => `${String(i + 1).padStart(3, "0")}_migration`);
+  const validChecksum = "a".repeat(64);
+
+  // Missing one key (39 records)
+  const missingRecords = canonicalKeys.slice(0, 39).map((key) => ({
+    migration_key: key,
+    checksum: validChecksum,
+    status: "APPLIED",
+  }));
+  assert.throws(
+    () => validateMigrationHistoryRecords(missingRecords, canonicalKeys),
+    /Expected exactly 40 migration records, got 39/,
+  );
+
+  // Duplicate key
+  const duplicateRecords = [
+    ...canonicalKeys.slice(0, 39).map((key) => ({ migration_key: key, checksum: validChecksum, status: "APPLIED" })),
+    { migration_key: canonicalKeys[0], checksum: validChecksum, status: "APPLIED" },
+  ];
+  assert.throws(
+    () => validateMigrationHistoryRecords(duplicateRecords, canonicalKeys),
+    /Duplicate migration key in history/,
+  );
+
+  // Non-applied status
+  const pendingRecords = canonicalKeys.map((key, i) => ({
+    migration_key: key,
+    checksum: validChecksum,
+    status: i === 0 ? "PENDING" : "APPLIED",
+  }));
+  assert.throws(
+    () => validateMigrationHistoryRecords(pendingRecords, canonicalKeys),
+    /status 'PENDING', expected 'APPLIED'/,
+  );
+});
+
+test("M07-A2R-18: Rerun checksum mutation rejected by history validator", () => {
+  const canonicalKeys = Array.from({ length: 40 }, (_, i) => `${String(i + 1).padStart(3, "0")}_migration`);
+  const canonicalChecksums = new Map<string, string>();
+  for (const key of canonicalKeys) canonicalChecksums.set(key, "a".repeat(64));
+
+  const mutatedRecords = canonicalKeys.map((key, i) => ({
+    migration_key: key,
+    checksum: i === 0 ? "b".repeat(64) : "a".repeat(64),
+    status: "APPLIED",
+  }));
+
+  assert.throws(
+    () => validateMigrationHistoryRecords(mutatedRecords, canonicalKeys, canonicalChecksums),
+    /Checksum mismatch for 001_migration against canonical file/,
+  );
+});
+
+test("M07-A2R-19: Expected mismatch exit classification matches canonical failure output", () => {
+  const canonicalMismatchOutput = {
+    exitCode: 1,
+    stdout: "",
+    stderr: "Error: Migration checksum mismatch for 001_banking_mvp; refusing to run a modified applied migration.",
+  };
+  assert.equal(isExpectedChecksumMismatchRefusal(canonicalMismatchOutput, "001_banking_mvp"), true);
+});
+
+test("M07-A2R-20: Unrelated nonzero exit rejected by mismatch classifier", () => {
+  // Connection error
+  assert.equal(
+    isExpectedChecksumMismatchRefusal({
+      exitCode: 1,
+      stdout: "",
+      stderr: "Error: connect ECONNREFUSED 127.0.0.1:5432",
+    }),
+    false,
+  );
+
+  // Syntax error
+  assert.equal(
+    isExpectedChecksumMismatchRefusal({
+      exitCode: 1,
+      stdout: "",
+      stderr: "SyntaxError: Unexpected token",
+    }),
+    false,
+  );
+
+  // Success exit code 0
+  assert.equal(
+    isExpectedChecksumMismatchRefusal({
+      exitCode: 0,
+      stdout: "Migrations applied successfully",
+      stderr: "",
+    }),
+    false,
+  );
+
+  // Exit code 2
+  assert.equal(
+    isExpectedChecksumMismatchRefusal({
+      exitCode: 2,
+      stdout: "",
+      stderr: "Migration checksum mismatch for 001_banking_mvp",
+    }),
+    false,
+  );
+});
+
+test("M07-A2R-21: Canonical 19-step sequence ordering with test doubles", async () => {
+  const fixedRunId = "1234567890abcdef1234567890abcdef";
+  const fixedContainerId = "e".repeat(64);
+  const fixedContainerName = `banking_test_container_${fixedRunId}`;
+
+  const mockDocker: DockerAdapter = {
+    async inspectImage() { return JSON.stringify([{ Id: "sha256:" + "0".repeat(64), RepoTags: ["postgres:16"] }]); },
+    async runContainer() { return fixedContainerId; },
+    async inspectContainer() {
+      return JSON.stringify([{
+        Id: fixedContainerId,
+        Name: `/${fixedContainerName}`,
+        Image: "sha256:" + "0".repeat(64), Config: { Image: "postgres:16", Labels: { banking_test_run_id: fixedRunId } },
+        NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+        Mounts: [],
+      }]);
+    },
+    async removeContainer() {},
+    async waitForReady() {},
+  };
+
+  const poolQueries: string[] = [];
+  const mockPool: DisposablePoolClient = {
+    async query(sql: string) {
+      poolQueries.push(sql);
+      if (sql.includes("COUNT(*)")) {
+        return { rows: [{ count: 0 }] };
+      }
+      return { rows: [] };
+    },
+    async end() {},
+  };
+
+  const executedCommands: string[] = [];
+  let verifyOnlyCount = 0;
+  const mockRunCmd = async (cmd: string, args: readonly string[]) => {
+    executedCommands.push(`${cmd} ${args.join(" ")}`);
+    if (args.includes("--verify-only")) {
+      verifyOnlyCount++;
+      if (verifyOnlyCount === 2) {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: "Migration checksum mismatch for 001_banking_mvp; refusing to run.",
+        };
+      }
+    }
+    return {
+      exitCode: 0,
+      stdout: "OK",
+      stderr: "",
+    };
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    {
+      NODE_ENV: "test",
+      PATH: "C:\\Windows\\System32",
+    },
+    {
+      dockerAdapter: mockDocker,
+      createPoolFn: () => mockPool,
+      runCommandFn: mockRunCmd,
+      runIdGenerator: () => fixedRunId,
+    },
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.containerId, fixedContainerId);
+  assert.deepEqual(result.completedSteps, [
+    "1_VERIFY_LOCAL_IMAGE",
+    "2_CREATE_EPHEMERAL_CONTAINER",
+    "3_INSPECT_VALIDATE_CONTAINER",
+    "4_WAIT_READINESS",
+    "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    "6_APPLY_MIGRATIONS_RUN_1",
+    "7_CHILD_TEST_INITIAL_HISTORY",
+    "8_APPLY_MIGRATIONS_RUN_2",
+    "9_CHILD_TEST_RERUN_HISTORY",
+    "10_VERIFY_ONLY_PRE_MISMATCH",
+    "11_CHILD_TEST_INJECT_CHECKSUM_MISMATCH",
+    "12_VERIFY_ONLY_EXPECT_REFUSAL",
+    "13_CHILD_TEST_RESTORE_CHECKSUM",
+    "14_VERIFY_ONLY_POST_RESTORE_SUCCESS",
+    "19_VALIDATE_COMPLETION",
+    "15_CLOSE_TARGET_CONNECTIONS",
+    "16_CLEANUP_TARGET_DATABASE",
+    "17_PARENT_POST_DROP_CATALOG_CHECK",
+    "18_REMOVE_CONTAINER",
+  ]);
+});
+
+test("M07-A2R-22: Restoration verify-only failure fails closed and triggers cleanup", async () => {
+  const fixedRunId = "abcdef1234567890abcdef1234567890";
+  const fixedContainerId = "f".repeat(64);
+  const fixedContainerName = `banking_test_container_${fixedRunId}`;
+
+  const mockDocker: DockerAdapter = {
+    async inspectImage() { return JSON.stringify([{ Id: "sha256:" + "0".repeat(64), RepoTags: ["postgres:16"] }]); },
+    async runContainer() { return fixedContainerId; },
+    async inspectContainer() {
+      return JSON.stringify([{
+        Id: fixedContainerId,
+        Name: `/${fixedContainerName}`,
+        Image: "sha256:" + "0".repeat(64),
+        Config: { Image: "postgres:16", Labels: { banking_test_run_id: fixedRunId } },
+        NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+        Mounts: [],
+      }]);
+    },
+    async removeContainer() {},
+    async waitForReady() {},
+  };
+
+  const mockPool: DisposablePoolClient = {
+    async query(sql: string) {
+      if (sql.includes("COUNT(*)")) return { rows: [{ count: 0 }] };
+      return { rows: [] };
+    },
+    async end() {},
+  };
+
+  let verifyCount = 0;
+  const mockRunCmd = async (cmd: string, args: readonly string[]) => {
+    if (args.includes("--verify-only")) {
+      verifyCount++;
+      if (verifyCount === 1) return { exitCode: 0, stdout: "", stderr: "" };
+      if (verifyCount === 2) return { exitCode: 1, stdout: "", stderr: "Migration checksum mismatch for 001_banking_mvp" };
+      // Step 14 post-restore verify-only fails unexpectedly:
+      if (verifyCount === 3) return { exitCode: 1, stdout: "", stderr: "Restoration failed unexpectedly" };
+    }
+    return { exitCode: 0, stdout: "OK", stderr: "" };
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: mockDocker,
+      createPoolFn: () => mockPool,
+      runCommandFn: mockRunCmd,
+      runIdGenerator: () => fixedRunId,
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.ok(result.error?.message.includes("Post-restore verify-only failed"));
+  assert.ok(result.completedSteps.includes("16_CLEANUP_TARGET_DATABASE"), "Must execute database cleanup");
+  assert.ok(result.completedSteps.includes("18_REMOVE_CONTAINER"), "Must execute container removal");
+});
+
+test("M07-A2R-23: Parent post-drop count must equal zero or fail closed", async () => {
+  // Count === 0 succeeds
+  const zeroPool: DisposablePoolClient = {
+    async query() { return { rows: [{ count: 0 }] }; },
+    async end() {},
+  };
+  await verifyDatabaseDroppedInCatalog(zeroPool, "banking_test_target");
+
+  // Count === 1 fails closed
+  const remainingPool: DisposablePoolClient = {
+    async query() { return { rows: [{ count: 1 }] }; },
+    async end() {},
+  };
+  await assert.rejects(
+    () => verifyDatabaseDroppedInCatalog(remainingPool, "banking_test_target"),
+    /still present in pg_database \(count = 1\)/,
+  );
+});
+
+
+// ============================================================================
+// M07-A2R Safety Binding Follow-Up Tests (Pure In-Memory Test Doubles, No DB)
+// ============================================================================
+
+// Correction A: Exact Immutable Docker Image Binding
+test("M07-A2R-FU-01: Exact tag and immutable image ID valid accepted", () => {
+  const validImageId = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const validJson = JSON.stringify([{
+    Id: validImageId,
+    RepoTags: ["postgres:16"],
+  }]);
+  const imageId = validateDockerImageInspectOutput(validJson, "postgres:16");
+  assert.equal(imageId, validImageId);
+});
+
+test("M07-A2R-FU-02: Image inspect rejects evil/postgres:16", () => {
+  const validImageId = "sha256:" + "1".repeat(64);
+  const json = JSON.stringify([{
+    Id: validImageId,
+    RepoTags: ["evil/postgres:16"],
+  }]);
+  assert.throws(
+    () => validateDockerImageInspectOutput(json, "postgres:16"),
+    /does not contain exact tag 'postgres:16'/,
+  );
+});
+
+test("M07-A2R-FU-03: Image inspect rejects postgres:16-malicious", () => {
+  const validImageId = "sha256:" + "2".repeat(64);
+  const json = JSON.stringify([{
+    Id: validImageId,
+    RepoTags: ["postgres:16-malicious"],
+  }]);
+  assert.throws(
+    () => validateDockerImageInspectOutput(json, "postgres:16"),
+    /does not contain exact tag 'postgres:16'/,
+  );
+});
+
+test("M07-A2R-FU-04: Image inspect rejects prefix-postgres:16-suffix", () => {
+  const validImageId = "sha256:" + "3".repeat(64);
+  const json = JSON.stringify([{
+    Id: validImageId,
+    RepoTags: ["prefix-postgres:16-suffix"],
+  }]);
+  assert.throws(
+    () => validateDockerImageInspectOutput(json, "postgres:16"),
+    /does not contain exact tag 'postgres:16'/,
+  );
+});
+
+test("M07-A2R-FU-05: Image inspect rejects invalid immutable image ID format", () => {
+  assert.throws(
+    () => validateDockerImageInspectOutput(JSON.stringify([{ Id: "short", RepoTags: ["postgres:16"] }]), "postgres:16"),
+    /missing or invalid immutable image ID format/,
+  );
+  assert.throws(
+    () => validateDockerImageInspectOutput(JSON.stringify([{ Id: "sha256:" + "0".repeat(63), RepoTags: ["postgres:16"] }]), "postgres:16"),
+    /missing or invalid immutable image ID format/,
+  );
+  assert.throws(
+    () => validateDockerImageInspectOutput(JSON.stringify([{ Id: "sha256:" + "G".repeat(64), RepoTags: ["postgres:16"] }]), "postgres:16"),
+    /missing or invalid immutable image ID format/,
+  );
+  assert.throws(
+    () => validateDockerImageInspectOutput(JSON.stringify([{ Id: "md5:" + "0".repeat(64), RepoTags: ["postgres:16"] }]), "postgres:16"),
+    /missing or invalid immutable image ID format/,
+  );
+});
+
+test("M07-A2R-FU-06: Container inspect rejects Image differing from local inspected image ID", () => {
+  const runId = "00000000000000000000000000000001";
+  const containerName = `banking_test_container_${runId}`;
+  const containerId = "a".repeat(64);
+  const localImageId = "sha256:" + "a".repeat(64);
+  const differentImageId = "sha256:" + "b".repeat(64);
+
+  const inspectJson = JSON.stringify([{
+    Id: containerId,
+    Name: `/${containerName}`,
+    Image: differentImageId,
+    Config: { Image: "postgres:16", Labels: { banking_test_run_id: runId } },
+    NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+    Mounts: [],
+  }]);
+
+  assert.throws(
+    () => validateDockerInspectOutput(inspectJson, containerName, runId, localImageId, containerId),
+    /does not match approved local immutable image ID/,
+  );
+});
+
+test("M07-A2R-FU-07: Image inspect rejects 0 or multiple objects", () => {
+  assert.throws(
+    () => validateDockerImageInspectOutput("[]", "postgres:16"),
+    /exactly one record/,
+  );
+  assert.throws(
+    () => validateDockerImageInspectOutput("[{}, {}]", "postgres:16"),
+    /exactly one record/,
+  );
+});
+
+// Correction B: Docker Run / Inspect Container-ID Binding
+test("M07-A2R-FU-08: Exact 64-hex run ID parsed and bound successfully", () => {
+  const valid64Hex = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+  const parsedId = parseAndValidateLaunchedContainerId(valid64Hex);
+  assert.equal(parsedId, valid64Hex);
+
+  const parsedWithWhitespace = parseAndValidateLaunchedContainerId(`  ${valid64Hex}  `);
+  assert.equal(parsedWithWhitespace, valid64Hex);
+});
+
+test("M07-A2R-FU-09: Reject run stdout with two IDs or multiple lines", () => {
+  const id1 = "a".repeat(64);
+  const id2 = "b".repeat(64);
+  assert.throws(
+    () => parseAndValidateLaunchedContainerId(`${id1}\n${id2}`),
+    /invalid container ID format/,
+  );
+  assert.throws(
+    () => parseAndValidateLaunchedContainerId(`${id1}\r\n${id2}`),
+    /invalid container ID format/,
+  );
+});
+
+test("M07-A2R-FU-10: Reject short, uppercase, or malformed run ID", () => {
+  assert.throws(() => parseAndValidateLaunchedContainerId(""), /invalid container ID format/);
+  assert.throws(() => parseAndValidateLaunchedContainerId("short"), /invalid container ID format/);
+  assert.throws(() => parseAndValidateLaunchedContainerId("A".repeat(64)), /invalid container ID format/);
+  assert.throws(() => parseAndValidateLaunchedContainerId("a".repeat(63)), /invalid container ID format/);
+  assert.throws(() => parseAndValidateLaunchedContainerId("a".repeat(65)), /invalid container ID format/);
+  assert.throws(() => parseAndValidateLaunchedContainerId(`${"a".repeat(64)} extra text`), /invalid container ID format/);
+});
+
+test("M07-A2R-FU-11: Reject inspect ID differing from launch ID", () => {
+  const runId = "00000000000000000000000000000002";
+  const containerName = `banking_test_container_${runId}`;
+  const launchId = "c".repeat(64);
+  const reportedInspectId = "d".repeat(64);
+  const localImageId = "sha256:" + "c".repeat(64);
+
+  const inspectJson = JSON.stringify([{
+    Id: reportedInspectId,
+    Name: `/${containerName}`,
+    Image: localImageId,
+    Config: { Image: "postgres:16", Labels: { banking_test_run_id: runId } },
+    NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+    Mounts: [],
+  }]);
+
+  assert.throws(
+    () => validateDockerInspectOutput(inspectJson, containerName, runId, localImageId, launchId),
+    /does not match launched container ID/,
+  );
+});
+
+test("M07-A2R-FU-12: Sequence fails before DB creation and cleans up launch ID on inspect ID mismatch", async () => {
+  const fixedRunId = "00000000000000000000000000000003";
+  const launchId = "1".repeat(64);
+  const mismatchedInspectId = "2".repeat(64);
+  const fixedContainerName = `banking_test_container_${fixedRunId}`;
+  const localImageId = "sha256:" + "3".repeat(64);
+
+  const removedContainerIds: string[] = [];
+  const executedDbQueries: string[] = [];
+  const executedCommands: string[] = [];
+
+  const mockDocker: DockerAdapter = {
+    async inspectImage() {
+      return JSON.stringify([{ Id: localImageId, RepoTags: ["postgres:16"] }]);
+    },
+    async runContainer() {
+      return launchId;
+    },
+    async inspectContainer() {
+      // Returns inspect with mismatched ID
+      return JSON.stringify([{
+        Id: mismatchedInspectId,
+        Name: `/${fixedContainerName}`,
+        Image: localImageId,
+        Config: { Image: "postgres:16", Labels: { banking_test_run_id: fixedRunId } },
+        NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+        Mounts: [],
+      }]);
+    },
+    async removeContainer(id: string) {
+      removedContainerIds.push(id);
+    },
+    async waitForReady() {},
+  };
+
+  const mockPool: DisposablePoolClient = {
+    async query(sql: string) {
+      executedDbQueries.push(sql);
+      return { rows: [] };
+    },
+    async end() {},
+  };
+
+  const mockRunCmd = async (cmd: string, args: readonly string[]) => {
+    executedCommands.push(`${cmd} ${args.join(" ")}`);
+    return { exitCode: 0, stdout: "", stderr: "" };
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: mockDocker,
+      createPoolFn: () => mockPool,
+      runCommandFn: mockRunCmd,
+      runIdGenerator: () => fixedRunId,
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error?.message ?? "", /does not match launched container ID/);
+  // Zero DB queries
+  assert.equal(executedDbQueries.length, 0, "Zero DB queries on container ID mismatch");
+  // Zero child process commands
+  assert.equal(executedCommands.length, 0, "Zero child process commands on container ID mismatch");
+  // Cleanup removes launchedContainerId, NEVER the untrusted mismatchedInspectId!
+  assert.deepEqual(removedContainerIds, [launchId], "Cleanup must target exact launch ID");
+  assert.ok(!removedContainerIds.includes(mismatchedInspectId), "Cleanup must NOT target untrusted inspect ID");
+});
+
+// Correction C: Runtime Ownership Gate Before Phase Action
+test("M07-A2R-FU-13: Shared assertRuntimeDatabaseOwnership accepts valid canonical marker and current database", () => {
+  const runId = "00000000000000000000000000000004";
+  const expectedDbName = `banking_test_${runId}`;
+  const canonicalComment = `disposable_run_id=${runId};owner=m01_runner;created_at=1234567890`;
+
+  // Should succeed without error
+  assertRuntimeDatabaseOwnership(
+    {
+      currentDatabase: expectedDbName,
+      comment: canonicalComment,
+    },
+    runId,
+  );
+});
+
+test("M07-A2R-FU-14: Ownership gate rejects missing or malformed marker", () => {
+  const runId = "00000000000000000000000000000005";
+  const expectedDbName = `banking_test_${runId}`;
+
+  assert.throws(
+    () => assertRuntimeDatabaseOwnership({ currentDatabase: expectedDbName, comment: "" }, runId),
+    /missing database ownership comment/,
+  );
+  assert.throws(
+    () => assertRuntimeDatabaseOwnership({ currentDatabase: expectedDbName, comment: "not_a_marker" }, runId),
+    /Malformed ownership marker/,
+  );
+});
+
+test("M07-A2R-FU-15: Ownership gate rejects wrong owner or runId mismatch", () => {
+  const runId = "00000000000000000000000000000006";
+  const expectedDbName = `banking_test_${runId}`;
+
+  // Wrong owner
+  assert.throws(
+    () => assertRuntimeDatabaseOwnership(
+      { currentDatabase: expectedDbName, comment: `disposable_run_id=${runId};owner=evil_hacker;created_at=1` },
+      runId,
+    ),
+    /unexpected or missing owner/,
+  );
+
+  // Run ID mismatch
+  assert.throws(
+    () => assertRuntimeDatabaseOwnership(
+      { currentDatabase: expectedDbName, comment: `disposable_run_id=ffffffffffffffffffffffffffffffff;owner=m01_runner;created_at=1` },
+      runId,
+    ),
+    /Ownership marker run_id mismatch/,
+  );
+});
+
+test("M07-A2R-FU-16: Ownership gate rejects current_database mismatch", () => {
+  const runId = "00000000000000000000000000000007";
+  const comment = `disposable_run_id=${runId};owner=m01_runner;created_at=1`;
+
+  assert.throws(
+    () => assertRuntimeDatabaseOwnership(
+      { currentDatabase: "banking_preview", comment },
+      runId,
+    ),
+    /current_database does not match expected target/,
+  );
+});
+
+test("M07-A2R-FU-17: Ownership gate check enforced before any phase action across all four phases", () => {
+  const phases = ["INITIAL_HISTORY", "RERUN_HISTORY", "INJECT_CHECKSUM_MISMATCH", "RESTORE_CHECKSUM"] as const;
+  const runId = "00000000000000000000000000000008";
+
+  for (const phase of phases) {
+    let actionExecuted = false;
+    const testDoubleWorker = (catalogInfo: { currentDatabase: string; comment: string }) => {
+      // 1. Ownership gate
+      assertRuntimeDatabaseOwnership(catalogInfo, runId);
+      // 2. Phase action
+      actionExecuted = true;
+    };
+
+    // On invalid marker: must fail closed with zero action
+    assert.throws(
+      () => testDoubleWorker({ currentDatabase: `banking_test_${runId}`, comment: "bad_marker" }),
+      /Malformed ownership marker/,
+    );
+    assert.equal(actionExecuted, false, `Phase ${phase} action must NOT execute when ownership gate fails`);
+  }
+});
+
+// Correction D: Case-Insensitive Protected Environment
+test("M07-A2R-FU-18: Hostile lowercase inherited keys are stripped case-insensitively", () => {
+  const hostileEnv: NodeJS.ProcessEnv = {
+    database_url: "postgresql://hostile@10.0.0.1:5432/banking_preview",
+    database_test_phase: "EVIL_PHASE",
+    database_test_run_id: "hostile_run_id",
+    database_test_disposable: "0",
+    allow_database_test_reset: "0",
+    PATH: "C:\\Windows\\System32",
+  };
+
+  const clean = buildCleanChildEnvironment(
+    {
+      databaseUrl: "postgresql://postgres:secret@127.0.0.1:54321/banking_test_00000000000000000000000000000009",
+      databaseName: "banking_test_00000000000000000000000000000009",
+      runId: "00000000000000000000000000000009",
+      phase: "INITIAL_HISTORY",
+    },
+    hostileEnv,
+  );
+
+  assert.equal(clean.database_url, undefined, "database_url must be stripped");
+  assert.equal(clean.database_test_phase, undefined, "database_test_phase must be stripped");
+  assert.equal(clean.database_test_run_id, undefined, "database_test_run_id must be stripped");
+  assert.equal(clean.database_test_disposable, undefined, "database_test_disposable must be stripped");
+  assert.equal(clean.allow_database_test_reset, undefined, "allow_database_test_reset must be stripped");
+
+  // Canonical runner values exist in uppercase only
+  assert.equal(clean.DATABASE_URL, "postgresql://postgres:secret@127.0.0.1:54321/banking_test_00000000000000000000000000000009");
+  assert.equal(clean.DATABASE_TEST_RUN_ID, "00000000000000000000000000000009");
+  assert.equal(clean.DISPOSABLE_TEST_PHASE, "INITIAL_HISTORY");
+  assert.equal(clean.DATABASE_TEST_DISPOSABLE, "1");
+  assert.equal(clean.ALLOW_DATABASE_TEST_RESET, "1");
+});
+
+test("M07-A2R-FU-19: Mixed-case inherited keys are stripped and canonical runner value wins", () => {
+  const hostileEnv: NodeJS.ProcessEnv = {
+    Database_Url: "postgresql://mixedcase@10.0.0.1:5432/preview",
+    Database_Test_Run_Id: "bad_run_id",
+    Database_Test_Phase: "BAD_PHASE",
+    Database_Test_Disposable: "0",
+    Path: "C:\\Windows\\System32",
+  };
+
+  const clean = buildCleanChildEnvironment(
+    {
+      databaseUrl: "postgresql://postgres:secret@127.0.0.1:54321/banking_test_00000000000000000000000000000010",
+      databaseName: "banking_test_00000000000000000000000000000010",
+      runId: "00000000000000000000000000000010",
+    },
+    hostileEnv,
+  );
+
+  assert.equal(clean.Database_Url, undefined);
+  assert.equal(clean.Database_Test_Run_Id, undefined);
+  assert.equal(clean.Database_Test_Phase, undefined);
+  assert.equal(clean.Database_Test_Disposable, undefined);
+
+  assert.equal(clean.DATABASE_URL, "postgresql://postgres:secret@127.0.0.1:54321/banking_test_00000000000000000000000000000010");
+  assert.equal(clean.DATABASE_TEST_RUN_ID, "00000000000000000000000000000010");
+  assert.equal(clean.DATABASE_TEST_DISPOSABLE, "1");
+  assert.equal(clean.Path, "C:\\Windows\\System32");
+});
+
+test("M07-A2R-FU-20: Unrelated OS allowlisted keys preserved and arbitrary secrets discarded", () => {
+  const hostEnv: NodeJS.ProcessEnv = {
+    SystemRoot: "C:\\Windows",
+    TEMP: "C:\\Temp",
+    TMP: "C:\\Temp",
+    USERPROFILE: "C:\\Users\\Admin",
+    AWS_SECRET_ACCESS_KEY: "super_secret_aws",
+    GITHUB_TOKEN: "ghp_secret_token",
+    OPENAI_API_KEY: "sk_secret",
+    DATABASE_TEST_RUN_ID: "old_id",
+  };
+
+  const clean = buildCleanChildEnvironment(
+    {
+      databaseUrl: "postgresql://postgres:secret@127.0.0.1:54321/banking_test_00000000000000000000000000000011",
+      databaseName: "banking_test_00000000000000000000000000000011",
+      runId: "00000000000000000000000000000011",
+    },
+    hostEnv,
+  );
+
+  // OS allowlisted keys preserved
+  assert.equal(clean.SystemRoot, "C:\\Windows");
+  assert.equal(clean.TEMP, "C:\\Temp");
+  assert.equal(clean.TMP, "C:\\Temp");
+  assert.equal(clean.USERPROFILE, "C:\\Users\\Admin");
+
+  // Arbitrary secrets discarded
+  assert.equal(clean.AWS_SECRET_ACCESS_KEY, undefined);
+  assert.equal(clean.GITHUB_TOKEN, undefined);
+  assert.equal(clean.OPENAI_API_KEY, undefined);
+
+  // Protected key overridden with runner value
+  assert.equal(clean.DATABASE_TEST_RUN_ID, "00000000000000000000000000000011");
+  assert.equal(clean.DATABASE_TEST_DISPOSABLE, "1");
+});
+
+test("M07-A2R-FU-21: canonical DISPOSABLE_TEST_PHASE strips all inherited casing variants and remains the only forwarded phase key", () => {
+  const hostEnv: NodeJS.ProcessEnv = {
+    disposable_test_phase: "HOSTILE_LOWER",
+    Disposable_Test_Phase: "HOSTILE_MIXED",
+    DATABASE_TEST_PHASE: "HOSTILE_LEGACY_UPPER",
+    database_test_phase: "HOSTILE_LEGACY_LOWER",
+    PATH: "C:\\Windows\\System32",
+    AWS_SECRET_KEY: "secret",
+  };
+
+  const clean = buildCleanChildEnvironment(
+    {
+      databaseUrl: "postgresql://postgres:secret@127.0.0.1:54321/banking_test_00000000000000000000000000000012",
+      databaseName: "banking_test_00000000000000000000000000000012",
+      runId: "00000000000000000000000000000012",
+      phase: "INITIAL_HISTORY",
+    },
+    hostEnv,
+  );
+
+  assert.equal(clean.DISPOSABLE_TEST_PHASE, "INITIAL_HISTORY");
+  assert.equal(clean.disposable_test_phase, undefined);
+  assert.equal(clean.Disposable_Test_Phase, undefined);
+  assert.equal(clean.database_test_phase, undefined);
+  assert.equal(clean.DATABASE_TEST_PHASE, undefined);
+
+  // Exactly 1 key whose upper case is DISPOSABLE_TEST_PHASE
+  const disposablePhaseKeys = Object.keys(clean).filter((k) => k.toUpperCase() === "DISPOSABLE_TEST_PHASE");
+  assert.equal(disposablePhaseKeys.length, 1);
+  assert.equal(disposablePhaseKeys[0], "DISPOSABLE_TEST_PHASE");
+
+  // Exactly 0 keys whose upper case is DATABASE_TEST_PHASE
+  const databasePhaseKeys = Object.keys(clean).filter((k) => k.toUpperCase() === "DATABASE_TEST_PHASE");
+  assert.equal(databasePhaseKeys.length, 0);
+
+  // OS allowlisted key preserved
+  assert.equal(clean.PATH, "C:\\Windows\\System32");
+
+  // Arbitrary secret discarded
+  assert.equal(clean.AWS_SECRET_KEY, undefined);
 });

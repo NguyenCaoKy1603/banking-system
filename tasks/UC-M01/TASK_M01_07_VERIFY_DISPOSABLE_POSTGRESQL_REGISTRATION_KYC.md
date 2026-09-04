@@ -1,8 +1,8 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A1 COMMITTED — M07-A2 REMEDIATION NOT STARTED
-- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
-- An toàn thực thi database: BLOCKED — M07-A2 EVIDENCE HARNESS GAP; M07-A2 NOT AUTHORIZED
+- Trạng thái: IN_PROGRESS — M07-A2R VERIFIED — AWAITING CHECKPOINT COMMIT
+- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- An toàn thực thi database: BLOCKED — M07-A2 NOT AUTHORIZED; RUNTIME DATABASE EXECUTION NOT STARTED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
@@ -69,6 +69,31 @@ Bốn blocker M07-A2 được giữ nguyên vẹn:
 3. Runtime checksum mismatch refusal: Sửa đổi 1 byte checksum phải bị từ chối rõ ràng.
 4. Post-drop catalog verification: Truy vấn `pg_database` xác minh DB target đã biến mất hoàn toàn.
 
+## OWNER APPROVAL — M07-A2R NO-DB HARNESS ACCEPTED
+
+- Ngày phê duyệt: 2026-09-04
+- Baseline HEAD: `925bf3129ee7f0f3e562078f554c1f12cdfcaf4f`
+- Quyết định Owner: Chấp nhận Checkpoint M07-A2R No-DB Harness sau khi hoàn thành phase-key remediation.
+- Bằng chứng và cơ chế fail-closed được chấp nhận:
+  - Immutable Docker image binding: `validateDockerImageInspectOutput` ràng buộc exact `postgres:16` tag và 64-hex image ID (`^sha256:[0-9a-f]{64}$`).
+  - Container-ID binding: `parseAndValidateLaunchedContainerId` ràng buộc exact 64-hex container ID từ `docker run`; `validateDockerInspectOutput` đối chiếu `inspect.Id === launchedContainerId`; cleanup chỉ xóa `launchedContainerId`.
+  - Runtime ownership gate: `assertRuntimeDatabaseOwnership` xác thực `current_database()` và marker comment (`disposable_run_id=<run_id>;owner=m01_runner`) trên catalog trước mọi phase action.
+  - Case-insensitive child environment filtering: `PROTECTED_CHILD_ENV_KEYS_UPPERCASE` loại bỏ mọi biến thể hoa thường của các khóa nhạy cảm.
+  - Phase-key reconciliation: Canonical key duy nhất là `DISPOSABLE_TEST_PHASE`. Runner chỉ ghi `DISPOSABLE_TEST_PHASE`, runtime test chỉ đọc `DISPOSABLE_TEST_PHASE`. Legacy key `DATABASE_TEST_PHASE` chỉ được giữ trong protected set để strip triệt để input legacy/hostile, runtime worker hoàn toàn không chấp nhận hay đọc legacy key này.
+- Kết quả kiểm thử và Quality Gates:
+  - Typecheck: PASS (`npm run typecheck`, 0 lỗi, 0 prohibited bypasses: 0 `any`, 0 `as any`, 0 `as unknown as`, 0 `as never`, 0 `@ts-ignore`, 0 `@ts-expect-error`).
+  - Build: PASS (`npm run build`, biên dịch `dist/` thành công).
+  - Targeted tests: `76/76 PASS`, `0 fail`, `0 cancelled`, `0 skip` (`node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`).
+  - Phân bổ 76 tests:
+    - 32 M07-A1 baseline tests.
+    - 23 M07-A2R baseline harness tests (`M07-A2R-01` đến `M07-A2R-23`).
+    - 20 safety-binding follow-up tests (`M07-A2R-FU-01` đến `M07-A2R-FU-20`).
+    - 1 phase-key regression test (`M07-A2R-FU-21`).
+- Ranh giới an toàn:
+  - Không chạy Docker CLI, Docker daemon, PostgreSQL, database socket, migration hoặc runtime migration test.
+  - Bằng chứng chỉ chứng minh ở mức unit/test-double nhằm giảm thiểu rủi ro theo thiết kế fail-closed ở mức unit/test-double.
+  - Checkpoint M07-A2 runtime vẫn ở trạng thái: **CHƯA ĐƯỢC CẤP QUYỀN (NOT AUTHORIZED)**.
+  - Task M01-07 và Use Case UC-M01 tiếp tục: **CHƯA HOÀN THÀNH (INCOMPLETE)**.
 
 ## 1. Repository verification và quyền phiên này
 
@@ -1048,3 +1073,454 @@ PLAN APPROVED — M07-A1 NOT STARTED — DATABASE EXECUTION REMAINS BLOCKED UNTI
 4. Chưa có post-drop catalog verification runtime.
 
 Checkpoint M07-A2 cần một Owner directive riêng về remediation allowlist trước khi có thể chạy database. Checkpoint M07-A2 chưa sẵn sàng và chưa được cấp quyền (NOT AUTHORIZED). Task M01-07 và Use Case UC-M01 tiếp tục ở trạng thái chưa hoàn thành.
+## 28. M07-A2 EVIDENCE HARNESS RECONCILIATION & ARCHITECTURE CORRECTION
+
+### 28.1 Baseline và Danh mục Source Khảo sát
+- **Baseline HEAD**: `925bf3129ee7f0f3e562078f554c1f12cdfcaf4f`
+- **Parent Commit**: `bf384d4cec756e123340353703c1d60cc3206620` (`test(database): harden disposable PostgreSQL safety guard`)
+- **Chế độ**: `DIAGNOSE_AND_PLAN — DOCUMENTATION ONLY — NO DATABASE` (Tuyệt đối không chạy Docker, PostgreSQL, migration, runner hoặc test).
+- **Danh mục file đã khảo sát (Read-Only)**:
+  - `AGENTS.md`, `PROJECT_CONTEXT.md`, `backend/README.md`, Task M01-07
+  - `backend/package.json` (scripts và dependencies)
+  - `backend/scripts/run-disposable-postgres-test.ts`
+  - `backend/src/database/disposableDatabaseGuard.ts`
+  - `backend/src/tests/disposableDatabaseGuard.test.ts`
+  - `backend/scripts/apply-migration.cjs`
+  - `backend/scripts/migration-fingerprint.cjs`
+  - `backend/src/tests/migrationFingerprint.test.ts`
+  - `backend/scripts/migration-content.cjs`, `backend/scripts/postgres-ssl.cjs`
+  - `backend/src/database/pool.ts`, `backend/src/database/unitOfWork.ts`
+  - Thư mục migration: `backend/database/` (chứa đúng 40 file SQL `001_banking_mvp.sql` .. `040_card_security_and_suspense_retry.sql`)
+  - `compose.yaml` (preview stack, read-only)
+
+### 28.2 Ma trận Năng lực Thực tế của Runner (Capability Matrix)
+
+| Năng lực (Capability) | File / Biểu tượng Cụ thể (Exact File & Symbol) | Hiện có? | Unit-tested? | Runtime Evidence? | Khoảng trống Kỹ thuật (Gap) |
+| :--- | :--- | :---: | :---: | :---: | :--- |
+| **PostgreSQL 16 container creation** | `run-disposable-postgres-test.ts` / `disposableDatabaseGuard.ts` | Chưa có real adapter | Có (`SAFE-R05` validator) | Chưa có | Runner hiện không tự khởi chạy container; thiếu real Docker spawn adapter |
+| **Unique container/run identity** | `disposableDatabaseGuard.ts` (`generateDisposableRunId`, `RUN_ID_PATTERN`) | Có (32-hex ID) | Có (`SAFE-R04`) | Chưa có | Chưa đối chiếu label/name thực tế trên Docker engine |
+| **Loopback-only port binding** | `disposableDatabaseGuard.ts` (`isNumericLoopback`, `assertLoopbackHost`) | Có (Validator) | Có (`SAFE-R02`, `SAFE-R03`) | Chưa có | Chưa xác nhận socket binding trên loopback host thật |
+| **No persistent volume** | `disposableDatabaseGuard.ts` (`validateContainerDescriptor`) | Có (Validator) | Có (`SAFE-R05`) | Chưa có | Chưa kiểm tra cấu hình mounts rỗng từ Docker inspect thật |
+| **Exact container inspect/label verification** | `disposableDatabaseGuard.ts` (`validateContainerDescriptor`) | Có (Validator interface) | Có (`SAFE-R05`, `SAFE-R08-E2`) | Chưa có | Thiếu real Docker inspect adapter trong runner |
+| **Admin connection construction** | `disposableDatabaseGuard.ts` (`new Pool(adminUrl)`) | Có (`pg.Pool`) | Có (mock pool) | Chưa có | Chưa kết nối maintenance DB thật trên PostgreSQL 16 |
+| **Target database creation** | `disposableDatabaseGuard.ts` (`CREATE DATABASE ...`) | Có (SQL in runner) | Có (mock query) | Chưa có | Chưa tạo database thật trên PostgreSQL instance |
+| **Ownership comment write/readback** | `disposableDatabaseGuard.ts` (`COMMENT ON DATABASE`, `SELECT shobj_description`) | Có (SQL & Parser) | Có (`SAFE-R06`, `SAFE-R07`) | Chưa có | Chưa kiểm chứng ghi và đọc comment trong catalog `pg_shdescription` thật |
+| **Migration 001–040 invocation** | `apply-migration.cjs` & `disposableDatabaseGuard.ts` | Có (40 files SQL) | Có (orchestration) | Chưa có | Chưa chạy migration thật trên disposable database |
+| **Child test invocation** | `disposableDatabaseGuard.ts` (`executeChildCommandWithTimeout`) | Có (`tsx --test`) | Có (mock child) | Chưa có | Chưa chạy targeted test file thật trên disposable database |
+| **Migration history count** | `apply-migration.cjs` (`reference_schema_migrations`) | Có bảng DB | Chưa | Chưa có | **Gap A2-01**: Runner chưa truy vấn assert `COUNT(*) === 40` và so khớp key inventory |
+| **Migration rerun invariant** | `apply-migration.cjs` (idempotent apply & `--verify-only`) | Có trong script | Chưa | Chưa có | **Gap A2-02**: Runner chỉ gọi migration 1 lần; chưa assert rerun lần 2 giữ nguyên 40 rows |
+| **Checksum mismatch refusal** | `apply-migration.cjs` (`throw Migration checksum mismatch`) | Có trong script | Chưa | Chưa có | **Gap A2-03**: Chưa có cơ chế điều phối và kiểm thử refusal fail-closed khi checksum bị lệch |
+| **Target-session termination** | `disposableDatabaseGuard.ts` (`SELECT pg_terminate_backend(pid)...`) | Có (SQL in Phase 2) | Có (`SAFE-R10`, `SAFE-R10-E5`) | Chưa có | Chưa terminate sessions thật trên PostgreSQL runtime |
+| **Exact database drop** | `disposableDatabaseGuard.ts` (`DROP DATABASE ... WITH (FORCE)`) | Có (SQL in Phase 3) | Có (mock query) | Chưa có | Chưa drop database thật trên PostgreSQL instance |
+| **Post-drop catalog query** | `disposableDatabaseGuard.ts` (`SELECT 1 FROM pg_database WHERE datname = $1`) | Có (SQL in Phase 4) | Có (`SAFE-R11`) | Chưa có | **Gap A2-04**: Chưa có bằng chứng runtime độc lập do parent runner xác nhận DB đã biến mất |
+| **Exact container removal** | `disposableDatabaseGuard.ts` (`deps.containerRemovalFn`) | Có (Hook seam) | Có (`SAFE-R08-E2`, `SAFE-R10-E5`) | Chưa có | Thiếu real Docker rm adapter trong runner |
+| **Abort/timeout handling in real adapters** | `disposableDatabaseGuard.ts` (`checkCancellation`, `AbortController`) | Có (Orchestration) | Có (`SAFE-R09-E1..E2`, `SAFE-R10-E4..E6`) | Chưa có | Chưa kiểm chứng hủy socket thật qua `pg` driver |
+| **Sanitized runtime evidence** | `disposableDatabaseGuard.ts` (`sanitizeLogOutput`) | Có (Helper) | Có (`SAFE-R01`, `SAFE-R01-E1`) | Chưa có | Cần áp dụng redaction lọc console log khi chạy runtime thật |
+
+### 28.3 Điều chỉnh Fixed Modification Allowlist M07-A2R (Đúng 5 File)
+
+Để khắc phục việc thiếu adapter thực thi và cơ chế điều phối kiểm thử bốn khoảng trống an toàn, minimal future modification allowlist phải gồm đúng năm file:
+
+1. `backend/scripts/run-disposable-postgres-test.ts` — **MODIFY**: Điều phối vòng đời container ephemeral, migration sequencing, rerun, expected refusal, và post-drop catalog verification.
+2. `backend/src/database/disposableDatabaseGuard.ts` — **MODIFY**: Bổ sung validation Docker inspect, clean child environment construction, approved runtime test path, approved evidence phases, và one-nibble checksum mutation helpers.
+3. `backend/src/tests/disposableDatabaseGuard.test.ts` — **MODIFY**: Unit tests cho command construction, fake Docker inspect validation, phase validation, và checksum mutation helpers.
+4. `backend/src/tests/disposableMigrationRuntime.test.ts` — **NEW**: Dedicated runtime test suite thực thi các assertions theo phase được ủy quyền bởi runner.
+5. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md` — **MODIFY**: Ghi nhận tài liệu và kết quả nghiệm thu.
+
+**Giữ nguyên ở trạng thái Read-Only**:
+- `backend/scripts/apply-migration.cjs`
+- `backend/scripts/migration-fingerprint.cjs`
+- `backend/scripts/migration-content.cjs`
+- Toàn bộ 40 file migration SQL dưới `backend/database/*.sql`
+- `backend/package.json` (không thêm dependency mới)
+- Lockfile, tsconfig, Dockerfile, Compose và infrastructure files.
+
+*Lý do bắt buộc sửa runner*:
+- Snapshot hiện tại chưa có real adapter tạo container, inspect container, hay xóa container.
+- Parent runner phải là nơi sở hữu việc điều phối migration rerun, kiểm tra expected checksum refusal, và post-drop verification.
+- Dedicated runtime test không thể tự chứng minh database chứa chính nó đã biến mất sau khi drop.
+
+### 28.4 Phân định Trách nhiệm Kiến trúc (Architecture Ownership Matrix)
+
+| Trách nhiệm (Responsibility) | Parent Runner (`run-disposable-postgres-test.ts`) | Guard Module (`disposableDatabaseGuard.ts`) | Child Runtime Test (`disposableMigrationRuntime.test.ts`) |
+| :--- | :---: | :---: | :---: |
+| **Khởi tạo Ephemeral Container** | **Sở hữu** (Spawn qua Docker CLI argv) | Cung cấp validation & descriptor parsing | Không có quyền (Cấm) |
+| **Inspect & Xác minh Container** | **Sở hữu** (Gọi docker inspect) | Cung cấp typed schema & loopback check | Không có quyền (Cấm) |
+| **Quản lý Vòng đời Database Target** | **Sở hữu** (CREATE / DROP DATABASE, marker) | Cung cấp SQL generator & identifier quote | Không có quyền (Cấm tạo / drop DB) |
+| **Xây dựng Môi trường Con (Child Env)** | **Sở hữu** (Tạo synthetic target URL & allowlist) | Cung cấp clean environment builder | Không nhận caller env trực tiếp |
+| **Điều phối Migration 001–040 (Lần 1)** | **Sở hữu** (Thực thi `apply-migration.cjs`) | Cung cấp timeout & abort propagation | Không có quyền |
+| **Xác minh Initial History Rows** | Ủy quyền phase `INITIAL_HISTORY` | Cung cấp phase definition & token | **Sở hữu** (Assert 40 rows, 40 keys, sha256) |
+| **Điều phối Migration Rerun (Lần 2)** | **Sở hữu** (Thực thi `apply-migration.cjs` lần 2) | Cung cấp orchestration loop | Không có quyền |
+| **Xác minh Rerun Invariant** | Ủy quyền phase `RERUN_HISTORY` | Cung cấp phase definition & token | **Sở hữu** (Assert 40 rows giữ nguyên, 0 mutation) |
+| **Tiêm Lệch Checksum (One-nibble)** | Ủy quyền phase `INJECT_CHECKSUM_MISMATCH` | Cung cấp one-nibble mutation helper | **Sở hữu** (UPDATE 1 row trong disposable DB) |
+| **Kiểm tra Refusal Fail-Closed** | **Sở hữu** (Chạy `apply-migration.cjs --verify-only`) | Assert exitCode !== 0 & mismatch message | Không có quyền (Chạy ở process riêng) |
+| **Khôi phục Checksum (Restoration)** | Ủy quyền phase `RESTORE_CHECKSUM` | Cung cấp canonical checksum recompute | **Sở hữu** (UPDATE lại giá trị canonical) |
+| **Dọn dẹp & Xóa Database (Cleanup)** | **Sở hữu** (Phase 1-3 cleanup) | Cung cấp termination & drop SQL | Không có quyền |
+| **Xác minh Sau Khi Drop (Post-drop)** | **Sở hữu** (Admin connection query `pg_database`) | Cung cấp catalog check postcondition | Không có quyền (Không thể tự query sau drop) |
+| **Xóa Container Ephemeral** | **Sở hữu** (Gọi docker rm qua exact ID) | Cung cấp containerRemovalFn seam | Không có quyền |
+| **Ẩn danh hóa Kết quả (Redaction)** | **Sở hữu** (Lọc toàn bộ log output) | Cung cấp `sanitizeLogOutput` | Không log raw credentials / URLs |
+
+### 28.5 Kế hoạch Thiết kế Docker Real-Adapter trong Runner
+1. **Thực thi An toàn qua CLI**: Sử dụng `spawn` với argument array (`process.execPath` hoặc `docker`), tuyệt đối không dùng `shell: true` hoặc chuỗi nối lệnh.
+2. **Kiểm tra Image Có Sẵn (No Implicit Pull)**: Trước khi chạy container, runner kiểm tra image `postgres:16` có sẵn trong local image store qua `docker image inspect`. Nếu thiếu image, runner dừng ngay lập tức ở trạng thái fail-closed; không tự động pull ngầm trong quá trình kiểm thử.
+3. **Cấu hình Container Khép kín**:
+   - Tên container: `banking_test_container_<32-hex-run-id>`.
+   - Run label: `banking_test_run_id=<32-hex-run-id>`.
+   - Gán cổng: Chỉ bind lên numeric loopback (`127.0.0.1`) với cổng động do Docker cấp (`127.0.0.1::5432`).
+   - Không gắn volume bền vững: Không truyền cờ `-v` hay `--mount`.
+4. **Xác minh qua Docker Inspect**: Sau khi container khởi chạy, runner parse output `docker inspect` để xác minh:
+   - `Id`: Lưu lại exact container ID 64-hex dài.
+   - `Name`: Đúng định dạng `/banking_test_container_<32-hex>`.
+   - `Config.Labels`: Có label run ID khớp tuyệt đối.
+   - `Config.Image`: Khớp image PostgreSQL 16 được chỉ định.
+   - `NetworkSettings.Ports`: HostIp đúng là `127.0.0.1`, thu nhận HostPort động.
+   - `Mounts`: Mảng rỗng (`[]`), không có volume nào được gắn.
+5. **Dọn dẹp Container Chắc chắn**:
+   - Khi cleanup: Chỉ gọi `docker rm -f <exact-container-id>` sử dụng exact ID đã inspect được.
+   - Mọi thao tác Docker đều có timeout và AbortSignal.
+   - Không ghi password, URL kết nối hoặc full run ID ra console log.
+
+### 28.6 Ranh giới Môi trường Con (Clean Child Environment Boundary)
+- Runner từ chối/bỏ qua mọi `DATABASE_URL`, target name, hoặc run ID do caller bên ngoài truyền vào.
+- Runner tự xây dựng target URL nội bộ từ:
+  - Loopback host `127.0.0.1` và cổng động lấy từ kết quả inspect container.
+  - Tên database sinh nội bộ: `banking_test_<32-hex-run-id>`.
+  - Thông tin đăng nhập synthetic sinh ngẫu nhiên nội bộ.
+- Môi trường truyền cho child process (`tsx --test`) được xây dựng từ một explicit allowlist tối thiểu (`PATH`, `NODE_ENV=test`, `BANKING_ENV=test`, `ALLOW_DATABASE_TEST_RESET=1`, `DATABASE_URL=<internal-target-url>`, `DATABASE_TEST_RUN_ID=<run-id>`, `DISPOSABLE_TEST_PHASE=<phase>`).
+- Child process không được cấp quyền tự đoán hoặc override database name.
+- Runtime test phải truy vấn ownership comment trên target DB và so khớp với `DATABASE_TEST_RUN_ID` trước khi thực hiện bất kỳ thao tác nào.
+- Tuyệt đối không in toàn bộ environment object ra log.
+
+### 28.7 Trình tự Thực thi Bằng chứng Canonical (Canonical Migration-Evidence Sequence)
+
+Trình tự 15 bước bắt buộc tại Checkpoint M07-A2 runtime:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Runner as Parent Runner
+    participant Docker as Docker Daemon
+    participant PG as Disposable PG16
+    participant Child as Runtime Test Suite
+    participant Migrator as apply-migration.cjs
+
+    Runner->>Docker: 1. Tạo container loopback & inspect exact ID/port
+    Runner->>PG: 2. CREATE target DB & ghi ownership comment
+    Runner->>Migrator: 3. Chạy migration lần 1
+    Migrator-->>Runner: Exit code 0 (40 applied)
+    Runner->>Child: 4. Gọi phase INITIAL_HISTORY
+    Child-->>Runner: PASS (40 rows, 40 keys match SQL)
+    Runner->>Migrator: 5. Chạy migration lần 2 (rerun)
+    Migrator-->>Runner: Exit code 0 (already applied)
+    Runner->>Child: 6. Gọi phase RERUN_HISTORY
+    Child-->>Runner: PASS (40 rows invariant, 0 duplicate)
+    Runner->>Child: 7. Gọi phase INJECT_CHECKSUM_MISMATCH (1-nibble mutate)
+    Child-->>Runner: PASS (Updated 1 row)
+    Runner->>Migrator: 8. Chạy apply-migration.cjs --verify-only
+    Migrator-->>Runner: 9. Refusal (Exit code 1, Checksum mismatch)
+    Runner->>Child: 10. Gọi phase RESTORE_CHECKSUM (Canonical restore)
+    Child-->>Runner: PASS (Restored canonical hash)
+    Runner->>PG: 11. Cleanup (terminate sessions & DROP DATABASE)
+    Runner->>PG: 12. Admin query pg_database
+    Note over Runner,PG: 13. Assert count === 0 (DB absent)
+    Runner->>Docker: 14. docker rm -f exact container ID
+    Note over Runner: 15. Sanitized final result PASS
+```
+
+1. **Bước 1**: Runner khởi tạo và xác minh container PostgreSQL 16 ephemeral trên loopback.
+2. **Bước 2**: Runner tạo database `banking_test_<32-hex>` và ghi ownership marker comment vào `pg_shdescription`.
+3. **Bước 3**: Runner chạy `apply-migration.cjs` lần một.
+4. **Bước 4**: Runner gọi child test với phase `INITIAL_HISTORY`.
+5. **Bước 5**: Runner chạy `apply-migration.cjs` lần hai trên cùng target database.
+6. **Bước 6**: Runner gọi child test với phase `RERUN_HISTORY`.
+7. **Bước 7**: Runner gọi child test với phase `INJECT_CHECKSUM_MISMATCH`.
+8. **Bước 8**: Runner chạy `apply-migration.cjs --verify-only` ở một process riêng biệt.
+9. **Bước 9**: Xác minh kết quả từ chối chính xác:
+   - Exit code khác 0 (exit code 1).
+   - Thông điệp phân loại đúng `Migration checksum mismatch for ...`.
+   - Kết quả chẩn đoán được ẩn danh hóa.
+   - Không có schema mutation nào thành công.
+10. **Bước 10**: Runner gọi child test với phase `RESTORE_CHECKSUM` để khôi phục lại giá trị canonical nếu cần.
+11. **Bước 11**: Runner thực thi cleanup: terminate target sessions và DROP target database.
+12. **Bước 12**: Parent runner sử dụng admin connection riêng truy vấn catalog `pg_database`.
+13. **Bước 13**: Chỉ khi kết quả `SELECT COUNT(*)::int AS count FROM pg_database WHERE datname = $1` trả về đúng **0** thì post-drop mới được tính là PASS.
+14. **Bước 14**: Runner xóa container bằng exact inspected container ID.
+15. **Bước 15**: Kết quả cuối cùng chỉ PASS khi toàn bộ các bước kiểm tra và điều kiện dọn dẹp đều đạt chuẩn.
+
+*Bất kỳ exit code khác 0 ngoài dự kiến, lỗi timeout, hoặc sai lệch phân loại đều làm toàn bộ checkpoint fail-closed ngay lập tức.*
+
+### 28.8 Chiến lược Tiêm Lệch Checksum Chuẩn xác (One-Nibble Checksum Strategy)
+- **Không sử dụng chuỗi tùy tiện**: Tuyệt đối không dùng chuỗi sai định dạng như `mismatched_hex_0000...` vì chuỗi này không phải SHA-256 canonical và không chứng minh được sự sai lệch ở mức 1 ký tự.
+- **Quy trình tiêm lệch chuẩn xác**:
+  1. Test đọc checksum hiện tại từ bảng `reference_schema_migrations` cho một migration đã chọn (ví dụ `001_banking_mvp`).
+  2. Xác nhận checksum đọc được khớp mẫu `^[a-f0-9]{64}$`.
+  3. Tạo giá trị mismatch có cùng độ dài 64 ký tự bằng cách đảo đúng một hex nibble:
+     - Nếu ký tự đầu là `'0'`, đổi thành `'1'`.
+     - Nếu ký tự đầu khác `'0'`, đổi thành `'0'`.
+  4. Thực hiện `UPDATE reference_schema_migrations SET checksum = $1 WHERE migration_key = $2` có tham số hóa trên đúng disposable database thuộc quyền sở hữu.
+  5. Commit transaction trước khi runner gọi process `apply-migration.cjs --verify-only`.
+  6. Khôi phục (Restoration): Giá trị khôi phục phải được tính toán lại trực tiếp từ file migration SQL canonical trên đĩa, không sử dụng giá trị tùy ý từ caller.
+  7. Nếu bước khôi phục thất bại, cleanup của runner vẫn tiến hành drop database và checkpoint kết thúc ở trạng thái fail-closed.
+
+### 28.9 Quy chuẩn Kiểm tra Lịch sử Migration (History Assertions)
+
+#### Initial History Assertions (Phase `INITIAL_HISTORY`)
+- Truy vấn `SELECT migration_key, checksum, status FROM reference_schema_migrations ORDER BY migration_key`.
+- Assert số lượng bản ghi trả về bằng đúng **40 rows**.
+- Assert toàn bộ 40 dòng đều có `status = 'APPLIED'`.
+- Assert tập hợp 40 `migration_key` khớp tuyệt đối với 40 tên file SQL trong `backend/database/` (từ `001_banking_mvp` đến `040_card_security_and_suspense_retry`).
+- Assert không có khóa nào bị trùng lặp hoặc nằm ngoài danh mục 40 file.
+- Assert mỗi checksum đều là chuỗi 64 ký tự hex viết thường.
+- Assert checksum đã lưu khớp chính xác với checksum canonical được tính toán lại từ nội dung từng file SQL tương ứng.
+
+#### Rerun History Assertions (Phase `RERUN_HISTORY`)
+- Sau khi chạy `apply-migration.cjs` lần hai:
+  - Assert số lượng bản ghi vẫn bằng đúng **40 rows**.
+  - Assert danh sách khóa và thứ tự không thay đổi.
+  - Assert toàn bộ 40 checksum không bị biến đổi (no checksum mutation) và vẫn khớp giá trị canonical.
+  - Assert không phát sinh dòng trùng lặp.
+  - Assert kiểm tra `apply-migration.cjs --verify-only` thành công với exit code 0 trước khi chuyển sang bước tiêm lỗi checksum.
+
+### 28.10 Trách nhiệm Xác minh Sau Khi Drop (Post-Drop Ownership)
+- **Quyền sở hữu duy nhất**: Thuộc về **Parent Runner** (`run-disposable-postgres-test.ts`).
+- **Nguyên tắc phân lập**:
+  - Child runtime test hoàn toàn không có quyền và không thể tự xác nhận việc drop database chứa chính nó.
+  - Parent runner duy trì một admin connection độc lập tới `postgres` maintenance database, tách biệt hoàn toàn với target connection.
+  - Mọi connection tới target database phải được đóng trước khi gọi DROP.
+  - Sau khi thực thi `DROP DATABASE WITH (FORCE)`, parent runner thực thi truy vấn:
+    ```sql
+    SELECT COUNT(*)::int AS count FROM pg_database WHERE datname = $1
+    ```
+  - Kết quả `count === 0` là điều kiện bắt buộc để xác nhận post-drop PASS.
+  - Nếu câu query thất bại hoặc `count !== 0`, runner chuyển sang trạng thái `FAILED / FAIL-CLOSED`.
+  - Chỉ sau khi catalog assertion đạt thì runner mới tiến hành gọi xóa container.
+  - Tên target database được ẩn danh hóa trong mọi báo cáo kết quả.
+
+### 28.11 Ngữ nghĩa Xác minh Checkpoint M07-A2R (NO DB)
+- **Ranh giới nghiêm ngặt**: Checkpoint M07-A2R là checkpoint kỹ thuật **KHÔNG DATABASE**.
+- **Loại bỏ tuyên bố sai**: Không tuyên bố `disposableMigrationRuntime.test.ts` PASS ở chế độ dry-run nếu chưa có runnable test double hoàn chỉnh.
+- **Quy chuẩn xác minh tại M07-A2R**:
+  - File test mới `disposableMigrationRuntime.test.ts` được xác minh cú pháp qua `npm run typecheck` và `npm run build`.
+  - Logic phân luồng phase, kiểm tra ownership, hàm đảo 1-nibble checksum, và sequencing của runner được unit-test đầy đủ trong `disposableDatabaseGuard.test.ts` thông qua test-doubles/mocks.
+  - Không chạy trực tiếp `disposableMigrationRuntime.test.ts` khi không có database.
+  - Không dùng skipped tests để tuyên bố hoàn thành.
+  - Runtime test chỉ được chạy thật tại Checkpoint M07-A2 sau khi có phê duyệt riêng từ Owner.
+- **Ba Lệnh Kiểm tra Duy nhất tại M07-A2R**:
+  ```powershell
+  npm run typecheck                                               # Timeout: 60s
+  npm run build                                                   # Timeout: 60s
+  node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts # Timeout: 30s
+  ```
+
+### 28.12 Tiêu chuẩn Nghiệm thu M07-A2R Sửa đổi (Revised Acceptance Criteria)
+M07-A2R chỉ được chấp thuận khi đạt đầy đủ các tiêu chí sau:
+- [x] Đúng năm file trong fixed allowlist được sửa/tạo; tuyệt đối không có file thứ sáu.
+- [x] Real Docker adapter được triển khai trong runner nhưng chỉ kiểm tra bằng test-double/mock trong M07-A2R.
+- [x] Lệnh Docker sử dụng mảng tham số (argv), không dùng shell, kiểm tra image có sẵn và không tự động pull ngầm.
+- [x] Docker inspect validation kiểm tra fail-closed cho image, container name, run label, loopback port, mounts rỗng và unshared status.
+- [x] Target database URL, tên DB, và run ID từ bên ngoài bị loại bỏ/từ chối; runner hoàn toàn tự sinh nội bộ.
+- [x] Child environment được xây dựng từ explicit allowlist các biến cần thiết; không truyền bừa bãi.
+- [x] Dedicated runtime test fail-closed nếu thiếu ngữ cảnh ownership hoặc phase hợp lệ từ runner.
+- [x] Parent runner sở hữu toàn bộ việc điều phối rerun, kiểm tra expected refusal, và post-drop catalog verification.
+- [x] Hàm tiêm lệch checksum đổi đúng 1-nibble hex cùng độ dài 64 ký tự được unit-test chặt chẽ.
+- [x] Toàn bộ cơ chế timeout, cooperative cancellation và fatal exit semantics từ M07-A1 không bị hồi quy.
+- [x] Ba quality gates (`typecheck`, `build`, `disposableDatabaseGuard.test.ts`) PASS 100%.
+- [x] Tuyệt đối không chạy Docker, PostgreSQL, mạng, hay child process thật nào trong Checkpoint M07-A2R.
+- [x] `apply-migration.cjs`, toàn bộ 40 file migration SQL, `package.json` và dependencies giữ nguyên không đổi.
+- [x] Checkpoint M07-A2 vẫn ở trạng thái chưa được cấp quyền (NOT AUTHORIZED).
+
+### 28.13 Quyết định và Đề xuất Tiếp theo
+Kế hoạch kiến trúc đã được điều chỉnh toàn diện, phân định rõ quyền sở hữu của Parent Runner, bảo đảm ranh giới môi trường con, chuẩn hóa phương án tiêm lệch checksum 1-nibble, và xác lập quy chuẩn nghiệm thu no-DB cho Checkpoint M07-A2R.
+
+**Kết luận**:
+```text
+READY FOR M07-A2R OWNER REVIEW
+```
+
+
+## 29. M07-A2R EVIDENCE HARNESS IMPLEMENTATION
+
+### 29.1 Baseline và Ngữ cảnh Thực thi
+- **Baseline HEAD**: `925bf3129ee7f0f3e562078f554c1f12cdfcaf4f`
+- **Chế độ thực thi**: `IMPLEMENT_AND_VERIFY — M07-A2R HARNESS ONLY — NO DATABASE`
+- **Exact Five-File WIP**:
+  1. `backend/scripts/run-disposable-postgres-test.ts` (MODIFY)
+  2. `backend/src/database/disposableDatabaseGuard.ts` (MODIFY)
+  3. `backend/src/tests/disposableDatabaseGuard.test.ts` (MODIFY)
+  4. `backend/src/tests/disposableMigrationRuntime.test.ts` (NEW)
+  5. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md` (MODIFY)
+- **Tập tin giữ nguyên read-only**:
+  `backend/scripts/apply-migration.cjs`, `backend/scripts/migration-fingerprint.cjs`, `backend/scripts/migration-content.cjs`, toàn bộ 40 file `backend/database/*.sql`, `backend/package.json`, lockfile, `tsconfig.json`, `tsconfig.build.json`, Dockerfile, Compose, CI, business source code. Tuyệt đối không phát sinh file thứ sáu.
+
+### 29.2 Phân định Quyền Sở hữu Parent Runner & Child Test
+- **Parent Runner (`run-disposable-postgres-test.ts` & `disposableDatabaseGuard.ts`)**:
+  - Quản lý toàn bộ vòng đời container PostgreSQL: kiểm tra image local bằng `docker image inspect`, khởi tạo container với `--pull=never`, xác thực inspect JSON fail-closed, chờ socket readiness với finite timeout.
+  - Quản lý admin connection độc lập, tạo target database và gắn ownership comment marker ngay khi tạo.
+  - Điều phối canonical evidence sequence 19 bước tuần tự.
+  - Độc quyền sở hữu thao tác dọn dẹp (cleanup): đóng target connection, drop database target bằng `DROP DATABASE WITH (FORCE)`, thực thi post-drop catalog verification (`SELECT COUNT(*)::int AS count FROM pg_database WHERE datname = $1` -> count === 0), và xóa container theo exact 64-hex inspected container ID.
+- **Dedicated Child Runtime Test (`disposableMigrationRuntime.test.ts`)**:
+  - Có cổng bảo vệ fail-fast ngay ở mức top-level: kiểm tra `DATABASE_TEST_RUN_ID` (32 lowercase hex), `DISPOSABLE_TEST_PHASE` (thuộc 4 phase cho phép), target database URL (host loopback số, database name khớp `banking_test_${runId}`). Nếu thiếu hoặc sai runner context, ném lỗi fail-closed ngay lập tức trước khi đăng ký test hoặc mở bất kỳ kết nối socket nào.
+  - Mỗi invocation chỉ đăng ký duy nhất 1 test tương ứng với exact phase được chỉ định qua biến môi trường.
+  - Tuyệt đối không tự tạo/drop database, không tự chạy container, không tự spawn migration, không tự kiểm tra post-drop.
+  - Thực thi các assert lịch sử migration:
+    - `INITIAL_HISTORY`: xác minh đúng 40 bản ghi, status `APPLIED`, 40 keys khớp canonical file SQL, checksum 64-hex khớp canonical content.
+    - `RERUN_HISTORY`: xác minh bất biến 40 bản ghi, 0 duplicate, 0 checksum mutation.
+    - `INJECT_CHECKSUM_MISMATCH`: cập nhật có tham số hóa 1 bản ghi `001_banking_mvp` với giá trị checksum lệch 1-nibble (giữ nguyên độ dài 64 hex).
+    - `RESTORE_CHECKSUM`: tính lại checksum canonical từ file `001_banking_mvp.sql` trên đĩa và cập nhật phục hồi, xác minh lại giá trị canonical đã lưu.
+
+### 29.3 Thiết kế Docker Adapter & Clean Child Environment
+- **Docker Adapter**:
+  - Mọi lệnh Docker được gọi bằng mảng tham số argv (`spawn` với `shell: false`), tuyệt đối không dùng shell interpolation hoặc string concat.
+  - Tích hợp AbortSignal và finite timeout cho toàn bộ lệnh (`inspectImage`, `runContainer`, `inspectContainer`, `removeContainer`, `waitForReady`).
+  - Lệnh `docker run` luôn bao gồm cờ `--pull=never`, cổng loopback duy nhất `127.0.0.1::5432`, nhãn `banking_test_run_id=${runId}`, không sử dụng bất kỳ volume nào (`-v`, `--volume`, `--mount`).
+  - Hàm xác thực inspect `validateDockerInspectOutput` kiểm tra fail-closed cho container ID (64 lowercase hex), container name, label, image `postgres:16`, bind host `127.0.0.1`, port binding hợp lệ, và bảo đảm mảng Mounts và Binds hoàn toàn rỗng.
+- **Clean Child Environment Builder (`buildCleanChildEnvironment`)**:
+  - Loại bỏ hoàn toàn incoming `DATABASE_URL`, target name, run ID, phase, reset markers, và các biến độc hại từ môi trường bên ngoài.
+  - Chỉ kế thừa các biến hệ điều hành thiết yếu theo explicit allowlist (`PATH`/`Path`, `SystemRoot`, `TEMP`, `TMP`, `USERPROFILE`, `HOME`, etc.).
+  - Runner thiết lập các giá trị nội bộ có kiểm soát: `NODE_ENV=test`, `BANKING_ENV=test`, `ALLOW_DATABASE_TEST_RESET=1`, `DATABASE_TEST_RUN_ID`, `DATABASE_TEST_DATABASE_NAME`, target URL, phase.
+
+### 29.4 Canonical Evidence Sequence (19 Bước)
+Parent runner điều phối luồng thực thi tuần tự gồm 19 bước:
+1. `1_VERIFY_LOCAL_IMAGE`: Kiểm tra image `postgres:16` có sẵn local.
+2. `2_CREATE_EPHEMERAL_CONTAINER`: Khởi tạo ephemeral container (`--pull=never`, loopback dynamic port).
+3. `3_INSPECT_VALIDATE_CONTAINER`: Parse và validate inspect record của container.
+4. `4_WAIT_READINESS`: Chờ port PostgreSQL sẵn sàng nhận kết nối.
+5. `5_CREATE_TARGET_DATABASE_AND_MARKER`: Kết nối admin pool, tạo target database và gắn ownership marker.
+6. `6_APPLY_MIGRATIONS_RUN_1`: Chạy `apply-migration.cjs` lần 1.
+7. `7_CHILD_TEST_INITIAL_HISTORY`: Chạy child test phase `INITIAL_HISTORY`.
+8. `8_APPLY_MIGRATIONS_RUN_2`: Chạy `apply-migration.cjs` lần 2 (rerun).
+9. `9_CHILD_TEST_RERUN_HISTORY`: Chạy child test phase `RERUN_HISTORY`.
+10. `10_VERIFY_ONLY_PRE_MISMATCH`: Chạy verify-only, yêu cầu exit code 0.
+11. `11_CHILD_TEST_INJECT_CHECKSUM_MISMATCH`: Chạy child test phase `INJECT_CHECKSUM_MISMATCH`.
+12. `12_VERIFY_ONLY_EXPECT_REFUSAL`: Chạy verify-only, yêu cầu exit code 1 và khớp classification mismatch.
+13. `13_CHILD_TEST_RESTORE_CHECKSUM`: Chạy child test phase `RESTORE_CHECKSUM`.
+14. `14_VERIFY_ONLY_POST_RESTORE_SUCCESS`: Chạy verify-only lần cuối, yêu cầu exit code 0.
+15. `15_CLOSE_TARGET_CONNECTIONS`: Đóng toàn bộ target connections.
+16. `16_CLEANUP_TARGET_DATABASE`: Admin pool drop target database với `WITH (FORCE)`.
+17. `17_PARENT_POST_DROP_CATALOG_CHECK`: Admin pool query `pg_database`, assert `count === 0`.
+18. `18_REMOVE_CONTAINER`: Xóa container theo exact 64-hex inspected ID.
+19. `19_VALIDATE_COMPLETION`: Xác nhận toàn bộ chuỗi hoàn thành thành công.
+
+### 29.5 Checksum Mutation và Phân loại Lỗi Mong đợi
+- **Hàm `mutateChecksumOneNibble`**:
+  - Nhận vào chuỗi 64 ký tự hex viết thường, kiểm tra regex `/^[a-f0-9]{64}$/`.
+  - Đảo đúng 1 ký tự hex đầu tiên (`'0'` -> `'1'`, hoặc `'x'` -> `'0'`).
+  - Kết quả trả về giữ nguyên độ dài đúng 64 ký tự hex và khác biệt đúng 1 ký tự so với bản gốc.
+- **Hàm `isExpectedChecksumMismatchRefusal`**:
+  - Kiểm tra `exitCode === 1`.
+  - Kiểm tra output chứa chuỗi canonical `Migration checksum mismatch`.
+  - Kiểm tra target key cụ thể nếu được cung cấp.
+  - Loại bỏ các lỗi không liên quan như `ECONNREFUSED`, `SyntaxError`, `ENOENT`.
+
+### 29.6 Kết quả Ba Quality Gates tại M07-A2R
+1. **Typecheck Gate**:
+   - Lệnh: `npm run typecheck` (trong `backend/`)
+   - Kết quả: `PASS` (0 errors, 0 warnings).
+   - Kiểm tra mã cấm: 0 `any`, 0 `as any`, 0 `as unknown as`, 0 `as never`, 0 `@ts-ignore`, 0 `@ts-expect-error`.
+2. **Build Gate**:
+   - Lệnh: `npm run build` (trong `backend/`)
+   - Kết quả: `PASS` (0 errors, dist artifacts generated clean).
+3. **Targeted Unit Test Gate**:
+   - Lệnh: `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts` (trong `backend/`)
+   - Kết quả: `55/55 PASS` (32 M07-A1 tests + 23 M07-A2R unit tests, 0 fail, 0 cancelled, 0 skipped, thời gian chạy ~533ms).
+
+### 29.7 Giới hạn An toàn và Khẳng định Không Chạy Database
+- **Tuyệt đối không chạy**: Docker CLI, Docker daemon, PostgreSQL instance, container thật, `psql`, network socket, `apply-migration.cjs`, runner CLI, hay runtime test mới `disposableMigrationRuntime.test.ts`.
+- **Bảo toàn M07-A1**: Toàn bộ 32 unit test an toàn bảo vệ guard/runner (timeout, cooperative cancellation, fatal process events, post-drop catalog) giữ nguyên 100% và đều PASS.
+- **Trạng thái Checkpoint**:
+  - Checkpoint M07-A2R đã hoàn thành triển khai harness và vượt qua toàn bộ quality gates cấp độ unit/test-double.
+  - Checkpoint M07-A2 (chạy thực tế với Docker/PostgreSQL) **CHƯA ĐƯỢC CẤP QUYỀN** (NOT AUTHORIZED).
+  - Task M01-07 và Use Case UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH** (INCOMPLETE).
+
+
+## 30. M07-A2R SAFETY BINDING FOLLOW-UP EVIDENCE
+
+### 30.1 Baseline và Ngữ cảnh Thực thi
+- **Baseline HEAD**: `925bf3129ee7f0f3e562078f554c1f12cdfcaf4f`
+- **Chế độ thực thi**: `IMPLEMENT_AND_VERIFY — M07-A2R FOLLOW-UP — NO DATABASE`
+- **Exact Five-File Allowlist**:
+  1. `backend/scripts/run-disposable-postgres-test.ts` (MODIFY)
+  2. `backend/src/database/disposableDatabaseGuard.ts` (MODIFY)
+  3. `backend/src/tests/disposableDatabaseGuard.test.ts` (MODIFY)
+  4. `backend/src/tests/disposableMigrationRuntime.test.ts` (NEW)
+  5. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md` (MODIFY)
+- **Tập tin giữ nguyên read-only**:
+  `apply-migration.cjs`, `migration-fingerprint.cjs`, `migration-content.cjs`, toàn bộ 40 file SQL, `package.json`, lockfile, `tsconfig.json`, `tsconfig.build.json`, Dockerfile, Compose, CI, business source code. Tuyệt đối không phát sinh file thứ sáu.
+
+### 30.2 Chi tiết Bốn Corrections Đã Triển khai
+1. **Correction A — Exact Immutable Docker Image Binding**:
+   - Loại bỏ hoàn toàn kiểm tra substring/prefix (`includes`, `startsWith`).
+   - Hàm `validateDockerImageInspectOutput` xác thực:
+     - Record inspect trả về đúng 1 object.
+     - Image ID khớp chính xác format `^sha256:[0-9a-f]{64}$`.
+     - `RepoTags` chứa exact tag `postgres:16`.
+   - Hàm `validateDockerInspectOutput` xác thực đồng thời:
+     - `Config.Image === "postgres:16"` (so sánh bằng tuyệt đối).
+     - `Image === approvedLocalImageId` (khớp chính xác immutable image ID đã xác thực ở bước inspect image).
+     - Bất kỳ sai lệch nào đều fail-closed trước phase migration/database.
+2. **Correction B — Docker Run/Inspect Container-ID Binding**:
+   - Hàm `parseAndValidateLaunchedContainerId` xác thực stdout từ `docker run` đúng 1 dòng chứa exact 64 lowercase hex (`^[0-9a-f]{64}$`). Từ chối stdout rỗng, short ID, uppercase, đa dòng, hoặc chứa ký tự thừa.
+   - `docker inspect` được gọi trực tiếp bằng chính ID đã khởi chạy (`launchedContainerId`).
+   - `validateDockerInspectOutput` kiểm tra `inspect.Id === launchedContainerId`.
+   - Nếu xảy ra mismatch, chuỗi thực thi fail-closed ngay lập tức: không chạy migration, không tạo database, không chạy child runtime test.
+   - Cơ chế dọn dẹp cleanup chỉ xóa đúng `launchedContainerId`, tuyệt đối không dùng untrusted inspect ID.
+3. **Correction C — Runtime Ownership Gate Before Phase Action**:
+   - Sử dụng chung validator `assertRuntimeDatabaseOwnership` giữa runner và worker.
+   - File `disposableMigrationRuntime.test.ts` áp dụng fail-fast tại entry-point: kiểm tra run ID (32 lowercase hex), phase (thuộc 4 phase cho phép), `DATABASE_TEST_DISPOSABLE === "1"`, database name pattern, loopback URL.
+   - Sau khi kết nối, áp dụng session timeout guards và thực thi truy vấn ownership:
+     `SELECT current_database() AS db_name, shobj_description(d.oid, 'pg_database') AS comment FROM pg_database d WHERE d.datname = current_database()`
+   - Xác thực: `current_database() === banking_test_${runId}`, marker comment tồn tại, đúng format canonical (`disposable_run_id=<run_id>;owner=m01_runner`).
+   - Nếu marker thiếu, malformed, sai owner, hoặc sai run ID/current database: fail closed ngay lập tức, không đọc lịch sử migration, không update checksum, không echo marker/run ID đầy đủ.
+4. **Correction D — Case-Insensitive Protected Environment**:
+   - Thiết lập `PROTECTED_CHILD_ENV_KEYS_UPPERCASE` chứa toàn bộ các khóa nhạy cảm (`DATABASE_URL`, `DATABASE_TEST_RUN_ID`, `DATABASE_TEST_PHASE`, `DATABASE_TEST_DISPOSABLE`, `DATABASE_TEST_DATABASE_NAME`, `ALLOW_DATABASE_TEST_RESET`, etc.).
+   - Lọc toàn bộ inherited keys theo cách không phân biệt chữ hoa/thường (`key.toUpperCase()`). Các biến như `database_url`, `Database_Url`, `database_test_phase`, `Database_Test_Run_Id` bị loại bỏ triệt để.
+   - Runner thiết lập các giá trị canonical có kiểm soát: `DATABASE_TEST_DISPOSABLE = "1"`, `DATABASE_URL`, `DATABASE_TEST_RUN_ID`, `DISPOSABLE_TEST_PHASE`.
+   - Các biến OS cần thiết (`PATH`/`Path`, `SystemRoot`, `TEMP`, `TMP`) được bảo tồn; các secret lạ (`AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, etc.) bị loại bỏ.
+
+### 30.3 Kiểm kê Test Suite (Test Inventory)
+- **Baseline M07-A1 (Bảo toàn 100%)**: 32 tests.
+- **Baseline M07-A2R ban đầu**: 23 tests.
+- **Safety Binding Follow-Up Tests Mới**: 20 tests (`M07-A2R-FU-01` đến `M07-A2R-FU-20`).
+- **Tổng số Unit Tests hiện tại**: **75 tests**.
+- **Kết quả kiểm thử**: **75/75 PASS** (0 fail, 0 cancelled, 0 skipped, 0 removed, 0 renamed).
+
+### 30.4 Kết quả Ba Quality Gates
+1. **Typecheck Gate**: `npm run typecheck` -> **PASS** (0 lỗi, 0 mã cấm: 0 `any`, 0 `as any`, 0 `as unknown as`, 0 `as never`, 0 `@ts-ignore`, 0 `@ts-expect-error`).
+2. **Build Gate**: `npm run build` -> **PASS** (0 lỗi, biên dịch `dist/` sạch sẽ).
+3. **Targeted Unit Test Gate**: `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts` -> **75/75 PASS** (~508ms).
+
+### 30.5 Khẳng định Ranh giới Không Chạy Database
+- Toàn bộ bằng chứng được thu thập độc quyền ở cấp độ unit tests và in-memory test doubles nhằm giảm thiểu rủi ro theo thiết kế fail-closed ở mức unit/test-double.
+- Tuyệt đối không chạy Docker CLI, Docker daemon, PostgreSQL instance, mở TCP socket, hay chạy migration thật.
+- File `disposableMigrationRuntime.test.ts` không bị thực thi trực tiếp.
+- Checkpoint M07-A2 vẫn ở trạng thái **CHƯA ĐƯỢC CẤP QUYỀN (NOT AUTHORIZED)**.
+- Task M01-07 và Use Case UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**.
+
+## 31. M07-A2R PHASE ENVIRONMENT KEY REMEDIATION EVIDENCE
+
+### 31.1 Tóm tắt Finding và Khắc phục Tối thiểu
+- **Finding**: Biến runtime chuẩn hoá là `DISPOSABLE_TEST_PHASE` (được parent runner ghi và runtime worker đọc), tuy nhiên trong `PROTECTED_CHILD_ENV_KEYS_UPPERCASE` chỉ có `DATABASE_TEST_PHASE` mà chưa chứa `DISPOSABLE_TEST_PHASE`. Điều này có nguy cơ khiến các biến thể môi trường kế thừa không mong muốn (ví dụ `disposable_test_phase` hoặc `Disposable_Test_Phase`) không được lọc triệt để trước khi runner ghi canonical value.
+- **Khắc phục**:
+  - Bổ sung `"DISPOSABLE_TEST_PHASE"` vào tập hợp `PROTECTED_CHILD_ENV_KEYS_UPPERCASE` trong `backend/src/database/disposableDatabaseGuard.ts`, đồng thời giữ nguyên `"DATABASE_TEST_PHASE"`.
+  - Cơ chế lọc không phân biệt hoa thường (`key.toUpperCase()`) đảm bảo toàn bộ biến thể casing của cả `DISPOSABLE_TEST_PHASE` và `DATABASE_TEST_PHASE` đều bị strip triệt để khỏi môi trường con trước khi runner gán giá trị canonical duy nhất `cleanEnv.DISPOSABLE_TEST_PHASE = options.phase`.
+  - Thêm 1 unit test hồi quy `M07-A2R-FU-21` vào `backend/src/tests/disposableDatabaseGuard.test.ts`.
+
+### 31.2 Kiểm kê Test Suite (Test Inventory)
+- **Baseline M07-A1 (Bảo toàn 100%)**: 32 tests.
+- **Baseline M07-A2R ban đầu**: 23 tests.
+- **Safety Binding Follow-Up Tests**: 20 tests (`M07-A2R-FU-01` đến `M07-A2R-FU-20`).
+- **Phase-Key Minimal Remediation Test Mới**: 1 test (`M07-A2R-FU-21`).
+- **Tổng số Unit Tests hiện tại**: **76 tests**.
+- **Kết quả kiểm thử**: **76/76 PASS** (0 fail, 0 cancelled, 0 skipped, 0 removed, 0 renamed).
+
+### 31.3 Kết quả Ba Quality Gates
+1. **Typecheck Gate**: `npm run typecheck` trong `backend/` -> **PASS** (0 lỗi, 0 mã cấm: 0 `any`, 0 `as any`, 0 `as unknown as`, 0 `as never`, 0 `@ts-ignore`, 0 `@ts-expect-error`).
+2. **Build Gate**: `npm run build` trong `backend/` -> **PASS** (0 lỗi, biên dịch `dist/` thành công).
+3. **Targeted Unit Test Gate**: `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts` trong `backend/` -> **76/76 PASS** (~1100ms).
+
+### 31.4 Khẳng định Ranh giới Không Chạy Database
+- Toàn bộ bằng chứng được thu thập độc quyền ở cấp độ unit tests và in-memory test doubles nhằm giảm thiểu rủi ro theo thiết kế fail-closed ở mức unit/test-double.
+- Hai file được yêu cầu đóng băng (`backend/scripts/run-disposable-postgres-test.ts` và `backend/src/tests/disposableMigrationRuntime.test.ts`) được bảo toàn tuyệt đối từng byte (`47a2bd...` và `890511...`).
+- Tuyệt đối không chạy Docker CLI, Docker daemon, PostgreSQL instance, mở TCP socket, hay chạy migration thật. File `disposableMigrationRuntime.test.ts` không bị thực thi trực tiếp.
+- Checkpoint M07-A2 tiếp tục ở trạng thái **CHƯA ĐƯỢC CẤP QUYỀN (NOT AUTHORIZED)**.
+- Task M01-07 và Use Case UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**.
