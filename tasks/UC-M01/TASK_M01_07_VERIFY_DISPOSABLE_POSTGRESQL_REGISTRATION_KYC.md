@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2R VERIFIED — AWAITING CHECKPOINT COMMIT
-- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- Trạng thái: IN_PROGRESS — M07-A2R COMMITTED — M07-A2 NOT STARTED
+- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 NOT AUTHORIZED; RUNTIME DATABASE EXECUTION NOT STARTED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
@@ -94,6 +94,74 @@ Bốn blocker M07-A2 được giữ nguyên vẹn:
   - Bằng chứng chỉ chứng minh ở mức unit/test-double nhằm giảm thiểu rủi ro theo thiết kế fail-closed ở mức unit/test-double.
   - Checkpoint M07-A2 runtime vẫn ở trạng thái: **CHƯA ĐƯỢC CẤP QUYỀN (NOT AUTHORIZED)**.
   - Task M01-07 và Use Case UC-M01 tiếp tục: **CHƯA HOÀN THÀNH (INCOMPLETE)**.
+
+## M07-A2R CHECKPOINT IMPLEMENTATION COMMIT
+
+### Commit identity
+- **Full Commit SHA**: `0b9f5e143f823acbe6fa08ec92dabb1bc86658f4`
+- **Parent Commit SHA**: `925bf3129ee7f0f3e562078f554c1f12cdfcaf4f`
+- **Commit Message**: `test(database): prepare disposable PostgreSQL runtime harness`
+- **AuthorDate**: `2026-09-04T17:50:24+07:00`
+- **CommitDate**: `2026-09-04T17:50:24+07:00`
+- **Committed Files (Exact Five)**:
+  - `M backend/scripts/run-disposable-postgres-test.ts`
+  - `M backend/src/database/disposableDatabaseGuard.ts`
+  - `M backend/src/tests/disposableDatabaseGuard.test.ts`
+  - `A backend/src/tests/disposableMigrationRuntime.test.ts`
+  - `M tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`
+- **Exact Stat**: `5 files changed, 2694 insertions(+), 4 deletions(-)`
+- **Commit-Tree Blob Hashes**:
+  - `backend/scripts/run-disposable-postgres-test.ts`: `11c8a40019d6b1166b11898eda74b86fc908b67c`
+  - `backend/src/database/disposableDatabaseGuard.ts`: `ac7668b47c5c1a60468aa9d37e4f192ecd00fc45`
+  - `backend/src/tests/disposableDatabaseGuard.test.ts`: `60d4ffe82ce1d478c5184b9dd171f87d0d04de6e`
+  - `backend/src/tests/disposableMigrationRuntime.test.ts`: `d397b7ae88fee3f771cd8b0ae3030f43db83d07f`
+  - `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`: `c9b06615d568079424ed66185b0af1adfc0293ad`
+
+### Accepted implementation evidence
+- **Typecheck**: PASS (`npm run typecheck`, 0 lỗi, 0 prohibited bypasses).
+- **Build**: PASS (`npm run build`, biên dịch `dist/` thành công).
+- **Targeted Unit Suite**: `76/76 PASS` (`0 fail`, `0 cancelled`, `0 skipped`):
+  - 32 tests M07-A1 baseline.
+  - 23 tests M07-A2R baseline harness (`M07-A2R-01` đến `M07-A2R-23`).
+  - 20 tests safety-binding follow-up (`M07-A2R-FU-01` đến `M07-A2R-FU-20`).
+  - 1 test phase-key regression (`M07-A2R-FU-21`).
+
+### Accepted harness capabilities
+- Exact `postgres:16` tag and immutable image-ID binding (`validateDockerImageInspectOutput`).
+- Exact launch/inspect/cleanup container-ID binding (`parseAndValidateLaunchedContainerId`, cleanup uses `launchedContainerId`).
+- Loopback-only ephemeral container contract (`127.0.0.1`, numeric port).
+- No host volume contract (chặn `-v` và `--volume`).
+- `--pull=never` flag enforcement.
+- Clean child environment construction (`buildCleanChildEnvironment`).
+- Canonical phase key duy nhất: `DISPOSABLE_TEST_PHASE`.
+- Legacy `DATABASE_TEST_PHASE` bị strip triệt để và không được runtime chấp nhận.
+- Runtime ownership-marker gate trên catalog trước mọi phase action (`assertRuntimeDatabaseOwnership`).
+- Exact 40-row migration-history validator (`validateInitialMigrationHistory`).
+- Rerun invariant validator (`validateRerunMigrationHistory`).
+- One-nibble checksum mutation (`mutateMigrationChecksumOneNibble`).
+- Expected checksum-mismatch classifier (`isExpectedChecksumMismatchRefusal`).
+- Restoration verify-only phase và post-restore validation.
+- Parent-side post-drop catalog assertion (`assertPostDropCatalogEmpty`).
+- Bounded timeout/cancellation orchestration với typed lifecycle states.
+
+### Evidence boundary
+- Toàn bộ harness chỉ được xác minh bằng unit tests và in-memory test doubles nhằm giảm thiểu rủi ro theo thiết kế fail-closed ở mức unit/test-double.
+- Chưa chạy Docker CLI hoặc Docker daemon.
+- Chưa chạy PostgreSQL.
+- Chưa mở database/network socket.
+- Chưa chạy migrations.
+- Chưa chạy `disposableMigrationRuntime.test.ts`.
+- Chưa chứng minh runtime cleanup, row lock hoặc database concurrency trên hạ tầng thật.
+- Checkpoint M07-A2 vẫn cần Owner directive riêng trước khi được phép kích hoạt.
+
+### Remaining M07-A2 runtime evidence
+Giữ nguyên chưa hoàn thành và tiếp tục là ranh giới bắt buộc:
+1. Exact 40 migration rows trên PostgreSQL disposable thật.
+2. Rerun giữ nguyên exact 40 rows trên PostgreSQL disposable thật.
+3. Runtime checksum mismatch refusal trên PostgreSQL disposable thật.
+4. Post-drop `pg_database` catalog verification trên PostgreSQL disposable thật.
+5. Ephemeral container identity, loopback binding, và không-volume mount verification từ Docker daemon thật.
+6. Ownership marker comment trong `pg_shdescription` và cleanup xác nhận trên PostgreSQL thật.
 
 ## 1. Repository verification và quyền phiên này
 
