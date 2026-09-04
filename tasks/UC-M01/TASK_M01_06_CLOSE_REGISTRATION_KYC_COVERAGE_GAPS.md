@@ -1,8 +1,8 @@
 # TASK M01-06 — Bù khoảng trống coverage kiểm thử Registration và KYC
 
-Trạng thái: IN_PROGRESS — M01-06 VERIFIED — AWAITING CHECKPOINT COMMIT
+Trạng thái: COMPLETED
 Ưu tiên: P1
-Chế độ hiện tại: IMPLEMENT_AND_VERIFY — TEST ONLY
+Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION ONLY
 
 ## 1. Thông tin dự án và quyền truy cập
 
@@ -40,7 +40,8 @@ Tài liệu bắt buộc đọc:
 ## 2. Quyền Git và chế độ làm việc
 
 - Giai đoạn kế hoạch trước đây: `DIAGNOSE_AND_PLAN — DOCUMENTATION ONLY` — đã hoàn tất.
-- Chế độ hiện tại: `IMPLEMENT_AND_VERIFY — TEST ONLY`.
+- Giai đoạn implementation trước đây: `IMPLEMENT_AND_VERIFY — TEST ONLY` — đã hoàn tất tại commit `7599a5a13161a5bb9233c49ebfd0451d40ccedd4`.
+- Chế độ closure hiện tại: `DIAGNOSE_AND_PLAN — DOCUMENTATION ONLY`.
 - Git add/stage: `Không` trong lượt này.
 - Git commit: `Không` trong lượt này.
 - Git push / amend / merge / rebase / tag: `Không`.
@@ -342,7 +343,7 @@ git status --short --untracked-files=all
 - [x] Không có bất kỳ test cũ nào bị xóa, đổi tên, gộp hoặc skip.
 - [x] Toàn bộ Quality Gates Mobile (lint, typecheck, targeted tests, full tests, openapi, e2e syntax, export web) đều PASS 100%.
 - [x] M01-07 và M01-08 vẫn giữ nguyên ranh giới hoãn lại (deferred).
-- [x] Task M01-06 và Use Case UC-M01 chưa đánh dấu `COMPLETED`.
+- [x] Tại implementation review checkpoint, M01-06 và UC-M01 chưa được đánh dấu `COMPLETED`; sau final closure chỉ M01-06 chuyển thành `COMPLETED`, còn UC-M01 tiếp tục chưa hoàn thành cho đến M01-09.
 
 ---
 
@@ -353,7 +354,9 @@ git status --short --untracked-files=all
 - Toàn bộ thay đổi mã nguồn tuân thủ chế độ `IMPLEMENT_AND_VERIFY — TEST ONLY` và dừng lại ở worktree chờ Owner review.
 
 ### Trạng thái Quyết định
-- **Kết luận**: `READY FOR M01-06 OWNER REVIEW`.
+- **Trạng thái thực hiện**: `COMPLETED`
+- **Kết luận**: `READY FOR M01-06 CLOSURE COMMIT`.
+- **Ghi chú phân định trạng thái**: Các trạng thái `READY FOR M01-06 OWNER REVIEW` và `IN_PROGRESS` ở các section trước thuộc về audit trail lịch sử phát triển; nguồn sự thật hiện hành (current source of truth) là header (`Trạng thái: COMPLETED`), Section 13 (`Trạng thái thực hiện: COMPLETED`), và Section 18 (`M01-06 closure status: COMPLETED`).
 
 ---
 
@@ -409,7 +412,7 @@ git status --short --untracked-files=all
 ### 14.5. Scope Boundaries & Next Actions
 - **M01-07 (PostgreSQL Concurrency / Row-Lock)**: Hoãn lại (deferred), không chạy integration tests trên DB thật.
 - **M01-08 (Device / Emulator Maestro Runtime)**: Hoãn lại (deferred), không chạy device runtime tests.
-- **Trạng thái**: Task M01-06 và UC-M01 **CHƯA** đánh dấu `COMPLETED`.
+- **Trạng thái**: Tại thời điểm implementation review trước commit, M01-06 và UC-M01 chưa được đánh dấu `COMPLETED`. Trạng thái hiện hành sau closure: M01-06 `COMPLETED`, UC-M01 chưa hoàn thành.
 - **Git State**: Không stage, không commit, không push, không amend. Dừng tại worktree để chờ Owner review.
 
 ---
@@ -482,9 +485,9 @@ git status --short --untracked-files=all
 - Kết quả: **0 vi phạm**.
 
 ### 15.7. Status, Boundaries & Git Constraints
-- **Trạng thái**: `IN_PROGRESS — M01-06 VERIFIED — AWAITING CHECKPOINT COMMIT`
+- **Trạng thái (lịch sử tại thời điểm reconciliation)**: `IN_PROGRESS — M01-06 VERIFIED` (đã chuyển thành `COMPLETED` sau implementation commit và final closure).
 - **Scope Boundaries**: M01-07 (PostgreSQL concurrency / row-lock) và M01-08 (Device / Emulator Maestro runtime) giữ nguyên trạng thái hoãn lại (deferred).
-- **Task & Use Case**: M01-06 và UC-M01 **CHƯA** đánh dấu `COMPLETED`.
+- **Task & Use Case**: Tại thời điểm reconciliation trước implementation commit, M01-06 và UC-M01 đều chưa `COMPLETED`. Sau final closure, M01-06 đã `COMPLETED`; UC-M01 vẫn chưa hoàn thành.
 - **Git Restrictions**: Tuyệt đối không stage (`git add`), commit (`git commit`), push (`git push`), hay amend (`git commit --amend`). Toàn bộ thay đổi giữ nguyên ở working tree để chờ Owner review.
 
 ---
@@ -511,5 +514,105 @@ git status --short --untracked-files=all
 - **Zero Production Source Change**: 0 file mã nguồn production bị sửa đổi.
 - **Prohibited-Pattern Scan**: 0 vi phạm trên các dòng code thêm mới (`any`, `as any`, `as unknown as`, `as never`, `@ts-ignore`, `@ts-expect-error`).
 - **Deferred Scope**: M01-07 (PostgreSQL concurrency / row-lock) và M01-08 (Device/Emulator Maestro runtime) tiếp tục hoãn lại (deferred).
-- **Task Lifecycle**: M01-06 và UC-M01 chưa `COMPLETED`.
-- **Checkpoint Status**: Checkpoint đã sẵn sàng staging, chưa commit và chưa push.
+- **Task Lifecycle**: M01-06 và UC-M01 chưa `COMPLETED` tại thời điểm Owner Review trước implementation commit; sau final closure, M01-06 chuyển thành `COMPLETED`, UC-M01 tiếp tục chưa hoàn thành cho đến M01-09.
+- **Checkpoint Status**: Checkpoint đã được commit local thành công (commit `7599a5a13161a5bb9233c49ebfd0451d40ccedd4`), chưa push.
+
+---
+
+## 17. M01-06 TEST-ONLY IMPLEMENTATION COMMIT
+
+### 17.1. Commit Identity & Parentage
+- **Full Commit SHA**: `7599a5a13161a5bb9233c49ebfd0451d40ccedd4`
+- **Parent SHA**: `a7d30682ae721fb280fb6d4efd86364da3eae735`
+- **Exact Git Message**: `test(mobile): close registration KYC coverage gaps`
+- **Author Timestamp**: `2026-09-04T13:00:11+07:00`
+- **Committer Timestamp**: `2026-09-04T13:00:11+07:00`
+- **Ancestry Verification**:
+  - `git merge-base --is-ancestor 28c2711d13034555cbf3fee7df521926abb72847 HEAD`: PASS
+  - `git merge-base --is-ancestor a7d30682ae721fb280fb6d4efd86364da3eae735 HEAD`: PASS
+  - `git merge-base --is-ancestor 7599a5a13161a5bb9233c49ebfd0451d40ccedd4 HEAD`: PASS
+
+### 17.2. Exact Five-File Implementation Inventory & Stat
+- **Exact Inventory**:
+  - `M mobile-app/src/features/auth/screens/__tests__/RegisterScreen.test.tsx`
+  - `M mobile-app/src/features/kyc/screens/__tests__/KycScreen.test.tsx`
+  - `M mobile-app/src/features/kyc/services/__tests__/kycApi.test.ts`
+  - `M mobile-app/src/features/kyc/validation/__tests__/kycResponseValidators.test.ts`
+  - `A tasks/UC-M01/TASK_M01_06_CLOSE_REGISTRATION_KYC_COVERAGE_GAPS.md`
+- **Exact Stat**: `5 files changed, 828 insertions(+), 1 deletion(-)`
+- **Commit-Tree Hashes**:
+  - `RegisterScreen.test.tsx`: `10c2d9c6f907c52b38175b21960fa3a5977f48bf`
+  - `KycScreen.test.tsx`: `6b747bdcb7dddaeacfe7a7d8de0eb377615fc06c`
+  - `kycApi.test.ts`: `0dc3399b3fbbdb57a7d01a5ba3db94cce25c0156`
+  - `kycResponseValidators.test.ts`: `66243480b0ae39dc81431579a7831dc11cc21961`
+  - `TASK_M01_06_CLOSE_REGISTRATION_KYC_COVERAGE_GAPS.md`: `de8cd158b220f4718629c05846238ac2b330e0b2`
+
+### 17.3. Test Counts, Gates & Constraints
+- **Targeted Test Suites**: 4 suites / 67 passed / 0 failed / 0 skipped (100% PASS).
+- **Per-File Counts**:
+  - `RegisterScreen.test.tsx`: 42 passed
+  - `KycScreen.test.tsx`: 15 passed
+  - `kycApi.test.ts`: 5 passed
+  - `kycResponseValidators.test.ts`: 5 passed
+- **Full Mobile Test Suite**: 51 suites / 373 passed / 0 failed / 0 skipped (100% PASS).
+- **Delta Kiểm thử**: Đúng $+13$ tests (13 tests mới và 1 assertion-only amendment trong R17).
+- **Zero Test Tampering**: Không có bất kỳ test cũ nào bị xóa, đổi tên, gộp hoặc skip.
+- **Quality Gates**: Lint (PASS), Typecheck (PASS), OpenAPI Contract (PASS), E2E Syntax (PASS), Web Export (PASS).
+- **Production Source Changes**: 0 file.
+- **Git State**: Committed local trên branch `codex/staging-academic-completion`, chưa push.
+
+---
+
+## 18. M01-06 FINAL CLOSURE
+
+### 18.1. Completed Scope
+- Toàn bộ 13 khoảng trống kiểm thử đã được phê duyệt trong test matrix M01-06 đã được triển khai và xác minh.
+- **Các khoảng trống Registration đã được đóng**:
+  - Client validation (`T-REG-FE-VAL-01`): Chặn submit khi form không hợp lệ, không phát sinh API/storage call.
+  - HTTP 422 (`T-REG-FE-ERR-422`): Map `fieldErrors` và server banner, giữ form, kích hoạt lại submit, không tự retry.
+  - HTTP 409 (`T-REG-FE-ERR-409`): Hiển thị conflict banner, giữ form, không route sang `/login`, không tự retry.
+  - Defensive HTTP 401 (`T-REG-FE-ERR-401`): Hiển thị lỗi server, không route sai, kích hoạt lại submit, không tự retry.
+  - `NETWORK_ERROR` (`T-REG-FE-ERR-NETWORK`): Hiển thị lỗi mạng, giữ form, không phát sinh request thứ hai.
+  - `TIMEOUT` (`T-REG-FE-ERR-TIMEOUT`): Hiển thị lỗi timeout, giữ form, không phát sinh request thứ hai.
+  - Double-submit (`T-REG-FE-DBL-01`): Nút submit bị disabled với label "Đang đăng ký...", second press bị bỏ qua, API gọi đúng 1 lần.
+  - Invalid OTP (`T-REG-FE-OTP-01`): Yêu cầu đủ 6 số, hiển thị lỗi, không gọi verify API.
+  - `BEGIN_UNKNOWN` Recovery Reset (`T-REG-FE-REC-01`): Xóa session local và quay về form, tuyệt đối không gọi `cancelRegistration()`.
+  - Restored challenge mutation protection (R17 assertion amendment): Mount với restored challenge không tự động gọi `register`, `verifyRegistrationChallenge`, `resendRegistrationChallenge`, hay `cancelRegistration`.
+- **Các khoảng trống KYC đã được đóng**:
+  - Initial loading in-flight (`T-KYC-FE-GAP-01`): Giữ pending quan sát `ActivityIndicator`, resolve `null` chuyển sang empty form (`EMPTY_EDITABLE`).
+  - API runtime-validator wiring (`T-KYC-API-VAL-01`): Reject `ApiError` code `INVALID_RESPONSE` status 200 khi backend trả HTTP 200 nhưng schema không hợp lệ (`status: "UNKNOWN"`).
+  - Invalid status enum (`T-KYC-VAL-GAP-01`): Validator từ chối các status enum nằm ngoài canonical 6.
+  - Missing `userId` (`T-KYC-VAL-GAP-02`): Validator từ chối payload thiếu `userId`.
+  - Missing `updatedAt` (`T-KYC-VAL-GAP-02`): Validator từ chối payload thiếu `updatedAt`.
+- **Hành vi sản phẩm**: Không thay đổi bất kỳ hành vi sản phẩm hay logic production nào (0 production changes).
+
+### 18.2. Latest Evidence
+- Targeted Test Suites: **67/67 PASS** (100%).
+- Full Mobile Test Suite: **373/373 PASS** (100%).
+- Lint (`npm run lint`): **PASS** (0 errors, 0 warnings).
+- Typecheck (`npm run typecheck`): **PASS** (0 errors).
+- OpenAPI Validation (`npm run validate:openapi`): **PASS** (46 paths hợp lệ).
+- E2E Syntax Validation (`npm run validate:e2e`): **PASS** (19 flows hợp lệ).
+- Web Export (`npm run export:web`): **PASS** (36 static routes exported).
+- TypeScript Hygiene: 0 prohibited-pattern violation trên các dòng test được thêm bởi M01-06.
+- Bounded Async Wait: Các thao tác chờ bất đồng bộ được thêm trong các test M01-06 đều có timeout hữu hạn tối đa 2000 ms; không polling vô hạn hoặc fixed microtask ticks.
+
+### 18.3. Deferred Evidence
+- **M01-07**:
+  - PostgreSQL disposable runtime suite.
+  - Transaction isolation và row-level lock concurrency.
+  - Multi-process race condition và interleaving verification.
+- **M01-08**:
+  - Kiểm thử runtime trên Android emulator và thiết bị thật.
+  - Maestro CLI automation runtime flows.
+  - Bằng chứng crash-recovery, process-kill và app restart trên thiết bị.
+- **Lưu ý nguyên tắc**: Syntax validation (`validate-maestro.cjs`) không thể thay thế cho bằng chứng device-runtime evidence.
+
+### 18.4. Scope Closure & Lifecycle
+- **M01-06 implementation scope**: Hoàn thành (`COMPLETED`).
+- **M01-06 evidence scope**: Hoàn thành trong phạm vi test-only và static quality gates đã được phê duyệt.
+- **M01-06 closure status**: `COMPLETED`.
+- **M01-07 và M01-08**: Chưa bắt đầu (giữ nguyên ranh giới hoãn lại).
+- **UC-M01**: **Chưa hoàn thành**; chỉ M01-09 mới thực hiện tổng kiểm toán và đóng Use Case UC-M01.
+- **Tuyên bố sẵn sàng**: Không tuyên bố pilot hoặc production-ready khi chưa có staging, core integration và device E2E.
+- **Git Action**: Không push, không amend. Dừng tại local repository.
