@@ -54,6 +54,10 @@ import {
   isCanonicalRuntimePath,
   isReservedCanonicalRuntimeCandidate,
   runCliMain,
+  CANONICAL_TMPFS_DESTINATION,
+  CANONICAL_TMPFS_OPTIONS,
+  CANONICAL_TMPFS_FLAG_VALUE,
+  validateTmpfsOptions,
 } from "../database/disposableDatabaseGuard.js";
 
 
@@ -1441,9 +1445,20 @@ test("M07-A2R-03: Docker inspect golden case", () => {
           "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }],
         },
       },
-      Mounts: [],
+      Mounts: [
+        {
+          Type: "tmpfs",
+          Source: "",
+          Destination: "/var/lib/postgresql/data",
+          RW: true,
+          Propagation: "",
+        },
+      ],
       HostConfig: {
         Binds: [],
+        Tmpfs: {
+          "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700",
+        },
       },
     },
   ]);
@@ -1623,7 +1638,7 @@ test("M07-A2R-07: Reject any mount or shared descriptor", () => {
 test("M07-A2R-08: Exact-ID container removal rejects invalid container IDs", () => {
   const valid64Hex = "d".repeat(64);
   const rmArgs = buildDockerRmArgs(valid64Hex);
-  assert.deepEqual(rmArgs, ["rm", "-f", valid64Hex]);
+  assert.deepEqual(rmArgs, ["rm", "-f", "-v", valid64Hex]);
 
   assert.throws(() => buildDockerRmArgs("short"), /exact 64 lowercase hex/);
   assert.throws(() => buildDockerRmArgs("d".repeat(63)), /exact 64 lowercase hex/);
@@ -1868,7 +1883,8 @@ test("M07-A2R-21: Canonical 19-step sequence ordering with test doubles", async 
         Name: `/${fixedContainerName}`,
         Image: "sha256:" + "0".repeat(64), Config: { Image: "postgres:16", Labels: { banking_test_run_id: fixedRunId } },
         NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
-        Mounts: [],
+        Mounts: [{ Type: "tmpfs", Source: "", Destination: "/var/lib/postgresql/data", RW: true }],
+        HostConfig: { Binds: [], Tmpfs: { "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700" } },
       }]);
     },
     async removeContainer() {},
@@ -1961,7 +1977,8 @@ test("M07-A2R-22: Restoration verify-only failure fails closed and triggers clea
         Image: "sha256:" + "0".repeat(64),
         Config: { Image: "postgres:16", Labels: { banking_test_run_id: fixedRunId } },
         NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
-        Mounts: [],
+        Mounts: [{ Type: "tmpfs", Source: "", Destination: "/var/lib/postgresql/data", RW: true }],
+        HostConfig: { Binds: [], Tmpfs: { "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700" } },
       }]);
     },
     async removeContainer() {},
@@ -2759,4 +2776,634 @@ test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam
   assert.doesNotMatch(combinedLog, /test_password_123/);
   assert.match(combinedLog, /\[REDACTED_URL\]/);
   assert.match(combinedLog, /\[REDACTED_SECRET\]/);
+});
+
+// ============================================================================
+// M07-A2 TMPFS HARNESS TESTS (M07-A2-TMPFS-01 to M07-A2-TMPFS-08)
+// ============================================================================
+
+test("M07-A2-TMPFS-01: Launch arguments contain exact --tmpfs pair and no -v, --volume, or broad mount", () => {
+  const runId = "11111111222222223333333344444444";
+  const containerName = `banking_test_container_${runId}`;
+  const runArgs = buildDockerRunArgs({ containerName, runId });
+
+  const tmpfsIndex = runArgs.indexOf("--tmpfs");
+  assert.ok(tmpfsIndex !== -1, "Docker run arguments must include --tmpfs flag");
+  assert.equal(
+    runArgs[tmpfsIndex + 1],
+    CANONICAL_TMPFS_FLAG_VALUE,
+    `--tmpfs must be immediately followed by exact canonical flag value '${CANONICAL_TMPFS_FLAG_VALUE}'`,
+  );
+  assert.equal(
+    runArgs[tmpfsIndex + 1],
+    "/var/lib/postgresql/data:rw,noexec,nosuid,size=512m,mode=0700",
+  );
+
+  assert.ok(!runArgs.includes("-v"), "Must not include -v");
+  assert.ok(!runArgs.includes("--volume"), "Must not include --volume");
+  assert.ok(!runArgs.includes("--mount"), "Must not include --mount");
+  assert.ok(runArgs.includes("--pull=never"), "Must keep --pull=never");
+  assert.ok(runArgs.includes("-p"), "Must keep -p");
+  assert.equal(runArgs[runArgs.indexOf("-p") + 1], "127.0.0.1::5432");
+  assert.ok(runArgs.includes("-l"), "Must keep -l");
+  assert.equal(runArgs[runArgs.indexOf("-l") + 1], `banking_test_run_id=${runId}`);
+  assert.equal(runArgs[runArgs.length - 1], "postgres:16");
+});
+
+test("M07-A2-TMPFS-02: Exact tmpfs accepted in inspect record", () => {
+  const runId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const containerName = `banking_test_container_${runId}`;
+  const containerId = "1".repeat(64);
+  const imageId = "sha256:" + "2".repeat(64);
+
+  const inspectJson = JSON.stringify([
+    {
+      Id: containerId,
+      Name: `/${containerName}`,
+      Image: imageId,
+      Config: {
+        Image: "postgres:16",
+        Labels: { banking_test_run_id: runId },
+      },
+      NetworkSettings: {
+        Ports: {
+          "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }],
+        },
+      },
+      Mounts: [
+        {
+          Type: "tmpfs",
+          Source: "",
+          Destination: "/var/lib/postgresql/data",
+          RW: true,
+          Propagation: "",
+        },
+      ],
+      HostConfig: {
+        Binds: [],
+        Tmpfs: {
+          "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700",
+        },
+      },
+    },
+  ]);
+
+  const validated = validateDockerInspectOutput(
+    inspectJson,
+    containerName,
+    runId,
+    imageId,
+    containerId,
+  );
+  assert.equal(validated.containerId, containerId);
+  assert.equal(validated.containerName, containerName);
+  assert.equal(validated.hostPort, 54321);
+  assert.equal(validated.bindHost, "127.0.0.1");
+  assert.equal(validated.runId, runId);
+});
+
+test("M07-A2-TMPFS-03: Anonymous and named volumes rejected", () => {
+  const runId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const containerName = `banking_test_container_${runId}`;
+  const containerId = "3".repeat(64);
+
+  // Anonymous volume (the exact shape that caused runtime failure)
+  const anonymousVolumeJson = JSON.stringify([
+    {
+      Id: containerId,
+      Name: `/${containerName}`,
+      Config: {
+        Image: "postgres:16",
+        Labels: { banking_test_run_id: runId },
+      },
+      NetworkSettings: {
+        Ports: {
+          "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }],
+        },
+      },
+      Mounts: [
+        {
+          Type: "volume",
+          Name: "c9c6a6edd0a15289d713e81c8ae985c678bacc9c917b4be9cb701168c737d1db",
+          Destination: "/var/lib/postgresql/data",
+          Driver: "local",
+          Mode: "",
+          RW: true,
+          Propagation: "",
+        },
+      ],
+      HostConfig: {
+        Binds: [],
+        Tmpfs: {
+          "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700",
+        },
+      },
+    },
+  ]);
+
+  assert.throws(
+    () => validateDockerInspectOutput(anonymousVolumeJson, containerName, runId),
+    /persistent\/shared mounts, which are strictly prohibited/,
+  );
+
+  // Named volume
+  const namedVolumeJson = JSON.stringify([
+    {
+      Id: containerId,
+      Name: `/${containerName}`,
+      Config: {
+        Image: "postgres:16",
+        Labels: { banking_test_run_id: runId },
+      },
+      NetworkSettings: {
+        Ports: {
+          "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }],
+        },
+      },
+      Mounts: [
+        {
+          Type: "volume",
+          Name: "banking_persistent_pgdata",
+          Destination: "/var/lib/postgresql/data",
+          Driver: "local",
+          RW: true,
+        },
+      ],
+      HostConfig: {
+        Binds: [],
+        Tmpfs: {
+          "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700",
+        },
+      },
+    },
+  ]);
+
+  assert.throws(
+    () => validateDockerInspectOutput(namedVolumeJson, containerName, runId),
+    /not approved 'tmpfs'/,
+  );
+});
+
+test("M07-A2-TMPFS-04: Bind and additional mounts rejected", () => {
+  const runId = "cccccccccccccccccccccccccccccccc";
+  const containerName = `banking_test_container_${runId}`;
+  const containerId = "4".repeat(64);
+
+  const baseRecord = {
+    Id: containerId,
+    Name: `/${containerName}`,
+    Config: {
+      Image: "postgres:16",
+      Labels: { banking_test_run_id: runId },
+    },
+    NetworkSettings: {
+      Ports: {
+        "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }],
+      },
+    },
+    HostConfig: {
+      Binds: [],
+      Tmpfs: {
+        "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700",
+      },
+    },
+  };
+
+  // Bind mount
+  assert.throws(
+    () =>
+      validateDockerInspectOutput(
+        JSON.stringify([
+          {
+            ...baseRecord,
+            Mounts: [
+              {
+                Type: "bind",
+                Source: "/host/pgdata",
+                Destination: "/var/lib/postgresql/data",
+                RW: true,
+              },
+            ],
+          },
+        ]),
+        containerName,
+        runId,
+      ),
+    /not approved 'tmpfs'/,
+  );
+
+  // Non-empty source on tmpfs
+  assert.throws(
+    () =>
+      validateDockerInspectOutput(
+        JSON.stringify([
+          {
+            ...baseRecord,
+            Mounts: [
+              {
+                Type: "tmpfs",
+                Source: "/host/leak",
+                Destination: "/var/lib/postgresql/data",
+                RW: true,
+              },
+            ],
+          },
+        ]),
+        containerName,
+        runId,
+      ),
+    /Source must be empty string/,
+  );
+
+  // Wrong destination
+  assert.throws(
+    () =>
+      validateDockerInspectOutput(
+        JSON.stringify([
+          {
+            ...baseRecord,
+            Mounts: [
+              {
+                Type: "tmpfs",
+                Source: "",
+                Destination: "/var/lib/postgresql/other",
+                RW: true,
+              },
+            ],
+          },
+        ]),
+        containerName,
+        runId,
+      ),
+    /does not match exact approved/,
+  );
+
+  // Second mount
+  assert.throws(
+    () =>
+      validateDockerInspectOutput(
+        JSON.stringify([
+          {
+            ...baseRecord,
+            Mounts: [
+              {
+                Type: "tmpfs",
+                Source: "",
+                Destination: "/var/lib/postgresql/data",
+                RW: true,
+              },
+              {
+                Type: "tmpfs",
+                Source: "",
+                Destination: "/tmp",
+                RW: true,
+              },
+            ],
+          },
+        ]),
+        containerName,
+        runId,
+      ),
+    /expected exactly one tmpfs mount, found 2/,
+  );
+});
+
+test("M07-A2-TMPFS-05: Option mismatch rejected while accepting valid semantic permutations", () => {
+  // Valid option permutations
+  assert.doesNotThrow(() =>
+    validateTmpfsOptions("size=512m,mode=0700,noexec,nosuid,rw"),
+  );
+  assert.doesNotThrow(() =>
+    validateTmpfsOptions("rw,noexec,nosuid,size=536870912,mode=0700"),
+  );
+  assert.doesNotThrow(() =>
+    validateTmpfsOptions("rw,noexec,nosuid,size=524288k,mode=0700"),
+  );
+  assert.doesNotThrow(() =>
+    validateTmpfsOptions("rw,noexec,nosuid,size=512m,mode=700"),
+  );
+
+  // Missing required options
+  assert.throws(
+    () => validateTmpfsOptions("rw,nosuid,size=512m,mode=0700"),
+    /must contain exactly one 'noexec' flag/,
+  );
+  assert.throws(
+    () => validateTmpfsOptions("rw,noexec,size=512m,mode=0700"),
+    /must contain exactly one 'nosuid' flag/,
+  );
+  assert.throws(
+    () => validateTmpfsOptions("noexec,nosuid,size=512m,mode=0700"),
+    /must contain exactly one 'rw' flag/,
+  );
+  assert.throws(
+    () => validateTmpfsOptions("rw,noexec,nosuid,mode=0700"),
+    /must contain exactly one size parameter/,
+  );
+  assert.throws(
+    () => validateTmpfsOptions("rw,noexec,nosuid,size=512m"),
+    /must contain exactly one mode parameter/,
+  );
+
+  // Wrong size or mode
+  assert.throws(
+    () => validateTmpfsOptions("rw,noexec,nosuid,size=1024m,mode=0700"),
+    /expected 512m/,
+  );
+  assert.throws(
+    () => validateTmpfsOptions("rw,noexec,nosuid,size=512m,mode=0777"),
+    /expected 0700/,
+  );
+
+  // Disallowed / unexpected options
+  assert.throws(
+    () => validateTmpfsOptions("ro,noexec,nosuid,size=512m,mode=0700"),
+    /unexpected option/,
+  );
+  assert.throws(
+    () => validateTmpfsOptions("rw,noexec,nosuid,size=512m,mode=0700,exec"),
+    /unexpected option/,
+  );
+
+  // In inspect record context: HostConfig.Tmpfs key mismatch
+  const runId = "dddddddddddddddddddddddddddddddd";
+  const containerName = `banking_test_container_${runId}`;
+  const recordWithWrongKey = JSON.stringify([
+    {
+      Id: "5".repeat(64),
+      Name: `/${containerName}`,
+      Config: { Image: "postgres:16", Labels: { banking_test_run_id: runId } },
+      NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+      Mounts: [
+        {
+          Type: "tmpfs",
+          Source: "",
+          Destination: "/var/lib/postgresql/data",
+          RW: true,
+        },
+      ],
+      HostConfig: {
+        Binds: [],
+        Tmpfs: {
+          "/var/lib/postgresql/wrong": "rw,noexec,nosuid,size=512m,mode=0700",
+        },
+      },
+    },
+  ]);
+  assert.throws(
+    () => validateDockerInspectOutput(recordWithWrongKey, containerName, runId),
+    /HostConfig\.Tmpfs must contain exactly '\/var\/lib\/postgresql\/data'/,
+  );
+
+  // Mounts RW flag false
+  const recordWithRoMount = JSON.stringify([
+    {
+      Id: "5".repeat(64),
+      Name: `/${containerName}`,
+      Config: { Image: "postgres:16", Labels: { banking_test_run_id: runId } },
+      NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+      Mounts: [
+        {
+          Type: "tmpfs",
+          Source: "",
+          Destination: "/var/lib/postgresql/data",
+          RW: false,
+        },
+      ],
+      HostConfig: {
+        Binds: [],
+        Tmpfs: {
+          "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700",
+        },
+      },
+    },
+  ]);
+  assert.throws(
+    () => validateDockerInspectOutput(recordWithRoMount, containerName, runId),
+    /RW flag must be true/,
+  );
+});
+
+test("M07-A2-TMPFS-06: Exact defensive cleanup uses launched container ID with -f and -v", () => {
+  const launchedId = "6".repeat(64);
+  const rmArgs = buildDockerRmArgs(launchedId);
+
+  assert.deepEqual(rmArgs, ["rm", "-f", "-v", launchedId]);
+  assert.ok(!rmArgs.includes("*"), "Must not contain wildcard");
+  assert.ok(!rmArgs.includes("prune"), "Must not prune");
+  assert.equal(rmArgs.length, 4, "Must have exactly 4 arguments");
+
+  assert.throws(() => buildDockerRmArgs("short"), /exact 64 lowercase hex/);
+  assert.throws(() => buildDockerRmArgs("6".repeat(63)), /exact 64 lowercase hex/);
+  assert.throws(() => buildDockerRmArgs("6".repeat(65)), /exact 64 lowercase hex/);
+  assert.throws(() => buildDockerRmArgs("F".repeat(64)), /exact 64 lowercase hex/);
+});
+
+test("M07-A2-TMPFS-07: Inspect failure stops sequence, cleans up with -v, and fails closed", async () => {
+  const fixedRunId = "77777777777777777777777777777777";
+  const launchId = "7".repeat(64);
+  const fixedContainerName = `banking_test_container_${fixedRunId}`;
+  const localImageId = "sha256:" + "7".repeat(64);
+
+  const removedContainerIds: string[] = [];
+  const executedDbQueries: string[] = [];
+
+  const mockDocker: DockerAdapter = {
+    async inspectImage() {
+      return JSON.stringify([{ Id: localImageId, RepoTags: ["postgres:16"] }]);
+    },
+    async runContainer() {
+      return launchId;
+    },
+    async inspectContainer() {
+      // Returns anonymous volume inspect output (like actual runtime failure)
+      return JSON.stringify([
+        {
+          Id: launchId,
+          Name: `/${fixedContainerName}`,
+          Image: localImageId,
+          Config: { Image: "postgres:16", Labels: { banking_test_run_id: fixedRunId } },
+          NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+          Mounts: [
+            {
+              Type: "volume",
+              Name: "c9c6a6edd0a15289d713e81c8ae985c678bacc9c917b4be9cb701168c737d1db",
+              Destination: "/var/lib/postgresql/data",
+            },
+          ],
+        },
+      ]);
+    },
+    async removeContainer(containerId: string) {
+      removedContainerIds.push(containerId);
+    },
+    async waitForReady() {},
+  };
+
+  const mockPool: DisposablePoolClient = {
+    async query(sql: string) {
+      executedDbQueries.push(sql);
+      return { rows: [] };
+    },
+    async end() {},
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: mockDocker,
+      createPoolFn: () => mockPool,
+      runCommandFn: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      runIdGenerator: () => fixedRunId,
+    },
+  );
+
+  assert.equal(result.success, false, "Must fail closed on mount validation failure");
+  assert.ok(
+    result.error?.message.includes("persistent/shared mounts, which are strictly prohibited"),
+    "Must preserve mount error",
+  );
+  assert.equal(
+    executedDbQueries.length,
+    0,
+    "Step 5 and later phases must never execute when inspect validation fails",
+  );
+  assert.deepEqual(
+    removedContainerIds,
+    [launchId],
+    "Must cleanup exact launched container ID once in awaited finally",
+  );
+});
+
+test("M07-A2-TMPFS-08: Success and cancellation hygiene", async () => {
+  const fixedRunId = "88888888888888888888888888888888";
+  const launchId = "8".repeat(64);
+  const fixedContainerName = `banking_test_container_${fixedRunId}`;
+  const localImageId = "sha256:" + "8".repeat(64);
+
+  // Verify buildDockerRunArgs rejects unknown or caller-supplied tmpfs options
+  const defaultRunArgs = buildDockerRunArgs({
+    containerName: fixedContainerName,
+    runId: fixedRunId,
+  });
+  const tmpfsIndices = defaultRunArgs.reduce<number[]>(
+    (acc, val, idx) => (val === "--tmpfs" ? [...acc, idx] : acc),
+    [],
+  );
+  assert.equal(tmpfsIndices.length, 1, "Exactly one --tmpfs pair allowed in launch args");
+
+  // Part 1: Normal completion hygiene
+  const normalRemovedContainers: string[] = [];
+  const normalMockDocker: DockerAdapter = {
+    async inspectImage() {
+      return JSON.stringify([{ Id: localImageId, RepoTags: ["postgres:16"] }]);
+    },
+    async runContainer() {
+      return launchId;
+    },
+    async inspectContainer() {
+      return JSON.stringify([
+        {
+          Id: launchId,
+          Name: `/${fixedContainerName}`,
+          Image: localImageId,
+          Config: { Image: "postgres:16", Labels: { banking_test_run_id: fixedRunId } },
+          NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+          Mounts: [
+            {
+              Type: "tmpfs",
+              Source: "",
+              Destination: "/var/lib/postgresql/data",
+              RW: true,
+            },
+          ],
+          HostConfig: {
+            Binds: [],
+            Tmpfs: {
+              "/var/lib/postgresql/data": "rw,noexec,nosuid,size=512m,mode=0700",
+            },
+          },
+        },
+      ]);
+    },
+    async removeContainer(containerId: string) {
+      normalRemovedContainers.push(containerId);
+    },
+    async waitForReady() {},
+  };
+
+  let verifyCount = 0;
+  const normalResult = await runCanonicalEvidenceSequence(
+    { PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: normalMockDocker,
+      createPoolFn: () => ({
+        async query(sql: string) {
+          if (sql.includes("COUNT(*)")) return { rows: [{ count: 0 }] };
+          return { rows: [] };
+        },
+        async end() {},
+      }),
+      runCommandFn: async (_cmd: string, args: readonly string[]) => {
+        if (args.includes("--verify-only")) {
+          verifyCount++;
+          if (verifyCount === 2) {
+            return {
+              exitCode: 1,
+              stdout: "",
+              stderr: "Migration checksum mismatch for 001_banking_mvp; refusing to run.",
+            };
+          }
+        }
+        return { exitCode: 0, stdout: "OK", stderr: "" };
+      },
+      runIdGenerator: () => fixedRunId,
+    },
+  );
+
+  assert.equal(normalResult.success, true, "Normal run must succeed");
+  assert.deepEqual(
+    normalRemovedContainers,
+    [launchId],
+    "Normal completion must clean up exact launched container ID once and never invoke volume prune/rm",
+  );
+
+  // Part 2: Cancellation hygiene
+  const cancelRemovedContainers: string[] = [];
+  const cancelMockDocker: DockerAdapter = {
+    async inspectImage() {
+      return JSON.stringify([{ Id: localImageId, RepoTags: ["postgres:16"] }]);
+    },
+    async runContainer() {
+      return launchId;
+    },
+    async inspectContainer() {
+      // Simulate cooperative cancellation during inspect phase
+      throw new Error("Cooperative cancellation triggered during inspection");
+    },
+    async removeContainer(containerId: string) {
+      cancelRemovedContainers.push(containerId);
+    },
+    async waitForReady() {},
+  };
+
+  const cancelResult = await runCanonicalEvidenceSequence(
+    { PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: cancelMockDocker,
+      createPoolFn: () => ({
+        async query() { return { rows: [] }; },
+        async end() {},
+      }),
+      runCommandFn: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+      runIdGenerator: () => fixedRunId,
+    },
+  );
+
+  assert.equal(cancelResult.success, false, "Must fail closed on cancellation");
+  assert.deepEqual(
+    cancelRemovedContainers,
+    [launchId],
+    "Cancellation must await cleanup of exact launched container without separate volume operations",
+  );
 });

@@ -913,6 +913,10 @@ export function buildDockerImageInspectArgs(image = "postgres:16"): readonly str
   return ["image", "inspect", image];
 }
 
+export const CANONICAL_TMPFS_DESTINATION = "/var/lib/postgresql/data";
+export const CANONICAL_TMPFS_OPTIONS = "rw,noexec,nosuid,size=512m,mode=0700";
+export const CANONICAL_TMPFS_FLAG_VALUE = `${CANONICAL_TMPFS_DESTINATION}:${CANONICAL_TMPFS_OPTIONS}`;
+
 export interface DockerRunOptions {
   readonly containerName: string;
   readonly runId: string;
@@ -939,6 +943,8 @@ export function buildDockerRunArgs(options: DockerRunOptions): readonly string[]
     `POSTGRES_PASSWORD=${password}`,
     "-p",
     "127.0.0.1::5432",
+    "--tmpfs",
+    CANONICAL_TMPFS_FLAG_VALUE,
     "-l",
     `banking_test_run_id=${options.runId}`,
     image,
@@ -956,12 +962,21 @@ export function buildDockerRmArgs(containerId: string): readonly string[] {
   if (!/^[a-f0-9]{64}$/.test(containerId)) {
     throw new Error(`Invalid container ID for removal: '${containerId}'. Must be exact 64 lowercase hex.`);
   }
-  return ["rm", "-f", containerId];
+  return ["rm", "-f", "-v", containerId];
 }
 
 export interface DockerInspectPortBinding {
   readonly HostIp: string;
   readonly HostPort: string;
+}
+
+export interface DockerInspectMount {
+  readonly Type?: string;
+  readonly Source?: string;
+  readonly Destination?: string;
+  readonly Mode?: string;
+  readonly RW?: boolean;
+  readonly Propagation?: string;
 }
 
 export interface DockerInspectRecord {
@@ -976,9 +991,10 @@ export interface DockerInspectRecord {
   readonly NetworkSettings?: {
     readonly Ports?: Record<string, readonly DockerInspectPortBinding[] | null>;
   };
-  readonly Mounts?: readonly unknown[];
+  readonly Mounts?: readonly DockerInspectMount[];
   readonly HostConfig?: {
     readonly Binds?: readonly unknown[];
+    readonly Tmpfs?: Record<string, string>;
   };
 }
 
@@ -1034,6 +1050,83 @@ export function parseAndValidateLaunchedContainerId(stdout: string): string {
     throw new Error("docker run returned invalid container ID format: expected exactly one single-line 64 lowercase hex string");
   }
   return trimmed;
+}
+
+export function validateTmpfsOptions(optionsString: string): void {
+  if (typeof optionsString !== "string" || optionsString.trim() === "") {
+    throw new Error("Docker inspect tmpfs options string is empty or invalid");
+  }
+
+  const tokens = optionsString.split(",").map((s) => s.trim()).filter(Boolean);
+
+  let countRw = 0;
+  let countNoexec = 0;
+  let countNosuid = 0;
+  let countSize = 0;
+  let countMode = 0;
+  const unknownTokens: string[] = [];
+
+  for (const token of tokens) {
+    if (token === "rw") {
+      countRw++;
+    } else if (token === "noexec") {
+      countNoexec++;
+    } else if (token === "nosuid") {
+      countNosuid++;
+    } else if (token.startsWith("size=")) {
+      countSize++;
+      const match = /^size=(\d+)([kmgKMG]?)$/.exec(token);
+      if (!match) {
+        throw new Error(`Docker inspect tmpfs size option format invalid: '${token}'`);
+      }
+      const rawNum = parseInt(match[1], 10);
+      const unit = (match[2] ?? "").toLowerCase();
+      let bytes = rawNum;
+      if (unit === "k") {
+        bytes = rawNum * 1024;
+      } else if (unit === "m") {
+        bytes = rawNum * 1024 * 1024;
+      } else if (unit === "g") {
+        bytes = rawNum * 1024 * 1024 * 1024;
+      }
+      const EXPECTED_512M_BYTES = 512 * 1024 * 1024;
+      if (bytes !== EXPECTED_512M_BYTES) {
+        throw new Error(`Docker inspect tmpfs size is '${token}' (${bytes} bytes), expected 512m (${EXPECTED_512M_BYTES} bytes)`);
+      }
+    } else if (token.startsWith("mode=")) {
+      const match = /^mode=([0-7]+)$/.exec(token);
+      if (!match) {
+        throw new Error(`Docker inspect tmpfs mode option format invalid: '${token}'`);
+      }
+      countMode++;
+      const octalVal = parseInt(match[1], 8);
+      const EXPECTED_0700_OCTAL = 0o700;
+      if (octalVal !== EXPECTED_0700_OCTAL) {
+        throw new Error(`Docker inspect tmpfs mode is '${token}' (0o${octalVal.toString(8)}), expected 0700`);
+      }
+    } else {
+      unknownTokens.push(token);
+    }
+  }
+
+  if (unknownTokens.length > 0) {
+    throw new Error(`Docker inspect tmpfs has unexpected option(s): ${unknownTokens.join(", ")}`);
+  }
+  if (countRw !== 1) {
+    throw new Error(`Docker inspect tmpfs options must contain exactly one 'rw' flag, found ${countRw}`);
+  }
+  if (countNoexec !== 1) {
+    throw new Error(`Docker inspect tmpfs options must contain exactly one 'noexec' flag, found ${countNoexec}`);
+  }
+  if (countNosuid !== 1) {
+    throw new Error(`Docker inspect tmpfs options must contain exactly one 'nosuid' flag, found ${countNosuid}`);
+  }
+  if (countSize !== 1) {
+    throw new Error(`Docker inspect tmpfs options must contain exactly one size parameter (512m), found ${countSize}`);
+  }
+  if (countMode !== 1) {
+    throw new Error(`Docker inspect tmpfs options must contain exactly one mode parameter (0700), found ${countMode}`);
+  }
 }
 
 export function validateDockerInspectOutput(
@@ -1095,15 +1188,6 @@ export function validateDockerInspectOutput(
     }
   }
 
-  const mounts = record.Mounts;
-  if (Array.isArray(mounts) && mounts.length > 0) {
-    throw new Error("Docker inspect shows persistent/shared mounts, which are strictly prohibited");
-  }
-  const binds = record.HostConfig?.Binds;
-  if (Array.isArray(binds) && binds.length > 0) {
-    throw new Error("Docker inspect shows host binds, which are strictly prohibited");
-  }
-
   const ports = record.NetworkSettings?.Ports;
   if (!ports || typeof ports !== "object") {
     throw new Error("Docker inspect missing NetworkSettings.Ports");
@@ -1124,6 +1208,53 @@ export function validateDockerInspectOutput(
   if (Number.isNaN(hostPort) || hostPort <= 0 || hostPort > 65535) {
     throw new Error(`Docker inspect invalid host port: '${firstBinding.HostPort}'`);
   }
+
+  const binds = record.HostConfig?.Binds;
+  if (Array.isArray(binds) && binds.length > 0) {
+    throw new Error("Docker inspect shows host binds, which are strictly prohibited");
+  }
+
+  const mounts = record.Mounts;
+  if (!Array.isArray(mounts) || mounts.length === 0) {
+    throw new Error("Docker inspect shows persistent/shared mounts, which are strictly prohibited: missing or empty approved tmpfs mount");
+  }
+  if (mounts.length > 1) {
+    throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: expected exactly one tmpfs mount, found ${mounts.length}`);
+  }
+
+  const mount = mounts[0];
+  if (!mount || typeof mount !== "object") {
+    throw new Error("Docker inspect mount entry is not an object");
+  }
+  if (mount.Type !== "tmpfs") {
+    throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: mount Type '${String(mount.Type)}' is not approved 'tmpfs'`);
+  }
+  if (mount.Destination !== CANONICAL_TMPFS_DESTINATION) {
+    throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: mount Destination '${String(mount.Destination)}' does not match exact approved '${CANONICAL_TMPFS_DESTINATION}'`);
+  }
+  if (mount.Source !== undefined && mount.Source !== "") {
+    throw new Error(`Docker inspect shows persistent/shared mounts, which are strictly prohibited: tmpfs mount Source must be empty string, got '${String(mount.Source)}'`);
+  }
+  if (mount.RW !== true) {
+    throw new Error("Docker inspect tmpfs mount RW flag must be true (read/write)");
+  }
+  if (mount.Propagation !== undefined && mount.Propagation !== "") {
+    throw new Error(`Docker inspect tmpfs mount Propagation must be empty, got '${String(mount.Propagation)}'`);
+  }
+
+  const hostTmpfs = record.HostConfig?.Tmpfs;
+  if (!hostTmpfs || typeof hostTmpfs !== "object" || Array.isArray(hostTmpfs)) {
+    throw new Error("Docker inspect missing HostConfig.Tmpfs object");
+  }
+  const tmpfsKeys = Object.keys(hostTmpfs);
+  if (tmpfsKeys.length !== 1 || tmpfsKeys[0] !== CANONICAL_TMPFS_DESTINATION) {
+    throw new Error(`Docker inspect HostConfig.Tmpfs must contain exactly '${CANONICAL_TMPFS_DESTINATION}', got: ${tmpfsKeys.join(", ")}`);
+  }
+  const optionsString = hostTmpfs[CANONICAL_TMPFS_DESTINATION];
+  if (typeof optionsString !== "string") {
+    throw new Error(`Docker inspect HostConfig.Tmpfs options for '${CANONICAL_TMPFS_DESTINATION}' is not a string`);
+  }
+  validateTmpfsOptions(optionsString);
 
   return {
     containerId: id,

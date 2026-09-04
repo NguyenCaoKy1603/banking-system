@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 CLI WIRING COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
-- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 TMPFS REMEDIATION VERIFIED — AWAITING CHECKPOINT COMMIT
+- Chế độ hiện tại: DOCUMENTATION CORRECTION AND CHECKPOINT STAGING ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
@@ -12,11 +12,12 @@ Baseline được xác nhận khi soạn task:
 - Repository root: C:\Projects\banking-system
 - Current working directory: C:\Projects\banking-system
 - Branch: codex/staging-academic-completion
-- HEAD: 1bded79c8575c7958f3920cc021878e050225aed
-- Working tree: có đúng một authorized untracked file; không có modified/staged file khác
+- HEAD: 1343f7120441ac359a598b59153a8f3634602f35
+- Working tree trước documentation correction: đúng ba file modified trong checkpoint allowlist, 0 untracked file
 - Cached area: sạch
 - M01-06: COMPLETED
-- M01-07, M01-08, M01-09: chưa bắt đầu
+- M01-07: đang IN_PROGRESS ở checkpoint M07-A2 remediation; chưa hoàn thành
+- M01-08, M01-09: chưa bắt đầu
 
 Task này là kế hoạch xác minh cho dữ liệu tổng hợp và tiền ảo trong phạm vi khóa luận. Nó không biến hệ thống thành production, không kết nối hệ thống ngân hàng thật và không sử dụng dữ liệu khách hàng thật.
 
@@ -1801,3 +1802,333 @@ Exact single canonical ("src/tests/disposableMigrationRuntime.test.ts")
 - File đóng băng `backend/src/tests/disposableMigrationRuntime.test.ts` được bảo toàn toàn vẹn byte-for-byte (SHA-256: `890511a6d95a75b59cda04ebac737379f6c3c55c2e8003d3b7844e6b6834eb04`).
 - Checkpoint M07-A2 runtime tiếp tục ở trạng thái **CHƯA ĐƯỢC CẤP QUYỀN (NOT AUTHORIZED)** cho lần chạy lại.
 - Task M01-07 và Use Case UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**, sẵn sàng để Owner tái thẩm định (re-review).
+
+## 35. M07-A2 ONE-SHOT RUNTIME RETRY EVIDENCE
+
+### 35.1 Bối cảnh Thực thi và Thông số Lệnh
+- **Baseline HEAD**: `1343f7120441ac359a598b59153a8f3634602f35`
+- **Thời điểm thực thi**: 2026-09-04 20:32:59 +07:00 đến 2026-09-04 20:33:01 +07:00
+- **Duration**: ~1.7 giây
+- **Lệnh thực thi duy nhất**:
+  ```powershell
+  node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/disposableMigrationRuntime.test.ts
+  ```
+- **Working Directory**: `C:\Projects\banking-system\backend`
+- **Số lần thực thi**: Đúng 1 lần duy nhất (`invocation count = 1`). Không retry.
+- **Docker Context**: `desktop-linux` (endpoint: `npipe:////./pipe/dockerDesktopLinuxEngine`).
+
+### 35.2 Kết quả Thực thi và Phân tích Lỗi (Execution Failure Analysis)
+- **Overall Exit Code**: `1` (FAIL)
+- **Thông điệp Lỗi Đầu ra (Sanitized Output)**:
+  ```text
+  Docker inspect shows persistent/shared mounts, which are strictly prohibited
+  ```
+- **Phân tích Nguyên nhân Gốc (Root Cause)**:
+  - CLI entrypoint wiring và dispatch đã hoạt động chính xác: Lệnh đã điều phối thành công vào `runCanonicalEvidenceSequence` (khắc phục hoàn toàn lỗi `DATABASE_TEST_ADMIN_URL` của lần chạy trước).
+  - Bước 1 (`1_VERIFY_LOCAL_IMAGE`): Thành công, xác nhận exact local image `postgres:16` với immutable ID format `^sha256:[0-9a-f]{64}$`.
+  - Bước 2 (`2_CREATE_EPHEMERAL_CONTAINER`): Thành công, runner đã khởi chạy container ephemeral qua Docker CLI với `--pull=never`, bind `127.0.0.1::5432` và nhãn `banking_test_run_id`. Đã parse thành công container ID dạng 64-hex lowercase.
+  - Bước 3 (`3_INSPECT_VALIDATE_CONTAINER`): Thất bại tại guard validation `validateDockerInspectOutput`.
+  - Chi tiết guard validation: Image gốc `postgres:16` khai báo mặc định `VOLUME ["/var/lib/postgresql/data"]` trong Dockerfile metadata. Khi Docker daemon khởi chạy container mà không chỉ định volume hay mount flag, engine tự động tạo một anonymous volume mount (`record.Mounts` có 1 phần tử mount anonymous cho `/var/lib/postgresql/data`).
+  - Hàm kiểm tra nghiêm ngặt của guard:
+    ```typescript
+    const mounts = record.Mounts;
+    if (Array.isArray(mounts) && mounts.length > 0) {
+      throw new Error("Docker inspect shows persistent/shared mounts, which are strictly prohibited");
+    }
+    ```
+    đã kích hoạt fail-closed ngay lập tức để ngăn ngừa việc rò rỉ hoặc chia sẻ volume không kiểm soát.
+  - Tiến trình fail-closed an toàn trước khi kết nối database, trước khi tạo database `banking_test_<run_id>`, và trước khi chạy bất kỳ phase migration nào.
+
+### 35.3 Awaited Cleanup và Post-Run Docker Verification
+- **Awaited Cleanup Execution**:
+  - Khi Bước 3 ném ngoại lệ, khối `finally` trong `runCanonicalEvidenceSequence` đã kích hoạt chuỗi dọn dẹp `performCanonicalCleanup()`.
+  - Runner đã thực thi lệnh gỡ bỏ container theo đúng ID đã khởi chạy: `docker rm -f <launchedContainerId>`.
+  - Tiến trình kết thúc sạch sẽ mà không để lại unhandled rejection hay hanging process.
+- **Post-Run Read-Only Docker Scan**:
+  - Quét container read-only ngay sau khi tiến trình kết thúc:
+    `docker ps -a --format "{{.Names}}"`
+    lọc theo pattern: `^banking_test_container_[a-f0-9]{32}$`
+  - Kết quả kiểm kê: **0 container** (`POST_RUN_LEFTOVER_COUNT: 0`).
+  - Không có bất kỳ tài nguyên M01 nào bị rò rỉ trên hệ thống Docker.
+
+### 35.4 Trạng thái Từng Phase và Ranh giới Hoạt động
+- **Container Classification**: Đã khởi chạy và inspect thành công, bị chặn tại Bước 3 bởi mount guard.
+- **Database Ownership**: Chưa tạo target database (bị chặn trước Bước 5).
+- **Initial Migration History**: Chưa chạy.
+- **Rerun Invariant**: Chưa chạy.
+- **Checksum Mismatch Refusal**: Chưa chạy.
+- **Restoration**: Chưa chạy.
+- **Cleanup**: Đạt (container ephemeral đã được xóa hoàn toàn bởi runner, 0 leftover).
+- **Ranh giới Phiên**: Không retry, không sửa code, không manual cleanup.
+- **Trạng thái Checkpoint M07-A2**: **BLOCKED — M07-A2 RUNTIME 3_INSPECT_VALIDATE_CONTAINER**.
+- **Tiến độ Task**: M01-07 và UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**.
+
+## 36. M07-A2 ORPHANED ANONYMOUS VOLUME RECOVERY EVIDENCE
+
+### 36.1 Bối cảnh và Cơ chế Phát sinh Anonymous Volume
+- **Nguyên nhân**: Lần chạy runtime retry M07-A2 lúc `2026-09-04 20:32:59 +07:00` đã khởi chạy một container ephemeral từ image `postgres:16`. Do image gốc khai báo chỉ thị `VOLUME ["/var/lib/postgresql/data"]`, Docker daemon tự động cấp phát một anonymous volume mount cho container khi không có cờ mount rõ ràng.
+- **Fail-closed kích hoạt dọn dẹp một phần**: Khi Bước 3 (`validateDockerInspectOutput`) phát hiện mount và ném lỗi fail-closed, khối `finally` đã gọi `performCanonicalCleanup()` thực thi `docker rm -f <containerId>`. Lệnh này đã gỡ bỏ container ephemeral nhưng theo mặc định của Docker CLI (khi không có cờ `-v`), anonymous volume đã bị bỏ lại ở trạng thái dangling.
+
+### 36.2 Đối soát Ownership và Fingerprint Trước Khi Xóa
+- **Target Volume Name**: `c9c6a6edd0a15289d713e81c8ae985c678bacc9c917b4be9cb701168c737d1db`
+- **Name Fingerprint (SHA-256)**: `6bba55895432853663e854b017adc606282641a20e694c8767a5628877c71d1f`
+- **Metadata Đối soát**:
+  - `CreatedAt`: `2026-09-04T13:33:00Z` (`2026-09-04 20:33:00 +07:00`)
+  - `Driver`: `local`
+  - `Scope`: `local`
+  - `Labels`: `{"com.docker.volume.anonymous": ""}`
+  - `Dangling`: `true`
+  - `Original Destination`: `/var/lib/postgresql/data`
+  - `Associated Runtime Container`: `53bf88874b168641bed333cb33623fe3960df40b34c786801a43a96c7eaad404`
+- **Kiểm tra Tham chiếu Container**: `docker ps -a --filter "volume=c9c6a6edd0a15289d713e81c8ae985c678bacc9c917b4be9cb701168c737d1db"` trả về 0 container tham chiếu.
+- **Bảo mật**: Tuyệt đối không trích xuất hoặc in raw host Mountpoint.
+- **Pre-Cleanup Catalog Counts**:
+  - Host total volumes: `49`
+  - Dangling volumes: `38`
+
+### 36.3 Thực thi Lệnh Xóa Độc Quyền Được Cấp Quyền
+- **Exact Authorized Command**:
+  ```powershell
+  docker volume rm c9c6a6edd0a15289d713e81c8ae985c678bacc9c917b4be9cb701168c737d1db
+  ```
+- **Quy chuẩn An toàn**: Không dùng cờ `-f`, không wildcard, không batch deletion, không prune.
+- **Invocation Count**: Đúng 1 lần duy nhất (`1`).
+- **Timestamp**: `2026-09-04 20:47:14 +07:00`
+- **Exit Code**: `0`
+- **Standard Output**: `c9c6a6edd0a15289d713e81c8ae985c678bacc9c917b4be9cb701168c737d1db`
+
+### 36.4 Xác minh Hậu Kiểm và Phá Hủy Tài Nguyên (Post-Delete Verification)
+- **Kiểm tra Inspect**:
+  - Lệnh: `docker volume inspect c9c6a6edd0a15289d713e81c8ae985c678bacc9c917b4be9cb701168c737d1db`
+  - Kết quả: Exit code `1` (`Error response from daemon: get ...: no such volume`).
+- **Xác nhận Destroy Event**:
+  - Lệnh: `docker events --since "2026-09-04T20:47:00+07:00" --until "2026-09-04T20:47:30+07:00" --filter type=volume --format "{{json .}}"`
+  - Ghi nhận đúng 1 destroy event duy nhất cho target volume:
+    `{"Type":"volume","Action":"destroy","Actor":{"ID":"c9c6a6edd0a15289d713e81c8ae985c678bacc9c917b4be9cb701168c737d1db","Attributes":{"driver":"local"}},"scope":"local","time":1788529634,"timeNano":1788529634413623304}`
+- **Catalog Counts Sau Khi Xóa**:
+  - Host total volumes: `48` (giảm đúng 1 volume)
+  - Dangling volumes: `37` (giảm đúng 1 volume)
+  - Xác nhận: Hoàn toàn không có bất kỳ volume, container, network hay image nào khác bị xóa.
+
+### 36.5 Ranh giới và Trạng thái Tiến trình
+- **Runtime Retry**: Tiếp tục **CHƯA ĐƯỢC CẤP QUYỀN (NOT AUTHORIZED)**.
+- **Harness Remediation**: Cần hoàn thiện harness (bổ sung mount tmpfs cho `/var/lib/postgresql/data` để vừa ngăn Docker tạo anonymous volume vừa cho phép disposable inspect guard chấp thuận ephemeral mount an toàn trong RAM) trước khi đề xuất Owner cho phép retry.
+- **Checkpoint M07-A2**: **CHƯA HOÀN THÀNH** (không đánh dấu PASS).
+- **Tiến độ Task & Use Case**: Task M01-07 và UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**.
+
+### 36.6 Hiệu chỉnh Lịch sử về Số liệu Kiểm kê Volume (Volume-Count Discrepancy Correction)
+- **Time Qualifier & Context**: Tại thời điểm lập báo cáo đối soát read-only trước phiên xóa (`2026-09-04 20:44:00 +07:00`), câu lệnh đối soát đã xác định chính xác candidate volume duy nhất liên quan đến M07-A2 (`c9c6a6edd0a15289d713e81c8ae985c678bacc9c917b4be9cb701168c737d1db`), nhưng câu tóm tắt ban đầu ghi "tổng 1 volume trên host" là không chính xác do nhầm lẫn giữa số candidate M07-A2 với tổng số volume thực tế trên môi trường Docker.
+- **Giá trị kiểm kê thực tế ngay trước khi cleanup**:
+  - Tổng số volume trên host: `49` volumes.
+  - Tổng số dangling volumes: `38` volumes.
+  - Chính xác `1` volume là candidate M07-A2 (`c9c6a6edd0a15289d713e81c8ae985c678bacc9c917b4be9cb701168c737d1db`).
+- **Giá trị kiểm kê thực tế sau khi cleanup**:
+  - Tổng số volume trên host: `48` volumes.
+  - Tổng số dangling volumes: `37` volumes.
+  - Delta: đúng `-1` volume tổng và `-1` dangling volume.
+- **Tính toàn vẹn**: Exact destroy event (`time: 1788529634413623304`) và target ownership fingerprint (`6bba55895432853663e854b017adc606282641a20e694c8767a5628877c71d1f`) hoàn toàn không thay đổi. Không có bất kỳ volume độc lập nào khác bị xóa.
+
+## 37. M07-A2 TMPFS HARNESS REMEDIATION EVIDENCE
+
+### 37.1 Root Cause Phân tích Từ postgres:16 Declared VOLUME
+- **Cơ chế**: Image `postgres:16` khai báo mặc định chỉ thị `VOLUME ["/var/lib/postgresql/data"]` trong Dockerfile metadata. Khi `docker run` được gọi mà không có volume/tmpfs mount chỉ định rõ tại đích này, Docker daemon tự động cấp phát một anonymous volume trên host filesystem.
+- **Hạn chế của Harness cũ**:
+  - `buildDockerRunArgs` không chỉ định mount cho `/var/lib/postgresql/data`.
+  - `validateDockerInspectOutput` fail-closed khi thấy bất kỳ mount nào (`record.Mounts.length > 0`).
+  - Lệnh cleanup cũ `buildDockerRmArgs` chạy `docker rm -f <id>` mà không có cờ `-v`, khiến anonymous volume bị bỏ lại dangling.
+
+### 37.2 Exact TMPFS Launch Contract
+- **Canonical Flag Pair**:
+  ```powershell
+  --tmpfs
+  /var/lib/postgresql/data:rw,noexec,nosuid,size=512m,mode=0700
+  ```
+- **Ràng buộc Hợp đồng**:
+  - Exact destination: `/var/lib/postgresql/data` (được bảo vệ bởi hằng số `CANONICAL_TMPFS_DESTINATION`).
+  - Flag value: `CANONICAL_TMPFS_FLAG_VALUE` = `/var/lib/postgresql/data:rw,noexec,nosuid,size=512m,mode=0700`.
+  - Quyền đọc/ghi: `rw` (read/write = true).
+  - Bảo mật: `noexec`, `nosuid`.
+  - Dung lượng tối đa: `512 MiB` (`size=512m`).
+  - Quyền thư mục: `0700` (`mode=0700`).
+  - Thiết kế nhằm ngăn Docker-managed anonymous volume bằng exact tmpfs override; launch contract không truyền source host, named volume, bind mount, `-v`, `--volume` hoặc `--mount` loại khác.
+  - tmpfs không phải Docker-managed persistent volume. Không tuyên bố tmpfs không bao giờ liên quan đến host swap hoặc storage của Docker Desktop/host.
+  - Không cho phép caller/environment override destination hoặc options.
+  - Giữ nguyên `--pull=never`, loopback-only binding `-p 127.0.0.1::5432`, exact container name, exact runId label, và exact image `postgres:16`.
+
+### 37.3 Exact Inspect Validation Contract
+- **Hàm thẩm định**: `validateDockerInspectOutput` kết hợp `validateTmpfsOptions`.
+- Hợp đồng inspect và cleanup ở phần này được xác minh ở mức unit/test-double; hành vi Docker runtime của tmpfs chưa được xác minh.
+- **Yêu cầu đối với runtime Mounts**:
+  - `Mounts.length === 1`
+  - `Type === "tmpfs"`
+  - `Source === ""`
+  - `Destination === "/var/lib/postgresql/data"`
+  - `RW === true`
+  - `Propagation === ""` (không unexpected propagation)
+- **Yêu cầu đối với HostConfig.Tmpfs**:
+  - `HostConfig.Tmpfs` tồn tại và chỉ chứa đúng một key là `CANONICAL_TMPFS_DESTINATION`.
+  - Options string được kiểm tra theo semantic set, độc lập thứ tự chuỗi (cho phép hoán vị thứ tự, kích thước tương đương `512m` như `536870912` byte hoặc `524288k`, chế độ `mode=0700` hoặc `mode=700`).
+- **Từ chối dứt khoát**:
+  - Mounts rỗng hoặc thiếu expected tmpfs.
+  - `Type: "volume"`, kể cả anonymous volume do image tạo hoặc named volume.
+  - Bind mount, source khác rỗng, sai destination, read-only mount, hoặc có mount thứ hai.
+  - Bất kỳ mismatch nào về options (`rw`, `noexec`, `nosuid`, size, mode) hoặc HostConfig.Tmpfs không nhất quán với Mounts.
+
+### 37.4 Defense-in-Depth Cleanup Contract
+- **Lệnh dọn dẹp**: `buildDockerRmArgs(containerId)` được cập nhật thành:
+  ```powershell
+  docker rm -f -v <exact-launched-container-id>
+  ```
+- **Ràng buộc Phòng vệ**:
+  - Chỉ nhận exact 64 lowercase hex container ID.
+  - Sử dụng argument array an toàn, không shell interpolation, không wildcard, không prune, không batch target.
+  - `docker rm -v` là defense-in-depth: nếu launch hoặc inspect thất bại và Docker engine đã kịp tạo anonymous volume ngoài dự kiến, volume đó sẽ được xóa kèm theo exact container.
+  - Đây là contract thiết kế/kiểm tra; không phải bằng chứng rằng Docker Desktop luôn materialize options đúng như unit fixture.
+
+### 37.5 Ma trận Kiểm thử 8 Tests M07-A2-TMPFS-01 đến M07-A2-TMPFS-08
+- **M07-A2-TMPFS-01**: Launch arguments chứa exact `--tmpfs` pair, không chứa `-v`, `--volume`, hoặc broad mount input.
+- **M07-A2-TMPFS-02**: Inspect record có đúng một tmpfs mount chuẩn được chấp nhận thành công.
+- **M07-A2-TMPFS-03**: Anonymous volume (shape gây lỗi runtime M07-A2) và named volume đều bị từ chối fail-closed.
+- **M07-A2-TMPFS-04**: Bind mount, wrong destination, non-empty source và mount thứ hai đều bị từ chối fail-closed.
+- **M07-A2-TMPFS-05**: Option mismatch bị từ chối; chấp nhận hoán vị thứ tự hợp lệ và các biểu diễn tương đương của size (512m, bytes, kb) và mode (0700, 700).
+- **M07-A2-TMPFS-06**: Cleanup sử dụng đúng launched container ID cùng `-f` và `-v`; cấm wildcard, prune, hoặc ID không hợp lệ.
+- **M07-A2-TMPFS-07**: Khi inspect phát hiện persistent/unknown mount: dừng ngay chuỗi (zero DB queries), await cleanup đúng 1 lần với `-v`, trả về kết quả fail-closed.
+- **M07-A2-TMPFS-08**: Vệ sinh tài nguyên khi chạy thành công và khi hủy: không gọi volume prune/rm riêng lẻ, không dọn dẹp ngoài exact container, từ chối caller-supplied tmpfs options.
+
+### 37.6 Kết quả Kiểm định Chất lượng (Quality Gate Results)
+Các kết quả dưới đây đã được Owner chấp thuận làm evidence remediation; không chạy lại quality gate trong phiên staging này vì code/test đã đóng băng byte-for-byte.
+1. **Typecheck**:
+   - Lệnh: `npm run typecheck` (tại `backend/`)
+   - Kết quả: `PASS` (0 lỗi TypeScript, 0 prohibited bypasses).
+2. **Build**:
+   - Lệnh: `npm run build` (tại `backend/`)
+   - Kết quả: `PASS` (Build thành công).
+3. **Unit/Test-Double Suite**:
+   - Lệnh: `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts` (tại `backend/`)
+   - Kết quả: `89/89 PASS`, `0 fail`, `0 cancelled`, `0 skipped` (~524ms).
+4. **Prohibited Pattern Scan**:
+   - Không có `any`, `as any`, `as unknown as`, `as never`, `@ts-ignore`, hoặc `@ts-expect-error` trên các dòng code/test bổ sung.
+
+### 37.7 Ranh giới An toàn và Trạng thái Hiện tại
+- **Ranh giới phiên remediation**: Tuân thủ ranh giới NO-DATABASE trong phiên remediation; không chạy Docker, PostgreSQL, migration hoặc runtime command.
+- **Mức bằng chứng**: Inspect và cleanup contract được xác minh ở mức unit/test-double; chưa có runtime proof rằng Docker Desktop materialize options tmpfs đúng như fixture.
+- **Mục tiêu volume**: Thiết kế nhằm ngăn Docker-managed anonymous volume bằng exact tmpfs override; không tuyên bố tmpfs không bao giờ liên quan đến host swap/storage.
+- **Runtime Retry**: Tiếp tục **CHƯA ĐƯỢC CẤP QUYỀN (NOT AUTHORIZED)**.
+- **Trạng thái M07-A2**: TMPFS remediation đã được Owner chấp thuận ở mức unit/test-double; không đánh dấu runtime PASS và vẫn chờ quyền retry riêng.
+- **Tiến độ Task & Use Case**: Task M01-07 và UC-M01 tiếp tục ở trạng thái **CHƯA HOÀN THÀNH (INCOMPLETE)**.
+
+## 38. OWNER APPROVAL — M07-A2 TMPFS HARNESS REMEDIATION ACCEPTED
+
+Approval record này chỉ chấp thuận documentation correction và checkpoint staging. Nó không cấp quyền chạy lại runtime.
+
+- Approval date: `2026-09-04`.
+- Baseline HEAD: `1343f7120441ac359a598b59153a8f3634602f35`.
+- Exact checkpoint inventory:
+  1. `backend/src/database/disposableDatabaseGuard.ts`
+  2. `backend/src/tests/disposableDatabaseGuard.test.ts`
+  3. `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`
+- `backend/scripts/run-disposable-postgres-test.ts` không thuộc inventory thay đổi và phải giữ nguyên.
+- `backend/src/tests/disposableMigrationRuntime.test.ts` không thuộc inventory thay đổi và phải giữ nguyên.
+- Exact tmpfs argument pair:
+
+      --tmpfs
+      /var/lib/postgresql/data:rw,noexec,nosuid,size=512m,mode=0700
+
+- Inspect validation contract: đúng một mount `tmpfs`, source rỗng, destination `/var/lib/postgresql/data`, `RW=true`, propagation rỗng; `HostConfig.Tmpfs` chỉ có đúng key canonical và option semantic set đúng.
+- Defensive cleanup contract: `docker rm -f -v <exact-launched-container-id>`; `-v` là defense-in-depth cho anonymous volume của exact container, không phải lệnh prune hoặc batch cleanup.
+- TMPFS-01 đến TMPFS-08 đã được Owner chấp thuận theo ma trận unit/test-double ở mục 37.5.
+- Typecheck: `PASS`.
+- Build: `PASS`.
+- Targeted suite: `89/89 PASS`, `0 fail`, `0 cancelled`, `0 skipped`.
+- Volume-count correction: trước cleanup `49 total / 38 dangling`; đúng `1` candidate M07-A2; sau cleanup `48 total / 37 dangling`.
+- Không có Docker/database execution trong phiên remediation này.
+- Runtime retry: `NOT AUTHORIZED`.
+- Không tick hoặc ghi nhận bất kỳ runtime acceptance criterion nào là PASS.
+- M01-07 và UC-M01 vẫn `INCOMPLETE`.
+
+### 38.1 Hash classification và byte-for-byte freeze
+
+Quy ước bắt buộc trong task và staging packet:
+
+- SHA-256 luôn là digest gồm đúng 64 ký tự hexadecimal.
+- Git blob SHA-1 luôn là mã gồm đúng 40 ký tự hexadecimal.
+- Working-tree hash và Git blob có thể khác do representation hoặc line-ending; không gắn nhãn Git blob SHA-1 là SHA-256.
+- Chuỗi `25c0dae7c64fcbe3ad5db43b7682b2acde786974` chỉ được ghi ở cột Git blob SHA-1 của runner.
+
+SHA-256 baseline trước remediation:
+
+| File | SHA-256 trước remediation |
+| ---- | ------------------------- |
+| `backend/src/database/disposableDatabaseGuard.ts` | `a7061fa04b950c937a4d8b14db49f772ad83a4b50da5919bf8d4a72fa129b622` |
+| `backend/src/tests/disposableDatabaseGuard.test.ts` | `1e07791bf9686163c7adb22fe0d9c3d0665562973b6e07eecf86cd10494d6cc3` |
+| `backend/scripts/run-disposable-postgres-test.ts` | `a004b060df96cee3c11fb2069f03393338e60f1eb7094ab4fed95ba5b126ac60` |
+
+Frozen post-remediation snapshot trước checkpoint staging:
+
+| File | SHA-256 hiện tại | Git blob SHA-1 hiện tại |
+| ---- | ---------------- | ---------------------- |
+| `backend/src/database/disposableDatabaseGuard.ts` | `e1f50a04f2e776d8f0d339339ae7df187239afc6451d1e134c1e3aaee6970ca8` | `bf1aeafdd73d8a03a14b11721b6bb9e9250b2aa9` |
+| `backend/src/tests/disposableDatabaseGuard.test.ts` | `f7b137e96cc895123bcfdff995dfbf4fceffb77718facc9d09a0cc5a1c30e047` | `eb2dc91f4f0638dcfd7590505d17feeb0ea5258e` |
+| `backend/scripts/run-disposable-postgres-test.ts` | `a004b060df96cee3c11fb2069f03393338e60f1eb7094ab4fed95ba5b126ac60` | `25c0dae7c64fcbe3ad5db43b7682b2acde786974` |
+| `backend/src/tests/disposableMigrationRuntime.test.ts` | `890511a6d95a75b59cda04ebac737379f6c3c55c2e8003d3b7844e6b6834eb04` | `d397b7ae88fee3f771cd8b0ae3030f43db83d07f` |
+
+Bốn file guard/test/runner/runtime-test phải được giữ nguyên byte-for-byte
+sau freeze. Chỉ task document được phép tiếp tục thay đổi trong phiên này.
+
+### 38.2 Calibrated evidence wording
+
+- Phiên remediation tuân thủ ranh giới `NO-DATABASE`.
+- Exact tmpfs override được thiết kế nhằm ngăn Docker-managed anonymous volume; đây không phải tuyên bố tuyệt đối về mọi storage/swap của host.
+- tmpfs không phải Docker-managed persistent volume.
+- Inspect và cleanup contract được xác minh ở mức unit/test-double.
+- Chưa có runtime proof rằng Docker Desktop materialize options đúng như unit fixture.
+- Chưa tuyên bố hành vi Docker runtime, migration runtime, PostgreSQL runtime hoặc cleanup runtime là đã được kiểm chứng.
+
+## 39. M07-A2 TMPFS HARNESS CHECKPOINT STAGING PACKET
+
+### 39.1 Pre-stage verification
+
+- CWD: `C:\Projects\banking-system`.
+- Branch: `codex/staging-academic-completion`.
+- HEAD: `1343f7120441ac359a598b59153a8f3634602f35`.
+- Cached area trước staging: sạch.
+- Working tree trước staging: đúng ba file modified trong inventory; `0` untracked file.
+- `backend/scripts/run-disposable-postgres-test.ts`: không đổi.
+- `backend/src/tests/disposableMigrationRuntime.test.ts`: không đổi.
+- Không có file runtime test/migration nào ngoài inventory được đưa vào staging.
+
+### 39.2 Exact staging scope
+
+Chỉ stage ba đường dẫn sau, bằng đường dẫn cụ thể:
+
+    git add -- backend/src/database/disposableDatabaseGuard.ts
+    git add -- backend/src/tests/disposableDatabaseGuard.test.ts
+    git add -- tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md
+
+Không stage runner, runtime test, migration, Docker config, database artifact,
+secret file hoặc file ngoài inventory. Không dùng `git add .`, `git add -A`,
+directory add hoặc wildcard.
+
+### 39.3 Post-staging verification bắt buộc
+
+Sau staging phải báo chính xác:
+
+1. `git diff --cached --name-status` chỉ có ba file inventory.
+2. `git diff --cached --stat`.
+3. `git diff --cached --check` không có lỗi.
+4. Exact ba index blob hashes và exact ba working-tree blob hashes.
+5. Index/working-tree binding `MATCH`.
+6. Frozen SHA-256 của guard, guard test, runner và runtime test đúng bảng 38.1.
+7. `git diff --name-status` rỗng.
+8. `0` untracked file.
+9. Cached diff không có credential, raw URL, runtime environment value, OTP,
+   password, token, key, raw device ID hoặc raw PII.
+10. Xác nhận không chạy Docker, database, migration, test/build hoặc runtime
+    retry trong staging session này.
+
+### 39.4 Handoff decision
+
+- Proposed commit message: `fix(database): use tmpfs for disposable PostgreSQL data`.
+- Không commit, push, amend, rebase, merge hoặc tag trong phiên này.
+- Không retry runtime M07-A2.
+- Kết luận packet: `READY FOR M07-A2 TMPFS HARNESS CHECKPOINT COMMIT`.
