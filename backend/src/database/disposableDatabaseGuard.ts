@@ -404,8 +404,39 @@ export interface DisposableQueryResult {
 }
 
 export interface DisposablePoolClient {
-  query(sql: string, params?: unknown[], signal?: AbortSignal): Promise<DisposableQueryResult>;
+  query(sql: string, params?: unknown[]): Promise<DisposableQueryResult>;
   end(): Promise<void>;
+}
+
+export const DATABASE_QUERY_FAILURE_CODES = [
+  "DATABASE_QUERY_FAILURE",
+  "DATABASE_QUERY_CANCELLED",
+] as const;
+export type DatabaseQueryFailureCode = (typeof DATABASE_QUERY_FAILURE_CODES)[number];
+
+export const DATABASE_QUERY_DIAGNOSTIC_KEYS = [
+  "phase",
+  "operation",
+  "failureCode",
+] as const;
+
+export type DatabaseQueryDiagnostic = {
+  readonly phase:
+    | "5_CREATE_TARGET_DATABASE_AND_MARKER"
+    | "16_CLEANUP_TARGET_DATABASE"
+    | "17_PARENT_POST_DROP_CATALOG_CHECK";
+  readonly operation:
+    | "CREATE_TARGET_DATABASE"
+    | "WRITE_OWNERSHIP_MARKER"
+    | "DROP_TARGET_DATABASE"
+    | "VERIFY_TARGET_DATABASE";
+  readonly failureCode: DatabaseQueryFailureCode;
+};
+
+function assertDatabaseQueryCanStart(signal: AbortSignal | undefined, operation: DatabaseQueryDiagnostic["operation"]): void {
+  if (signal?.aborted) {
+    throw new Error(`Database query '${operation}' was cancelled before execution.`);
+  }
 }
 
 export type CreatePoolFunction = (adminUrl: string, ssl: unknown) => DisposablePoolClient;
@@ -618,7 +649,6 @@ export async function runDisposablePostgresTest(
           const commentRes = await pool.query(
             "SELECT shobj_description(d.oid, 'pg_database') AS comment FROM pg_database d WHERE d.datname = $1",
             [databaseName],
-            cleanupAbortController.signal,
           );
           const rows = commentRes.rows as Array<{ comment?: string }> | undefined;
           const comment = rows?.[0]?.comment;
@@ -632,7 +662,6 @@ export async function runDisposablePostgresTest(
           await pool.query(
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()",
             [databaseName],
-            cleanupAbortController.signal,
           );
 
           // Phase 3: Drop target database
@@ -640,7 +669,6 @@ export async function runDisposablePostgresTest(
           await pool.query(
             `DROP DATABASE IF EXISTS ${quoteDatabaseIdentifier(databaseName)} WITH (FORCE)`,
             undefined,
-            cleanupAbortController.signal,
           );
 
           // Phase 4: Post-drop catalog check
@@ -648,7 +676,6 @@ export async function runDisposablePostgresTest(
           const verifyRes = await pool.query(
             "SELECT 1 FROM pg_database WHERE datname = $1",
             [databaseName],
-            cleanupAbortController.signal,
           );
           const remainingRows = verifyRes.rows;
           if (remainingRows && remainingRows.length > 0) {
@@ -718,7 +745,8 @@ export async function runDisposablePostgresTest(
 
   const mainExecution = async (): Promise<void> => {
     // 1. Create target DB
-    await pool.query(`CREATE DATABASE ${quoteDatabaseIdentifier(databaseName)}`, undefined, childAbortController.signal);
+    assertDatabaseQueryCanStart(childAbortController.signal, "CREATE_TARGET_DATABASE");
+    await pool.query(`CREATE DATABASE ${quoteDatabaseIdentifier(databaseName)}`, undefined);
 
     // 2. Set ownership marker immediately
     const marker = buildOwnershipMarker({
@@ -726,7 +754,8 @@ export async function runDisposablePostgresTest(
       owner: "m01_runner",
       createdAt: Date.now(),
     });
-    await pool.query(`COMMENT ON DATABASE ${quoteDatabaseIdentifier(databaseName)} IS '${marker}'`, undefined, childAbortController.signal);
+    assertDatabaseQueryCanStart(childAbortController.signal, "WRITE_OWNERSHIP_MARKER");
+    await pool.query(`COMMENT ON DATABASE ${quoteDatabaseIdentifier(databaseName)} IS '${marker}'`, undefined);
 
     const executeChildCommandWithTimeout = async (
       cmd: string,
@@ -1880,10 +1909,10 @@ export async function verifyDatabaseDroppedInCatalog(
   targetName: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  assertDatabaseQueryCanStart(signal, "VERIFY_TARGET_DATABASE");
   const result = await pool.query(
     "SELECT COUNT(*)::int AS count FROM pg_database WHERE datname = $1",
     [targetName],
-    signal,
   );
   const row = result.rows?.[0] as { count?: number | string } | undefined;
   const count = Number(row?.count ?? -1);
@@ -2150,6 +2179,7 @@ export interface CanonicalSequenceExecutionResult {
   readonly containerId?: string;
   readonly completedSteps: readonly CanonicalSequenceStep[];
   readonly attestationDiagnostic?: AttestationDiagnostic;
+  readonly databaseDiagnostic?: DatabaseQueryDiagnostic;
   readonly error?: Error;
   readonly cleanupError?: Error;
 }
@@ -2179,8 +2209,27 @@ export async function runCanonicalEvidenceSequence(
   let mainError: Error | undefined;
   let cleanupError: Error | undefined;
   let attestationDiagnostic: AttestationDiagnostic | undefined;
+  let databaseDiagnostic: DatabaseQueryDiagnostic | undefined;
 
   const childAbortController = new AbortController();
+
+  const executeDatabaseQuery = async <T>(
+    phase: DatabaseQueryDiagnostic["phase"],
+    operation: DatabaseQueryDiagnostic["operation"],
+    signal: AbortSignal,
+    query: () => Promise<T>,
+  ): Promise<T> => {
+    if (signal.aborted) {
+      databaseDiagnostic ??= { phase, operation, failureCode: "DATABASE_QUERY_CANCELLED" };
+      throw new Error(`Database query '${operation}' was cancelled before execution.`);
+    }
+    try {
+      return await query();
+    } catch (error) {
+      databaseDiagnostic ??= { phase, operation, failureCode: "DATABASE_QUERY_FAILURE" };
+      throw error;
+    }
+  };
 
   const recordStep = (step: CanonicalSequenceStep) => {
     completedSteps.push(step);
@@ -2204,9 +2253,15 @@ export async function runCanonicalEvidenceSequence(
 
       // 2. Drop target database via admin pool
       if (adminPool && targetUrl) {
+        const pool = adminPool;
         try {
           recordStep("16_CLEANUP_TARGET_DATABASE");
-          await adminPool.query(`DROP DATABASE IF EXISTS ${quoteDatabaseIdentifier(databaseName)} WITH (FORCE)`, undefined, cleanupAbortController.signal);
+          await executeDatabaseQuery(
+            "16_CLEANUP_TARGET_DATABASE",
+            "DROP_TARGET_DATABASE",
+            cleanupAbortController.signal,
+            () => pool.query(`DROP DATABASE IF EXISTS ${quoteDatabaseIdentifier(databaseName)} WITH (FORCE)`, undefined),
+          );
         } catch (err) {
           if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
         }
@@ -2214,7 +2269,12 @@ export async function runCanonicalEvidenceSequence(
         // 3. Post-drop catalog assertion
         try {
           recordStep("17_PARENT_POST_DROP_CATALOG_CHECK");
-          await verifyDatabaseDroppedInCatalog(adminPool, databaseName, cleanupAbortController.signal);
+          await executeDatabaseQuery(
+            "17_PARENT_POST_DROP_CATALOG_CHECK",
+            "VERIFY_TARGET_DATABASE",
+            cleanupAbortController.signal,
+            () => verifyDatabaseDroppedInCatalog(pool, databaseName, cleanupAbortController.signal),
+          );
         } catch (err) {
           if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
         }
@@ -2366,21 +2426,32 @@ export async function runCanonicalEvidenceSequence(
     // Step 5: Create target database & ownership marker
     recordStep("5_CREATE_TARGET_DATABASE_AND_MARKER");
     const adminUrl = `postgresql://postgres:banking_test_secret@${validated.bindHost}:${validated.hostPort}/postgres`;
-    adminPool = deps.createPoolFn
+    const pool = deps.createPoolFn
       ? deps.createPoolFn(adminUrl, undefined)
       : new Pool({
           connectionString: adminUrl,
           max: 1,
           connectionTimeoutMillis: DISPOSABLE_TIMEOUTS.poolConnectionMs,
         });
+    adminPool = pool;
 
-    await adminPool.query(`CREATE DATABASE ${quoteDatabaseIdentifier(databaseName)}`, undefined, childAbortController.signal);
+    await executeDatabaseQuery(
+      "5_CREATE_TARGET_DATABASE_AND_MARKER",
+      "CREATE_TARGET_DATABASE",
+      childAbortController.signal,
+      () => pool.query(`CREATE DATABASE ${quoteDatabaseIdentifier(databaseName)}`, undefined),
+    );
     const marker = buildOwnershipMarker({
       runId,
       owner: "m01_runner",
       createdAt: Date.now(),
     });
-    await adminPool.query(`COMMENT ON DATABASE ${quoteDatabaseIdentifier(databaseName)} IS '${marker}'`, undefined, childAbortController.signal);
+    await executeDatabaseQuery(
+      "5_CREATE_TARGET_DATABASE_AND_MARKER",
+      "WRITE_OWNERSHIP_MARKER",
+      childAbortController.signal,
+      () => pool.query(`COMMENT ON DATABASE ${quoteDatabaseIdentifier(databaseName)} IS '${marker}'`, undefined),
+    );
 
     targetUrl = `postgresql://postgres:banking_test_secret@${validated.bindHost}:${validated.hostPort}/${databaseName}`;
     const childEnv = buildCleanChildEnvironment(
@@ -2505,6 +2576,7 @@ export async function runCanonicalEvidenceSequence(
       containerId: launchedContainerId,
       completedSteps,
       attestationDiagnostic,
+      databaseDiagnostic,
       error: finalError,
       cleanupError,
     };
@@ -2517,6 +2589,7 @@ export async function runCanonicalEvidenceSequence(
     containerId: launchedContainerId,
     completedSteps,
     attestationDiagnostic,
+    databaseDiagnostic,
   };
 }
 

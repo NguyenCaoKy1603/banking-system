@@ -60,6 +60,8 @@ import {
   CANONICAL_TMPFS_OPTIONS,
   CANONICAL_TMPFS_FLAG_VALUE,
   ATTESTATION_DIAGNOSTIC_KEYS,
+  DATABASE_QUERY_DIAGNOSTIC_KEYS,
+  DATABASE_QUERY_FAILURE_CODES,
   AttestationCommandError,
   type AttestationCommandResult,
   validateMountNamespaceAttestation,
@@ -1262,18 +1264,13 @@ test("SAFE-R10-E5: late cleanup continuation after deadline has zero count for s
   let triggerLatePhase1Resolve: () => void = () => {};
 
   const fakePoolWithHangingPhase1: DisposablePoolClient = {
-    async query(sql: string, _params, signal) {
+    async query(sql: string, _params?: unknown[]) {
       if (sql.includes("shobj_description")) {
         // Phase 1: Pre-cleanup revalidation comment query hangs
-        return new Promise<DisposableQueryResult>((resolve, reject) => {
+        return new Promise<DisposableQueryResult>((resolve) => {
           triggerLatePhase1Resolve = () => {
             resolve({ rows: [{ comment: `disposable_run_id=${fixedRunId};owner=m01_runner;created_at=1756980000000` }] });
           };
-          if (signal) {
-            signal.addEventListener("abort", () => {
-              reject(new Error("Query aborted"));
-            });
-          }
         });
       }
       if (sql.includes("pg_terminate_backend")) {
@@ -4282,4 +4279,117 @@ test("M07-A2-INSTR-11: target fingerprint is deterministic and never exposes the
   assert.match(firstDiagnostic.targetRecordFingerprint ?? "", /^[a-f0-9]{64}$/);
   assert.doesNotMatch(JSON.stringify(firstDiagnostic), /\/var\/lib\/postgresql\/data/);
   assert.doesNotMatch(JSON.stringify(firstDiagnostic), /rw,nosuid,noexec/);
+});
+
+// ============================================================================
+// M07-A2 pg-pool Promise Contract Remediation (Pure In-Memory Test Doubles)
+// ============================================================================
+
+test("M07-A2-PGPOOL-01: canonical disposable queries use the supported Promise overload", async () => {
+  const runId = "30000000000000000000000000000001";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture());
+  const argumentCounts: number[] = [];
+
+  const strictPool: DisposablePoolClient = {
+    async query(sql: string, params?: unknown[]) {
+      argumentCounts.push(arguments.length);
+      assert.ok(arguments.length <= 2, "pg-pool Promise query must not receive a third callback argument");
+      assert.equal(params === undefined || Array.isArray(params), true);
+      if (sql.includes("COUNT(*)")) return { rows: [{ count: 0 }] };
+      return { rows: [] };
+    },
+    async end() {},
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: () => strictPool,
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+    },
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(argumentCounts, [2, 2, 2, 2], "create, marker, drop, and catalog queries must all use two-argument Promise calls");
+  assert.equal(result.databaseDiagnostic, undefined);
+});
+
+test("M07-A2-PGPOOL-02: callback-faithful double rejects the historical AbortSignal third argument", async () => {
+  const callbackFaithfulQuery = async (...args: unknown[]): Promise<DisposableQueryResult> => {
+    if (args.length >= 3 && typeof args[2] !== "function") {
+      throw new TypeError("cb is not a function");
+    }
+    return { rows: [] };
+  };
+
+  await assert.rejects(
+    () => callbackFaithfulQuery("SELECT 1", undefined, new AbortController().signal),
+    /cb is not a function/,
+  );
+  await assert.doesNotReject(() => callbackFaithfulQuery("SELECT 1", undefined));
+});
+
+test("M07-A2-PGPOOL-03: database setup rejection preserves the primary error and emits a closed sanitized diagnostic", async () => {
+  const runId = "30000000000000000000000000000002";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture());
+  const primaryFailure = new Error("synthetic disposable query failure");
+  let queryCount = 0;
+  const failingPool: DisposablePoolClient = {
+    async query() {
+      queryCount += 1;
+      throw primaryFailure;
+    },
+    async end() {},
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: () => failingPool,
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, primaryFailure);
+  assert.equal(queryCount, 1);
+  assert.deepEqual(result.databaseDiagnostic, {
+    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    operation: "CREATE_TARGET_DATABASE",
+    failureCode: "DATABASE_QUERY_FAILURE",
+  });
+  assert.deepEqual(Object.keys(result.databaseDiagnostic ?? {}).sort(), [...DATABASE_QUERY_DIAGNOSTIC_KEYS].sort());
+  assert.deepEqual([...DATABASE_QUERY_FAILURE_CODES], ["DATABASE_QUERY_FAILURE", "DATABASE_QUERY_CANCELLED"]);
+  assert.doesNotMatch(JSON.stringify(result.databaseDiagnostic), /synthetic disposable query failure/);
+});
+
+test("M07-A2-PGPOOL-04: catalog verification uses two arguments and cancellation blocks the query", async () => {
+  let argumentCount = 0;
+  let queryCount = 0;
+  const catalogPool: DisposablePoolClient = {
+    async query(_sql: string, params?: unknown[]) {
+      argumentCount = arguments.length;
+      queryCount += 1;
+      assert.deepEqual(params, ["banking_test_target"]);
+      return { rows: [{ count: 0 }] };
+    },
+    async end() {},
+  };
+
+  const activeSignal = new AbortController();
+  await verifyDatabaseDroppedInCatalog(catalogPool, "banking_test_target", activeSignal.signal);
+  assert.equal(argumentCount, 2);
+  assert.equal(queryCount, 1);
+
+  const cancelledSignal = new AbortController();
+  cancelledSignal.abort(new Error("synthetic cancellation"));
+  await assert.rejects(
+    () => verifyDatabaseDroppedInCatalog(catalogPool, "banking_test_target", cancelledSignal.signal),
+    /cancelled before execution/,
+  );
+  assert.equal(queryCount, 1, "An already-cancelled query must not reach the pool");
 });

@@ -1,11 +1,26 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 STRUCTURED INSTRUMENTATION COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
-- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 PG-POOL CONTRACT REMEDIATION VERIFIED — AWAITING CHECKPOINT COMMIT
+- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - M01-07: INCOMPLETE
 - UC-M01: INCOMPLETE
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
+
+## OWNER APPROVAL RECORD — M07-A2 PG-POOL REMEDIATION (2026-09-05)
+
+- Root cause được Owner chấp nhận: `POOL_QUERY_OVERLOAD_MISMATCH`.
+- Remediation local/unit được Owner chấp nhận để staging; không phải runtime
+  approval.
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS.
+- Targeted suite: `115/115 PASS`, delta `+4` từ baseline `111`.
+- CodeGraph/source reconciliation: PASS; unsupported query shape đã biến mất
+  trong disposable scope.
+- Runtime retry chưa được cấp quyền.
+- Không có bằng chứng socket-level cancellation; không được suy diễn từ
+  orchestration cancellation.
+- M07-A2 runtime, M01-07 và UC-M01 vẫn chưa hoàn thành.
 
 Baseline được xác nhận khi soạn task:
 
@@ -3155,3 +3170,459 @@ Ba commit-tree blob khớp các approved index blob trước commit.
 - M07-B/C/D: chưa bắt đầu.
 
 **Kết luận:** `M07-A2 STRUCTURED INSTRUMENTATION RECORDED — RUNTIME RETRY REQUIRES SEPARATE OWNER AUTHORIZATION`.
+
+## 53. M07-A2 INSTRUMENTED ONE-SHOT RUNTIME RETRY — BLOCKED
+
+- Đây là invocation duy nhất theo Owner Authorization; outer invocation count:
+  `1`. Không retry, không fallback legacy và không cleanup Docker thủ công.
+- Command đã được gọi đúng một lần tại `C:\Projects\banking-system\backend`:
+  `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/disposableMigrationRuntime.test.ts`.
+- Thời gian theo timezone Asia/Bangkok: bắt đầu
+  `2026-09-05T11:18:43.899+07:00`, kết thúc
+  `2026-09-05T11:18:47.705+07:00`, thời lượng `3806 ms (~3.806 s)`.
+- Overall exit code: `1`.
+- Process failure được sanitize ở dạng `TypeError: cb is not a function` từ
+  tầng `pg-pool`. Runner không phát ra được canonical phase result/envelope;
+  vì vậy không gán một `failureCode` thuộc closed set theo suy đoán.
+- Phase attribution giới hạn: container đã được tạo trước khi process lỗi;
+  theo source, bước database đầu tiên sau readiness là Step 5 — tạo target
+  database và ownership marker. Exact sub-failure trong boundary này chưa được
+  runner phân loại thành structured diagnostic; không tuyên bố migration,
+  checksum, restore hoặc database cleanup đã đạt.
+
+### 53.1 Sanitized post-run resource verification
+
+- Baseline trước invocation: containers `22`, volumes `48`, dangling volumes
+  `37`, networks `7`, image references `56`.
+- Container set fingerprint trước: `4e20a88db45e709a0866a4ac8cf4cf86edc97d41cbc40f9bad43a9ff21d1066c`.
+- Sau process: containers `23`; container set fingerprint
+  `aa6b1d78c7a21753f378da4bb20d08ccaef69be323779322917d3a9e53233676`.
+- Phát hiện `1` M07-A2 disposable container còn lại; probe container còn lại:
+  `0`. Ownership cleanup chưa hoàn tất; không in name hoặc ID đầy đủ.
+- Volume set trước/sau khớp nhau:
+  `910fd05da4a8356227646562e8cbb03f84a3dab911e14c827ab0f64d538a3bc1`.
+  Dangling volume set cũng khớp:
+  `e5e094c34a01c8de63d23aaad95b4ece0ade239de5e88e4d6518b5fd7e367df5`.
+- Network set và image-reference set không đổi; không phát hiện volume mới.
+- Chỉ thực hiện Docker read-only hậu kiểm. Không gọi `docker rm`, không xóa
+  volume và không cleanup tài nguyên thủ công.
+
+### 53.2 Runtime evidence boundary và handoff
+
+- Chưa có evidence đủ để tuyên bố image/inspect/attestation/readiness,
+  target database, migration 001–040, rerun, checksum mismatch, restore hoặc
+  post-drop catalog verification đã PASS trong invocation này.
+- Structured diagnostic failure code không được phát ra do lỗi `pg-pool` xảy
+  ra ngoài canonical result envelope; không thay thế bằng mã lỗi suy đoán.
+- Container còn lại phải được xử lý bằng một Owner recovery authorization
+  riêng. Không retry M07-A2 trong phiên này.
+- M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B, M07-C và M07-D chưa bắt đầu.
+- Sau runtime chỉ task document này được cập nhật; không sửa source/test/
+  migration/config, không stage, commit, push, amend, rebase, merge hoặc tag.
+
+**Kết luận:** `BLOCKED — M07-A2 LEFTOVER RESOURCE RECOVERY REQUIRES OWNER AUTHORIZATION`.
+
+## 54. M07-A2 EXACT LEFTOVER CONTAINER RECOVERY — OWNERSHIP REVALIDATION BLOCKED
+
+- Đã thực hiện recovery preflight theo Owner Authorization; không retry
+  runtime, không chạy PostgreSQL/migration/test/build và không sửa source.
+- Git preflight đạt: đúng branch/HEAD, cached area sạch, untracked bằng `0`,
+  task document là file modified duy nhất.
+- Docker context/endpoint cục bộ đạt. Candidate M07-A2 được phát hiện duy nhất
+  `1`; probe container là `0`.
+- Các điều kiện đã đạt: tên canonical, label tồn tại và khớp run identity,
+  image immutable được phê duyệt, inspect ID binding, loopback port, canonical
+  `HostConfig.Tmpfs`, mount/bind/volume isolation, không privileged và không
+  capability bổ sung.
+- Điều kiện bắt buộc không đạt: `Created` của candidate không được xác nhận
+  nằm trong cửa sổ invocation đã ghi nhận. Vì vậy ownership không đủ chắc chắn
+  theo fail-closed contract.
+- Cleanup invocation count: `0`. Không chạy
+  `docker rm -f -v`; không xóa container, volume, network hoặc image.
+- Không có post-cleanup proof vì cleanup chưa được phép thực hiện. Recovery
+  bị dừng đúng theo directive; cần Owner cấp quyết định/ủy quyền recovery mới
+  với bằng chứng thời gian phù hợp.
+- Lỗi gốc được giữ nguyên: `TypeError: cb is not a function`. Root cause
+  chưa được xác định và canonical structured phase result vẫn không được phát
+  ra.
+- M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B,
+  M07-C và M07-D chưa bắt đầu.
+
+**Kết luận:** `BLOCKED — LEFTOVER CONTAINER OWNERSHIP NOT UNIQUELY ESTABLISHED`.
+
+## 55. M07-A2 TIMESTAMP RECONCILIATION — TEMPORAL OWNERSHIP BLOCKED
+
+- Đã thực hiện đúng recovery authorization hiện tại bằng read-only
+  reconciliation; không retry runtime và không chạy cleanup khi điều kiện
+  temporal không đạt.
+- Git preflight đạt: branch `codex/staging-academic-completion`, HEAD
+  `0037cb96971e8f6223867852f27df66c9d36f8b7`, cached area sạch, untracked bằng
+  `0`, task document là file modified duy nhất.
+- Candidate M07-A2 duy nhất được tái xác minh. Các điều kiện identity đạt:
+  canonical name/label, approved image, inspect-ID binding, loopback port,
+  canonical tmpfs, không bind/volume/additional mount, không privileged và
+  không capability bổ sung. Probe candidate count bằng `0`.
+
+### 55.1 Chuẩn hóa timestamp và event correlation
+
+- Expected accepted UTC window sau tolerance ±5 giây:
+  `2026-09-05T04:18:38.899Z` đến `2026-09-05T04:18:52.705Z`.
+- `.Created` sau khi parse RFC3339 và chuyển UTC:
+  `2026-09-04T21:18:46.0000000Z` — **ngoài accepted window**.
+- `.State.StartedAt` sau khi chuyển UTC:
+  `2026-09-05T04:18:46.7360984Z`. Giá trị này không làm `.Created` hợp lệ.
+- `.State.FinishedAt` không cung cấp terminal timestamp hợp lệ trong inspect
+  state; không dùng giá trị zero/unset để suy ra temporal PASS.
+- Docker event lookup trong cửa sổ mở rộng: exit code `0`, tổng `5` records,
+  `1` create và `1` start. Event identity exact đã khớp candidate; thời điểm
+  create `2026-09-05T04:18:46.6980000Z`, start
+  `2026-09-05T04:18:47.0130000Z`. Create event không tương thích với
+  `.Created`, nên event correlation **FAIL**.
+- Đây là temporal ownership mismatch; không kết luận lỗi timezone của Docker,
+  không sửa parser và không suy đoán root cause.
+
+### 55.2 Cleanup và trạng thái
+
+- Cleanup authorized: `false`.
+- Exact cleanup invocation count: `0`.
+- Không chạy `docker rm -f -v`, không xóa container/volume/network/image và
+  không thực hiện cleanup thủ công.
+- Không có post-cleanup proof vì timestamp/temporal ownership không đạt.
+- Lỗi gốc vẫn giữ nguyên: `TypeError: cb is not a function`. Root cause chưa
+  được chẩn đoán; canonical structured phase result không được phát ra.
+- M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B,
+  M07-C và M07-D chưa bắt đầu.
+
+**Kết luận:** `BLOCKED — M07-A2 LEFTOVER TEMPORAL OWNERSHIP MISMATCH`.
+
+## 56. M07-A2 EXACT LEFTOVER CONTAINER RECOVERY — COMPLETED
+
+- Owner đã supersede điều kiện `.Created` làm cleanup veto trong authorization
+  này. Chênh lệch `-07:00` được ghi nhận là
+  `DOCKER CREATED TIMESTAMP TIMEZONE/METADATA ANOMALY`; event create/start và
+  `.State.StartedAt` là temporal evidence chính.
+- Pre-delete stability đạt: candidate M07-A2 duy nhất bằng `1`, probe bằng `0`;
+  canonical name/label, approved image, inspect-ID binding, loopback port,
+  canonical tmpfs, mount isolation, privilege và capability checks đều PASS.
+- Event lookup: exit code `0`, tổng `5` records, đúng `1` create và `1` start;
+  cả hai event ID khớp exact candidate. Không ghi full ID hoặc raw event JSON.
+- Timestamp field đã chuẩn hóa UTC, không dùng localized display string:
+  `.Created = 2026-09-04T21:18:46.0000000Z`,
+  `.State.StartedAt = 2026-09-05T04:18:46.7360984Z`.
+
+### 56.1 Exact cleanup và postcondition
+
+- Exact cleanup invocation count: `1`.
+- Command được thực thi đúng một lần bằng full ID đã revalidate:
+  `docker rm -f -v <exact-full-container-id>`.
+- Cleanup exit code: `0`; không retry, không wildcard, không batch deletion,
+  không prune và không xóa tài nguyên riêng lẻ.
+- Post-cleanup inspect exact ID: `no such container`.
+- Canonical name không còn; M07-A2 leftover count `0`; probe count `0`.
+- Container inventory giảm đúng `1` candidate, không có container mới. Candidate
+  identity chỉ được báo cáo dưới dạng redacted fingerprint; full ID không được
+  ghi vào tài liệu.
+- Volumes giữ nguyên `48 total / 37 dangling`; volume set và dangling-volume
+  set khớp baseline. Network set và image-reference set cũng khớp baseline.
+- Docker events hậu kiểm ghi nhận đúng `1` destroy event, exact ID khớp;
+  không có resource ngoài candidate bị xóa.
+
+### 56.2 Boundary và trạng thái sau recovery
+
+- Recovery chỉ thực hiện Docker read-only verification và đúng cleanup được
+  Owner cấp quyền. Không retry runtime, không chạy PostgreSQL query, migration,
+  test hoặc build.
+- Lỗi gốc vẫn giữ nguyên: `TypeError: cb is not a function`. Root cause chưa
+  được chẩn đoán; canonical structured phase result vẫn chưa được phát ra.
+- M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B,
+  M07-C và M07-D chưa bắt đầu.
+
+**Kết luận:** `M07-A2 LEFTOVER CONTAINER REMOVED — PG-POOL FAILURE DIAGNOSIS REQUIRED`.
+
+## 57. M07-A2 PG-POOL FAILURE DIAGNOSIS — ROOT CAUSE CONFIRMED
+
+### 57.1 Phạm vi, preflight và bằng chứng đã bảo toàn
+
+- Phiên này chỉ đọc source/dependency và cập nhật task document; không chạy
+  Docker, PostgreSQL, database socket, migration, runtime retry, test hoặc
+  build. Không sửa source/test, không sửa node_modules/lockfile, không stage,
+  commit hoặc push.
+- CWD: `C:\Projects\banking-system`.
+- Branch: `codex/staging-academic-completion`.
+- HEAD: `0037cb96971e8f6223867852f27df66c9d36f8b7`.
+- Preflight Git: cached area sạch; untracked bằng `0`; chỉ task document này
+  đang modified. Recovery evidence và các phần WIP trước đó được giữ nguyên.
+- `.codegraph/` không tồn tại; trace được thực hiện trực tiếp trên source đã
+  commit và dependency đã cài.
+- Recovery của leftover container ở mục 56 vẫn được coi là hoàn tất. Không có
+  runtime retry trong phiên chẩn đoán này.
+
+### 57.2 Dependency contract đã xác minh
+
+- Node.js: `v24.19.0`.
+- `pg`: `8.23.0`, xác minh từ
+  `backend/node_modules/pg/package.json` và
+  `backend/package-lock.json`.
+- `pg-pool`: `3.14.0`, xác minh từ
+  `backend/node_modules/pg-pool/package.json` và
+  `backend/package-lock.json`; đây là dependency `^3.14.0` của `pg` và có
+  peer dependency `pg >=8.0`.
+- `@types/pg`: `8.21.0`; các khai báo API dùng để đối chiếu nằm trong
+  `backend/node_modules/@types/pg/index.d.ts`. `pg-pool` không khai báo file
+  type riêng; runtime contract được đối chiếu thêm với
+  `backend/node_modules/pg-pool/index.js`.
+- TypeScript của Backend bật `strict: true`, nhưng `skipLibCheck: true` và
+  interface nội bộ `DisposablePoolClient` đã che khuất overload thật của
+  `pg-pool`.
+
+| API | Contract production đã xác minh | AbortSignal được hỗ trợ ở vị trí đã dùng? |
+| --- | --- | --- |
+| `new Pool(config?)` | Constructor nhận một `PoolConfig` tùy chọn; `pg/lib/index.js` bind `Pool` từ `pg-pool` với `Client`. | Không có tham số signal riêng. |
+| `Pool.connect()` | Trả `Promise<PoolClient>`. | Không có options/signal overload. |
+| `Pool.connect(callback)` | Callback một function, nhận `(err, client, done)`; trả `void`. | Không; truyền object vào vị trí callback là sai. |
+| `Pool.query(query/config, values?)` | Promise overload tối đa hai argument: query/config và values tùy chọn. | Không có argument thứ ba là signal. |
+| `Pool.query(query/config, callback)` | Callback overload hai argument; argument cuối phải là function. | Không. |
+| `Pool.query(text, values, callback)` | Callback overload ba argument; argument thứ ba phải là function. | Không; `AbortSignal` không phải callback. |
+| `Pool.end()` | Trả `Promise<void>`. | Không có options/signal overload. |
+| `Pool.end(callback)` | Callback một function, trả `void`. | Không; app hiện gọi không argument. |
+| `Client.query(...)` | Promise forms dùng query/config và values; callback forms có callback function ở vị trí cuối. | Không có AbortSignal overload trong khai báo đã cài. |
+| `Client.end()` | Promise; hoặc callback function ở vị trí duy nhất. | Không có signal overload. |
+| `PoolClient.release(err?)` | `release(err?: Error \| boolean): void`; được pool gọi với error/boolean tùy chọn. | Không nhận signal. |
+
+### 57.3 Call-path trace
+
+1. `backend/scripts/run-disposable-postgres-test.ts:41-44` gọi
+   `runCliMain(process.argv, process.env, ...)` khi script là entry point.
+2. `backend/src/database/disposableDatabaseGuard.ts:2560-2595` lấy
+   `argv.slice(2)`, nhận đúng một canonical positional target và gọi
+   `runCanonicalEvidenceSequence`; nhánh này không fallback sang legacy runner.
+3. `runCanonicalEvidenceSequence` tại
+   `backend/src/database/disposableDatabaseGuard.ts:2252-2273` xác minh image,
+   tạo container, parse launched ID và inspect container.
+4. Attestation tại `:2278-2359` chạy trước readiness và database. Kết quả
+   command được normalize, sau đó chỉ `normalizedResult.stdout` được truyền
+   vào `validateMountNamespaceAttestation` tại `:2312-2314`. Vì vậy lỗi
+   `pg-pool` không nằm trong mountinfo validator.
+5. Step 4 readiness chạy tại `:2362-2364`. Step 5 tạo `Pool` tại
+   `:2366-2375`; nhánh mặc định dùng `new Pool({...})`, còn test seam dùng
+   `deps.createPoolFn(adminUrl, undefined)`.
+6. Lời gọi pg-pool đầu tiên của nhánh canonical là
+   `adminPool.query(...)` tại `:2377`: có **3 argument** gồm query string,
+   `undefined` và một `AbortSignal`. Lời gọi marker ngay sau đó tại `:2383`
+   có cùng hình dạng sai.
+7. `DisposablePoolClient` tại `:406-409` lại khai báo
+   `query(sql, params?, signal?): Promise<...>`, nên TypeScript chấp nhận lời
+   gọi này dù đó không phải contract của `pg-pool`.
+8. Trong `pg-pool/index.js:441-448`, `Pool.query(text, values, cb)` chỉ coi
+   function ở vị trí values là callback; với ba argument hiện tại, `cb` là
+   object `AbortSignal`. `promisify` tại `:30-48` kiểm tra truthiness thay vì
+   `typeof callback === "function"`, giữ nguyên object đó và trả
+   `result: undefined`, không phải Promise kết quả query.
+9. `Pool.query` gọi `this.connect(...)` bằng một arrow function hợp lệ tại
+   `:449`. Nếu connect/query gặp lỗi, các nhánh `:451`, `:461`, `:476` và
+   `:482` gọi `cb(...)`; nếu query thành công, nhánh `:478` cũng gọi
+   `cb(undefined, res)`. Do `cb` thực tế là `AbortSignal`, các nhánh đó có
+   thể phát sinh `TypeError: cb is not a function`. Stack runtime lịch sử
+   trỏ vào `pg-pool/index.js:451`, phù hợp trực tiếp với call path này.
+10. Sau khi query bị gọi sai, `await adminPool.query(...)` không chờ Promise
+    database vì callback path trả `undefined`; đây là hậu quả bổ sung của
+    cùng overload mismatch, không phải một lỗi riêng của readiness.
+
+Các lời gọi cùng loại còn tồn tại ở:
+
+- Legacy database setup: `:721` và `:729`.
+- Legacy cleanup: `:618`, `:632`, `:640`, `:648`.
+- Canonical cleanup: `:2209`.
+- `verifyDatabaseDroppedInCatalog`: `:1883-1886`.
+
+Tất cả đều truyền `AbortSignal` ở argument thứ ba. Các lời gọi `pool.end()`
+tại `:667` và `:2236` không truyền argument, nên không tạo ra mismatch
+`Pool.end`.
+
+### 57.4 Các vị trí `cb(...)` trong pg-pool đã đối chiếu
+
+| Vị trí trong `pg-pool/index.js` | Điều kiện gọi | Ánh xạ call path | Kết luận |
+| --- | --- | --- | --- |
+| `:193` | `Pool.connect` đang ending và `cb` truthy | App không truyền signal trực tiếp vào `connect`; `Pool.query` truyền arrow function thật | Không phải candidate của lỗi lịch sử. |
+| `:451` | Callback nội bộ của `Pool.query` nhận lỗi connect | `adminPool.query(sql, undefined, AbortSignal)` làm `cb` là object | Candidate khớp trực tiếp stack lịch sử. |
+| `:461` | Client phát event error khi query đang xử lý | Cùng `Pool.query` overload sai | Candidate cùng root cause. |
+| `:476` | Client query callback nhận lỗi | Cùng `Pool.query` overload sai | Candidate cùng root cause. |
+| `:478` | Client query thành công | Cùng `Pool.query` overload sai | Có thể gọi object như callback. |
+| `:482` | `client.query` ném đồng bộ | Cùng `Pool.query` overload sai | Candidate cùng root cause. |
+| `:492` | `Pool.end` được gọi lần hai và callback truthy | App chỉ gọi `end()` không argument | Không phải candidate của lỗi lịch sử. |
+
+### 57.5 Evidence matrix
+
+| Candidate | App call site | Actual arguments | pg-pool expected contract | Test-double behavior | Supported/Rejected | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| `Pool.query` với signal ở vị trí thứ ba | `disposableDatabaseGuard.ts:2377`, `2383`, `2209`; legacy `:618`, `:632`, `:640`, `:648`, `:721`, `:729`; helper `:1883` | `(string, undefined\|unknown[], AbortSignal object)` | Hai argument cho Promise, hoặc argument cuối là callback function trong overload ba argument | Nhiều fake khai báo `async query(sql: string)` và bỏ qua argument dư | **Rejected by production; confirmed mismatch** | `DisposablePoolClient.query` cho phép signal; `@types/pg` không có overload signal; runtime `Pool.query` giữ signal làm `cb`; stack lịch sử là `cb is not a function`. |
+| `Pool.connect` callback contract | Không gọi trực tiếp; `Pool.query` nội bộ gọi `this.connect((err, client) => ...)` | Một function arrow | Một callback function hoặc không argument để lấy Promise | Fake pool không đi qua pg-pool internals | Supported | `pg-pool/index.js:449`; arrow callback là function hợp lệ. |
+| `Client.query` callback contract | Không gọi trực tiếp từ guard; `Pool.query` nội bộ gọi `client.query(text, values, callback)` | `(query/config, values, function)` | Callback overload ba argument với callback function | Fake không mô phỏng client | Supported | `pg-pool/index.js:467`; callback được tạo trong production. |
+| `Pool.end` callback contract | `disposableDatabaseGuard.ts:667`, `2236` | Không argument | Promise overload không argument | Fake `end()` trả Promise | Supported | `@types/pg` và runtime `end()`; không truyền signal. |
+| `PoolClient.release` contract | Pool nội bộ gọi `client.release(err)` | Không argument hoặc `Error` | `release(err?: Error \| boolean)` | Fake pool không mô phỏng release | Supported | `@types/pg:index.d.ts:316-318`; không có signal. |
+| `Client.query` nhận AbortSignal trực tiếp | Không có app call site | Không có | Không có overload signal | Không áp dụng | Rejected as app cause | Runtime test tạo `Pool`, nhưng guard không gọi `Client.query` trực tiếp; đây không phải đường gây lỗi lịch sử. |
+| Cancellation wrapper là callback mismatch độc lập | `AbortController.signal` được truyền xuyên các lớp guard | Signal được truyền nhầm vào positional query arg | pg-pool không có cancellation/options arg tại vị trí đó | Fake chấp nhận và bỏ qua signal | Rejected as separate class | Signal abstraction là nguyên nhân dữ liệu argument; class chính xác hơn là query overload mismatch, không phải `connect/end/release`. |
+
+### 57.6 Phân loại root cause
+
+**`POOL_QUERY_OVERLOAD_MISMATCH` — CONFIRMED.**
+
+Bằng chứng trực tiếp là sự kết hợp của: (a) call site production truyền ba
+argument với argument thứ ba là `AbortSignal`; (b) interface nội bộ cho phép
+hình dạng đó nhưng `@types/pg` không cho phép; (c) `pg-pool` runtime coi
+argument thứ ba là callback, không kiểm tra `typeof`; và (d) các nhánh `cb(...)`
+ở line 451/461/476/478/482 có thể gọi object không phải function. Test double
+hiện tại bỏ qua argument dư nên không bắt được structural mismatch. Không cần
+gán lỗi cho `Pool.connect`, `Pool.end`, `PoolClient.release` hoặc tmpfs.
+
+### 57.7 Minimal remediation plan — historical snapshot trước remediation
+
+- **Allowlist dự kiến:**
+  `backend/src/database/disposableDatabaseGuard.ts`,
+  `backend/src/tests/disposableDatabaseGuard.test.ts` và task document này.
+  Không sửa runner CLI, runtime test, migration runner, migration, dependency
+  hoặc lockfile.
+- **Symbol và call sites:** sửa `DisposablePoolClient.query` tại `:406-409`,
+  `verifyDatabaseDroppedInCatalog`, canonical Step 5, canonical cleanup và
+  legacy setup/cleanup để không truyền `AbortSignal` vào `Pool.query`.
+- **Signature mong đợi:**
+  `query(sql: string, params?: unknown[]): Promise<DisposableQueryResult>`;
+  `end(): Promise<void>`. Mọi call production tối đa hai argument và dùng
+  Promise overload thật của `pg-pool`.
+- **Cancellation boundary:** giữ kiểm tra cancellation trước phase/query và
+  giữ timeout orchestration hiện có; không đưa signal vào positional callback
+  slot. Cơ chế hủy query đang chạy, nếu còn yêu cầu, phải có quyết định riêng
+  với một API được `pg` hỗ trợ, không tự thêm trong remediation này.
+- **Regression test:** thay/ bổ sung strict pool-compatible fake với
+  `query(...args)` kiểm tra số argument không vượt quá hai và từ chối nếu
+  argument thứ ba xuất hiện; ghi nhận query Promise hoàn tất mà không gọi
+  callback. Test phải kiểm tra cả canonical và cleanup/verification path, giữ
+  callback/Promise contract, và chứng minh không mở socket/database thật.
+- **Test double boundary:** không dùng fake có signature rộng hơn production;
+  fake phải mô phỏng đúng `Pool.query` Promise overload và `Pool.end()`.
+- **Quality gates sau khi Owner cấp quyền remediation:** đọc lại
+  `backend/package.json`, sau đó chạy đúng script hiện có
+  `npm run typecheck`, `npm run build` và targeted test phù hợp trong
+  `backend/`; không tạo script mới. Runtime retry M07-A2 vẫn cần Owner
+  authorization riêng.
+- **Migration conclusion:** không cần migration; đây là lỗi positional API
+  contract, không phải thay đổi schema hoặc dữ liệu.
+
+### 57.8 Trạng thái và giới hạn bằng chứng
+
+- Tại thời điểm snapshot chẩn đoán trước remediation, root cause đã được xác
+  nhận ở mức source/dependency contract; remediation khi đó chưa triển khai và
+  quality gate khi đó chưa chạy theo directive no-test/no-runtime.
+- Không có bằng chứng mới cho readiness, database creation, migration
+  001–040, rerun, checksum mismatch, restore hoặc cleanup runtime. Không được
+  suy ra các phase đó PASS từ chẩn đoán này.
+- M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`.
+- M07-B, M07-C và M07-D chưa bắt đầu.
+- Không tuyên bố production-ready, pilot-ready hoặc runtime verified.
+
+**Kết luận:** `ROOT CAUSE CONFIRMED — POOL_QUERY_OVERLOAD_MISMATCH — READY FOR MINIMAL REMEDIATION OWNER REVIEW`.
+
+## 58. M07-A2 PG-POOL QUERY CONTRACT MINIMAL REMEDIATION — LOCAL VERIFICATION
+
+### 58.1 Phạm vi và trạng thái
+
+- Root cause được giữ nguyên: `POOL_QUERY_OVERLOAD_MISMATCH`.
+- Phiên này chỉ thực hiện remediation source/unit-test và CodeGraph
+  reconciliation; không chạy Docker, PostgreSQL, database socket, migration
+  hoặc M07-A2 runtime retry.
+- Không sửa `backend/src/database/pool.ts`, runner CLI, runtime test,
+  migration runner, migration, package/dependency hoặc `.gitignore`.
+- M07-A2 runtime vẫn `BLOCKED — RUNTIME RETRY NOT AUTHORIZED`.
+- M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B, M07-C và M07-D chưa bắt đầu.
+
+### 58.2 Dependency và remediation đã thực hiện
+
+- Node.js: `v24.19.0`.
+- `pg`: `8.23.0`.
+- `pg-pool`: `3.14.0`.
+- Version được đối chiếu từ package metadata đã cài và
+  `backend/package-lock.json`; không cài hoặc cập nhật dependency.
+- `DisposablePoolClient.query` nay dùng signature:
+  `query(sql: string, params?: unknown[]): Promise<DisposableQueryResult>`.
+- Canonical database setup, ownership marker, cleanup drop và catalog
+  verification đều gọi Promise overload tối đa hai argument; không truyền
+  `AbortSignal` vào vị trí callback thứ ba.
+- Cancellation vẫn được kiểm tra trước khi query ở orchestration boundary;
+  không tuyên bố socket-level query cancellation.
+- `DATABASE_QUERY_FAILURE_CODES` là closed set gồm
+  `DATABASE_QUERY_FAILURE` và `DATABASE_QUERY_CANCELLED`; diagnostic chỉ có
+  `phase`, `operation`, `failureCode`, không chứa SQL, values, URL,
+  credentials, database name đầy đủ, ID hoặc raw exception text.
+- Không thay đổi tmpfs, migration, checksum, ownership marker hoặc cleanup
+  semantics.
+
+### 58.3 Regression tests và quality gates
+
+- Baseline targeted suite trước remediation: `111/111 PASS`.
+- Sau remediation: `115/115 PASS`, `0 fail`, `0 cancelled`, `0 skipped`;
+  delta `+4`, gồm `M07-A2-PGPOOL-01..04`.
+- `M07-A2-PGPOOL-01`: mọi query canonical (create, marker, drop, catalog)
+  dùng đúng hai-argument Promise overload; không có argument thứ ba.
+- `M07-A2-PGPOOL-02`: callback-faithful double từ chối hình dạng lịch sử
+  có `AbortSignal` ở vị trí callback và chấp nhận Promise shape đúng.
+- `M07-A2-PGPOOL-03`: query rejection giữ nguyên primary error và tạo
+  database diagnostic đóng, sanitized.
+- `M07-A2-PGPOOL-04`: catalog query dùng hai argument; signal đã aborted
+  chặn query trước khi chạm pool.
+- Các test cleanup/cancellation non-cooperative và orchestration cũ vẫn
+  được giữ nguyên, không xóa, rename, merge hoặc skip.
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS.
+- `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`:
+  PASS với `115/115`.
+- `git diff --check`: PASS.
+- Prohibited-pattern scan trên dòng thêm mới: `any`, `as any`,
+  `as unknown as`, `as never`, `@ts-ignore`, `@ts-expect-error`: không có.
+- Secret/PII scan trên dòng thêm mới: không phát hiện credential, URL,
+  token, secret hoặc raw environment value.
+
+### 58.4 CodeGraph post-change reconciliation
+
+- Đã chạy `codegraph sync`; kết quả: `Already up to date`.
+- Đã chạy lại truy vấn tập trung:
+  `runCanonicalEvidenceSequence DisposablePoolClient adminPool.query
+  verifyDatabaseDroppedInCatalog callers callees`.
+- Kết quả hậu thay đổi: `84 symbols across 5 files`.
+- CodeGraph/source trace xác nhận:
+  - `DisposablePoolClient` tại
+    `backend/src/database/disposableDatabaseGuard.ts:406` không còn
+    tham số signal trong `query`.
+  - `executeDatabaseQuery` tại `:2216` kiểm tra cancellation trước query và
+    ghi diagnostic đóng khi query fail/cancel.
+  - Canonical cleanup tại `:2259-2279` và setup tại `:2438-2453` dùng cùng
+    adapter contract, chỉ truyền query và params.
+  - `verifyDatabaseDroppedInCatalog` tại `:1907-1916` kiểm tra signal trước
+    query và gọi pool với hai argument.
+  - Callers của `runCanonicalEvidenceSequence` vẫn là script và test; không
+    có fallback legacy cho canonical target.
+  - `backend/src/database/pool.ts` không bị thay đổi; kết quả 196 caller của
+    method tên chung `query` không được dùng làm phạm vi remediation.
+- Unsupported third-argument path đã biến mất khỏi disposable setup,
+  marker, cleanup và catalog call sites theo source scan. Đây là source/
+  index evidence, không phải runtime evidence.
+
+### 58.5 Git và giới hạn bằng chứng
+
+- Tracked modifications trước staging, theo exact `git status`:
+  `M backend/src/database/disposableDatabaseGuard.ts`,
+  `M backend/src/tests/disposableDatabaseGuard.test.ts` và
+  `M tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`.
+- Untracked trước khi thêm local exclude, theo exact `git status`:
+  `?? documents/05-testing/staging-readiness/codegraph-report-2026-09-05.md`
+  và `?? .codegraph/.gitignore`.
+- `.codegraph/.gitignore` đã được local-exclude bằng đúng entry `.codegraph/`
+  trong `.git/info/exclude`; file index trong `.codegraph` không được stage.
+  CodeGraph report vẫn là file untracked được phép stage trong packet này.
+- Cached area vẫn sạch; không stage, commit, push hoặc amend.
+- Không có database/runtime evidence mới. Chưa chứng minh PostgreSQL runtime,
+  migration 001–040, checksum restore, socket cancellation hoặc cleanup trên
+  Docker daemon.
+- Không tuyên bố M07-A2 runtime fixed/verified, STAGING VERIFIED,
+  pilot-ready hoặc production-ready.
+
+**Kết luận:** `READY FOR M07-A2 PG-POOL CONTRACT REMEDIATION OWNER REVIEW`.
