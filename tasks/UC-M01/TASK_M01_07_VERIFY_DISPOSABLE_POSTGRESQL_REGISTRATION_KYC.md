@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 STRUCTURED RESULT EMISSION VERIFIED — AWAITING CHECKPOINT COMMIT
-- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 STRUCTURED RESULT EMISSION COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
+- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - M01-07: INCOMPLETE
 - UC-M01: INCOMPLETE
@@ -4261,3 +4261,42 @@ runCliMain dispatchCliRun runCanonicalEvidenceSequence CanonicalSequenceExecutio
 Kết quả là `Found 63 symbols across 3 files`. Đây chỉ là static/local
 evidence; CodeGraph không thay thế runtime evidence và không chứng minh
 PostgreSQL, migration, cleanup hoặc socket-level cancellation.
+
+## 65. M07-A2 STRUCTURED RESULT EMISSION CHECKPOINT RECORD
+
+- Implementation commit: `16c72c3516221099ac501158cd1d4982be028d9b`.
+- Parent: `cf21a21ad0b1f49f6ee535368520c1f3228c387c`.
+- Message: `fix(database): emit canonical runtime result envelope`.
+- Timestamp: `2026-09-05T23:34:59+07:00`.
+- Exact five-file inventory:
+
+  ```text
+  M backend/scripts/run-disposable-postgres-test.ts
+  M backend/src/database/disposableDatabaseGuard.ts
+  M backend/src/tests/disposableDatabaseGuard.test.ts
+  M documents/05-testing/staging-readiness/codegraph-report-2026-09-05.md
+  M tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md
+  ```
+
+- Stat: `5 files changed, 1494 insertions(+), 22 deletions(-)`.
+- Commit-tree blobs:
+
+  | File | Commit-tree blob |
+  | --- | --- |
+  | `backend/scripts/run-disposable-postgres-test.ts` | `06da98571ab6f3d521552b0c8d148490313369df` |
+  | `backend/src/database/disposableDatabaseGuard.ts` | `1edf4eb4acaea2fbecdbd0ad7c16d35c74f75d34` |
+  | `backend/src/tests/disposableDatabaseGuard.test.ts` | `e2c23460c9a4d09224546f26cee7394b1fb3614c` |
+  | `documents/05-testing/staging-readiness/codegraph-report-2026-09-05.md` | `7154fa6b3e0dae578f445b2d5ccbe15852531a6f` |
+  | `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md` | `6f370c4aa0078d94bb835a846a513c3ecab9114d` |
+
+- Root cause: `STRUCTURED_RESULT_DISCARDED_BY_DISPATCH`.
+- Envelope: `M07_A2_RESULT_V1 <single-line-json>`.
+- Schema: `m07-a2-canonical-runtime-result`; version: `1`.
+- Writer và production entrypoint đều được await; không serialize raw
+  `Error` hoặc internal result; legacy path không emit canonical envelope.
+- Targeted test baseline: `115`; delta: `+9`; final: `124/124 PASS`.
+- Typecheck: PASS; build: PASS; `git diff --check`: PASS.
+- CodeGraph post-change: `63 symbols across 3 files`.
+- Underlying runtime failure vẫn `UNKNOWN`; runtime retry chưa được cấp quyền.
+- Đây là checkpoint local đã ghi nhận; không có bằng chứng runtime mới và
+  không được xem là M07-A2 runtime verification.
