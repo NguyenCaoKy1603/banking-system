@@ -25,21 +25,26 @@ export {
   type RunnerExecutionResult,
   type RunnerLifecycleState,
   CANONICAL_RUNTIME_TEST_PATH,
+  CANONICAL_RUNTIME_RESULT_PREFIX,
   dispatchCliRun,
   executeCommandWithOutput,
+  formatCanonicalRuntimeResultLine,
   isCanonicalRuntimePath,
   isReservedCanonicalRuntimeCandidate,
   realDockerAdapter,
   runCanonicalEvidenceSequence,
   runCliMain,
   runDisposablePostgresTest,
+  serializeCanonicalRuntimeResult,
 } from "../src/database/disposableDatabaseGuard.js";
 
 // Ensure importing this module never executes main or registers global process handlers!
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
 
 if (isMain) {
-  runCliMain(process.argv, process.env, { processFacade: process }).catch(() => {
+  try {
+    await runCliMain(process.argv, process.env, { processFacade: process });
+  } catch {
     process.exitCode = 1;
-  });
+  }
 }

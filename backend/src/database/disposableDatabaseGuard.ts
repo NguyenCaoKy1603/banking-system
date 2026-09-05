@@ -2184,6 +2184,166 @@ export interface CanonicalSequenceExecutionResult {
   readonly cleanupError?: Error;
 }
 
+export const CANONICAL_RUNTIME_RESULT_SCHEMA = "m07-a2-canonical-runtime-result" as const;
+export const CANONICAL_RUNTIME_RESULT_VERSION = 1 as const;
+export const CANONICAL_RUNTIME_RESULT_PREFIX = "M07_A2_RESULT_V1 " as const;
+export const CANONICAL_RUNTIME_FAILURE_CODES = [
+  "PRIMARY_ERROR",
+  "CLEANUP_ERROR",
+  "CANONICAL_SEQUENCE_THROWN",
+] as const;
+export type CanonicalRuntimeFailureCode = (typeof CANONICAL_RUNTIME_FAILURE_CODES)[number];
+
+export type CanonicalRuntimeFailure = {
+  readonly kind: "PRIMARY" | "CLEANUP";
+  readonly code: CanonicalRuntimeFailureCode;
+  readonly phase: CanonicalSequenceStep | null;
+  readonly operation: DatabaseQueryDiagnostic["operation"] | null;
+};
+
+export type CanonicalRuntimeCleanupEnvelope = {
+  readonly attempted: boolean;
+  readonly succeeded: boolean;
+  readonly failureCode: "CLEANUP_ERROR" | null;
+};
+
+export type CanonicalRuntimeResultEnvelope = {
+  readonly schema: typeof CANONICAL_RUNTIME_RESULT_SCHEMA;
+  readonly version: typeof CANONICAL_RUNTIME_RESULT_VERSION;
+  readonly outcome: "PASS" | "FAIL";
+  readonly completedSteps: readonly CanonicalSequenceStep[];
+  readonly attestationDiagnostic: AttestationDiagnostic | null;
+  readonly databaseDiagnostic: DatabaseQueryDiagnostic | null;
+  readonly failure: CanonicalRuntimeFailure | null;
+  readonly cleanup: CanonicalRuntimeCleanupEnvelope;
+};
+
+function toPublicAttestationDiagnostic(
+  diagnostic: AttestationDiagnostic | undefined,
+): AttestationDiagnostic | null {
+  if (!diagnostic) return null;
+  return {
+    phase: diagnostic.phase,
+    commandExitCode: diagnostic.commandExitCode,
+    commandTimedOut: diagnostic.commandTimedOut,
+    commandCancelled: diagnostic.commandCancelled,
+    stdoutKind: diagnostic.stdoutKind,
+    stdoutByteLength: diagnostic.stdoutByteLength,
+    lineCount: diagnostic.lineCount,
+    crCount: diagnostic.crCount,
+    lfCount: diagnostic.lfCount,
+    trailingNewline: diagnostic.trailingNewline,
+    stderrPresent: diagnostic.stderrPresent,
+    validatorCalled: diagnostic.validatorCalled,
+    validatorPassed: diagnostic.validatorPassed,
+    failureCode: diagnostic.failureCode,
+    targetRecordCount: diagnostic.targetRecordCount,
+    targetRecordFingerprint: diagnostic.targetRecordFingerprint,
+    filesystemType: diagnostic.filesystemType,
+    normalizedSizeBytes: diagnostic.normalizedSizeBytes,
+    normalizedModeOctal: diagnostic.normalizedModeOctal,
+  };
+}
+
+function toPublicDatabaseDiagnostic(
+  diagnostic: DatabaseQueryDiagnostic | undefined,
+): DatabaseQueryDiagnostic | null {
+  if (!diagnostic) return null;
+  return {
+    phase: diagnostic.phase,
+    operation: diagnostic.operation,
+    failureCode: diagnostic.failureCode,
+  };
+}
+
+function canonicalFailureContext(result: CanonicalSequenceExecutionResult): {
+  readonly phase: CanonicalSequenceStep | null;
+  readonly operation: DatabaseQueryDiagnostic["operation"] | null;
+} {
+  return {
+    phase: result.attestationDiagnostic?.phase ?? result.databaseDiagnostic?.phase ?? null,
+    operation: result.databaseDiagnostic?.operation ?? null,
+  };
+}
+
+function toCanonicalRuntimeFailure(
+  result: CanonicalSequenceExecutionResult | undefined,
+): CanonicalRuntimeFailure | null {
+  if (!result) {
+    return {
+      kind: "PRIMARY",
+      code: "CANONICAL_SEQUENCE_THROWN",
+      phase: null,
+      operation: null,
+    };
+  }
+
+  if (result.error) {
+    const context = canonicalFailureContext(result);
+    return {
+      kind: "PRIMARY",
+      code: "PRIMARY_ERROR",
+      phase: context.phase,
+      operation: context.operation,
+    };
+  }
+
+  if (result.cleanupError) {
+    const context = canonicalFailureContext(result);
+    return {
+      kind: "CLEANUP",
+      code: "CLEANUP_ERROR",
+      phase: context.phase,
+      operation: context.operation,
+    };
+  }
+
+  if (!result.success) {
+    const context = canonicalFailureContext(result);
+    return {
+      kind: "PRIMARY",
+      code: "PRIMARY_ERROR",
+      phase: context.phase,
+      operation: context.operation,
+    };
+  }
+
+  return null;
+}
+
+export function createCanonicalRuntimeResultEnvelope(
+  result?: CanonicalSequenceExecutionResult,
+): CanonicalRuntimeResultEnvelope {
+  const cleanupAttempted = Boolean(result?.containerId);
+  const cleanupFailed = Boolean(result?.cleanupError);
+  return {
+    schema: CANONICAL_RUNTIME_RESULT_SCHEMA,
+    version: CANONICAL_RUNTIME_RESULT_VERSION,
+    outcome: result?.success === true ? "PASS" : "FAIL",
+    completedSteps: result ? [...result.completedSteps] : [],
+    attestationDiagnostic: toPublicAttestationDiagnostic(result?.attestationDiagnostic),
+    databaseDiagnostic: toPublicDatabaseDiagnostic(result?.databaseDiagnostic),
+    failure: toCanonicalRuntimeFailure(result),
+    cleanup: {
+      attempted: cleanupAttempted,
+      succeeded: cleanupAttempted && !cleanupFailed,
+      failureCode: cleanupFailed ? "CLEANUP_ERROR" : null,
+    },
+  };
+}
+
+export function serializeCanonicalRuntimeResult(
+  result?: CanonicalSequenceExecutionResult,
+): string {
+  return JSON.stringify(createCanonicalRuntimeResultEnvelope(result));
+}
+
+export function formatCanonicalRuntimeResultLine(
+  result?: CanonicalSequenceExecutionResult,
+): string {
+  return `${CANONICAL_RUNTIME_RESULT_PREFIX}${serializeCanonicalRuntimeResult(result)}`;
+}
+
 /**
  * Coordinate canonical 19-step evidence sequence orchestration.
  */
@@ -2621,11 +2781,13 @@ export interface CliDispatcherDependencies {
   readonly canonicalDeps?: CanonicalSequenceDependencies;
   readonly legacyDeps?: DisposableRunnerDependencies;
   readonly logErrorFn?: (message: string) => void;
+  readonly writeCanonicalResultFn?: (protocolLine: string) => void | Promise<void>;
 }
 
 export interface CliDispatchResult {
   readonly handled: "CANONICAL" | "LEGACY" | "REJECTED";
   readonly success: boolean;
+  readonly canonicalResult?: CanonicalSequenceExecutionResult;
   readonly error?: Error;
   readonly cleanupError?: Error;
 }
@@ -2660,19 +2822,16 @@ export async function dispatchCliRun(
     // Branch 1: Exact single canonical target -> execute canonical sequence
     const runner = deps.canonicalRunnerFn ?? runCanonicalEvidenceSequence;
     const canonicalDeps: CanonicalSequenceDependencies = {
-      processFacade: facade,
       ...(deps.canonicalDeps ?? {}),
     };
 
     try {
       const result = await runner(hostEnv, canonicalDeps);
       if (!result.success) {
-        if (facade) {
-          facade.exitCode = 1;
-        }
         return {
           handled: "CANONICAL",
           success: false,
+          canonicalResult: result,
           error: result.error,
           cleanupError: result.cleanupError,
         };
@@ -2680,11 +2839,9 @@ export async function dispatchCliRun(
       return {
         handled: "CANONICAL",
         success: true,
+        canonicalResult: result,
       };
     } catch (err) {
-      if (facade) {
-        facade.exitCode = 1;
-      }
       const caughtError = err instanceof Error ? err : new Error(String(err));
       return {
         handled: "CANONICAL",
@@ -2754,9 +2911,36 @@ export async function runCliMain(
 ): Promise<CliDispatchResult> {
   const facade = deps.processFacade ?? process;
   const logError = deps.logErrorFn ?? console.error;
+  const writeCanonicalResult = deps.writeCanonicalResultFn ?? ((protocolLine: string): Promise<void> => (
+    new Promise<void>((resolve, reject) => {
+      process.stdout.write(`${protocolLine}\n`, (error?: Error | null) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    })
+  ));
 
   try {
     const result = await dispatchCliRun(argv, hostEnv, { ...deps, processFacade: facade });
+    if (result.handled === "CANONICAL") {
+      try {
+        await writeCanonicalResult(formatCanonicalRuntimeResultLine(result.canonicalResult));
+      } catch {
+        facade.exitCode = 1;
+        return {
+          ...result,
+          success: false,
+          error: result.error ?? new Error("Canonical result writer failed"),
+        };
+      }
+      if (!result.success) {
+        facade.exitCode = 1;
+      }
+      return result;
+    }
     if (!result.success) {
       if (result.error) {
         logError(sanitizeLogOutput(result.error.message));

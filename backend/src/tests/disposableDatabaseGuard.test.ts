@@ -56,6 +56,7 @@ import {
   isReservedCanonicalRuntimeCandidate,
   runCliMain,
   executeCommandWithOutput,
+  CANONICAL_RUNTIME_RESULT_PREFIX,
   CANONICAL_TMPFS_DESTINATION,
   CANONICAL_TMPFS_OPTIONS,
   CANONICAL_TMPFS_FLAG_VALUE,
@@ -83,6 +84,17 @@ const makeMountInfo = (
   mountId = "100",
 ): string => `${mountId} 50 0:1 / ${destination} ${mountOptions} - ${filesystemType} tmpfs ${superOptions}`;
 const validMountInfoFixture = makeMountInfo();
+
+const parseCanonicalResultLine = (line: string): Record<string, unknown> => {
+  assert.equal(line.startsWith(CANONICAL_RUNTIME_RESULT_PREFIX), true);
+  assert.equal(
+    line.indexOf(CANONICAL_RUNTIME_RESULT_PREFIX),
+    line.lastIndexOf(CANONICAL_RUNTIME_RESULT_PREFIX),
+  );
+  const json = line.slice(CANONICAL_RUNTIME_RESULT_PREFIX.length);
+  assert.doesNotMatch(json, /[\r\n]/);
+  return JSON.parse(json) as Record<string, unknown>;
+};
 
 const makeExpandedMountInfoFixture = (lineEnding = "\n"): string => {
   const nonTargetRecords = Array.from({ length: 50 }, (_, index) => makeMountInfo(
@@ -2776,7 +2788,7 @@ test("M07-A2-CLI-01: canonical runtime target dispatches into canonical runner w
   assert.equal(resFail.handled, "CANONICAL");
   assert.equal(resFail.success, false);
   assert.equal(resFail.error?.message, "Canonical verification aborted");
-  assert.equal(mockFailFacade.exitCode, 1);
+  assert.equal(mockFailFacade.exitCode, 0, "Canonical dispatch defers exit-code mutation until after output handling");
   assert.equal(legacyCalls, 0);
 });
 
@@ -2917,7 +2929,7 @@ test("M07-A2-CLI-04: legacy/non-canonical targets dispatch into runDisposablePos
   assert.equal(facade.exitCode, 0);
 });
 
-test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam runCliMain handles failure, redacting error output", async () => {
+test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam emits a redacted canonical envelope", async () => {
   // 1. Verify side-effect-free module import
   const initialExitCode = process.exitCode;
   const runnerModulePath = "../../scripts/run-disposable-postgres-test.js";
@@ -2933,6 +2945,7 @@ test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam
   let canonicalCalls = 0;
   let legacyCalls = 0;
   const loggedErrors: string[] = [];
+  const serializedEnvelopes: string[] = [];
 
   const facade: ProcessFacade = { exitCode: 0 };
   const sensitiveError = new Error(
@@ -2947,6 +2960,9 @@ test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam
       logErrorFn: (msg: string) => {
         loggedErrors.push(msg);
       },
+      writeCanonicalResultFn: (serializedEnvelope: string) => {
+        serializedEnvelopes.push(serializedEnvelope);
+      },
       canonicalRunnerFn: async () => {
         canonicalCalls++;
         return {
@@ -2954,6 +2970,11 @@ test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam
           runId: "00000000000000000000000000000007",
           databaseName: "banking_test_00000000000000000000000000000007",
           completedSteps: ["1_VERIFY_LOCAL_IMAGE"],
+          databaseDiagnostic: {
+            phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+            operation: "CREATE_TARGET_DATABASE",
+            failureCode: "DATABASE_QUERY_FAILURE",
+          },
           error: sensitiveError,
         };
       },
@@ -2970,13 +2991,467 @@ test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam
   assert.equal(legacyCalls, 0, "Legacy runner must never be called as fallback or retry on canonical failure");
   assert.equal(facade.exitCode, 1, "Production main seam must set process facade exitCode to 1 on failure");
   assert.ok(res.error);
+  assert.equal(res.canonicalResult?.error, sensitiveError);
 
-  assert.ok(loggedErrors.length > 0, "runCliMain must log the redacted error");
-  const combinedLog = loggedErrors.join("\n");
-  assert.doesNotMatch(combinedLog, /super_secret_password/);
-  assert.doesNotMatch(combinedLog, /test_password_123/);
-  assert.match(combinedLog, /\[REDACTED_URL\]/);
-  assert.match(combinedLog, /\[REDACTED_SECRET\]/);
+  assert.deepEqual(loggedErrors, [], "Canonical failures must use the structured stdout channel");
+  assert.equal(serializedEnvelopes.length, 1, "Canonical execution must emit exactly one envelope");
+  const envelope = parseCanonicalResultLine(serializedEnvelopes[0]);
+  assert.deepEqual(Object.keys(envelope).sort(), [
+    "attestationDiagnostic",
+    "completedSteps",
+    "cleanup",
+    "databaseDiagnostic",
+    "failure",
+    "outcome",
+    "schema",
+    "version",
+  ].sort());
+  assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
+  assert.equal(envelope.version, 1);
+  assert.equal(envelope.outcome, "FAIL");
+  assert.deepEqual(envelope.completedSteps, ["1_VERIFY_LOCAL_IMAGE"]);
+  assert.deepEqual(envelope.databaseDiagnostic, {
+    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    operation: "CREATE_TARGET_DATABASE",
+    failureCode: "DATABASE_QUERY_FAILURE",
+  });
+  assert.deepEqual(envelope.failure, {
+    kind: "PRIMARY",
+    code: "PRIMARY_ERROR",
+    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    operation: "CREATE_TARGET_DATABASE",
+  });
+  assert.deepEqual(envelope.cleanup, {
+    attempted: false,
+    succeeded: false,
+    failureCode: null,
+  });
+  const serialized = serializedEnvelopes[0];
+  assert.doesNotMatch(serialized, /super_secret_password|test_password_123/);
+  assert.doesNotMatch(serialized, /postgresql:\/\//);
+  assert.doesNotMatch(serialized, /banking_test_00000000000000000000000000000007/);
+});
+
+test("M07-A2-EMIT-01: canonical success preserves the complete result and emits exactly one envelope", async () => {
+  const canonicalResult = {
+    success: true,
+    runId: "00000000000000000000000000000021",
+    databaseName: "banking_test_00000000000000000000000000000021",
+    containerId: "e".repeat(64),
+    completedSteps: ["1_VERIFY_LOCAL_IMAGE", "19_VALIDATE_COMPLETION"] as const,
+  };
+  const serializedEnvelopes: string[] = [];
+  const facade: ProcessFacade = { exitCode: 0 };
+
+  const result = await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: facade,
+      canonicalRunnerFn: async () => canonicalResult,
+      writeCanonicalResultFn: (protocolLine: string) => {
+        serializedEnvelopes.push(protocolLine);
+      },
+    },
+  );
+
+  assert.equal(result.handled, "CANONICAL");
+  assert.equal(result.success, true);
+  assert.equal(result.canonicalResult, canonicalResult);
+  assert.equal(facade.exitCode, 0);
+  assert.equal(serializedEnvelopes.length, 1);
+  const envelope = parseCanonicalResultLine(serializedEnvelopes[0]);
+  assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
+  assert.equal(envelope.version, 1);
+  assert.equal(envelope.outcome, "PASS");
+  assert.deepEqual(envelope.completedSteps, ["1_VERIFY_LOCAL_IMAGE", "19_VALIDATE_COMPLETION"]);
+  assert.equal(envelope.failure, null);
+  assert.deepEqual(envelope.cleanup, {
+    attempted: true,
+    succeeded: true,
+    failureCode: null,
+  });
+});
+
+test("M07-A2-EMIT-02: returned canonical failure forwards attestation and database diagnostics", async () => {
+  const serializedEnvelopes: string[] = [];
+  const facade: ProcessFacade = { exitCode: 0 };
+  const attestationDiagnostic = {
+    phase: "3_INSPECT_VALIDATE_CONTAINER" as const,
+    commandExitCode: 0,
+    commandTimedOut: false,
+    commandCancelled: false,
+    stdoutKind: "string",
+    stdoutByteLength: 128,
+    lineCount: 1,
+    crCount: 0,
+    lfCount: 1,
+    trailingNewline: "LF" as const,
+    stderrPresent: false,
+    validatorCalled: true,
+    validatorPassed: false,
+    failureCode: "SIZE_MISMATCH" as const,
+    targetRecordCount: 1,
+    targetRecordFingerprint: "a".repeat(64),
+    filesystemType: "tmpfs",
+    normalizedSizeBytes: null,
+    normalizedModeOctal: null,
+  };
+  const databaseDiagnostic = {
+    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER" as const,
+    operation: "CREATE_TARGET_DATABASE" as const,
+    failureCode: "DATABASE_QUERY_FAILURE" as const,
+  };
+
+  const result = await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: facade,
+      canonicalRunnerFn: async () => ({
+        success: false,
+        runId: "00000000000000000000000000000022",
+        databaseName: "banking_test_00000000000000000000000000000022",
+        completedSteps: ["1_VERIFY_LOCAL_IMAGE"],
+        attestationDiagnostic,
+        databaseDiagnostic,
+        error: new Error("internal failure is not part of the public envelope"),
+      }),
+      writeCanonicalResultFn: (protocolLine: string) => {
+        serializedEnvelopes.push(protocolLine);
+      },
+    },
+  );
+
+  const envelope = parseCanonicalResultLine(serializedEnvelopes[0]);
+  assert.equal(result.success, false);
+  assert.equal(facade.exitCode, 1);
+  assert.equal(serializedEnvelopes.length, 1);
+  assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
+  assert.equal(envelope.version, 1);
+  assert.equal(envelope.outcome, "FAIL");
+  assert.deepEqual(envelope.completedSteps, ["1_VERIFY_LOCAL_IMAGE"]);
+  assert.deepEqual(envelope.attestationDiagnostic, attestationDiagnostic);
+  assert.deepEqual(envelope.databaseDiagnostic, databaseDiagnostic);
+  assert.deepEqual(envelope.failure, {
+    kind: "PRIMARY",
+    code: "PRIMARY_ERROR",
+    phase: "3_INSPECT_VALIDATE_CONTAINER",
+    operation: "CREATE_TARGET_DATABASE",
+  });
+  assert.deepEqual(envelope.cleanup, {
+    attempted: false,
+    succeeded: false,
+    failureCode: null,
+  });
+});
+
+test("M07-A2-EMIT-03: canonical runner throw emits a safe no-result envelope without legacy fallback", async () => {
+  let legacyCalls = 0;
+  const serializedEnvelopes: string[] = [];
+  const facade: ProcessFacade = { exitCode: 0 };
+
+  const result = await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: facade,
+      canonicalRunnerFn: async () => {
+        throw new Error("raw-internal-error-marker");
+      },
+      legacyRunnerFn: async () => {
+        legacyCalls++;
+        return mockLegacySuccessResult;
+      },
+      writeCanonicalResultFn: (protocolLine: string) => {
+        serializedEnvelopes.push(protocolLine);
+      },
+    },
+  );
+
+  const envelope = parseCanonicalResultLine(serializedEnvelopes[0]);
+  assert.equal(result.handled, "CANONICAL");
+  assert.equal(result.success, false);
+  assert.equal(legacyCalls, 0);
+  assert.equal(facade.exitCode, 1);
+  assert.deepEqual(envelope.completedSteps, []);
+  assert.equal(envelope.attestationDiagnostic, null);
+  assert.equal(envelope.databaseDiagnostic, null);
+  assert.deepEqual(envelope.failure, {
+    kind: "PRIMARY",
+    code: "CANONICAL_SEQUENCE_THROWN",
+    phase: null,
+    operation: null,
+  });
+  assert.doesNotMatch(serializedEnvelopes[0], /raw-internal-error-marker/);
+});
+
+test("M07-A2-EMIT-04: cleanup failure is separate and cannot overwrite primary failure", async () => {
+  const serializedEnvelopes: string[] = [];
+  const facade: ProcessFacade = { exitCode: 0 };
+
+  await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: facade,
+      canonicalRunnerFn: async () => ({
+        success: false,
+        runId: "00000000000000000000000000000025",
+        databaseName: "banking_test_00000000000000000000000000000025",
+        containerId: "a".repeat(64),
+        completedSteps: ["1_VERIFY_LOCAL_IMAGE"],
+        error: new Error("synthetic primary failure"),
+        cleanupError: new Error("synthetic cleanup failure"),
+      }),
+      writeCanonicalResultFn: (protocolLine: string) => {
+        serializedEnvelopes.push(protocolLine);
+      },
+    },
+  );
+
+  const envelope = parseCanonicalResultLine(serializedEnvelopes[0]);
+  assert.deepEqual(envelope.failure, {
+    kind: "PRIMARY",
+    code: "PRIMARY_ERROR",
+    phase: null,
+    operation: null,
+  });
+  assert.deepEqual(envelope.cleanup, {
+    attempted: true,
+    succeeded: false,
+    failureCode: "CLEANUP_ERROR",
+  });
+  assert.doesNotMatch(serializedEnvelopes[0], /synthetic primary failure|synthetic cleanup failure/);
+});
+
+test("M07-A2-EMIT-05: catch/finally paths emit one canonical envelope without duplication", async () => {
+  const serializedEnvelopes: string[] = [];
+  const loggedErrors: string[] = [];
+  const facade: ProcessFacade = { exitCode: 0 };
+  let finallyCalls = 0;
+
+  const result = await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: facade,
+      canonicalRunnerFn: async () => {
+        try {
+          throw new Error("primary failure remains internal");
+        } finally {
+          finallyCalls += 1;
+        }
+      },
+      logErrorFn: (message: string) => loggedErrors.push(message),
+      writeCanonicalResultFn: (protocolLine: string) => {
+        serializedEnvelopes.push(protocolLine);
+      },
+    },
+  );
+
+  assert.equal(result.handled, "CANONICAL");
+  assert.equal(result.success, false);
+  assert.equal(finallyCalls, 1);
+  assert.equal(serializedEnvelopes.length, 1);
+  assert.deepEqual(loggedErrors, []);
+  const envelope = parseCanonicalResultLine(serializedEnvelopes[0]);
+  assert.equal(envelope.outcome, "FAIL");
+  assert.deepEqual(envelope.failure, {
+    kind: "PRIMARY",
+    code: "CANONICAL_SEQUENCE_THROWN",
+    phase: null,
+    operation: null,
+  });
+  assert.deepEqual(envelope.cleanup, {
+    attempted: false,
+    succeeded: false,
+    failureCode: null,
+  });
+});
+
+test("M07-A2-EMIT-06: async canonical writer is awaited and legacy output behavior remains separate", async () => {
+  const serializedEnvelopes: string[] = [];
+  let writerCompleted = false;
+  const canonicalFacade: ProcessFacade = { exitCode: 0 };
+
+  await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: canonicalFacade,
+      canonicalRunnerFn: async () => ({
+        success: true,
+        runId: "00000000000000000000000000000023",
+        databaseName: "banking_test_00000000000000000000000000000023",
+        completedSteps: [],
+      }),
+      writeCanonicalResultFn: async (protocolLine: string) => {
+        await Promise.resolve();
+        serializedEnvelopes.push(protocolLine);
+        writerCompleted = true;
+      },
+    },
+  );
+  assert.equal(writerCompleted, true);
+  assert.equal(serializedEnvelopes.length, 1);
+  parseCanonicalResultLine(serializedEnvelopes[0]);
+
+  const legacyLogs: string[] = [];
+  const legacyFacade: ProcessFacade = { exitCode: 0 };
+  await runCliMain(
+    ["node", "runner", "src/tests/registrationRelational.test.ts"],
+    {},
+    {
+      processFacade: legacyFacade,
+      legacyRunnerFn: async () => ({
+        success: false,
+        runId: "00000000000000000000000000000024",
+        databaseName: "banking_test_00000000000000000000000000000024",
+        lifecycleState: "FAILED",
+        error: new Error("synthetic legacy failure"),
+      }),
+      logErrorFn: (message: string) => legacyLogs.push(message),
+      writeCanonicalResultFn: () => {
+        throw new Error("legacy path must not use canonical writer");
+      },
+    },
+  );
+  assert.equal(legacyFacade.exitCode, 1);
+  assert.deepEqual(legacyLogs, ["synthetic legacy failure"]);
+});
+
+test("M07-A2-EMIT-07: writer rejection sets exit code once without retry or raw stderr", async () => {
+  const facade: ProcessFacade = { exitCode: 0 };
+  const loggedErrors: string[] = [];
+  let writerCalls = 0;
+
+  const result = await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: facade,
+      logErrorFn: (message: string) => loggedErrors.push(message),
+      canonicalRunnerFn: async () => ({
+        success: true,
+        runId: "00000000000000000000000000000027",
+        databaseName: "banking_test_00000000000000000000000000000027",
+        completedSteps: [],
+      }),
+      writeCanonicalResultFn: async () => {
+        writerCalls += 1;
+        await Promise.resolve();
+        throw new Error("raw-writer-secret-marker");
+      },
+    },
+  );
+
+  assert.equal(result.handled, "CANONICAL");
+  assert.equal(result.success, false);
+  assert.equal(result.error?.message, "Canonical result writer failed");
+  assert.equal(facade.exitCode, 1);
+  assert.equal(writerCalls, 1);
+  assert.deepEqual(loggedErrors, []);
+});
+
+test("M07-A2-EMIT-08: serialized canonical diagnostics exclude raw errors, SQL, params, stderr, IDs and secrets", async () => {
+  const serializedEnvelopes: string[] = [];
+  const facade: ProcessFacade = { exitCode: 0 };
+  const rawMarkers = [
+    "raw-error-marker",
+    "SELECT sensitive_value",
+    "param-secret-marker",
+    "stderr-secret-marker",
+    "container-id-marker",
+    "run-id-marker",
+    "secret-marker",
+  ];
+  const attestationDiagnostic = {
+    phase: "3_INSPECT_VALIDATE_CONTAINER" as const,
+    commandExitCode: 1,
+    commandTimedOut: false,
+    commandCancelled: false,
+    stdoutKind: "string",
+    stdoutByteLength: 256,
+    lineCount: 2,
+    crCount: 0,
+    lfCount: 2,
+    trailingNewline: "LF" as const,
+    stderrPresent: true,
+    validatorCalled: true,
+    validatorPassed: false,
+    failureCode: "STDOUT_INVALID" as const,
+    targetRecordCount: 0,
+    targetRecordFingerprint: null,
+    filesystemType: null,
+    normalizedSizeBytes: null,
+    normalizedModeOctal: null,
+  };
+
+  await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: facade,
+      canonicalRunnerFn: async () => ({
+        success: false,
+        runId: rawMarkers[5],
+        databaseName: rawMarkers[1],
+        containerId: rawMarkers[4],
+        completedSteps: [],
+        attestationDiagnostic,
+        error: new Error(`${rawMarkers[0]} ${rawMarkers[1]} ${rawMarkers[2]} ${rawMarkers[3]} ${rawMarkers[6]}`),
+      }),
+      writeCanonicalResultFn: (protocolLine: string) => {
+        serializedEnvelopes.push(protocolLine);
+      },
+    },
+  );
+
+  assert.equal(serializedEnvelopes.length, 1);
+  const serialized = serializedEnvelopes[0];
+  parseCanonicalResultLine(serialized);
+  for (const marker of rawMarkers) {
+    assert.equal(serialized.includes(marker), false, `Serialized diagnostic must not contain ${marker}`);
+  }
+  assert.doesNotMatch(serialized, /[\r\n]/);
+});
+
+test("M07-A2-EMIT-09: legacy path and CLI import remain side-effect-free and emit no canonical envelope", async () => {
+  const initialExitCode = process.exitCode;
+  const runnerModulePath = "../../scripts/run-disposable-postgres-test.js";
+  const runnerModule = await import(runnerModulePath);
+  assert.equal(process.exitCode, initialExitCode);
+
+  const facade: ProcessFacade = { exitCode: 0 };
+  const legacyLogs: string[] = [];
+  let writerCalls = 0;
+  const result = await runnerModule.runCliMain(
+    ["node", "runner", "src/tests/registrationRelational.test.ts"],
+    {},
+    {
+      processFacade: facade,
+      legacyRunnerFn: async () => ({
+        success: false,
+        runId: "00000000000000000000000000000028",
+        databaseName: "banking_test_00000000000000000000000000000028",
+        lifecycleState: "FAILED" as const,
+        error: new Error("synthetic legacy failure"),
+      }),
+      logErrorFn: (message: string) => legacyLogs.push(message),
+      writeCanonicalResultFn: () => {
+        writerCalls += 1;
+        throw new Error("legacy path must not use canonical writer");
+      },
+    },
+  );
+
+  assert.equal(result.handled, "LEGACY");
+  assert.equal(result.success, false);
+  assert.equal(facade.exitCode, 1);
+  assert.equal(writerCalls, 0);
+  assert.deepEqual(legacyLogs, ["synthetic legacy failure"]);
+  assert.doesNotMatch(legacyLogs.join("\n"), /M07_A2_RESULT_V1/);
 });
 
 // ============================================================================
@@ -3274,6 +3749,7 @@ test("M07-A2-TMPFS-16: Attestation failures are not logged with raw mountinfo", 
   const localImageId = "sha256:" + "c".repeat(64);
   const rawMarker = "mountinfo-sensitive-marker";
   const loggedErrors: string[] = [];
+  const serializedEnvelopes: string[] = [];
   const mockDocker: DockerAdapter = {
     async inspectImage() { return JSON.stringify([{ Id: localImageId, RepoTags: ["postgres:16"] }]); },
     async runContainer() { return launchId; },
@@ -3312,13 +3788,17 @@ test("M07-A2-TMPFS-16: Attestation failures are not logged with raw mountinfo", 
         runIdGenerator: () => fixedRunId,
       },
       logErrorFn: (message) => loggedErrors.push(message),
+      writeCanonicalResultFn: (serializedEnvelope) => {
+        serializedEnvelopes.push(serializedEnvelope);
+      },
     },
   );
 
   assert.equal(result.success, false);
-  assert.ok(loggedErrors.length > 0);
-  assert.doesNotMatch(loggedErrors.join("\n"), new RegExp(rawMarker));
-  assert.doesNotMatch(loggedErrors.join("\n"), /mountinfo-sensitive/);
+  assert.deepEqual(loggedErrors, []);
+  assert.equal(serializedEnvelopes.length, 1);
+  assert.doesNotMatch(serializedEnvelopes[0], new RegExp(rawMarker));
+  assert.doesNotMatch(serializedEnvelopes[0], /mountinfo-sensitive/);
 });
 
 test("M07-A2-TMPFS-03: Anonymous and named volumes rejected", () => {

@@ -260,3 +260,207 @@ graph/source không còn unsupported query shape trong disposable scope.
 Đây chỉ là static/local evidence: CodeGraph không chứng minh hành vi Docker,
 PostgreSQL, socket cancellation, migration hoặc cleanup runtime. M07-A2 runtime
 chưa được verified và vẫn cần Owner authorization riêng cho retry.
+
+## 13. M07-A2 STRUCTURED RESULT EMISSION REMEDIATION — CODEGRAPH RECONCILIATION
+
+> Ghi chú: mục 13 là snapshot CodeGraph của remediation trung gian trước
+> continuation output protocol. Mục 14 là kết quả hiện hành sau khi bổ sung
+> EMIT-06..09 và awaitable production entrypoint.
+
+### 13.1 Pre-change binding
+
+Trước remediation, CodeGraph đã được sync và chạy đúng query:
+
+```text
+runCliMain dispatchCliRun runCanonicalEvidenceSequence CanonicalSequenceExecutionResult CliDispatchResult structured result stdout writer return throw callers callees
+```
+
+Kết quả pre-change: `63 symbols across 3 files`. Các symbol và line position
+của snapshot trước sửa:
+
+- `CanonicalSequenceExecutionResult` —
+  `backend/src/database/disposableDatabaseGuard.ts:2175`.
+- `dispatchCliRun` — `.../disposableDatabaseGuard.ts:2633`.
+- `CliDispatchResult` — `.../disposableDatabaseGuard.ts:2626`.
+- `runCliMain` — `.../disposableDatabaseGuard.ts:2750`.
+- CLI entrypoint — `backend/scripts/run-disposable-postgres-test.ts:39-43`.
+
+Call path trước sửa:
+
+```text
+run-disposable-postgres-test.ts
+  → runCliMain
+    → dispatchCliRun
+      → runCanonicalEvidenceSequence
+        → CanonicalSequenceExecutionResult
+```
+
+Source trace cho thấy canonical dispatch chỉ giữ các field điều phối cơ bản
+và làm mất `completedSteps`, attestation/database diagnostic trước khi result
+đến `runCliMain`; entrypoint cũng không serialize return value.
+
+### 13.2 Remediation surface
+
+Source change chỉ nằm trong disposable result/CLI boundary:
+
+- `CanonicalRuntimeResultEnvelope` —
+  `backend/src/database/disposableDatabaseGuard.ts:2209`.
+- `createCanonicalRuntimeResultEnvelope` — `:2313`.
+- `serializeCanonicalRuntimeResult` — `:2334`.
+- `CliDispatchResult.canonicalResult` — `:2783`.
+- `CliDispatcherDependencies.writeCanonicalResultFn` — `:2777`.
+- `dispatchCliRun` canonical branches — `:2828-2841`.
+- `runCliMain` canonical writer boundary — `:2907-2925`.
+
+Mapper chỉ tạo envelope từ các field explicit đã allowlist. Internal `Error`
+và các identity/runtime payload không được đưa vào JSON. Writer là stdout
+channel và được `await`; legacy branch tiếp tục dùng log path đã sanitize.
+
+### 13.3 Post-change CodeGraph query
+
+Sau source change đã chạy:
+
+```text
+codegraph sync
+```
+
+Kết quả exact: `Already up to date`.
+
+Query cùng nội dung được chạy lại:
+
+```text
+runCliMain dispatchCliRun runCanonicalEvidenceSequence CanonicalSequenceExecutionResult CliDispatchResult structured result stdout writer return throw callers callees
+```
+
+Kết quả post-change: `63 symbols across 2 files`. Việc sync trả
+`Already up to date` phản ánh watcher/index đã nhận working-tree changes; nó
+không có nghĩa các thay đổi đã commit. Graph hậu thay đổi phản ánh working
+tree remediation, chưa phải tree của HEAD trước sửa.
+
+Call path hậu thay đổi:
+
+```text
+run-disposable-postgres-test.ts
+  → runCliMain
+    → dispatchCliRun
+      → runCanonicalEvidenceSequence
+        → canonicalResult
+          → createCanonicalRuntimeResultEnvelope
+            → serializeCanonicalRuntimeResult
+              → awaited stdout writer
+```
+
+CodeGraph/source reconciliation xác nhận `canonicalResult` không còn bị
+discard tại dispatch boundary trong disposable scope. Không có thay đổi tại
+`backend/src/database/pool.ts`; các caller tổng quát của method `query` nằm
+ngoài blast radius này.
+
+### 13.4 Evidence liên kết
+
+- `M07-A2-EMIT-01` kiểm tra dispatch giữ complete canonical result.
+- `M07-A2-EMIT-02` kiểm tra success envelope, schema, version và key set.
+- `M07-A2-EMIT-03` kiểm tra throw/no-result envelope và không fallback legacy.
+- `M07-A2-EMIT-04` kiểm tra async writer được await và legacy output tách
+  biệt.
+- `M07-A2-EMIT-05` kiểm tra primary failure và cleanup failure được tách trong
+  envelope.
+- Targeted suite sau remediation: `120/120 PASS`; không có test bị xóa,
+  rename hoặc skip.
+
+### 13.5 Giới hạn
+
+CodeGraph chỉ cung cấp static/local source evidence và caller/callee
+reconciliation. Nó không chứng minh Docker, PostgreSQL, migration, resource
+cleanup runtime, socket-level cancellation hoặc M07-A2 runtime PASS. Không
+được dùng report này để suy luận underlying runtime failure của invocation
+lịch sử.
+
+## 14. M07-A2 STRUCTURED RESULT EMISSION — POST-EMISSION RECONCILIATION
+
+### 14.1 Mục đích và trạng thái index
+
+Phần này ghi nhận CodeGraph sau continuation verification của output protocol;
+đây là static evidence cho working tree, không phải runtime evidence. Sau khi
+dọn các JavaScript/declaration artifact do backend build sinh ra, CodeGraph
+index local đã được làm mới; `.codegraph` không nằm trong Git index.
+
+- `codegraph sync` trả exact: `Already up to date`.
+- Graph hiện phản ánh ba source files liên quan trong allowlist: disposable
+  guard, canonical CLI script và targeted test seam.
+- Kết quả không được dùng để đánh dấu M07-A2 runtime, M01-07 hoặc UC-M01
+  hoàn thành.
+
+### 14.2 Query exact và result
+
+Query đã chạy đúng:
+
+```text
+runCliMain dispatchCliRun runCanonicalEvidenceSequence CanonicalSequenceExecutionResult CliDispatchResult structured result writer stdout callers callees
+```
+
+Kết quả exact: `Found 63 symbols across 3 files`.
+
+Các symbol và vị trí hiện hành được CodeGraph/source đối chiếu:
+
+| Symbol | File | Vị trí hiện hành |
+| --- | --- | ---: |
+| `CanonicalSequenceExecutionResult` | `backend/src/database/disposableDatabaseGuard.ts` | `2175` |
+| `CanonicalRuntimeResultEnvelope` | `backend/src/database/disposableDatabaseGuard.ts` | `2210` |
+| `createCanonicalRuntimeResultEnvelope` | `backend/src/database/disposableDatabaseGuard.ts` | `2314` |
+| `serializeCanonicalRuntimeResult` | `backend/src/database/disposableDatabaseGuard.ts` | `2335` |
+| `formatCanonicalRuntimeResultLine` | `backend/src/database/disposableDatabaseGuard.ts` | `2341` |
+| `CliDispatcherDependencies.writeCanonicalResultFn` | `backend/src/database/disposableDatabaseGuard.ts` | `2784` |
+| `CliDispatchResult` | `backend/src/database/disposableDatabaseGuard.ts` | `2787` |
+| `dispatchCliRun` | `backend/src/database/disposableDatabaseGuard.ts` | `2795` |
+| `runCliMain` | `backend/src/database/disposableDatabaseGuard.ts` | `2907`, writer `2930` |
+| production entrypoint | `backend/scripts/run-disposable-postgres-test.ts` | `45–49` |
+
+### 14.3 Post-change call graph và output path
+
+```text
+run-disposable-postgres-test.ts:45-49
+  → await runCliMain:2907
+    → dispatchCliRun:2795
+      → runCanonicalEvidenceSequence:2350
+        → CanonicalSequenceExecutionResult:2175
+          → formatCanonicalRuntimeResultLine:2341
+            → serializeCanonicalRuntimeResult:2335
+              → awaited stdout writer:2930
+```
+
+Reconciliation với source xác nhận:
+
+- `dispatchCliRun` giữ `canonicalResult` nguyên vẹn; không còn discard
+  `completedSteps`, attestation diagnostic hoặc database diagnostic.
+- `runCliMain` là production output sink; prefix `M07_A2_RESULT_V1 ` được tạo
+  đúng một lần cho canonical invocation.
+- Writer có contract đồng bộ/bất đồng bộ, được await; entrypoint cũng await
+  `runCliMain`. Không có `process.exit()` hoặc duplicate writer path.
+- Canonical throw được map thành `CANONICAL_SEQUENCE_THROWN`; writer rejection
+  không retry và không đưa raw error sang stderr.
+- Legacy route không emit canonical prefix và tiếp tục dùng sanitized stderr.
+- PG-pool remediation hai-argument, tmpfs, migration, checksum, ownership và
+  exact cleanup semantics không bị mở rộng hoặc thay đổi trong continuation.
+- `backend/src/database/pool.ts` không thay đổi; generic `query` callers không
+  được dùng làm blast radius.
+
+### 14.4 Test/evidence binding
+
+- Baseline: `115/115 PASS` tại committed HEAD trước continuation.
+- Final local targeted suite: `124/124 PASS`, delta `+9`; chín registration
+  `M07-A2-EMIT-01..09` xuất hiện đúng một lần.
+- EMIT matrix bao phủ success, returned failure diagnostics, throw/no-result,
+  cleanup precedence, duplicate prevention, awaited writer, writer rejection,
+  leakage và legacy/import safety.
+- Typecheck, build và `git diff --check` đều PASS.
+- Đây chỉ là unit/static/local evidence; chưa chạy Docker, PostgreSQL,
+  migration hoặc M07-A2 runtime retry.
+
+### 14.5 Giới hạn và bàn giao
+
+CodeGraph không chứng minh runtime behavior, PostgreSQL migration history,
+container cleanup, network/socket behavior hoặc socket-level cancellation.
+Underlying runtime failure lịch sử vẫn `UNKNOWN`; M07-A2 runtime vẫn
+`NOT AUTHORIZED`/`BLOCKED`, M01-07 và UC-M01 vẫn `INCOMPLETE`.
+
+**Kết luận:** `READY FOR M07-A2 STRUCTURED RESULT EMISSION OWNER REVIEW`.
