@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 TMPFS EVIDENCE CONTRACT COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
-- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 STRUCTURED INSTRUMENTATION VERIFIED — AWAITING CHECKPOINT COMMIT
+- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - M01-07: INCOMPLETE
 - UC-M01: INCOMPLETE
@@ -2418,3 +2418,673 @@ Kết luận: `READY FOR M07-A2 TMPFS EVIDENCE CONTRACT CHECKPOINT COMMIT`.
   đã verified.
 
 Kết luận: `M07-A2 TMPFS EVIDENCE CONTRACT RECORDED — RUNTIME RETRY REQUIRES SEPARATE OWNER AUTHORIZATION`.
+
+## 44. M07-A2 ONE-SHOT RUNTIME RETRY EXECUTION REVIEW PACKET
+
+### 44.1 Preflight và snapshot trước khi chạy
+
+- CWD: `C:\Projects\banking-system`; branch: `codex/staging-academic-completion`.
+- HEAD trước khi chạy: `87df363454d14b7e55dae5c9f9eb0e0410343be8`.
+- Git trước khi chạy: working tree, index và untracked area sạch.
+- Docker context: `desktop-linux`; endpoint là local named pipe đã được xác minh.
+- Daemon: Linux/amd64.
+- Local image: `postgres:16`; immutable image ID khớp image đã phê duyệt:
+  `sha256:c6b1bbedb6efcb2b380a85d1d550d10298f335bab55cfff237e2504edfcd747a`.
+- Docker/database override, database/admin URL, caller-supplied identity, phase
+  variable và harness secret environment presence đều `False`.
+- Không có leftover M07-A2 hoặc probe có label trước khi chạy.
+
+Fingerprint inventory trước chạy:
+
+| Resource set | Count | Fingerprint |
+| ------------ | ----- | ----------- |
+| Containers | 22 | `1fc285c54401a6f08c7ba3b5c09ff9b1661664842e66413ab050e09aba26e081` |
+| Volumes | 48 | `910fd05da4a8356227646562e8cbb03f84a3dab911e14c827ab0f64d538a3bc1` |
+| Dangling volumes | 37 | `e5e094c34a01c8de63d23aaad95b4ece0ade239de5e88e4d6518b5fd7e367df5` |
+| Networks | 7 | `86b70ed42790564c75a15e061b10d5bb5ab377031aa652a1ad95b6fe7ae8d178` |
+| Images | 56 | `5594748adce521a4d07903258e06bfe2d993a556f22bfe31ce6c116597786c03` |
+
+### 44.2 Runtime invocation và phase evidence
+
+- Outer invocation count: `1`.
+- Lệnh đã chạy đúng một lần tại `backend/`:
+  `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/disposableMigrationRuntime.test.ts`.
+- Runtime start UTC: `2026-09-04T18:22:49.4340075Z`.
+- Runtime end UTC: `2026-09-04T18:22:50.8290340Z`.
+- Duration: `1395 ms (~1.395 s)`.
+- Overall exit code: `1`.
+- Output runtime đã được capture và sanitize; không ghi raw password, database
+  URL, run ID, container ID, checksum payload hoặc raw mountinfo.
+
+Kết quả theo phase:
+
+1. **Step 1 — Verify local image: PASS ở preflight/runtime entry.** Image tag,
+   `--pull=never` contract và immutable image identity khớp.
+2. **Step 2 — Create ephemeral container: đã tạo được.** Docker event window
+   ghi nhận đúng một create, một network connect và một start. Container target
+   có name theo pattern `banking_test_container_<32-hex-run-id>`, label run-id
+   đúng shape, image đúng và loopback binding đúng contract.
+3. **Step 3 — Inspect/validate container và mount namespace: FAIL tại boundary
+   này.** `HostConfig.Tmpfs` canonical hợp lệ; `.Mounts=[]` là representation
+   được phép; `docker exec` với fixed argv đọc mountinfo kết thúc exit `0`. Lần
+   chạy ban đầu kết thúc với exit `1` trước khi có bằng chứng readiness và output
+   lỗi nội bộ đã được sanitize/không lưu, nên chưa thể kết luận predicate nào là
+   nguyên nhân trực tiếp. Recovery capture sau đó được ghi ở mục 45 và cho thấy
+   record thực tế khớp các token tmpfs/flag/size/mode canonical; không dùng nó để
+   đổi kết quả failed run thành PASS.
+4. **Step 4 — Wait readiness: NOT REACHED.** Không có readiness proof.
+5. **Step 5–14 — Database, migration, rerun, checksum mismatch/restore:
+   NOT REACHED.** Không có PostgreSQL query, migration hoặc runtime test phase
+   nào được chứng minh là đã chạy.
+6. **Step 15–19 — Cleanup/completion: NOT COMPLETE.** Không quan sát được event
+   remove container trong execution window; một canonical target container vẫn
+   tồn tại ở trạng thái running sau khi process kết thúc. Không thực hiện cleanup
+   thủ công vì failure rule cấm xóa resource ngoài cleanup đã được runner ủy quyền.
+
+Docker event window chỉ ghi nhận các loại/action sau, không in tên hoặc ID:
+
+| Event | Count |
+| ----- | ----- |
+| `container/create` | 1 |
+| `network/connect` | 1 |
+| `container/start` | 1 |
+| `container/exec_create: cat /proc/self/mountinfo` | 1 |
+| `container/exec_start: cat /proc/self/mountinfo` | 1 |
+| `container/exec_die` với exit `0` | 1 |
+
+### 44.3 Hậu kiểm tài nguyên chỉ-đọc
+
+- Canonical target còn tồn tại: `1`; probe có label còn lại: `0`.
+- Target còn lại khớp name pattern, image immutable, run-label shape,
+  `HostConfig.Tmpfs` canonical, `.Mounts=[]`, loopback contract, không bind,
+  không privileged. Đây là finding leftover, không phải cleanup PASS.
+- Volume inventory sau chạy: `48`, fingerprint
+  `910fd05da4a8356227646562e8cbb03f84a3dab911e14c827ab0f64d538a3bc1`, khớp
+  baseline; dangling: `37`, fingerprint khớp baseline. Không phát hiện volume mới.
+- Network inventory: `7`, fingerprint
+  `86b70ed42790564c75a15e061b10d5bb5ab377031aa652a1ad95b6fe7ae8d178`, khớp
+  baseline.
+- Image inventory: `56`, fingerprint
+  `5594748adce521a4d07903258e06bfe2d993a556f22bfe31ce6c116597786c03`, khớp
+  baseline; không pull image.
+- Container inventory: `23`, fingerprint
+  `650e25ed6f38e0501f9bcacfe0886f5959679b38bf65c6205ba52ed29c6dc39b`, không
+  khớp baseline vì canonical target chưa được runner loại bỏ.
+- Không có bằng chứng tài nguyên ngoài target bị xóa; không xóa volume riêng lẻ
+  hoặc prune.
+
+### 44.4 Git, kết luận và trạng thái chuyển giao
+
+- Sau runtime, trước cập nhật documentation: HEAD vẫn
+  `87df363454d14b7e55dae5c9f9eb0e0410343be8`; source/test/migration/config
+  không thay đổi.
+- Trong phiên này chỉ task document được phép cập nhật để ghi nhận kết quả;
+  không stage, commit, push hoặc amend.
+- M01-07: `INCOMPLETE`; UC-M01: `INCOMPLETE`.
+- M07-B, M07-C và M07-D: chưa bắt đầu.
+- M07-A2 runtime retry: không retry lần hai và không fallback legacy.
+- Không tick các acceptance criterion về PostgreSQL readiness, migration,
+  checksum/restore, database drop hoặc runtime cleanup.
+
+**Kết luận:** `BLOCKED — M07-A2 RUNTIME 3_INSPECT_VALIDATE_CONTAINER_MOUNT_NAMESPACE_ATTESTATION`.
+
+Nguyên nhân chính xác ở cấp phase: lần chạy ban đầu dừng tại boundary
+`3_INSPECT_VALIDATE_CONTAINER_MOUNT_NAMESPACE_ATTESTATION`; bằng chứng runtime
+không đủ để phân biệt lỗi inspect, validator hoặc chuyển tiếp readiness vì output
+nội bộ không được lưu. Recovery capture ở mục 45 không tái hiện lỗi predicate và
+chỉ phục vụ chẩn đoán. Cleanup runtime ban đầu không hoàn tất, nhưng leftover đã
+được xử lý theo Owner authorization riêng. Không được xem kết quả này là
+`STAGING VERIFIED`, production-ready hoặc M01-07/UC-M01 hoàn thành.
+
+## 45. M07-A2 EXACT LEFTOVER CONTAINER RECOVERY REPORT
+
+### 45.1 Preflight và ownership proof
+
+- Chế độ: `RECOVERY_AND_VERIFY — EXACT DISPOSABLE CONTAINER ONLY`.
+- Repository: `C:\Projects\banking-system`; branch:
+  `codex/staging-academic-completion`.
+- HEAD: `87df363454d14b7e55dae5c9f9eb0e0410343be8`.
+- Index sạch, untracked `0`; trước recovery chỉ task document đang modified.
+- Docker context/endpoint/image immutable vẫn khớp precondition của Owner; không
+  pull image và không có Docker/database override environment.
+- Candidate count: `1`; name khớp pattern
+  `banking_test_container_<32-hex-run-id>`; run ID trong name khớp exact label
+  `banking_test_run_id`; image khớp immutable `postgres:16` đã phê duyệt.
+- Candidate `CreatedAt` nằm trong cửa sổ invocation thất bại; full container ID
+  khớp create event và được giữ trong memory dưới dạng validated ID, không ghi ra
+  tài liệu.
+- `HostConfig.Tmpfs` canonical, `.Mounts=[]` hợp lệ, binds rỗng, loopback-only
+  port, không privileged, không CapAdd/CapDrop bổ sung và không có volume/bind
+  mount khác. Ownership proof: `PASS`.
+
+### 45.2 Một lần capture mount evidence trước cleanup
+
+- `docker exec <exact-full-container-id> cat /proc/self/mountinfo`: invocation
+  count `1`; exit code `0`.
+- Số record có mountpoint chính xác `/var/lib/postgresql/data`: `1`.
+- Filesystem-type token: `tmpfs`.
+- Mount source token: `tmpfs`.
+- Flags: `rw=present`, `ro=absent`, `nosuid=present`, `suid=absent`,
+  `noexec=present`, `exec=absent`.
+- Raw size token: `size=524288k`; normalized: `536870912` bytes (`512 MiB`).
+- Raw mode token: `mode=700`; normalized octal: `0700`.
+- SHA-256 fingerprint của exact target record:
+  `18d66dd10d4d659b26b18a853e05d3e67422e89c60233983ebeabbb3b0d694c9`.
+- Capture chỉ giữ dữ liệu trong memory, không ghi raw mountinfo ra file, không in
+  raw mountinfo và không kết nối PostgreSQL/database socket.
+- Trước capture, root cause của failed run được giữ ở trạng thái chưa kết luận;
+  chỉ sau khi phân tích các token trên mới ghi nhận mount record canonical. Việc
+  này không hồi tố biến failed runtime thành PASS.
+
+### 45.3 Exact cleanup và hậu kiểm
+
+- Cleanup invocation count: `1`.
+- Command contract: `docker rm -f -v <exact-full-container-id>`; dùng full
+  validated ID trong memory, không dùng name/prefix/wildcard.
+- Cleanup exit code: `0`.
+- Exact created container ID: không còn trong catalog; exact name không còn.
+- M07-A2 container pattern count: `0`; probe label count: `0`.
+- Docker event ghi nhận destroy của exact candidate: `1`.
+- Container inventory sau cleanup: `22`, fingerprint
+  `1fc285c54401a6f08c7ba3b5c09ff9b1661664842e66413ab050e09aba26e081`, khớp
+  baseline trước invocation.
+- Volume inventory: `48 total / 37 dangling`, fingerprint lần lượt
+  `910fd05da4a8356227646562e8cbb03f84a3dab911e14c827ab0f64d538a3bc1` và
+  `e5e094c34a01c8de63d23aaad95b4ece0ade239de5e88e4d6518b5fd7e367df5`, khớp
+  baseline; không có volume mới.
+- Network và image set khớp baseline; không có resource ngoài candidate bị xóa.
+
+### 45.4 Git và trạng thái bàn giao
+
+- HEAD không đổi: `87df363454d14b7e55dae5c9f9eb0e0410343be8`.
+- Không stage, commit, push, amend hoặc retry M07-A2 runtime.
+- Sau cập nhật documentation: chỉ task document này được modified; cached area
+  sạch, untracked `0`, `git diff --check`: `PASS`.
+- M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`.
+- M07-B, M07-C và M07-D chưa bắt đầu.
+
+**Kết luận recovery:** `M07-A2 LEFTOVER CONTAINER REMOVED — MOUNTINFO VALIDATOR DIAGNOSIS REQUIRED`.
+
+## 46. M07-A2 MOUNTINFO VALIDATOR REMEDIATION DIAGNOSTIC RESULT
+
+### 46.1 Phạm vi và preflight
+
+- Baseline repository: `C:\Projects\banking-system`.
+- Branch: `codex/staging-academic-completion`.
+- HEAD: `87df363454d14b7e55dae5c9f9eb0e0410343be8`.
+- Cached area sạch, untracked `0`; WIP trước phiên là task document đang
+  modified do runtime failure/recovery và được bảo toàn.
+- Chỉ sử dụng in-memory synthetic fixture; không tạo fixture file và không sửa
+  runner, runtime test, migration, config hoặc dependency.
+- Không chạy Docker CLI/daemon, PostgreSQL, database socket, migration hoặc
+  M07-A2 runtime retry trong phiên này.
+
+### 46.2 Fixture và kết quả tái hiện
+
+Fixture đã dùng có các đặc tính bắt buộc:
+
+- Nhiều mountinfo records, trong đó có đúng một target
+  `/var/lib/postgresql/data`.
+- Target filesystem `tmpfs`, source token `tmpfs`, flags `rw,nosuid,noexec`.
+- Kernel-generated options `nodev`, `relatime`, `inode64`.
+- Size token `size=524288k`, tương đương `536870912` bytes.
+- Mode token `mode=700`, tương đương octal `0700`.
+- Có trailing newline và được kiểm tra cả LF lẫn CRLF.
+
+Kết quả gọi trực tiếp `validateMountNamespaceAttestation` trên fixture:
+
+| Fixture variant | Result |
+| --------------- | ------ |
+| Nhiều record, LF | `PASS` |
+| Nhiều record, CRLF | `PASS` |
+
+Vì fixture tương đương evidence runtime đã quan sát nhưng không bị từ chối,
+không có rejection branch nào được tái hiện. Không sửa code/test theo suy đoán
+và không thay đổi size/mode parser hiện tại.
+
+### 46.3 Test evidence và quyết định dừng
+
+- Baseline targeted guard suite:
+  `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`.
+- Kết quả: `97/97 PASS`, `0 fail`, `0 cancelled`, `0 skipped`.
+- Không chạy lại typecheck/build hoặc runtime quality gate sau chẩn đoán vì
+  không có source/test implementation nào được sửa.
+- Không có test mới, migration, dependency hoặc config thay đổi.
+- Exact failed run trước đó vẫn giữ lịch sử tại mục 44; recovery exact container
+  đã hoàn tất tại mục 45. Fixture hiện tại không đủ bằng chứng để gán root cause
+  cho symbol/branch cụ thể.
+
+### 46.4 Metadata và handoff
+
+- M07-A2 mountinfo remediation: `BLOCKED — FAILURE NOT REPRODUCED`.
+- M07-A2 runtime: vẫn `BLOCKED`; không được retry trong phiên này.
+- M01-07 và UC-M01: `INCOMPLETE`.
+- M07-B, M07-C và M07-D: chưa bắt đầu.
+- Không stage, commit, push hoặc amend; chỉ task document được cập nhật để ghi
+  nhận chẩn đoán.
+
+**Kết luận:** `BLOCKED — M07-A2 MOUNTINFO FAILURE NOT REPRODUCED`.
+
+## 47. M07-A2 LIVE PRODUCTION-VALIDATOR BOUNDARY PROBE REPORT
+
+### 47.1 Phạm vi và preflight
+
+- Chế độ: `EXECUTE_AND_DIAGNOSE — CONTAINER-ONLY PRODUCTION VALIDATOR PROBE`.
+- Repository: `C:\Projects\banking-system`; branch:
+  `codex/staging-academic-completion`.
+- HEAD: `87df363454d14b7e55dae5c9f9eb0e0410343be8`.
+- Trước probe, index sạch, untracked `0`, và chỉ task document này đang
+  modified. Guard/test SHA-256 giữ nguyên lần lượt:
+  `588252550a317daeab8caa1b049bac2f813240bf1ddfff38c41b7adc6d8a1500` và
+  `f8eec01ce19bf225dc9d8cef9aaeff2466680dac38b892b56c3c07743ed0b92f`.
+- Docker context: `desktop-linux`; endpoint:
+  `npipe:////./pipe/dockerDesktopLinuxEngine`; daemon: `linux/amd64`.
+- Docker/database override và secret-bearing environment presence: `false`.
+- Image local `postgres:16` có immutable ID đã phê duyệt; không pull image.
+- Không có leftover container/probe M07-A2 trước khi chạy.
+- Helper tạm ngoài repository import trực tiếp production symbols từ
+  `disposableDatabaseGuard.ts`; không sửa hoặc sao chép production validator để
+  quyết định PASS/FAIL. Helper đã được xóa sau probe.
+
+### 47.2 Exact live probe và event evidence
+
+- Outer helper invocation: `1`; không retry.
+- Semantics: local `postgres:16`, `--pull=never`, không port, không database
+  environment, không bind/volume, canonical tmpfs
+  `/var/lib/postgresql/data:rw,noexec,nosuid,size=512m,mode=0700`, entrypoint
+  `/bin/sh`, command `-c "sleep 120"`.
+- PostgreSQL entrypoint/server không được khởi động; không kết nối database.
+- Bounded Docker events của probe: `create=1`, `start=1`,
+  `exec_create=1`, `exec_start=1`, `exec_die=1`, `kill=1`, `die=1`,
+  `destroy=1`. Lệnh exec mountinfo kết thúc với exit code `0`; exit `137` của
+  container là hậu quả của exact forced cleanup.
+- Probe/container ID, raw inspect JSON và raw mountinfo không được ghi vào
+  tài liệu.
+
+### 47.3 Boundary result và giới hạn bằng chứng
+
+- `validateDockerInspectOutput`: production contract yêu cầu binding
+  `5432/tcp`, trong khi probe được Owner yêu cầu không publish port. Vì vậy
+  nhánh từ chối `missing port 5432/tcp binding` là kết quả deterministic của
+  inspect boundary; đây không phải bằng chứng tmpfs hoặc mountinfo bị hỏng.
+- `validateMountNamespaceAttestation`: helper đã gọi production validator trực
+  tiếp sau đúng một `docker exec` và không tự quyết định bằng parser riêng.
+  Tuy nhiên output JSON của helper không được giữ lại bởi execution wrapper sau
+  khi bước thu hồi helper bị shell policy chặn; vì vậy không được tuyên bố
+  live mountinfo validator `PASS` hoặc `FAIL` từ phiên này.
+- Chuỗi stdout của `docker exec` được chuyển qua `executeCommandWithOutput` và
+  truyền nguyên trạng vào production validator theo boundary của canonical
+  adapter. Runtime type, byte length, BOM/NUL/CR/LF counts và target-record
+  fingerprint không thể báo cáo vì structured helper output không được lưu;
+  raw stdout không bị ghi ra file hoặc log.
+- Không gọi production orchestration runner thứ hai, không tạo container thứ
+  hai và không chạy parser thay thế để kết luận.
+
+### 47.4 Cleanup và postcondition
+
+- Helper đã đi qua `finally` với cleanup exact container ID; event `destroy=1`
+  và hậu kiểm không còn probe/container M07-A2.
+- Container inventory: `22`, fingerprint
+  `5bb4b8e3d4156cea89f46e4cd4857a349ef198662a1b5b1d3081923d1d5f6da1`.
+- Volume inventory: `48`; dangling: `37`; fingerprint lần lượt
+  `e34864a892be18f2177c7ffd082691e896d2c9010f60277e7cf1759b098b50d4` và
+  `a99ce38de9d854005f415a244bf2eb90caf7b2aae8164eeea4f129c4b8417f7d`.
+- Network inventory: `7`, fingerprint
+  `89adfc4ea507919b3f67fe395a47438aaef37939fc94ccf7a49ddb09ad2d4124`.
+- Image inventory: `56`, fingerprint
+  `48919cc50505d8711175967f541a89f726c2d0c9510bd4d87f66744cc2f084e6`.
+  Các fingerprint hậu kiểm khớp baseline của probe; không có resource ngoài
+  probe bị xóa.
+- Temporary helper: không còn tồn tại. Repository không phát sinh file mới.
+
+### 47.5 Git và trạng thái M07-A2
+
+- HEAD không đổi; cached area rỗng; chỉ task document được cập nhật; không
+  stage, commit, push, amend hoặc retry M07-A2 runtime.
+- Không chạy test/build, PostgreSQL, migration, database socket hoặc runtime
+  command. Probe chỉ chạy shell sleep trong container disposable.
+- M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`.
+- M07-B, M07-C và M07-D chưa bắt đầu.
+
+**Kết luận cũ (SUPERSEDED):** `SUPERSEDED — INSPECT PROBE CONTRACT MISMATCH`.
+
+Kết luận cũ chỉ phản ánh probe trước cố ý thiếu binding `5432/tcp`; đó không
+phải là tmpfs failure và không phải bằng chứng
+`validateMountNamespaceAttestation` thất bại. Không còn sử dụng claim
+`LIVE PRODUCTION MOUNTINFO VALIDATOR FAILURE REPRODUCED` cho probe trước.
+
+## 48. M07-A2 CONTRACT-FAITHFUL LIVE VALIDATOR PROBE REPORT
+
+### 48.1 Preflight và source-contract reconciliation
+
+- Chế độ: `EXECUTE_AND_DIAGNOSE — CORRECTED CONTAINER-ONLY VALIDATOR PROBE`.
+- Repository: `C:\Projects\banking-system`; branch:
+  `codex/staging-academic-completion`; HEAD:
+  `87df363454d14b7e55dae5c9f9eb0e0410343be8`.
+- Cached area sạch, untracked `0`, chỉ task document đang modified.
+- Guard/test SHA-256 giữ nguyên:
+  `588252550a317daeab8caa1b049bac2f813240bf1ddfff38c41b7adc6d8a1500` và
+  `f8eec01ce19bf225dc9d8cef9aaeff2466680dac38b892b56c3c07743ed0b92f`.
+- Docker context: `desktop-linux`; endpoint:
+  `npipe:////./pipe/dockerDesktopLinuxEngine`; daemon: `linux/amd64`.
+- Image local `postgres:16` có immutable ID đã phê duyệt; không pull image.
+- Docker/database override, caller-supplied run/database/container identity và
+  secret-bearing environment presence: `false`; không có leftover probe.
+- Source reconciliation xác nhận `validateDockerInspectOutput` yêu cầu name,
+  `banking_test_run_id`, image identity, binding `127.0.0.1` cho `5432/tcp`,
+  isolation và canonical tmpfs. Probe đã tái tạo đủ các field đó.
+- Source reconciliation xác nhận canonical adapter dùng
+  `executeCommandWithOutput` và chuyển `stdout` mountinfo nguyên trạng tới
+  `validateMountNamespaceAttestation`; helper gọi đúng production functions,
+  không dùng parser riêng để quyết định PASS/FAIL.
+
+### 48.2 Exact probe và explicit validator envelope
+
+- Sinh run ID ngẫu nhiên 32 ký tự hex trong memory; name/ID chỉ được báo cáo
+  dưới dạng redacted.
+- Exact launch contract: local `postgres:16`, `--pull=never`, name
+  `banking_test_container_<run-id>`, label duy nhất
+  `banking_test_run_id=<run-id>`, tmpfs
+  `/var/lib/postgresql/data:rw,noexec,nosuid,size=512m,mode=0700`, port
+  `127.0.0.1::5432`, không bind/volume, không privileged/capability bổ sung,
+  entrypoint `/bin/sh`, command `-c "sleep 120"`.
+- Probe invocation count: `1`; image inspect: `1`; container inspect: `1`;
+  `docker exec ... cat /proc/self/mountinfo`: `1`; cleanup: `1`.
+- Inspect state: ID binding, name binding, name pattern, run-label binding,
+  image binding, running/status, shell entrypoint, sleep arguments,
+  loopback port, no additional port, no binds, no privileged và no added
+  capabilities đều `PASS`. `.Mounts=[]` là representation Docker Desktop được
+  chấp nhận cùng với `HostConfig.Tmpfs` canonical.
+- Explicit inspect envelope:
+  `called=true`, `passed=true`, `errorCode=null`, `returnKind=object`.
+- Explicit mount envelope:
+  `called=true`, `passed=true`, `errorCode=null`, `returnKind=object`.
+- Return `object` chỉ được ghi nhận sau khi validator không throw; không dùng
+  `JSON.stringify(returnValue)` để quyết định PASS/FAIL.
+
+### 48.3 Sanitized stdout và mountinfo diagnostics
+
+- Command-result shape của `docker exec`: runtime type `object`; keys
+  `exitCode`, `stderr`, `stdout`; exit code type `number`; stdout/stderr type
+  `string`; stdout `3746` bytes UTF-8; stderr `0` bytes.
+- Mountinfo stdout: runtime type `string`; UTF-8 `3746` bytes; BOM `false`;
+  NUL `0`; CR `0`; LF `25`; trailing LF `true`; trailing CRLF/CR `false`.
+- Target record count: `1` cho `/var/lib/postgresql/data`.
+- Filesystem token: `tmpfs`; source token: `tmpfs`.
+- Required flags: `rw=present`, `nosuid=present`, `noexec=present`; đối nghịch
+  `ro`, `suid`, `exec` đều `absent`.
+- Raw size token: `size=524288k`; normalized `536870912` bytes (`512 MiB`).
+- Raw mode token: `mode=700`; normalized octal `0700`.
+- SHA-256 fingerprint của target record: `b1ab450e4587f46a523e938e89478a5e438023730b14d72be74d37bdb28f08d4`.
+- Không ghi raw inspect JSON, raw mountinfo, full container ID hoặc run ID.
+
+### 48.4 Exact cleanup và hậu kiểm tài nguyên
+
+- Cleanup gọi đúng một lần với exact launched container ID qua
+  `docker rm -f -v <exact-launched-container-id>`; exit code `0`.
+- Probe container count sau cleanup: `0`; M07-A2/probe leftover: `0`.
+- Container inventory: `22`, fingerprint
+  `5bb4b8e3d4156cea89f46e4cd4857a349ef198662a1b5b1d3081923d1d5f6da1`, khớp
+  preflight.
+- Volume inventory: `48`, dangling `37`; fingerprint lần lượt
+  `e34864a892be18f2177c7ffd082691e896d2c9010f60277e7cf1759b098b50d4` và
+  `a99ce38de9d854005f415a244bf2eb90caf7b2aae8164eeea4f129c4b8417f7d`, khớp
+  baseline.
+- Network inventory: `7`, fingerprint
+  `89adfc4ea507919b3f67fe395a47438aaef37939fc94ccf7a49ddb09ad2d4124`, khớp
+  baseline.
+- Image inventory: `56`, fingerprint
+  `48919cc50505d8711175967f541a89f726c2d0c9510bd4d87f66744cc2f084e6`, khớp
+  baseline; không pull image.
+- Temporary helper đã được xóa; không phát sinh file ngoài task document.
+
+### 48.5 Git, giới hạn và kết luận
+
+- Sau probe, HEAD vẫn `87df363454d14b7e55dae5c9f9eb0e0410343be8`; chỉ task
+  document được cập nhật; cached area sạch; không stage, commit, push, amend.
+- Không chạy PostgreSQL, database socket, migration, M07-A2 runtime,
+  test hoặc build. Container chỉ chạy shell sleep.
+- Probe chứng minh live production inspect validator và live production
+  mountinfo validator cùng PASS trên contract-faithful container. Đây chưa phải
+  bằng chứng PostgreSQL runtime, migration, readiness hoặc M07-A2 hoàn tất.
+- M07-A2 runtime vẫn `NOT AUTHORIZED`; M01-07 và UC-M01 vẫn `INCOMPLETE`;
+  M07-B/C/D chưa bắt đầu.
+
+**Kết luận cũ (SUPERSEDED):** `SUPERSEDED — ORCHESTRATION ROOT CAUSE NOT PROVEN`.
+
+Việc hai validator live PASS không đủ để khẳng định plumbing là root cause khi
+chưa có failing orchestration regression. Không dùng câu kết luận cũ làm bằng
+chứng root-cause hoặc cấp quyền retry M07-A2 runtime.
+
+## 49. M07-A2 ATTESTATION ORCHESTRATION DIAGNOSIS REVIEW PACKET
+
+### 49.1 Trace source và boundary contract
+
+- `runCanonicalEvidenceSequence` tạo `childAbortController` mới cho mỗi lần
+  chạy, gọi `docker.inspectContainer` bằng exact launched ID, chạy
+  `validateDockerInspectOutput`, sau đó gọi
+  `docker.attestMountNamespace(launchedContainerId, signal, commandTimeoutMs)`
+  và truyền `mountInfo` dạng `string` nguyên trạng vào
+  `validateMountNamespaceAttestation` trước readiness, database hoặc migration.
+- `realDockerAdapter.attestMountNamespace` dùng
+  `executeCommandWithOutput("docker", buildDockerExecMountinfoArgs(...), ...)`;
+  chỉ khi exit code khác `0` mới throw, còn exit code `0` trả `result.stdout`.
+  Không có bước consume, truncate, redact hoặc JSON-encode stdout trước
+  validator.
+- `executeCommandWithOutput` thu thập stdout/stderr riêng qua các chunk, resolve
+  tại `close` với `exitCode`, `stdout`, `stderr`; cleanup clear timer và tháo
+  abort listener. Regression test xác nhận exit code và stdout không bị mất sau
+  late cancellation.
+- Canonical sequence không dùng readiness để xác minh mount; attestation nằm
+  trước `4_WAIT_READINESS` và mọi database action. Cleanup chạy trong `finally`;
+  `finalError = mainError ?? cleanupError` bảo toàn primary error khi cleanup
+  cũng thất bại.
+- Không có failing regression chứng minh lỗi ở normalization, validator hoặc
+  orchestration. Không sửa semantic production validator và không thêm
+  instrumentation production theo suy đoán.
+
+### 49.2 Orchestration regression fixture và test coverage
+
+- Test mới `M07-A2-ORCH-01` chạy `runCanonicalEvidenceSequence` bằng fake
+  Docker adapter/pool, với inspect hợp lệ, `.Mounts=[]`,
+  `HostConfig.Tmpfs` canonical và command-result shape `exitCode=0`, stdout
+  mountinfo nhiều record, stderr tách riêng. Các biến thể gồm LF, CRLF,
+  concatenated/chunked stdout và stderr không rỗng khi exit code vẫn `0`.
+- Fixture chứa đúng target semantic `tmpfs/tmpfs`, `rw,nosuid,noexec`,
+  `size=524288k`, `mode=700`, payload live-sized; attestation validator trả
+  `object`, readiness xảy ra sau attestation, database/pool sau readiness và
+  cleanup exact launch ID đúng một lần.
+- Test mới `M07-A2-ORCH-02` xác nhận khi attestation PASS nhưng later phase
+  thất bại, primary error của later phase được giữ nguyên và cleanup không ghi
+  đè lỗi chính.
+- Test mới `M07-A2-ORCH-03` xác nhận command facade giữ `exitCode=0` và stdout
+  sau late cancellation; không chạy Docker hoặc database.
+- Test cũ không bị xóa, rename hoặc skip. Không thêm dependency.
+
+### 49.3 Quality gates và kết quả
+
+- `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`:
+  `100 tests`, `100 PASS`, `0 FAIL`, `0 SKIPPED`, `0 CANCELLED`; baseline `97`,
+  delta `+3` test orchestration.
+- `npm run typecheck`: `PASS`.
+- `npm run build`: `PASS`.
+- `git diff --check`: `PASS`.
+- Không chạy Docker CLI/daemon, PostgreSQL, database socket, migration hoặc
+  M07-A2 runtime. Chỉ chạy unit/test-double suite và command-wrapper test không
+  kết nối database.
+
+### 49.4 Documentation status và handoff
+
+- Invalid no-port probe và kết luận cũ đã được đánh dấu `SUPERSEDED`.
+- Corrected contract-faithful live probe trước đó vẫn được giữ là bằng chứng
+  độc lập: cả inspect validator và mountinfo validator PASS; original runtime
+  failure chưa được tái hiện.
+- Container, volume, network và image inventory của corrected probe đã trở về
+  baseline; không còn leftover.
+- M07-A2 runtime vẫn `BLOCKED` và `NOT AUTHORIZED`; M01-07 và UC-M01 vẫn
+  `INCOMPLETE`; M07-B, M07-C và M07-D chưa bắt đầu.
+- Chỉ test file và task document nằm trong allowlist được cập nhật; production
+  guard source, runner CLI, runtime test, migration, config và dependency không
+  đổi. Không stage, commit hoặc push.
+
+**Kết luận:** `READY FOR M07-A2 ORCHESTRATION REMEDIATION OWNER REVIEW`.
+
+Kết luận này chỉ xác nhận packet chẩn đoán và regression coverage sẵn sàng cho
+Owner review; không khẳng định root cause, không đánh dấu M07-A2 runtime PASS
+và không cấp quyền retry.
+
+## 50. M07-A2 STRUCTURED ATTESTATION INSTRUMENTATION REVIEW PACKET
+
+### 50.1 Phạm vi và nguyên tắc giữ nguyên
+
+- Chế độ: `IMPLEMENT_AND_VERIFY — STRUCTURED DIAGNOSTIC INSTRUMENTATION — NO DATABASE`.
+- Baseline được bảo toàn: branch `codex/staging-academic-completion`, HEAD
+  `87df363454d14b7e55dae5c9f9eb0e0410343be8`; WIP và toàn bộ evidence trước đó
+  không bị reset hoặc ghi đè.
+- Chỉ ba file trong allowlist được modified:
+  `backend/src/database/disposableDatabaseGuard.ts`,
+  `backend/src/tests/disposableDatabaseGuard.test.ts` và task document này.
+- Không sửa runner CLI riêng, runtime test, migration, config, dependency hoặc
+  hạ tầng. Không chạy Docker, PostgreSQL, database socket, migration hay
+  M07-A2 runtime retry.
+- Corrected live probe trước đó vẫn giữ nguyên bằng chứng: inspect validator và
+  mount validator đều PASS; runtime failure cũ chưa được tái hiện. Vì vậy
+  instrumentation này không được ghi nhận như một root-cause fix.
+
+### 50.2 Structured diagnostic contract
+
+- `runCanonicalEvidenceSequence` hiện trả `attestationDiagnostic` khi mount
+  attestation PASS hoặc FAIL. Diagnostic chỉ có đúng các key allowlist:
+  `phase`, `commandExitCode`, `commandTimedOut`, `commandCancelled`,
+  `stdoutKind`, `stdoutByteLength`, `lineCount`, `crCount`, `lfCount`,
+  `trailingNewline`, `stderrPresent`, `validatorCalled`, `validatorPassed`,
+  `failureCode`, `targetRecordCount`, `targetRecordFingerprint`,
+  `filesystemType`, `normalizedSizeBytes`, `normalizedModeOctal`.
+- Failure taxonomy là closed union: `COMMAND_NONZERO`, `COMMAND_TIMEOUT`,
+  `COMMAND_CANCELLED`, `STDOUT_INVALID`, `TARGET_RECORD_COUNT`,
+  `FILESYSTEM_MISMATCH`, `FLAGS_MISMATCH`, `SIZE_MISMATCH`,
+  `MODE_MISMATCH`, `VALIDATOR_INTERNAL` và `NONE` cho PASS.
+- Command result được kiểm tra hình dạng trước khi dùng; `stdout` được chuyển
+  nguyên trạng vào production validator nhưng không được đưa vào diagnostic.
+  `stderr` chỉ còn cờ có/không. Validator chỉ được coi là PASS khi return
+  `void`/`undefined` hoặc object mà không throw; không dùng truthiness hay
+  serialized return value để quyết định.
+- Command nonzero/timeout/cancel đều giữ `validatorCalled=false`. Validator
+  failure được phân loại độc lập sau khi command exit thành công. Timeout và
+  cancellation được gắn tại lần gọi hiện tại, không kế thừa state từ phase
+  trước.
+- Khi có đúng một target record, fingerprint là SHA-256 lowercase 64 hex trên
+  record đã chuẩn hóa tại ranh giới parser; khi thiếu/trùng target, fingerprint
+  là `null`. Size và mode chỉ xuất hiện dưới dạng giá trị đã chuẩn hóa.
+- Không diagnostic nào chứa raw stdout/mountinfo, raw stderr, inspect JSON,
+  full container ID, run ID, database name, URL, password, token hoặc exception
+  message từ command bên ngoài. Cleanup error không ghi đè primary attestation
+  hoặc later-phase error.
+
+### 50.3 Implementation trace
+
+- `DockerAdapter.attestMountNamespaceWithResult` là seam tùy chọn để giữ
+  `exitCode`, `stdout` và `stderr` cho canonical orchestration; adapter cũ vẫn
+  tương thích bằng fallback string-only với exit code `0`.
+- `realDockerAdapter` dùng cùng `executeCommandWithOutput` và chuyển command
+  lifecycle timeout/cancel thành failure code cấu trúc, không đưa message ngoài
+  vào diagnostic.
+- `runCanonicalEvidenceSequence` chuẩn hóa command result, tạo diagnostic,
+  gọi `validateMountNamespaceAttestation` đúng một lần sau exit code `0`, rồi
+  chỉ ghi readiness/database phase sau khi attestation PASS. `finally` vẫn gọi
+  cleanup exact container; `mainError ?? cleanupError` giữ primary error.
+- Không thay đổi canonical `HostConfig.Tmpfs`, mount/bind/volume rejection,
+  exact launched-ID binding, attestation ordering, timeout/cancellation contract
+  hoặc cleanup `docker rm -f -v`.
+
+### 50.4 Regression test evidence
+
+- Giữ nguyên toàn bộ test cũ và ba test orchestration
+  `M07-A2-ORCH-01..03`; packet orchestration trước đó vẫn ghi nhận
+  `100/100 PASS`.
+- Bổ sung các test `M07-A2-INSTR-01..11` để bao phủ PASS LF/CRLF, command
+  nonzero, timeout, cancellation, invalid stdout, thiếu/trùng target,
+  filesystem/flags/size/mode mismatch, validator internal error, cleanup
+  attribution, diagnostic key allowlist, redaction và fingerprint ổn định.
+- Targeted suite mới nhất:
+  `111 tests`, `111 PASS`, `0 FAIL`, `0 SKIPPED`, `0 CANCELLED`;
+  delta so với baseline instrumentation `100` là `+11`. Không xóa, rename
+  hoặc skip test cũ.
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS.
+- Các test dùng test doubles; không gọi Docker hoặc database thật.
+
+### 50.5 Trạng thái và handoff
+
+- Structured instrumentation đã được chuẩn bị để phân loại chính xác lần
+  runtime sau; chưa có bằng chứng root cause cũ đã được sửa.
+- M07-A2 runtime retry vẫn `NOT AUTHORIZED` và M07-A2 vẫn `BLOCKED` chờ Owner
+  review/cấp quyền riêng. M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B, M07-C và
+  M07-D chưa bắt đầu.
+- Không stage, commit hoặc push trong phiên này.
+
+**Kết luận:** `READY FOR M07-A2 STRUCTURED INSTRUMENTATION OWNER REVIEW`.
+
+## 51. OWNER APPROVAL — M07-A2 STRUCTURED ATTESTATION INSTRUMENTATION ACCEPTED
+
+- Approval date: `2026-09-05`.
+- Baseline HEAD: `87df363454d14b7e55dae5c9f9eb0e0410343be8` trên branch
+  `codex/staging-academic-completion`.
+- Approval boundary chỉ áp dụng cho structured diagnostic allowlist, closed
+  failure-code taxonomy, command/timeout/cancellation/validator attribution,
+  privacy redaction và regression coverage ở mức unit/test-double.
+- Không thay đổi tmpfs acceptance contract, phase ordering hoặc cleanup
+  behavior. Không có claim rằng runtime failure cũ đã được fixed/resolved;
+  root cause runtime vẫn `NOT PROVEN`.
+
+### 51.1 Exact instrumentation test mapping
+
+| Test ID | Trường hợp được chứng minh |
+| --- | --- |
+| `M07-A2-INSTR-01` | PASS với LF; kiểm tra toàn bộ diagnostic key allowlist và readiness đúng một lần. |
+| `M07-A2-INSTR-02` | PASS với CRLF; kiểm tra CR/LF count và trailing-newline classification. |
+| `M07-A2-INSTR-03` | Command nonzero; validator không được gọi, stderr/raw marker/full ID/run ID không đi vào serialized diagnostic. |
+| `M07-A2-INSTR-04` | Timeout và cancellation có failure code riêng, đúng boolean attribution và không gọi validator. |
+| `M07-A2-INSTR-05` | Stdout sai kiểu và command-result shape thiếu field bị từ chối với `STDOUT_INVALID`. |
+| `M07-A2-INSTR-06` | Target record thiếu/trùng được phân loại `TARGET_RECORD_COUNT`; duplicate không tạo fingerprint. |
+| `M07-A2-INSTR-07` | Filesystem mismatch và flags mismatch được phân loại riêng, chỉ giữ semantic field an toàn. |
+| `M07-A2-INSTR-08` | Size mismatch và mode mismatch; giá trị normalized được giữ, raw mount record không được serialize. |
+| `M07-A2-INSTR-09` | Validator internal error; exception text không đi vào diagnostic. |
+| `M07-A2-INSTR-10` | Cleanup failure không ghi đè later-phase primary error; PASS attestation vẫn giữ `failureCode=NONE`. |
+| `M07-A2-INSTR-11` | Target fingerprint deterministic, đúng 64 lowercase hex; không lộ destination, mount flags hoặc target record. |
+
+### 51.2 Accepted evidence và kết quả gate
+
+- Targeted suite: `111/111 PASS`, `0 FAIL`, `0 SKIPPED`, `0 CANCELLED`.
+  Delta: `+11` so với baseline `100`. Không xóa, rename hoặc skip test cũ;
+  các test `M07-A2-ORCH-01..03` vẫn được giữ.
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS.
+- `git diff --check`: PASS.
+- Structured diagnostic chỉ gồm các field:
+  `phase`, `commandExitCode`, `commandTimedOut`, `commandCancelled`,
+  `stdoutKind`, `stdoutByteLength`, `lineCount`, `crCount`, `lfCount`,
+  `trailingNewline`, `stderrPresent`, `validatorCalled`, `validatorPassed`,
+  `failureCode`, `targetRecordCount`, `targetRecordFingerprint`,
+  `filesystemType`, `normalizedSizeBytes`, `normalizedModeOctal`.
+- Closed failure codes: `COMMAND_NONZERO`, `COMMAND_TIMEOUT`,
+  `COMMAND_CANCELLED`, `STDOUT_INVALID`, `TARGET_RECORD_COUNT`,
+  `FILESYSTEM_MISMATCH`, `FLAGS_MISMATCH`, `SIZE_MISMATCH`,
+  `MODE_MISMATCH`, `VALIDATOR_INTERNAL`, `NONE`.
+- Code/test SHA-256 được freeze trước documentation update và không thay đổi
+  trong bước này: guard `ae7ad09185b5a2c7ef6108174c09d6b8cbcd82b018bf5d357d3621a2b87a3200`,
+  test `9669ba782556806c469b2dbc444fefcf97508ec419c1930174519d98cc4908eb`.
+- Runner CLI, runtime test, migration runner và migrations 001–040 không đổi.
+- Instrumentation chỉ nhằm phân loại chính xác lần chạy runtime sau; M07-A2
+  runtime retry vẫn chưa được cấp quyền. M01-07 và UC-M01 vẫn `INCOMPLETE`.
+
+### 51.3 Staging boundary và handoff
+
+- Documentation update này giữ nguyên lịch sử probe, recovery và orchestration
+  evidence; không thay thế hoặc xóa failed-run/orphan-resource audit trail.
+- Không chạy lại test/build, Docker, PostgreSQL, migration hoặc runtime trong
+  phiên documentation/staging này.
+- Không stage, commit, push hoặc amend trong bước cập nhật tài liệu; staging
+  packet sau đó chỉ được phép chứa đúng ba file đã được owner chỉ định.
+
+**Kết luận:** `READY FOR M07-A2 STRUCTURED INSTRUMENTATION CHECKPOINT COMMIT`.

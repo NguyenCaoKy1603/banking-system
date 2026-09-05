@@ -1,5 +1,5 @@
 import net from "node:net";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -1388,6 +1388,277 @@ export function validateMountNamespaceAttestation(mountInfo: string): MountNames
   return record;
 }
 
+export const ATTESTATION_FAILURE_CODES = [
+  "COMMAND_NONZERO",
+  "COMMAND_TIMEOUT",
+  "COMMAND_CANCELLED",
+  "STDOUT_INVALID",
+  "TARGET_RECORD_COUNT",
+  "FILESYSTEM_MISMATCH",
+  "FLAGS_MISMATCH",
+  "SIZE_MISMATCH",
+  "MODE_MISMATCH",
+  "VALIDATOR_INTERNAL",
+  "NONE",
+] as const;
+export type AttestationFailureCode = (typeof ATTESTATION_FAILURE_CODES)[number];
+
+export const ATTESTATION_DIAGNOSTIC_KEYS = [
+  "phase",
+  "commandExitCode",
+  "commandTimedOut",
+  "commandCancelled",
+  "stdoutKind",
+  "stdoutByteLength",
+  "lineCount",
+  "crCount",
+  "lfCount",
+  "trailingNewline",
+  "stderrPresent",
+  "validatorCalled",
+  "validatorPassed",
+  "failureCode",
+  "targetRecordCount",
+  "targetRecordFingerprint",
+  "filesystemType",
+  "normalizedSizeBytes",
+  "normalizedModeOctal",
+] as const;
+
+export type AttestationDiagnostic = {
+  readonly phase: "3_INSPECT_VALIDATE_CONTAINER";
+  readonly commandExitCode: number | null;
+  readonly commandTimedOut: boolean | null;
+  readonly commandCancelled: boolean | null;
+  readonly stdoutKind: string;
+  readonly stdoutByteLength: number | null;
+  readonly lineCount: number | null;
+  readonly crCount: number | null;
+  readonly lfCount: number | null;
+  readonly trailingNewline: "LF" | "CRLF" | "CR" | "NONE" | null;
+  readonly stderrPresent: boolean | null;
+  readonly validatorCalled: boolean;
+  readonly validatorPassed: boolean;
+  readonly failureCode: AttestationFailureCode;
+  readonly targetRecordCount: number | null;
+  readonly targetRecordFingerprint: string | null;
+  readonly filesystemType: string | null;
+  readonly normalizedSizeBytes: number | null;
+  readonly normalizedModeOctal: string | null;
+};
+
+export interface AttestationCommandResult {
+  readonly exitCode: unknown;
+  readonly stdout: unknown;
+  readonly stderr: unknown;
+}
+
+type AttestationCommandFailureCode = Extract<
+  AttestationFailureCode,
+  "COMMAND_NONZERO" | "COMMAND_TIMEOUT" | "COMMAND_CANCELLED"
+>;
+
+export class AttestationCommandError extends Error {
+  readonly failureCode: AttestationCommandFailureCode;
+  readonly commandTimedOut: boolean;
+  readonly commandCancelled: boolean;
+
+  constructor(failureCode: AttestationCommandFailureCode) {
+    const message = failureCode === "COMMAND_TIMEOUT"
+      ? "docker exec mount-namespace attestation timed out"
+      : failureCode === "COMMAND_CANCELLED"
+        ? "docker exec mount-namespace attestation was cancelled"
+        : "docker exec mount-namespace attestation command failed";
+    super(message);
+    this.name = "AttestationCommandError";
+    this.failureCode = failureCode;
+    this.commandTimedOut = failureCode === "COMMAND_TIMEOUT";
+    this.commandCancelled = failureCode === "COMMAND_CANCELLED";
+  }
+}
+
+interface AttestationDiagnosticInput {
+  readonly exitCode: number | null;
+  readonly stdout: unknown;
+  readonly stderr: unknown;
+  readonly commandTimedOut?: boolean | null;
+  readonly commandCancelled?: boolean | null;
+}
+
+interface AttestationDiagnosticOverrides {
+  readonly validatorCalled?: boolean;
+  readonly validatorPassed?: boolean;
+  readonly failureCode?: AttestationFailureCode;
+}
+
+type NormalizedAttestationCommandResult =
+  | {
+      readonly valid: true;
+      readonly exitCode: number;
+      readonly stdout: string;
+      readonly stderr: string;
+    }
+  | {
+      readonly valid: false;
+      readonly exitCode: number | null;
+      readonly stdout: unknown;
+      readonly stderr: unknown;
+    };
+
+function diagnosticValueKind(value: unknown): string {
+  if (value === undefined) return "unavailable";
+  if (value === null) return "null";
+  return typeof value;
+}
+
+function trailingNewlineKind(value: string): "LF" | "CRLF" | "CR" | "NONE" {
+  if (value.endsWith("\r\n")) return "CRLF";
+  if (value.endsWith("\n")) return "LF";
+  if (value.endsWith("\r")) return "CR";
+  return "NONE";
+}
+
+function safeFilesystemType(value: string): string {
+  return /^[a-zA-Z0-9._+-]{1,32}$/.test(value) ? value : "[REDACTED]";
+}
+
+function summarizeMountInfo(stdout: string): Pick<
+  AttestationDiagnostic,
+  "lineCount" | "crCount" | "lfCount" | "trailingNewline" | "targetRecordCount" |
+  "targetRecordFingerprint" | "filesystemType" | "normalizedSizeBytes" | "normalizedModeOctal"
+> {
+  const lines = stdout.split(/\r\n|\n|\r/);
+  const nonEmptyLines = lines.filter((line) => line.trim().length > 0);
+  const targets: Array<{ readonly line: string; readonly record: MountNamespaceAttestationRecord }> = [];
+
+  for (const [index, line] of lines.entries()) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const record = parseMountInfoLine(trimmed, index + 1);
+      if (record.mountPoint === CANONICAL_TMPFS_DESTINATION) {
+        targets.push({ line: trimmed, record });
+      }
+    } catch {
+      // The validator remains the only PASS/FAIL authority. This summary is best-effort only.
+    }
+  }
+
+  const targetRecordCount = targets.length;
+  if (targetRecordCount !== 1) {
+    return {
+      lineCount: nonEmptyLines.length,
+      crCount: (stdout.match(/\r/g) ?? []).length,
+      lfCount: (stdout.match(/\n/g) ?? []).length,
+      trailingNewline: trailingNewlineKind(stdout),
+      targetRecordCount,
+      targetRecordFingerprint: null,
+      filesystemType: null,
+      normalizedSizeBytes: null,
+      normalizedModeOctal: null,
+    };
+  }
+
+  const [{ line, record }] = targets;
+  const allOptions = [...record.mountOptions, ...record.superOptions];
+  const sizeTokens = allOptions.filter((option) => option.startsWith("size="));
+  const sizeBytes = sizeTokens.length === 1 ? parseMountInfoSizeBytes(sizeTokens[0]) : undefined;
+  const normalizedSizeBytes = sizeBytes !== undefined && sizeBytes <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(sizeBytes)
+    : null;
+  const modeTokens = allOptions.filter((option) => option.startsWith("mode="));
+  const mode = modeTokens.length === 1 ? parseMountInfoMode(modeTokens[0]) : undefined;
+
+  return {
+    lineCount: nonEmptyLines.length,
+    crCount: (stdout.match(/\r/g) ?? []).length,
+    lfCount: (stdout.match(/\n/g) ?? []).length,
+    trailingNewline: trailingNewlineKind(stdout),
+    targetRecordCount,
+    targetRecordFingerprint: createHash("sha256").update(line, "utf8").digest("hex"),
+    filesystemType: safeFilesystemType(record.filesystemType),
+    normalizedSizeBytes,
+    normalizedModeOctal: mode === undefined ? null : mode.toString(8).padStart(4, "0"),
+  };
+}
+
+function buildAttestationDiagnostic(
+  input: AttestationDiagnosticInput,
+  overrides: AttestationDiagnosticOverrides = {},
+): AttestationDiagnostic {
+  const isString = typeof input.stdout === "string";
+  const summary = isString
+    ? summarizeMountInfo(input.stdout)
+    : {
+        lineCount: null,
+        crCount: null,
+        lfCount: null,
+        trailingNewline: null,
+        targetRecordCount: null,
+        targetRecordFingerprint: null,
+        filesystemType: null,
+        normalizedSizeBytes: null,
+        normalizedModeOctal: null,
+      };
+
+  return {
+    phase: "3_INSPECT_VALIDATE_CONTAINER",
+    commandExitCode: input.exitCode,
+    commandTimedOut: input.commandTimedOut ?? false,
+    commandCancelled: input.commandCancelled ?? false,
+    stdoutKind: diagnosticValueKind(input.stdout),
+    stdoutByteLength: isString ? Buffer.byteLength(input.stdout, "utf8") : null,
+    lineCount: summary.lineCount,
+    crCount: summary.crCount,
+    lfCount: summary.lfCount,
+    trailingNewline: summary.trailingNewline,
+    stderrPresent: typeof input.stderr === "string" ? input.stderr.length > 0 : null,
+    validatorCalled: overrides.validatorCalled ?? false,
+    validatorPassed: overrides.validatorPassed ?? false,
+    failureCode: overrides.failureCode ?? "VALIDATOR_INTERNAL",
+    targetRecordCount: summary.targetRecordCount,
+    targetRecordFingerprint: summary.targetRecordFingerprint,
+    filesystemType: summary.filesystemType,
+    normalizedSizeBytes: summary.normalizedSizeBytes,
+    normalizedModeOctal: summary.normalizedModeOctal,
+  };
+}
+
+function normalizeAttestationCommandResult(value: unknown): NormalizedAttestationCommandResult {
+  if (value === null || typeof value !== "object") {
+    return { valid: false, exitCode: null, stdout: undefined, stderr: undefined };
+  }
+  const record = value as Record<string, unknown>;
+  const exitCode = typeof record.exitCode === "number" && Number.isInteger(record.exitCode)
+    ? record.exitCode
+    : null;
+  if (exitCode !== null && typeof record.stdout === "string" && typeof record.stderr === "string") {
+    return {
+      valid: true,
+      exitCode,
+      stdout: record.stdout,
+      stderr: record.stderr,
+    };
+  }
+  return {
+    valid: false,
+    exitCode,
+    stdout: record.stdout,
+    stderr: record.stderr,
+  };
+}
+
+function classifyAttestationValidationFailure(error: unknown): AttestationFailureCode {
+  const message = error instanceof Error ? error.message : "";
+  if (/empty or invalid|malformed|incomplete/i.test(message)) return "STDOUT_INVALID";
+  if (/exactly one canonical destination/i.test(message)) return "TARGET_RECORD_COUNT";
+  if (/filesystem type/i.test(message)) return "FILESYSTEM_MISMATCH";
+  if (/read-write|contradictory (?:ro|suid|exec)|missing (?:nosuid|noexec)/i.test(message)) return "FLAGS_MISMATCH";
+  if (/size/i.test(message)) return "SIZE_MISMATCH";
+  if (/mode/i.test(message)) return "MODE_MISMATCH";
+  return "VALIDATOR_INTERNAL";
+}
+
 export interface CleanChildEnvOptions {
   readonly databaseUrl: string;
   readonly databaseName: string;
@@ -1650,6 +1921,7 @@ export interface DockerAdapter {
   runContainer(args: readonly string[], signal?: AbortSignal, timeoutMs?: number): Promise<string>;
   inspectContainer(containerNameOrId: string, signal?: AbortSignal, timeoutMs?: number): Promise<string>;
   attestMountNamespace(containerId: string, signal?: AbortSignal, timeoutMs?: number): Promise<string>;
+  attestMountNamespaceWithResult?(containerId: string, signal?: AbortSignal, timeoutMs?: number): Promise<AttestationCommandResult>;
   removeContainer(containerId: string, signal?: AbortSignal, timeoutMs?: number): Promise<void>;
   waitForReady(host: string, port: number, timeoutMs?: number, signal?: AbortSignal): Promise<void>;
 }
@@ -1661,6 +1933,18 @@ export type RunCommandWithOutputFunction = (
   timeoutMs?: number,
   signal?: AbortSignal,
 ) => Promise<CommandExecutionOutput>;
+
+class CommandExecutionLifecycleError extends Error {
+  readonly timedOut: boolean;
+  readonly cancelled: boolean;
+
+  constructor(message: string, options: { readonly timedOut?: boolean; readonly cancelled?: boolean } = {}) {
+    super(message);
+    this.name = "CommandExecutionLifecycleError";
+    this.timedOut = options.timedOut ?? false;
+    this.cancelled = options.cancelled ?? false;
+  }
+}
 
 /**
  * Execute command with argv array (no shell) capturing stdout/stderr and handling timeout and abort signal.
@@ -1700,13 +1984,19 @@ export async function executeCommandWithOutput(
     if (signal) {
       if (signal.aborted) {
         child.kill("SIGTERM");
-        reject(new Error(`Command '${path.basename(command)}' was aborted before execution.`));
+        reject(new CommandExecutionLifecycleError(
+          `Command '${path.basename(command)}' was aborted before execution.`,
+          { cancelled: true },
+        ));
         return;
       }
       abortListener = () => {
         child.kill("SIGTERM");
         cleanup();
-        reject(new Error(`Command '${path.basename(command)}' aborted: ${String(signal.reason)}`));
+        reject(new CommandExecutionLifecycleError(
+          `Command '${path.basename(command)}' aborted: ${String(signal.reason)}`,
+          { cancelled: true },
+        ));
       };
       signal.addEventListener("abort", abortListener, { once: true });
     }
@@ -1715,7 +2005,10 @@ export async function executeCommandWithOutput(
       timer = setTimeout(() => {
         child.kill("SIGTERM");
         cleanup();
-        reject(new Error(`Command '${path.basename(command)}' timed out after ${timeoutMs}ms.`));
+        reject(new CommandExecutionLifecycleError(
+          `Command '${path.basename(command)}' timed out after ${timeoutMs}ms.`,
+          { timedOut: true },
+        ));
       }, timeoutMs);
     }
 
@@ -1733,6 +2026,24 @@ export async function executeCommandWithOutput(
       });
     });
   });
+}
+
+async function executeMountNamespaceCommand(
+  containerId: string,
+  signal?: AbortSignal,
+  timeoutMs = 30_000,
+): Promise<CommandExecutionOutput> {
+  const args = buildDockerExecMountinfoArgs(containerId);
+  try {
+    return await executeCommandWithOutput("docker", args, process.env, timeoutMs, signal);
+  } catch (error) {
+    if (error instanceof CommandExecutionLifecycleError) {
+      throw new AttestationCommandError(
+        error.timedOut ? "COMMAND_TIMEOUT" : "COMMAND_CANCELLED",
+      );
+    }
+    throw new AttestationCommandError("COMMAND_NONZERO");
+  }
 }
 
 /**
@@ -1767,11 +2078,17 @@ export const realDockerAdapter: DockerAdapter = {
     return result.stdout;
   },
 
+  async attestMountNamespaceWithResult(containerId: string, signal?: AbortSignal, timeoutMs = 30_000): Promise<AttestationCommandResult> {
+    return executeMountNamespaceCommand(containerId, signal, timeoutMs);
+  },
+
   async attestMountNamespace(containerId: string, signal?: AbortSignal, timeoutMs = 30_000): Promise<string> {
-    const args = buildDockerExecMountinfoArgs(containerId);
-    const result = await executeCommandWithOutput("docker", args, process.env, timeoutMs, signal);
+    const result = await executeMountNamespaceCommand(containerId, signal, timeoutMs);
     if (result.exitCode !== 0) {
       throw new Error("docker exec mount-namespace attestation failed");
+    }
+    if (typeof result.stdout !== "string") {
+      throw new Error("docker exec mount-namespace attestation returned invalid stdout");
     }
     return result.stdout;
   },
@@ -1818,6 +2135,7 @@ export interface CanonicalSequenceDependencies {
   readonly dockerAdapter?: DockerAdapter;
   readonly runCommandFn?: RunCommandWithOutputFunction;
   readonly createPoolFn?: CreatePoolFunction;
+  readonly mountNamespaceValidatorFn?: (mountInfo: string) => MountNamespaceAttestationRecord;
   readonly runIdGenerator?: () => string;
   readonly processEmitter?: ProcessInterruptionEmitter;
   readonly processFacade?: ProcessFacade;
@@ -1831,6 +2149,7 @@ export interface CanonicalSequenceExecutionResult {
   readonly databaseName: string;
   readonly containerId?: string;
   readonly completedSteps: readonly CanonicalSequenceStep[];
+  readonly attestationDiagnostic?: AttestationDiagnostic;
   readonly error?: Error;
   readonly cleanupError?: Error;
 }
@@ -1859,6 +2178,7 @@ export async function runCanonicalEvidenceSequence(
   let targetUrl: string | undefined;
   let mainError: Error | undefined;
   let cleanupError: Error | undefined;
+  let attestationDiagnostic: AttestationDiagnostic | undefined;
 
   const childAbortController = new AbortController();
 
@@ -1955,12 +2275,89 @@ export async function runCanonicalEvidenceSequence(
     // Mounts=[] is a valid Docker Desktop representation for legacy --tmpfs,
     // so the exact launched container must attest its mount namespace before
     // readiness, database creation, or a migration action.
-    const mountInfo = await docker.attestMountNamespace(
-      launchedContainerId,
-      childAbortController.signal,
-      commandTimeoutMs,
-    );
-    validateMountNamespaceAttestation(mountInfo);
+    try {
+      const commandResult = docker.attestMountNamespaceWithResult
+        ? await docker.attestMountNamespaceWithResult(
+            launchedContainerId,
+            childAbortController.signal,
+            commandTimeoutMs,
+          )
+        : {
+            exitCode: 0,
+            stdout: await docker.attestMountNamespace(
+              launchedContainerId,
+              childAbortController.signal,
+              commandTimeoutMs,
+            ),
+            stderr: "",
+          };
+      const normalizedResult = normalizeAttestationCommandResult(commandResult);
+
+      if (!normalizedResult.valid) {
+        attestationDiagnostic = buildAttestationDiagnostic(
+          normalizedResult,
+          { failureCode: "STDOUT_INVALID" },
+        );
+        throw new Error("docker exec mount-namespace attestation returned invalid command result");
+      }
+
+      if (normalizedResult.exitCode !== 0) {
+        attestationDiagnostic = buildAttestationDiagnostic(
+          normalizedResult,
+          { failureCode: "COMMAND_NONZERO" },
+        );
+        throw new Error("docker exec mount-namespace attestation failed");
+      }
+
+      try {
+        (deps.mountNamespaceValidatorFn ?? validateMountNamespaceAttestation)(normalizedResult.stdout);
+        attestationDiagnostic = buildAttestationDiagnostic(
+          normalizedResult,
+          {
+            validatorCalled: true,
+            validatorPassed: true,
+            failureCode: "NONE",
+          },
+        );
+      } catch (error) {
+        attestationDiagnostic = buildAttestationDiagnostic(
+          normalizedResult,
+          {
+            validatorCalled: true,
+            validatorPassed: false,
+            failureCode: classifyAttestationValidationFailure(error),
+          },
+        );
+        throw error instanceof Error ? error : new Error("Mount namespace attestation validator failed");
+      }
+    } catch (error) {
+      if (!attestationDiagnostic) {
+        const commandFailure = error instanceof AttestationCommandError
+          ? error
+          : error instanceof CommandExecutionLifecycleError
+            ? new AttestationCommandError(
+                error.timedOut ? "COMMAND_TIMEOUT" : "COMMAND_CANCELLED",
+              )
+            : new AttestationCommandError(
+                error instanceof Error && /timed out/i.test(error.message)
+                  ? "COMMAND_TIMEOUT"
+                  : error instanceof Error && /aborted|cancelled/i.test(error.message)
+                    ? "COMMAND_CANCELLED"
+                    : "COMMAND_NONZERO",
+              );
+        attestationDiagnostic = buildAttestationDiagnostic(
+          {
+            exitCode: null,
+            stdout: undefined,
+            stderr: undefined,
+            commandTimedOut: commandFailure.commandTimedOut,
+            commandCancelled: commandFailure.commandCancelled,
+          },
+          { failureCode: commandFailure.failureCode },
+        );
+      }
+      throw error;
+    }
 
     // Step 4: Wait readiness
     recordStep("4_WAIT_READINESS");
@@ -2107,6 +2504,7 @@ export async function runCanonicalEvidenceSequence(
       databaseName,
       containerId: launchedContainerId,
       completedSteps,
+      attestationDiagnostic,
       error: finalError,
       cleanupError,
     };
@@ -2118,6 +2516,7 @@ export async function runCanonicalEvidenceSequence(
     databaseName,
     containerId: launchedContainerId,
     completedSteps,
+    attestationDiagnostic,
   };
 }
 

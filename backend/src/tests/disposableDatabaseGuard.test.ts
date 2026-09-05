@@ -55,9 +55,13 @@ import {
   isCanonicalRuntimePath,
   isReservedCanonicalRuntimeCandidate,
   runCliMain,
+  executeCommandWithOutput,
   CANONICAL_TMPFS_DESTINATION,
   CANONICAL_TMPFS_OPTIONS,
   CANONICAL_TMPFS_FLAG_VALUE,
+  ATTESTATION_DIAGNOSTIC_KEYS,
+  AttestationCommandError,
+  type AttestationCommandResult,
   validateMountNamespaceAttestation,
   validateTmpfsOptions,
 } from "../database/disposableDatabaseGuard.js";
@@ -77,6 +81,174 @@ const makeMountInfo = (
   mountId = "100",
 ): string => `${mountId} 50 0:1 / ${destination} ${mountOptions} - ${filesystemType} tmpfs ${superOptions}`;
 const validMountInfoFixture = makeMountInfo();
+
+const makeExpandedMountInfoFixture = (lineEnding = "\n"): string => {
+  const nonTargetRecords = Array.from({ length: 50 }, (_, index) => makeMountInfo(
+    `/synthetic/mount-${String(index).padStart(2, "0")}`,
+    "rw,relatime,nodev",
+    "proc",
+    "rw,relatime",
+    String(200 + index),
+  ));
+  const targetRecord = makeMountInfo(
+    CANONICAL_TMPFS_DESTINATION,
+    "rw,nosuid,noexec,relatime,nodev",
+    "tmpfs",
+    "rw,size=524288k,mode=700,inode64",
+    "999",
+  );
+  return [...nonTargetRecords, targetRecord].join(lineEnding) + lineEnding;
+};
+
+const makeCanonicalOrchestrationHarness = (
+  fixedRunId: string,
+  mountInfo: string,
+  options: {
+    readonly chunks?: readonly string[];
+    readonly attestationStderr?: string;
+    readonly attestationCommandResult?: AttestationCommandResult;
+    readonly attestationCommandFailure?: AttestationCommandError;
+    readonly cleanupFailure?: boolean;
+    readonly failAfterAttestation?: boolean;
+    readonly deferAttestation?: boolean;
+  } = {},
+) => {
+  const launchId = "d".repeat(64);
+  const fixedContainerName = `banking_test_container_${fixedRunId}`;
+  const localImageId = "sha256:" + "d".repeat(64);
+  const events: string[] = [];
+  const removedContainerIds: string[] = [];
+  const observedCommandResults: Array<{ exitCode: number; stdout: string; stderr: string }> = [];
+  let attestationOutput: string | undefined;
+  let attestationValidatorReturnKind: string | undefined;
+  let verifyOnlyCount = 0;
+
+  const mockDocker: DockerAdapter = {
+    async inspectImage() {
+      return JSON.stringify([{ Id: localImageId, RepoTags: ["postgres:16"] }]);
+    },
+    async runContainer() {
+      events.push("launch");
+      return launchId;
+    },
+    async inspectContainer(containerId: string) {
+      events.push("inspect");
+      assert.equal(containerId, launchId);
+      return JSON.stringify([{
+        Id: launchId,
+        Name: `/${fixedContainerName}`,
+        Image: localImageId,
+        Config: { Image: "postgres:16", Labels: { banking_test_run_id: fixedRunId } },
+        NetworkSettings: { Ports: { "5432/tcp": [{ HostIp: "127.0.0.1", HostPort: "54321" }] } },
+        Mounts: [],
+        HostConfig: {
+          Binds: [],
+          Tmpfs: { [CANONICAL_TMPFS_DESTINATION]: CANONICAL_TMPFS_OPTIONS },
+        },
+      }]);
+    },
+    async attestMountNamespace(containerId: string, signal?: AbortSignal) {
+      events.push("attest");
+      assert.equal(containerId, launchId);
+      assert.equal(signal?.aborted, false, "Attestation must start with a fresh non-aborted signal");
+      if (options.deferAttestation) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(signal?.aborted, false, "Late command completion must not inherit an aborted signal");
+      }
+      const commandResult = {
+        exitCode: 0,
+        stdout: (options.chunks ?? [mountInfo]).join(""),
+        stderr: options.attestationStderr ?? "",
+      };
+      observedCommandResults.push(commandResult);
+      assert.equal(commandResult.exitCode, 0);
+      assert.equal(commandResult.stdout, mountInfo, "Command facade must concatenate and preserve stdout exactly");
+      attestationOutput = commandResult.stdout;
+      const validated = validateMountNamespaceAttestation(attestationOutput);
+      attestationValidatorReturnKind = typeof validated;
+      return attestationOutput;
+    },
+    async removeContainer(containerId: string) {
+      events.push("cleanup");
+      removedContainerIds.push(containerId);
+    },
+    async waitForReady() {
+      events.push("ready");
+    },
+  };
+
+  const mockPool: DisposablePoolClient = {
+    async query(sql: string) {
+      events.push("db");
+      if (sql.includes("COUNT(*)")) return { rows: [{ count: 0 }] };
+      return { rows: [] };
+    },
+    async end() {
+      events.push("pool-end");
+    },
+  };
+
+  const runCommandFn = async (_command: string, args: readonly string[]) => {
+    events.push("child");
+    if (args.includes("--verify-only")) {
+      verifyOnlyCount += 1;
+      if (verifyOnlyCount === 2) {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: "Migration checksum mismatch for 001_banking_mvp; refusing to run.",
+        };
+      }
+      if (options.failAfterAttestation && verifyOnlyCount === 3) {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: "Synthetic later phase failure",
+        };
+      }
+    }
+    return { exitCode: 0, stdout: "OK", stderr: "" };
+  };
+
+  const createPoolFn = () => {
+    events.push("pool");
+    return mockPool;
+  };
+
+  if (options.attestationCommandResult || options.attestationCommandFailure) {
+    mockDocker.attestMountNamespaceWithResult = async (containerId: string) => {
+      events.push("attest-result");
+      assert.equal(containerId, launchId);
+      if (options.attestationCommandFailure) throw options.attestationCommandFailure;
+      return options.attestationCommandResult ?? {
+        exitCode: 0,
+        stdout: mountInfo,
+        stderr: "",
+      };
+    };
+  }
+
+  if (options.cleanupFailure) {
+    mockDocker.removeContainer = async (containerId: string) => {
+      events.push("cleanup");
+      removedContainerIds.push(containerId);
+      throw new Error("synthetic cleanup failure");
+    };
+  }
+
+  return {
+    mockDocker,
+    mockPool,
+    createPoolFn,
+    runCommandFn,
+    events,
+    removedContainerIds,
+    observedCommandResults,
+    get attestationOutput() { return attestationOutput; },
+    get attestationValidatorReturnKind() { return attestationValidatorReturnKind; },
+    launchId,
+  };
+};
 
 // ============================================================================
 // Original 5 Pre-existing Tests (Preserved verbatim)
@@ -3706,4 +3878,408 @@ test("M07-A2-TMPFS-08: Success and cancellation hygiene", async () => {
     [launchId],
     "Cancellation must await cleanup of exact launched container without separate volume operations",
   );
+});
+
+test("M07-A2-ORCH-01: canonical orchestration preserves live stdout and gates readiness", async () => {
+  const lfFixture = makeExpandedMountInfoFixture("\n");
+  const crlfFixture = makeExpandedMountInfoFixture("\r\n");
+  assert.equal(Buffer.byteLength(lfFixture, "utf8") >= 3000, true, "Fixture must exercise a live-sized stdout payload");
+
+  const cases = [
+    {
+      name: "LF",
+      runId: "10000000000000000000000000000001",
+      mountInfo: lfFixture,
+      options: { deferAttestation: true },
+    },
+    {
+      name: "CRLF",
+      runId: "10000000000000000000000000000002",
+      mountInfo: crlfFixture,
+      options: {},
+    },
+    {
+      name: "chunked stdout",
+      runId: "10000000000000000000000000000003",
+      mountInfo: lfFixture,
+      options: {
+        chunks: [lfFixture.slice(0, 901), lfFixture.slice(901, 2200), lfFixture.slice(2200)],
+      },
+    },
+    {
+      name: "non-empty stderr with successful exit",
+      runId: "10000000000000000000000000000004",
+      mountInfo: lfFixture,
+      options: { attestationStderr: "synthetic warning" },
+    },
+  ];
+
+  for (const scenario of cases) {
+    const harness = makeCanonicalOrchestrationHarness(scenario.runId, scenario.mountInfo, scenario.options);
+    const result = await runCanonicalEvidenceSequence(
+      { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+      {
+        dockerAdapter: harness.mockDocker,
+        createPoolFn: harness.createPoolFn,
+        runCommandFn: harness.runCommandFn,
+        runIdGenerator: () => scenario.runId,
+      },
+    );
+
+    assert.equal(result.success, true, `${scenario.name} orchestration must succeed`);
+    assert.equal(harness.observedCommandResults.length, 1, `${scenario.name} must have one attestation command result`);
+    assert.equal(harness.observedCommandResults[0].exitCode, 0);
+    assert.equal(harness.observedCommandResults[0].stdout, scenario.mountInfo);
+    assert.equal(harness.observedCommandResults[0].stderr, scenario.options.attestationStderr ?? "");
+    assert.equal(harness.attestationOutput, scenario.mountInfo, `${scenario.name} stdout must not be trimmed or serialized`);
+    assert.equal(harness.attestationValidatorReturnKind, "object");
+    assert.ok(harness.events.indexOf("attest") < harness.events.indexOf("ready"), `${scenario.name} attestation must precede readiness`);
+    assert.ok(harness.events.indexOf("ready") < harness.events.indexOf("pool"), `${scenario.name} readiness must precede database creation`);
+    assert.deepEqual(harness.removedContainerIds, [harness.launchId], `${scenario.name} cleanup must target the exact launch ID once`);
+  }
+});
+
+test("M07-A2-ORCH-02: successful attestation preserves later-phase primary attribution and cleanup", async () => {
+  const runId = "10000000000000000000000000000005";
+  const fixture = makeExpandedMountInfoFixture("\n");
+  const harness = makeCanonicalOrchestrationHarness(runId, fixture, {
+    failAfterAttestation: true,
+    deferAttestation: true,
+  });
+
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: harness.createPoolFn,
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error?.message ?? "", /Post-restore verify-only failed/);
+  assert.equal(result.cleanupError, undefined, "Successful attestation and cleanup must not replace the later primary error");
+  assert.equal(harness.attestationValidatorReturnKind, "object");
+  assert.ok(harness.events.indexOf("attest") < harness.events.indexOf("ready"));
+  assert.ok(harness.events.lastIndexOf("cleanup") > harness.events.lastIndexOf("child"));
+  assert.deepEqual(harness.removedContainerIds, [harness.launchId]);
+});
+
+test("M07-A2-ORCH-03: command result keeps exit code and stdout after late cancellation", async () => {
+  const controller = new AbortController();
+  const commandEnvironment: NodeJS.ProcessEnv = {
+    PATH: process.env.PATH ?? "",
+    SystemRoot: process.env.SystemRoot ?? "",
+  };
+  const result = await executeCommandWithOutput(
+    process.execPath,
+    ["-e", "process.stdout.write('attestation-ready')"],
+    commandEnvironment,
+    5_000,
+    controller.signal,
+  );
+
+  controller.abort(new Error("late cancellation after command completion"));
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "attestation-ready");
+  assert.equal(result.stderr, "");
+});
+
+const runAttestationDiagnosticScenario = async (
+  runId: string,
+  commandResult: AttestationCommandResult,
+  validator?: (mountInfo: string) => ReturnType<typeof validateMountNamespaceAttestation>,
+  options: { readonly cleanupFailure?: boolean; readonly failAfterAttestation?: boolean } = {},
+) => {
+  const harness = makeCanonicalOrchestrationHarness(runId, "unavailable-fixture", {
+    attestationCommandResult: commandResult,
+    cleanupFailure: options.cleanupFailure,
+    failAfterAttestation: options.failAfterAttestation,
+  });
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: harness.createPoolFn,
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+      mountNamespaceValidatorFn: validator,
+    },
+  );
+  return { harness, result };
+};
+
+test("M07-A2-INSTR-01: successful LF attestation emits only the allowlisted PASS diagnostic", async () => {
+  const fixture = makeExpandedMountInfoFixture("\n");
+  const { harness, result } = await runAttestationDiagnosticScenario(
+    "20000000000000000000000000000001",
+    { exitCode: 0, stdout: fixture, stderr: "" },
+  );
+  const diagnostic = result.attestationDiagnostic;
+
+  assert.equal(result.success, true);
+  assert.ok(diagnostic);
+  assert.deepEqual(Object.keys(diagnostic).sort(), [...ATTESTATION_DIAGNOSTIC_KEYS].sort());
+  assert.equal(diagnostic.phase, "3_INSPECT_VALIDATE_CONTAINER");
+  assert.equal(diagnostic.commandExitCode, 0);
+  assert.equal(diagnostic.commandTimedOut, false);
+  assert.equal(diagnostic.commandCancelled, false);
+  assert.equal(diagnostic.stdoutKind, "string");
+  assert.equal(diagnostic.stdoutByteLength, Buffer.byteLength(fixture, "utf8"));
+  assert.equal(diagnostic.trailingNewline, "LF");
+  assert.equal(diagnostic.stderrPresent, false);
+  assert.equal(diagnostic.validatorCalled, true);
+  assert.equal(diagnostic.validatorPassed, true);
+  assert.equal(diagnostic.failureCode, "NONE");
+  assert.equal(diagnostic.targetRecordCount, 1);
+  assert.match(diagnostic.targetRecordFingerprint ?? "", /^[a-f0-9]{64}$/);
+  assert.equal(diagnostic.filesystemType, "tmpfs");
+  assert.equal(diagnostic.normalizedSizeBytes, 536870912);
+  assert.equal(diagnostic.normalizedModeOctal, "0700");
+  assert.equal(harness.events.filter((event) => event === "ready").length, 1);
+  assert.equal(harness.events.indexOf("attest-result") < harness.events.indexOf("ready"), true);
+});
+
+test("M07-A2-INSTR-02: successful CRLF attestation records line diagnostics without changing validation", async () => {
+  const fixture = makeExpandedMountInfoFixture("\r\n");
+  const { result } = await runAttestationDiagnosticScenario(
+    "20000000000000000000000000000002",
+    { exitCode: 0, stdout: fixture, stderr: "" },
+  );
+  const diagnostic = result.attestationDiagnostic;
+
+  assert.equal(result.success, true);
+  assert.ok(diagnostic);
+  assert.ok(diagnostic.crCount !== null);
+  assert.ok(diagnostic.lfCount !== null);
+  assert.equal(diagnostic.crCount > 0, true);
+  assert.equal(diagnostic.lfCount, diagnostic.crCount);
+  assert.equal(diagnostic.trailingNewline, "CRLF");
+  assert.equal(diagnostic.validatorPassed, true);
+  assert.equal(diagnostic.failureCode, "NONE");
+});
+
+test("M07-A2-INSTR-03: nonzero command emits COMMAND_NONZERO and does not call the validator", async () => {
+  const { harness, result } = await runAttestationDiagnosticScenario(
+    "20000000000000000000000000000003",
+    {
+      exitCode: 17,
+      stdout: "raw-mountinfo-marker",
+      stderr: "raw-stderr-marker; synthetic-secret-marker",
+    },
+  );
+  const diagnostic = result.attestationDiagnostic;
+
+  assert.equal(result.success, false);
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.commandExitCode, 17);
+  assert.equal(diagnostic.stderrPresent, true);
+  assert.equal(diagnostic.validatorCalled, false);
+  assert.equal(diagnostic.validatorPassed, false);
+  assert.equal(diagnostic.failureCode, "COMMAND_NONZERO");
+  assert.equal(harness.events.includes("ready"), false);
+  const serialized = JSON.stringify(diagnostic);
+  assert.doesNotMatch(serialized, /raw-mountinfo-marker|raw-stderr-marker|synthetic-secret-marker/);
+  assert.doesNotMatch(serialized, new RegExp(harness.launchId));
+  assert.doesNotMatch(serialized, /20000000000000000000000000000003/);
+});
+
+test("M07-A2-INSTR-04: timeout and cancellation are distinct command failures", async () => {
+  const timeoutHarness = makeCanonicalOrchestrationHarness(
+    "20000000000000000000000000000004",
+    "unavailable-fixture",
+    { attestationCommandFailure: new AttestationCommandError("COMMAND_TIMEOUT") },
+  );
+  const timeoutResult = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: timeoutHarness.mockDocker,
+      createPoolFn: timeoutHarness.createPoolFn,
+      runCommandFn: timeoutHarness.runCommandFn,
+      runIdGenerator: () => "20000000000000000000000000000004",
+    },
+  );
+  assert.equal(timeoutResult.attestationDiagnostic?.failureCode, "COMMAND_TIMEOUT");
+  assert.equal(timeoutResult.attestationDiagnostic?.commandTimedOut, true);
+  assert.equal(timeoutResult.attestationDiagnostic?.commandCancelled, false);
+  assert.equal(timeoutResult.attestationDiagnostic?.validatorCalled, false);
+
+  const cancelHarness = makeCanonicalOrchestrationHarness(
+    "20000000000000000000000000000005",
+    "unavailable-fixture",
+    { attestationCommandFailure: new AttestationCommandError("COMMAND_CANCELLED") },
+  );
+  const cancelResult = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: cancelHarness.mockDocker,
+      createPoolFn: cancelHarness.createPoolFn,
+      runCommandFn: cancelHarness.runCommandFn,
+      runIdGenerator: () => "20000000000000000000000000000005",
+    },
+  );
+  assert.equal(cancelResult.attestationDiagnostic?.failureCode, "COMMAND_CANCELLED");
+  assert.equal(cancelResult.attestationDiagnostic?.commandTimedOut, false);
+  assert.equal(cancelResult.attestationDiagnostic?.commandCancelled, true);
+  assert.equal(cancelResult.attestationDiagnostic?.validatorCalled, false);
+});
+
+test("M07-A2-INSTR-05: invalid command-result stdout is classified without serializing the value", async () => {
+  const { result } = await runAttestationDiagnosticScenario(
+    "20000000000000000000000000000006",
+    { exitCode: 0, stdout: 42, stderr: "" },
+  );
+  const diagnostic = result.attestationDiagnostic;
+
+  assert.equal(result.success, false);
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.stdoutKind, "number");
+  assert.equal(diagnostic.stdoutByteLength, null);
+  assert.equal(diagnostic.targetRecordCount, null);
+  assert.equal(diagnostic.validatorCalled, false);
+  assert.equal(diagnostic.failureCode, "STDOUT_INVALID");
+  assert.doesNotMatch(JSON.stringify(diagnostic), /42/);
+
+  const missingShape = await runAttestationDiagnosticScenario(
+    "20000000000000000000000000000011",
+    { exitCode: 0, stdout: makeExpandedMountInfoFixture(), stderr: undefined },
+  );
+  assert.equal(missingShape.result.attestationDiagnostic?.failureCode, "STDOUT_INVALID");
+  assert.equal(missingShape.result.attestationDiagnostic?.stdoutKind, "string");
+  assert.equal(missingShape.result.attestationDiagnostic?.stderrPresent, null);
+  assert.equal(missingShape.result.attestationDiagnostic?.validatorCalled, false);
+});
+
+test("M07-A2-INSTR-06: missing and duplicate target records are classified as TARGET_RECORD_COUNT", async () => {
+  const missing = await runAttestationDiagnosticScenario(
+    "20000000000000000000000000000007",
+    { exitCode: 0, stdout: makeMountInfo("/synthetic/no-target"), stderr: "" },
+  );
+  assert.equal(missing.result.attestationDiagnostic?.failureCode, "TARGET_RECORD_COUNT");
+  assert.equal(missing.result.attestationDiagnostic?.targetRecordCount, 0);
+
+  const single = makeMountInfo();
+  const duplicate = await runAttestationDiagnosticScenario(
+    "20000000000000000000000000000008",
+    { exitCode: 0, stdout: `${single}\n${single}\n`, stderr: "" },
+  );
+  assert.equal(duplicate.result.attestationDiagnostic?.failureCode, "TARGET_RECORD_COUNT");
+  assert.equal(duplicate.result.attestationDiagnostic?.targetRecordCount, 2);
+  assert.equal(duplicate.result.attestationDiagnostic?.targetRecordFingerprint, null);
+});
+
+test("M07-A2-INSTR-07: filesystem and flags failures retain sanitized semantic fields", async () => {
+  const filesystem = await runAttestationDiagnosticScenario(
+    "20000000000000000000000000000009",
+    {
+      exitCode: 0,
+      stdout: makeMountInfo(CANONICAL_TMPFS_DESTINATION, "rw,nosuid,noexec", "ext4"),
+      stderr: "",
+    },
+  );
+  assert.equal(filesystem.result.attestationDiagnostic?.failureCode, "FILESYSTEM_MISMATCH");
+  assert.equal(filesystem.result.attestationDiagnostic?.filesystemType, "ext4");
+
+  const flags = await runAttestationDiagnosticScenario(
+    "2000000000000000000000000000000a",
+    {
+      exitCode: 0,
+      stdout: makeMountInfo(CANONICAL_TMPFS_DESTINATION, "rw,nosuid,relatime"),
+      stderr: "",
+    },
+  );
+  assert.equal(flags.result.attestationDiagnostic?.failureCode, "FLAGS_MISMATCH");
+  assert.equal(flags.result.attestationDiagnostic?.validatorCalled, true);
+  assert.equal(flags.result.attestationDiagnostic?.validatorPassed, false);
+});
+
+test("M07-A2-INSTR-08: size and mode failures expose normalized values without raw records", async () => {
+  const size = await runAttestationDiagnosticScenario(
+    "2000000000000000000000000000000b",
+    {
+      exitCode: 0,
+      stdout: makeMountInfo(
+        CANONICAL_TMPFS_DESTINATION,
+        "rw,nosuid,noexec",
+        "tmpfs",
+        "rw,size=512000k,mode=700",
+      ),
+      stderr: "",
+    },
+  );
+  assert.equal(size.result.attestationDiagnostic?.failureCode, "SIZE_MISMATCH");
+  assert.equal(size.result.attestationDiagnostic?.normalizedSizeBytes, 524288000);
+
+  const mode = await runAttestationDiagnosticScenario(
+    "2000000000000000000000000000000c",
+    {
+      exitCode: 0,
+      stdout: makeMountInfo(
+        CANONICAL_TMPFS_DESTINATION,
+        "rw,nosuid,noexec",
+        "tmpfs",
+        "rw,size=524288k,mode=0750",
+      ),
+      stderr: "",
+    },
+  );
+  assert.equal(mode.result.attestationDiagnostic?.failureCode, "MODE_MISMATCH");
+  assert.equal(mode.result.attestationDiagnostic?.normalizedModeOctal, "0750");
+  assert.doesNotMatch(JSON.stringify(mode.result.attestationDiagnostic), /var\/lib\/postgresql\/data/);
+});
+
+test("M07-A2-INSTR-09: injected validator internal errors use VALIDATOR_INTERNAL without raw exception text", async () => {
+  const { result } = await runAttestationDiagnosticScenario(
+    "2000000000000000000000000000000d",
+    { exitCode: 0, stdout: makeExpandedMountInfoFixture(), stderr: "" },
+    () => {
+      throw new Error("internal-validator-marker");
+    },
+  );
+  const diagnostic = result.attestationDiagnostic;
+
+  assert.equal(result.success, false);
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.validatorCalled, true);
+  assert.equal(diagnostic.validatorPassed, false);
+  assert.equal(diagnostic.failureCode, "VALIDATOR_INTERNAL");
+  assert.doesNotMatch(JSON.stringify(diagnostic), /internal-validator-marker/);
+});
+
+test("M07-A2-INSTR-10: cleanup failure does not overwrite a later primary failure", async () => {
+  const fixture = makeExpandedMountInfoFixture();
+  const { harness, result } = await runAttestationDiagnosticScenario(
+    "2000000000000000000000000000000e",
+    { exitCode: 0, stdout: fixture, stderr: "" },
+    undefined,
+    { cleanupFailure: true, failAfterAttestation: true },
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error?.message ?? "", /Post-restore verify-only failed/);
+  assert.match(result.cleanupError?.message ?? "", /synthetic cleanup failure/);
+  assert.equal(result.attestationDiagnostic?.failureCode, "NONE");
+  assert.deepEqual(harness.removedContainerIds, [harness.launchId]);
+});
+
+test("M07-A2-INSTR-11: target fingerprint is deterministic and never exposes the target record", async () => {
+  const fixture = makeExpandedMountInfoFixture();
+  const first = await runAttestationDiagnosticScenario(
+    "2000000000000000000000000000000f",
+    { exitCode: 0, stdout: fixture, stderr: "" },
+  );
+  const second = await runAttestationDiagnosticScenario(
+    "20000000000000000000000000000010",
+    { exitCode: 0, stdout: fixture, stderr: "" },
+  );
+  const firstDiagnostic = first.result.attestationDiagnostic;
+  const secondDiagnostic = second.result.attestationDiagnostic;
+
+  assert.ok(firstDiagnostic);
+  assert.ok(secondDiagnostic);
+  assert.equal(firstDiagnostic.targetRecordFingerprint, secondDiagnostic.targetRecordFingerprint);
+  assert.match(firstDiagnostic.targetRecordFingerprint ?? "", /^[a-f0-9]{64}$/);
+  assert.doesNotMatch(JSON.stringify(firstDiagnostic), /\/var\/lib\/postgresql\/data/);
+  assert.doesNotMatch(JSON.stringify(firstDiagnostic), /rw,nosuid,noexec/);
 });
