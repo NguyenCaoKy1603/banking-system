@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 PG-POOL CONTRACT REMEDIATION VERIFIED — AWAITING CHECKPOINT COMMIT
-- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 PG-POOL CONTRACT REMEDIATION COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
+- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - M01-07: INCOMPLETE
 - UC-M01: INCOMPLETE
@@ -3618,7 +3618,9 @@ gán lỗi cho `Pool.connect`, `Pool.end`, `PoolClient.release` hoặc tmpfs.
 - `.codegraph/.gitignore` đã được local-exclude bằng đúng entry `.codegraph/`
   trong `.git/info/exclude`; file index trong `.codegraph` không được stage.
   CodeGraph report vẫn là file untracked được phép stage trong packet này.
-- Cached area vẫn sạch; không stage, commit, push hoặc amend.
+- Tại thời điểm trước implementation checkpoint, cached area sạch; trong phiên
+  remediation không stage, commit, push hoặc amend source ngoài checkpoint
+  được Owner phê duyệt riêng.
 - Không có database/runtime evidence mới. Chưa chứng minh PostgreSQL runtime,
   migration 001–040, checksum restore, socket cancellation hoặc cleanup trên
   Docker daemon.
@@ -3626,3 +3628,37 @@ gán lỗi cho `Pool.connect`, `Pool.end`, `PoolClient.release` hoặc tmpfs.
   pilot-ready hoặc production-ready.
 
 **Kết luận:** `READY FOR M07-A2 PG-POOL CONTRACT REMEDIATION OWNER REVIEW`.
+
+## 59. M07-A2 PG-POOL REMEDIATION CHECKPOINT COMMIT RECORDED
+
+- Implementation commit:
+  `429b384fc7a983da7eb718d812500911b7011139`.
+- Parent:
+  `0037cb96971e8f6223867852f27df66c9d36f8b7`.
+- Message: `fix(database): align disposable queries with pg-pool contract`.
+- AuthorDate/CommitDate: `2026-09-05T15:09:42+07:00`.
+- Exact inventory của implementation checkpoint:
+  `M backend/src/database/disposableDatabaseGuard.ts`,
+  `M backend/src/tests/disposableDatabaseGuard.test.ts`,
+  `A documents/05-testing/staging-readiness/codegraph-report-2026-09-05.md`,
+  `M tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`.
+- Stat: `4 files changed, 938 insertions(+), 22 deletions(-)`.
+- Commit-tree blobs đã phê duyệt:
+  - Guard: `f0187adf71c29314a71bb25516a495ec9b401978`.
+  - Guard test: `23eee18f9d0778f7ecfd0efd7077cfdc39f93483`.
+  - CodeGraph report: `2ffe7f568d4875d0f519ac64748f3ab7418def8d`.
+  - Task document tại implementation checkpoint:
+    `e6fb1c1381ec483b0d4f22f9b9b19aa7fc926e5e`.
+- Root cause: `POOL_QUERY_OVERLOAD_MISMATCH`.
+- Accepted local evidence: typecheck PASS, build PASS, targeted suite
+  `115/115 PASS` với delta `+4`, CodeGraph/source reconciliation PASS và
+  unsupported third-argument query path không còn trong disposable scope.
+- Giới hạn: chưa có runtime evidence sau remediation; không chứng minh
+  socket-level cancellation; runtime retry cần Owner authorization riêng;
+  M07-B, M07-C và M07-D chưa bắt đầu.
+- Commit local đã được tạo; không push. CodeGraph report giữ nguyên nội dung
+  đã commit trong implementation checkpoint.
+- M07-A2 runtime vẫn `NOT AUTHORIZED`; M07-A2 chưa `COMPLETED`; M01-07 và
+  UC-M01 vẫn `INCOMPLETE`.
+
+**Kết luận:** `M07-A2 PG-POOL CONTRACT REMEDIATION RECORDED — RUNTIME RETRY REQUIRES SEPARATE OWNER AUTHORIZATION`.
