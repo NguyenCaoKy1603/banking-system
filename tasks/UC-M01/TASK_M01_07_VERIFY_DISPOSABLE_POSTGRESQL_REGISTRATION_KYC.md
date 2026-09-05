@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 STRUCTURED INSTRUMENTATION VERIFIED — AWAITING CHECKPOINT COMMIT
-- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 STRUCTURED INSTRUMENTATION COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
+- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - M01-07: INCOMPLETE
 - UC-M01: INCOMPLETE
@@ -3088,3 +3088,70 @@ và không cấp quyền retry.
   packet sau đó chỉ được phép chứa đúng ba file đã được owner chỉ định.
 
 **Kết luận:** `READY FOR M07-A2 STRUCTURED INSTRUMENTATION CHECKPOINT COMMIT`.
+
+## 52. M07-A2 STRUCTURED INSTRUMENTATION CHECKPOINT RECORDED
+
+- Implementation commit: `6737494059aa9a1b578bc7493a78dc7b12f8ce9d`.
+- Parent: `87df363454d14b7e55dae5c9f9eb0e0410343be8`.
+- Message: `chore(database): instrument tmpfs attestation diagnostics`.
+- Timestamp: `2026-09-05T10:11:30+07:00`.
+- Commit local, chưa push.
+
+### 52.1 Exact commit inventory và stat
+
+Exact three-file inventory:
+
+| Trạng thái | Đường dẫn |
+| --- | --- |
+| `M` | `backend/src/database/disposableDatabaseGuard.ts` |
+| `M` | `backend/src/tests/disposableDatabaseGuard.test.ts` |
+| `M` | `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md` |
+
+Per-file stat:
+
+| Đường dẫn | Insertions | Deletions |
+| --- | ---: | ---: |
+| `backend/src/database/disposableDatabaseGuard.ts` | 411 | 12 |
+| `backend/src/tests/disposableDatabaseGuard.test.ts` | 576 | 0 |
+| `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md` | 672 | 2 |
+| **Tổng cộng** | **1659** | **14** |
+
+Commit stat: `3 files changed, 1659 insertions(+), 14 deletions(-)`.
+
+Commit-tree blobs:
+
+- Guard: `480d89247884e52d001780fc6e1d6c39ecf47842`.
+- Guard test: `980c4de5d5b294946723b22ef038913ebe75ac08`.
+- Task document: `ad86a14d4693cb1f3a5b715af28a5f6ac2a3ce68`.
+
+Ba commit-tree blob khớp các approved index blob trước commit.
+
+### 52.2 Evidence được ghi nhận
+
+- Targeted suite đã xác minh trước staging: `111/111 PASS`, delta `+11` từ
+  baseline `100`.
+- Typecheck: PASS.
+- Build: PASS.
+- Structured diagnostic allowlist và closed failure-code taxonomy: PASS.
+- Leakage/prohibited-pattern scan: PASS.
+- Không xóa, rename hoặc skip test cũ; các test
+  `M07-A2-ORCH-01..03` vẫn được giữ.
+- Root cause runtime cũ vẫn chưa được chứng minh. Instrumentation chỉ phục vụ
+  phân loại chính xác lần runtime sau.
+
+### 52.3 Post-commit state
+
+- `git diff --cached --name-status`: rỗng.
+- `git diff --name-status`: rỗng.
+- `git status --short --untracked-files=all`: rỗng.
+- Working tree và index sạch; branch
+  `codex/staging-academic-completion` ahead `47`, behind `0` so với
+  `origin/codex/staging-academic-completion`.
+- Không chạy test/build, Docker, PostgreSQL, migration hoặc runtime retry trong
+  phiên commit.
+- M07-A2 runtime retry: `NOT AUTHORIZED`.
+- M01-07: `INCOMPLETE`.
+- UC-M01: `INCOMPLETE`.
+- M07-B/C/D: chưa bắt đầu.
+
+**Kết luận:** `M07-A2 STRUCTURED INSTRUMENTATION RECORDED — RUNTIME RETRY REQUIRES SEPARATE OWNER AUTHORIZATION`.
