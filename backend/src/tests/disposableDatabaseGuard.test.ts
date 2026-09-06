@@ -9,6 +9,7 @@ import {
   type ContainerRemovalFunction,
   type CanonicalSequenceExecutionResult,
   type DatabaseQueryDiagnostic,
+  type DatabaseQueryConfigurationMetadata,
   type AttestationDiagnostic,
   type CreatePoolFunction,
   type ProcessFacade,
@@ -62,6 +63,9 @@ import {
   CANONICAL_RUNTIME_RESULT_PREFIX,
   createCanonicalRuntimeResultEnvelope,
   createDatabaseQueryCancelledDiagnostic,
+  buildDatabaseQueryConfigurationMetadata,
+  classifyDatabaseQueryError,
+  executeDatabaseQueryWithDiagnostic,
   CANONICAL_TMPFS_DESTINATION,
   CANONICAL_TMPFS_OPTIONS,
   CANONICAL_TMPFS_FLAG_VALUE,
@@ -152,8 +156,24 @@ const makeDatabaseDiagnostic = (
   driverFamily: "UNKNOWN",
   sqlState: null,
   systemCode: null,
+  failureStage: "QUERY_AWAIT",
+  errorKind: "STANDARD_ERROR",
+  originFamily: "UNKNOWN",
+  configurationMetadata: {
+    connectionConfigurationKind: "UNKNOWN",
+    passwordPresent: false,
+    passwordType: "UNKNOWN",
+    passwordNonEmpty: false,
+  },
   ...overrides,
 });
+
+const canonicalDatabaseConfigurationMetadata: DatabaseQueryConfigurationMetadata = {
+  connectionConfigurationKind: "CONNECTION_STRING",
+  passwordPresent: true,
+  passwordType: "STRING",
+  passwordNonEmpty: true,
+};
 
 const makeCanonicalFailureResult = (
   overrides: Partial<CanonicalSequenceExecutionResult> = {},
@@ -3028,6 +3048,15 @@ test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam
             driverFamily: "UNKNOWN",
             sqlState: null,
             systemCode: null,
+            failureStage: "QUERY_AWAIT",
+            errorKind: "STANDARD_ERROR",
+            originFamily: "UNKNOWN",
+            configurationMetadata: {
+              connectionConfigurationKind: "UNKNOWN",
+              passwordPresent: false,
+              passwordType: "UNKNOWN",
+              passwordNonEmpty: false,
+            },
           },
           error: sensitiveError,
         };
@@ -3061,17 +3090,10 @@ test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam
     "version",
   ].sort());
   assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
-  assert.equal(envelope.version, 2);
+  assert.equal(envelope.version, 3);
   assert.equal(envelope.outcome, "FAIL");
   assert.deepEqual(envelope.completedSteps, ["1_VERIFY_LOCAL_IMAGE"]);
-  assert.deepEqual(envelope.databaseDiagnostic, {
-    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
-    operation: "CREATE_TARGET_DATABASE",
-    failureCode: "DATABASE_QUERY_FAILURE",
-    driverFamily: "UNKNOWN",
-    sqlState: null,
-    systemCode: null,
-  });
+  assert.deepEqual(envelope.databaseDiagnostic, makeDatabaseDiagnostic());
   assert.deepEqual(envelope.failure, {
     kind: "PRIMARY",
     code: "PRIMARY_ERROR",
@@ -3119,7 +3141,7 @@ test("M07-A2-EMIT-01: canonical success preserves the complete result and emits 
   assert.equal(serializedEnvelopes.length, 1);
   const envelope = parseCanonicalResultLine(serializedEnvelopes[0]);
   assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
-  assert.equal(envelope.version, 2);
+  assert.equal(envelope.version, 3);
   assert.equal(envelope.outcome, "PASS");
   assert.deepEqual(envelope.completedSteps, ["1_VERIFY_LOCAL_IMAGE", "19_VALIDATE_COMPLETION"]);
   assert.equal(envelope.failure, null);
@@ -3161,6 +3183,15 @@ test("M07-A2-EMIT-02: returned canonical failure forwards attestation and databa
     driverFamily: "UNKNOWN" as const,
     sqlState: null,
     systemCode: null,
+    failureStage: "QUERY_AWAIT" as const,
+    errorKind: "STANDARD_ERROR" as const,
+    originFamily: "UNKNOWN" as const,
+    configurationMetadata: {
+      connectionConfigurationKind: "UNKNOWN" as const,
+      passwordPresent: false,
+      passwordType: "UNKNOWN" as const,
+      passwordNonEmpty: false,
+    },
   };
 
   const result = await runCliMain(
@@ -3188,7 +3219,7 @@ test("M07-A2-EMIT-02: returned canonical failure forwards attestation and databa
   assert.equal(facade.exitCode, 1);
   assert.equal(serializedEnvelopes.length, 1);
   assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
-  assert.equal(envelope.version, 2);
+  assert.equal(envelope.version, 3);
   assert.equal(envelope.outcome, "FAIL");
   assert.deepEqual(envelope.completedSteps, ["1_VERIFY_LOCAL_IMAGE"]);
   assert.deepEqual(envelope.attestationDiagnostic, attestationDiagnostic);
@@ -4904,6 +4935,10 @@ test("M07-A2-PGPOOL-03: database setup rejection preserves the primary error and
     driverFamily: "UNKNOWN",
     sqlState: null,
     systemCode: null,
+    failureStage: "QUERY_AWAIT",
+    errorKind: "STANDARD_ERROR",
+    originFamily: "DISPOSABLE_GUARD",
+    configurationMetadata: canonicalDatabaseConfigurationMetadata,
   });
   assert.deepEqual(Object.keys(result.databaseDiagnostic ?? {}).sort(), [...DATABASE_QUERY_DIAGNOSTIC_KEYS].sort());
   assert.deepEqual([...DATABASE_QUERY_FAILURE_CODES], ["DATABASE_QUERY_FAILURE", "DATABASE_QUERY_CANCELLED"]);
@@ -4946,7 +4981,7 @@ test("M07-A2-SEM-01: failing database diagnostic wins over attestation PASS/NONE
     }),
   );
 
-  assert.equal(envelope.version, 2);
+  assert.equal(envelope.version, 3);
   assert.equal(envelope.attestationDiagnostic?.failureCode, "NONE");
   assert.deepEqual(envelope.failure, {
     kind: "PRIMARY",
@@ -5118,6 +5153,10 @@ test("M07-A2-DBDIAG-01: PostgreSQL SQLSTATE is emitted without raw driver fields
     driverFamily: "POSTGRES",
     sqlState: "23505",
     systemCode: null,
+    failureStage: "QUERY_AWAIT",
+    errorKind: "STANDARD_ERROR",
+    originFamily: "DISPOSABLE_GUARD",
+    configurationMetadata: canonicalDatabaseConfigurationMetadata,
   });
   const serialized = JSON.stringify(createCanonicalRuntimeResultEnvelope(result));
   assert.doesNotMatch(serialized, /synthetic driver detail|private driver detail/);
@@ -5179,6 +5218,10 @@ test("M07-A2-DBDIAG-03: unknown or malicious error codes become UNKNOWN without 
     driverFamily: "UNKNOWN",
     sqlState: null,
     systemCode: null,
+    failureStage: "QUERY_AWAIT",
+    errorKind: "STANDARD_ERROR",
+    originFamily: "DISPOSABLE_GUARD",
+    configurationMetadata: canonicalDatabaseConfigurationMetadata,
   });
   const serialized = JSON.stringify(createCanonicalRuntimeResultEnvelope(result));
   assert.doesNotMatch(serialized, /unexpected driver metadata|NOT_ALLOWLISTED|private detail/);
@@ -5196,6 +5239,15 @@ test("M07-A2-DBDIAG-04: orchestration cancellation emits ORCHESTRATION diagnosti
     driverFamily: "ORCHESTRATION",
     sqlState: null,
     systemCode: null,
+    failureStage: "BEFORE_QUERY",
+    errorKind: "ABORT_ERROR",
+    originFamily: "DISPOSABLE_GUARD",
+    configurationMetadata: {
+      connectionConfigurationKind: "UNKNOWN",
+      passwordPresent: false,
+      passwordType: "UNKNOWN",
+      passwordNonEmpty: false,
+    },
   });
 
   let queryCount = 0;
@@ -5253,7 +5305,7 @@ test("M07-A2-DBDIAG-05: production-faithful rejection uses two query arguments a
   assert.equal(lines.length, 1);
   const envelope = parseCanonicalResultLine(lines[0]);
   assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
-  assert.equal(envelope.version, 2);
+  assert.equal(envelope.version, 3);
   assert.deepEqual(envelope.databaseDiagnostic, {
     phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
     operation: "CREATE_TARGET_DATABASE",
@@ -5261,9 +5313,331 @@ test("M07-A2-DBDIAG-05: production-faithful rejection uses two query arguments a
     driverFamily: "POSTGRES",
     sqlState: "23505",
     systemCode: null,
+    failureStage: "QUERY_AWAIT",
+    errorKind: "STANDARD_ERROR",
+    originFamily: "DISPOSABLE_GUARD",
+    configurationMetadata: canonicalDatabaseConfigurationMetadata,
   });
   assert.deepEqual(Object.keys(envelope.databaseDiagnostic as Record<string, unknown>).sort(), [
     ...DATABASE_QUERY_DIAGNOSTIC_KEYS,
   ].sort());
   assert.doesNotMatch(lines[0], /synthetic query rejection|postgresql:\/\//);
+});
+
+test("M07-A2-V3-01: synchronous pool query TypeError is classified at QUERY_CALL", async () => {
+  let queryCalls = 0;
+  let diagnostic: DatabaseQueryDiagnostic | undefined;
+
+  await assert.rejects(
+    () => executeDatabaseQueryWithDiagnostic(
+      {
+        phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+        operation: "CREATE_TARGET_DATABASE",
+        onDiagnostic: (value) => { diagnostic = value; },
+      },
+      () => {
+        queryCalls += 1;
+        throw new TypeError("raw synchronous query failure");
+      },
+    ),
+  );
+
+  assert.equal(queryCalls, 1);
+  assert.equal(diagnostic?.failureStage, "QUERY_CALL");
+  assert.equal(diagnostic?.errorKind, "TYPE_ERROR");
+  assert.equal(diagnostic?.failureCode, "DATABASE_QUERY_FAILURE");
+  assert.equal(diagnostic?.driverFamily, "UNKNOWN");
+  assert.equal(diagnostic?.sqlState, null);
+  assert.equal(diagnostic?.systemCode, null);
+});
+
+test("M07-A2-V3-02: Promise rejection is classified at QUERY_AWAIT and preserves the error", async () => {
+  const primaryError = new Error("raw promise rejection");
+  let diagnostic: DatabaseQueryDiagnostic | undefined;
+
+  try {
+    await executeDatabaseQueryWithDiagnostic(
+      {
+        phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+        operation: "CREATE_TARGET_DATABASE",
+        configurationMetadata: canonicalDatabaseConfigurationMetadata,
+        onDiagnostic: (value) => { diagnostic = value; },
+      },
+      () => Promise.reject(primaryError),
+    );
+    assert.fail("Promise rejection must be rethrown");
+  } catch (error) {
+    assert.equal(error, primaryError);
+  }
+
+  assert.equal(diagnostic?.failureStage, "QUERY_AWAIT");
+  assert.equal(diagnostic?.errorKind, "STANDARD_ERROR");
+  assert.deepEqual(diagnostic?.configurationMetadata, canonicalDatabaseConfigurationMetadata);
+});
+
+test("M07-A2-V3-03: pre-query cancellation is BEFORE_QUERY and never calls the pool", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("synthetic cancellation"));
+  let queryCalls = 0;
+  let diagnostic: DatabaseQueryDiagnostic | undefined;
+
+  await assert.rejects(
+    () => executeDatabaseQueryWithDiagnostic(
+      {
+        phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+        operation: "CREATE_TARGET_DATABASE",
+        signal: controller.signal,
+        onDiagnostic: (value) => { diagnostic = value; },
+      },
+      async () => {
+        queryCalls += 1;
+        return { rows: [] };
+      },
+    ),
+    /cancelled before execution/,
+  );
+
+  assert.equal(queryCalls, 0);
+  assert.equal(diagnostic?.failureCode, "DATABASE_QUERY_CANCELLED");
+  assert.equal(diagnostic?.failureStage, "BEFORE_QUERY");
+  assert.equal(diagnostic?.errorKind, "ABORT_ERROR");
+  assert.equal(diagnostic?.originFamily, "DISPOSABLE_GUARD");
+});
+
+test("M07-A2-V3-04: TypeError without code keeps SQLSTATE and system code null", () => {
+  const diagnostic = classifyDatabaseQueryError(
+    new TypeError("raw type error"),
+    "QUERY_CALL",
+    canonicalDatabaseConfigurationMetadata,
+  );
+
+  assert.equal(diagnostic.errorKind, "TYPE_ERROR");
+  assert.equal(diagnostic.driverFamily, "UNKNOWN");
+  assert.equal(diagnostic.sqlState, null);
+  assert.equal(diagnostic.systemCode, null);
+  assert.doesNotMatch(JSON.stringify(diagnostic), /raw type error|TypeError/);
+});
+
+test("M07-A2-V3-05: closed error-kind table classifies supported and unknown values", () => {
+  const abortError = new Error("safe abort marker");
+  abortError.name = "AbortError";
+  const cases = [
+    { error: new RangeError("safe range marker"), expected: "RANGE_ERROR" as const },
+    { error: new AggregateError([], "safe aggregate marker"), expected: "AGGREGATE_ERROR" as const },
+    { error: new Error("safe standard marker"), expected: "STANDARD_ERROR" as const },
+    { error: abortError, expected: "ABORT_ERROR" as const },
+    { error: "safe non-error marker", expected: "NON_ERROR" as const },
+    { error: Object.create(null) as object, expected: "UNKNOWN" as const },
+  ];
+
+  for (const entry of cases) {
+    assert.equal(
+      classifyDatabaseQueryError(entry.error, "UNKNOWN").errorKind,
+      entry.expected,
+    );
+  }
+});
+
+test("M07-A2-V3-06: internal SASL stack token maps to PG_SASL without emitting the stack", () => {
+  const error = new Error("raw sasl marker");
+  Object.defineProperty(error, "stack", {
+    configurable: true,
+    value: "Error\n    at pg/lib/crypto/sasl.js:62:1",
+  });
+  const diagnostic = classifyDatabaseQueryError(error, "QUERY_AWAIT");
+
+  assert.equal(diagnostic.originFamily, "PG_SASL");
+  assert.doesNotMatch(JSON.stringify(diagnostic), /raw sasl marker|pg\/lib\/crypto\/sasl/);
+});
+
+test("M07-A2-V3-07: closed origin mapping covers pool, client, network, guard, and unknown", () => {
+  const cases = [
+    { stack: "Error\n    at pg-pool/index.js:1:1", expected: "PG_POOL" as const },
+    { stack: "Error\n    at pg/lib/client.js:1:1", expected: "PG_CLIENT" as const },
+    { stack: "Error\n    at node:net:1:1", expected: "NODE_NET" as const },
+    { stack: "Error\n    at disposableDatabaseGuard.ts:1:1", expected: "DISPOSABLE_GUARD" as const },
+    { stack: "Error\n    at unrelated-module.js:1:1", expected: "UNKNOWN" as const },
+  ];
+
+  for (const entry of cases) {
+    const error = new Error("safe origin marker");
+    Object.defineProperty(error, "stack", { configurable: true, value: entry.stack });
+    assert.equal(classifyDatabaseQueryError(error).originFamily, entry.expected);
+  }
+});
+
+test("M07-A2-V3-08: password metadata exposes only closed type and boolean presence", () => {
+  const functionPassword = () => "safe function result";
+  const cases = [
+    {
+      input: { connectionConfigurationKind: "CONNECTION_STRING", password: "non-empty" },
+      expected: { connectionConfigurationKind: "CONNECTION_STRING", passwordPresent: true, passwordType: "STRING", passwordNonEmpty: true },
+    },
+    {
+      input: { connectionConfigurationKind: "CONNECTION_STRING", password: "" },
+      expected: { connectionConfigurationKind: "CONNECTION_STRING", passwordPresent: true, passwordType: "STRING", passwordNonEmpty: false },
+    },
+    {
+      input: { connectionConfigurationKind: "CONNECTION_STRING", password: functionPassword },
+      expected: { connectionConfigurationKind: "CONNECTION_STRING", passwordPresent: true, passwordType: "FUNCTION", passwordNonEmpty: false },
+    },
+    {
+      input: { connectionConfigurationKind: "CONNECTION_STRING" },
+      expected: { connectionConfigurationKind: "CONNECTION_STRING", passwordPresent: false, passwordType: "ABSENT", passwordNonEmpty: false },
+    },
+    {
+      input: { connectionConfigurationKind: "CONNECTION_STRING", password: { marker: "safe object" } },
+      expected: { connectionConfigurationKind: "CONNECTION_STRING", passwordPresent: true, passwordType: "OTHER", passwordNonEmpty: false },
+    },
+  ];
+
+  for (const entry of cases) {
+    assert.deepEqual(buildDatabaseQueryConfigurationMetadata(entry.input), entry.expected);
+  }
+});
+
+test("M07-A2-V3-09: configuration kind is restricted to discrete, string, mixed, or unknown", () => {
+  const kinds = ["DISCRETE_FIELDS", "CONNECTION_STRING", "MIXED"] as const;
+  for (const kind of kinds) {
+    assert.equal(
+      buildDatabaseQueryConfigurationMetadata({ connectionConfigurationKind: kind, password: "safe" }).connectionConfigurationKind,
+      kind,
+    );
+  }
+  assert.equal(
+    buildDatabaseQueryConfigurationMetadata({ connectionConfigurationKind: "UNSAFE_KIND", password: "safe" }).connectionConfigurationKind,
+    "UNKNOWN",
+  );
+});
+
+test("M07-A2-V3-10: malicious error and configuration objects do not leak into V3 diagnostics", () => {
+  const maliciousError = Object.assign(new Error("RAW_ERROR_MARKER"), {
+    code: "UNSAFE_CODE_MARKER",
+    detail: "RAW_SQL_MARKER",
+    params: "RAW_PARAMS_MARKER",
+  });
+  Object.defineProperty(maliciousError, "stack", {
+    configurable: true,
+    value: "Error\n    at RAW_STACK_MARKER:1:1",
+  });
+  const details = classifyDatabaseQueryError(maliciousError, "QUERY_AWAIT");
+  const databaseDiagnostic = makeDatabaseDiagnostic(details);
+  const serialized = JSON.stringify(createCanonicalRuntimeResultEnvelope(
+    makeCanonicalFailureResult({ databaseDiagnostic, error: maliciousError }),
+  ));
+
+  assert.doesNotMatch(serialized, /RAW_ERROR_MARKER|UNSAFE_CODE_MARKER|RAW_SQL_MARKER|RAW_PARAMS_MARKER|RAW_STACK_MARKER/);
+  assert.deepEqual(Object.keys(databaseDiagnostic).sort(), [...DATABASE_QUERY_DIAGNOSTIC_KEYS].sort());
+});
+
+test("M07-A2-V3-11: canonical production seam emits exactly one V3 envelope and no V1/V2 line", async () => {
+  const lines: string[] = [];
+  const facade: ProcessFacade = { exitCode: 0 };
+  const result = await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: facade,
+      canonicalRunnerFn: async () => makeCanonicalFailureResult({
+        databaseDiagnostic: makeDatabaseDiagnostic(),
+        error: new Error("internal result marker"),
+      }),
+      writeCanonicalResultFn: (line: string) => { lines.push(line); },
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(lines.length, 1);
+  assert.equal((lines[0].match(/M07_A2_RESULT_V3/g) ?? []).length, 1);
+  assert.equal((lines[0].match(/M07_A2_RESULT_V2/g) ?? []).length, 0);
+  assert.equal((lines[0].match(/M07_A2_RESULT_V1/g) ?? []).length, 0);
+  const envelope = parseCanonicalResultLine(lines[0]);
+  assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
+  assert.equal(envelope.version, 3);
+  assert.equal(envelope.outcome, "FAIL");
+  assert.deepEqual(Object.keys(envelope.databaseDiagnostic as Record<string, unknown>).sort(), [
+    ...DATABASE_QUERY_DIAGNOSTIC_KEYS,
+  ].sort());
+});
+
+test("M07-A2-V3-12: V3 preserves failure precedence, successful steps, and cleanup separation", () => {
+  const failedPhase = "5_CREATE_TARGET_DATABASE_AND_MARKER";
+  const envelope = createCanonicalRuntimeResultEnvelope(
+    makeCanonicalFailureResult({
+      containerId: "a".repeat(64),
+      completedSteps: ["1_VERIFY_LOCAL_IMAGE", "4_WAIT_READINESS"],
+      attestationDiagnostic: makeAttestationDiagnostic("NONE"),
+      databaseDiagnostic: makeDatabaseDiagnostic({ failureStage: "QUERY_AWAIT" }),
+      error: new Error("primary marker"),
+      cleanupError: new Error("cleanup marker"),
+    }),
+  );
+
+  assert.equal(envelope.completedSteps.includes(failedPhase), false);
+  assert.deepEqual(envelope.completedSteps, ["1_VERIFY_LOCAL_IMAGE", "4_WAIT_READINESS"]);
+  assert.deepEqual(envelope.failure, {
+    kind: "PRIMARY",
+    code: "PRIMARY_ERROR",
+    phase: failedPhase,
+    operation: "CREATE_TARGET_DATABASE",
+  });
+  assert.deepEqual(envelope.cleanup, {
+    attempted: true,
+    succeeded: false,
+    failureCode: "CLEANUP_ERROR",
+  });
+});
+
+test("M07-A2-V3-13: production-faithful query boundary calls the pool once with at most two arguments", async () => {
+  let queryCalls = 0;
+  let argumentCount = 0;
+  let argumentTypes: string[] = [];
+  const strictPool: DisposablePoolClient = {
+    query(_queryText: string, params?: unknown[]) {
+      queryCalls += 1;
+      argumentCount = arguments.length;
+      argumentTypes = [typeof _queryText, typeof params];
+      return Promise.resolve({ rows: [] });
+    },
+    async end() {},
+  };
+
+  await executeDatabaseQueryWithDiagnostic(
+    {
+      phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+      operation: "CREATE_TARGET_DATABASE",
+      configurationMetadata: canonicalDatabaseConfigurationMetadata,
+    },
+    () => strictPool.query("safe-placeholder", undefined),
+  );
+
+  assert.equal(queryCalls, 1);
+  assert.equal(argumentCount, 2);
+  assert.deepEqual(argumentTypes, ["string", "undefined"]);
+});
+
+test("M07-A2-V3-14: Error and non-Error inputs remain outside the closed serialized diagnostic", () => {
+  const error = Object.assign(new Error("RAW_ERROR_OBJECT"), { code: "RAW_CODE_OBJECT" });
+  const errorDetails = classifyDatabaseQueryError(error, "QUERY_AWAIT");
+  const nonErrorDetails = classifyDatabaseQueryError({ raw: "RAW_NON_ERROR_OBJECT" }, "QUERY_CALL");
+
+  for (const details of [errorDetails, nonErrorDetails]) {
+    assert.deepEqual(Object.keys(details).sort(), [
+      "configurationMetadata",
+      "driverFamily",
+      "errorKind",
+      "failureStage",
+      "originFamily",
+      "sqlState",
+      "systemCode",
+    ]);
+  }
+
+  const serialized = JSON.stringify(createCanonicalRuntimeResultEnvelope(
+    makeCanonicalFailureResult({
+      databaseDiagnostic: makeDatabaseDiagnostic(errorDetails),
+      error,
+    }),
+  ));
+  assert.doesNotMatch(serialized, /RAW_ERROR_OBJECT|RAW_CODE_OBJECT|RAW_NON_ERROR_OBJECT/);
 });

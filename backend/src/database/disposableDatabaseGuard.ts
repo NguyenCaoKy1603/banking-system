@@ -435,6 +435,94 @@ export const DATABASE_QUERY_SYSTEM_CODES = [
 ] as const;
 export type DatabaseQuerySystemCode = (typeof DATABASE_QUERY_SYSTEM_CODES)[number];
 
+export const DATABASE_QUERY_FAILURE_STAGES = [
+  "BEFORE_QUERY",
+  "QUERY_CALL",
+  "QUERY_AWAIT",
+  "AFTER_QUERY",
+  "UNKNOWN",
+] as const;
+export type DatabaseQueryFailureStage = (typeof DATABASE_QUERY_FAILURE_STAGES)[number];
+
+export const DATABASE_QUERY_ERROR_KINDS = [
+  "TYPE_ERROR",
+  "RANGE_ERROR",
+  "AGGREGATE_ERROR",
+  "ABORT_ERROR",
+  "STANDARD_ERROR",
+  "NON_ERROR",
+  "UNKNOWN",
+] as const;
+export type DatabaseQueryErrorKind = (typeof DATABASE_QUERY_ERROR_KINDS)[number];
+
+export const DATABASE_QUERY_ORIGIN_FAMILIES = [
+  "DISPOSABLE_GUARD",
+  "PG_POOL",
+  "PG_CLIENT",
+  "PG_SASL",
+  "NODE_NET",
+  "UNKNOWN",
+] as const;
+export type DatabaseQueryOriginFamily = (typeof DATABASE_QUERY_ORIGIN_FAMILIES)[number];
+
+export const DATABASE_QUERY_CONFIGURATION_KINDS = [
+  "DISCRETE_FIELDS",
+  "CONNECTION_STRING",
+  "MIXED",
+  "UNKNOWN",
+] as const;
+export type DatabaseQueryConfigurationKind = (typeof DATABASE_QUERY_CONFIGURATION_KINDS)[number];
+
+export const DATABASE_QUERY_PASSWORD_TYPES = [
+  "STRING",
+  "FUNCTION",
+  "OTHER",
+  "ABSENT",
+  "UNKNOWN",
+] as const;
+export type DatabaseQueryPasswordType = (typeof DATABASE_QUERY_PASSWORD_TYPES)[number];
+
+export type DatabaseQueryConfigurationMetadata = {
+  readonly connectionConfigurationKind: DatabaseQueryConfigurationKind;
+  readonly passwordPresent: boolean;
+  readonly passwordType: DatabaseQueryPasswordType;
+  readonly passwordNonEmpty: boolean;
+};
+
+const UNKNOWN_DATABASE_QUERY_CONFIGURATION: DatabaseQueryConfigurationMetadata = {
+  connectionConfigurationKind: "UNKNOWN",
+  passwordPresent: false,
+  passwordType: "UNKNOWN",
+  passwordNonEmpty: false,
+};
+
+const DATABASE_QUERY_CONFIGURATION_KIND_SET = new Set<string>(DATABASE_QUERY_CONFIGURATION_KINDS);
+
+export function buildDatabaseQueryConfigurationMetadata(input: {
+  readonly connectionConfigurationKind?: unknown;
+  readonly password?: unknown;
+}): DatabaseQueryConfigurationMetadata {
+  const rawKind = input.connectionConfigurationKind;
+  const connectionConfigurationKind =
+    typeof rawKind === "string" && DATABASE_QUERY_CONFIGURATION_KIND_SET.has(rawKind)
+      ? rawKind as DatabaseQueryConfigurationKind
+      : "UNKNOWN";
+  const passwordPresent = Object.prototype.hasOwnProperty.call(input, "password") && input.password !== undefined;
+  const passwordType: DatabaseQueryPasswordType = !passwordPresent
+    ? "ABSENT"
+    : typeof input.password === "string"
+      ? "STRING"
+      : typeof input.password === "function"
+        ? "FUNCTION"
+        : "OTHER";
+  return {
+    connectionConfigurationKind,
+    passwordPresent,
+    passwordType,
+    passwordNonEmpty: typeof input.password === "string" && input.password.length > 0,
+  };
+}
+
 export const DATABASE_QUERY_DIAGNOSTIC_KEYS = [
   "phase",
   "operation",
@@ -442,6 +530,10 @@ export const DATABASE_QUERY_DIAGNOSTIC_KEYS = [
   "driverFamily",
   "sqlState",
   "systemCode",
+  "failureStage",
+  "errorKind",
+  "originFamily",
+  "configurationMetadata",
 ] as const;
 
 export type DatabaseQueryDiagnostic = {
@@ -458,39 +550,113 @@ export type DatabaseQueryDiagnostic = {
   readonly driverFamily: DatabaseQueryDriverFamily;
   readonly sqlState: string | null;
   readonly systemCode: DatabaseQuerySystemCode | null;
+  readonly failureStage: DatabaseQueryFailureStage;
+  readonly errorKind: DatabaseQueryErrorKind;
+  readonly originFamily: DatabaseQueryOriginFamily;
+  readonly configurationMetadata: DatabaseQueryConfigurationMetadata;
 };
 
 const POSTGRES_SQL_STATE_PATTERN = /^[0-9A-Z]{5}$/;
 const DATABASE_QUERY_SYSTEM_CODE_SET = new Set<string>(DATABASE_QUERY_SYSTEM_CODES);
 
-type DatabaseQueryFailureDetails = Pick<
+export type DatabaseQueryFailureDetails = Pick<
   DatabaseQueryDiagnostic,
-  "driverFamily" | "sqlState" | "systemCode"
+  | "driverFamily"
+  | "sqlState"
+  | "systemCode"
+  | "failureStage"
+  | "errorKind"
+  | "originFamily"
+  | "configurationMetadata"
 >;
 
-function classifyDatabaseQueryError(error: unknown): DatabaseQueryFailureDetails {
-  if (error === null || typeof error !== "object") {
-    return { driverFamily: "UNKNOWN", sqlState: null, systemCode: null };
+function classifyDatabaseQueryErrorKind(error: unknown): DatabaseQueryErrorKind {
+  if (error instanceof TypeError) return "TYPE_ERROR";
+  if (error instanceof RangeError) return "RANGE_ERROR";
+  if (typeof AggregateError !== "undefined" && error instanceof AggregateError) return "AGGREGATE_ERROR";
+  if (error instanceof Error) {
+    let errorName: unknown;
+    try {
+      errorName = (error as { readonly name?: unknown }).name;
+    } catch {
+      return "UNKNOWN";
+    }
+    return errorName === "AbortError" ? "ABORT_ERROR" : "STANDARD_ERROR";
+  }
+  if (error === null || (typeof error !== "object" && typeof error !== "function")) return "NON_ERROR";
+  return "UNKNOWN";
+}
+
+function classifyDatabaseQueryOriginFamily(error: unknown): DatabaseQueryOriginFamily {
+  if (error === null || typeof error !== "object") return "UNKNOWN";
+  let stack: unknown;
+  try {
+    stack = (error as { readonly stack?: unknown }).stack;
+  } catch {
+    return "UNKNOWN";
+  }
+  if (typeof stack !== "string") return "UNKNOWN";
+  const stackFrames = stack.split(/\r?\n/).slice(1);
+  for (const frame of stackFrames) {
+    if (frame.includes("pg/lib/crypto/sasl") || frame.includes("pg\\lib\\crypto\\sasl")) return "PG_SASL";
+    if (frame.includes("pg-pool") || frame.includes("pg_pool")) return "PG_POOL";
+    if (frame.includes("pg/lib/client") || frame.includes("pg\\lib\\client")) return "PG_CLIENT";
+    if (frame.includes("node:net") || frame.includes("node:internal/net")) return "NODE_NET";
+    if (frame.includes("disposableDatabaseGuard")) return "DISPOSABLE_GUARD";
+  }
+  return "UNKNOWN";
+}
+
+export function classifyDatabaseQueryError(
+  error: unknown,
+  failureStage: DatabaseQueryFailureStage = "UNKNOWN",
+  configurationMetadata: DatabaseQueryConfigurationMetadata = UNKNOWN_DATABASE_QUERY_CONFIGURATION,
+): DatabaseQueryFailureDetails {
+  let code: string | undefined;
+  if (error !== null && typeof error === "object") {
+    try {
+      const errorRecord = error as { readonly code?: unknown };
+      code = typeof errorRecord.code === "string" ? errorRecord.code : undefined;
+    } catch {
+      code = undefined;
+    }
   }
 
-  const errorRecord = error as { readonly code?: unknown };
-  const code = typeof errorRecord.code === "string" ? errorRecord.code : undefined;
-  if (code && POSTGRES_SQL_STATE_PATTERN.test(code)) {
-    return { driverFamily: "POSTGRES", sqlState: code, systemCode: null };
-  }
-  if (code && DATABASE_QUERY_SYSTEM_CODE_SET.has(code)) {
-    return {
-      driverFamily: "NODE_SYSTEM",
-      sqlState: null,
-      systemCode: code as DatabaseQuerySystemCode,
-    };
-  }
-  return { driverFamily: "UNKNOWN", sqlState: null, systemCode: null };
+  const driverDetails: Pick<DatabaseQueryFailureDetails, "driverFamily" | "sqlState" | "systemCode"> =
+    code && POSTGRES_SQL_STATE_PATTERN.test(code)
+      ? { driverFamily: "POSTGRES", sqlState: code, systemCode: null }
+      : code && DATABASE_QUERY_SYSTEM_CODE_SET.has(code)
+        ? { driverFamily: "NODE_SYSTEM", sqlState: null, systemCode: code as DatabaseQuerySystemCode }
+        : { driverFamily: "UNKNOWN", sqlState: null, systemCode: null };
+
+  return {
+    ...driverDetails,
+    failureStage,
+    errorKind: classifyDatabaseQueryErrorKind(error),
+    originFamily: classifyDatabaseQueryOriginFamily(error),
+    configurationMetadata: { ...configurationMetadata },
+  };
+}
+
+function createDatabaseQueryFailureDiagnostic(
+  phase: DatabaseQueryDiagnostic["phase"],
+  operation: DatabaseQueryDiagnostic["operation"],
+  error: unknown,
+  failureStage: DatabaseQueryFailureStage,
+  configurationMetadata: DatabaseQueryConfigurationMetadata,
+): DatabaseQueryDiagnostic {
+  return {
+    phase,
+    operation,
+    failureCode: "DATABASE_QUERY_FAILURE",
+    ...classifyDatabaseQueryError(error, failureStage, configurationMetadata),
+  };
 }
 
 export function createDatabaseQueryCancelledDiagnostic(
   phase: DatabaseQueryDiagnostic["phase"],
   operation: DatabaseQueryDiagnostic["operation"],
+  configurationMetadata: DatabaseQueryConfigurationMetadata = UNKNOWN_DATABASE_QUERY_CONFIGURATION,
 ): DatabaseQueryDiagnostic {
   return {
     phase,
@@ -499,7 +665,85 @@ export function createDatabaseQueryCancelledDiagnostic(
     driverFamily: "ORCHESTRATION",
     sqlState: null,
     systemCode: null,
+    failureStage: "BEFORE_QUERY",
+    errorKind: "ABORT_ERROR",
+    originFamily: "DISPOSABLE_GUARD",
+    configurationMetadata: { ...configurationMetadata },
   };
+}
+
+export interface DatabaseQueryExecutionOptions {
+  readonly phase: DatabaseQueryDiagnostic["phase"];
+  readonly operation: DatabaseQueryDiagnostic["operation"];
+  readonly signal?: AbortSignal;
+  readonly configurationMetadata?: DatabaseQueryConfigurationMetadata;
+  readonly onDiagnostic?: (diagnostic: DatabaseQueryDiagnostic) => void;
+}
+
+export async function executeDatabaseQueryWithDiagnostic<T>(
+  options: DatabaseQueryExecutionOptions,
+  query: () => Promise<T>,
+  afterQuery?: (result: T) => void,
+): Promise<T> {
+  const configurationMetadata = options.configurationMetadata ?? UNKNOWN_DATABASE_QUERY_CONFIGURATION;
+  const recordDiagnostic = (diagnostic: DatabaseQueryDiagnostic): void => {
+    options.onDiagnostic?.(diagnostic);
+  };
+
+  if (options.signal?.aborted) {
+    const diagnostic = createDatabaseQueryCancelledDiagnostic(
+      options.phase,
+      options.operation,
+      configurationMetadata,
+    );
+    recordDiagnostic(diagnostic);
+    throw new Error(`Database query '${options.operation}' was cancelled before execution.`);
+  }
+
+  let pending: Promise<T>;
+  try {
+    pending = query();
+  } catch (error) {
+    recordDiagnostic(createDatabaseQueryFailureDiagnostic(
+      options.phase,
+      options.operation,
+      error,
+      "QUERY_CALL",
+      configurationMetadata,
+    ));
+    throw error;
+  }
+
+  let result: T;
+  try {
+    result = await pending;
+  } catch (error) {
+    recordDiagnostic(createDatabaseQueryFailureDiagnostic(
+      options.phase,
+      options.operation,
+      error,
+      "QUERY_AWAIT",
+      configurationMetadata,
+    ));
+    throw error;
+  }
+
+  if (afterQuery) {
+    try {
+      afterQuery(result);
+    } catch (error) {
+      recordDiagnostic(createDatabaseQueryFailureDiagnostic(
+        options.phase,
+        options.operation,
+        error,
+        "AFTER_QUERY",
+        configurationMetadata,
+      ));
+      throw error;
+    }
+  }
+
+  return result;
 }
 
 function assertDatabaseQueryCanStart(signal: AbortSignal | undefined, operation: DatabaseQueryDiagnostic["operation"]): void {
@@ -1977,17 +2221,28 @@ export async function verifyDatabaseDroppedInCatalog(
   pool: DisposablePoolClient,
   targetName: string,
   signal?: AbortSignal,
+  options: Pick<DatabaseQueryExecutionOptions, "configurationMetadata" | "onDiagnostic"> = {},
 ): Promise<void> {
-  assertDatabaseQueryCanStart(signal, "VERIFY_TARGET_DATABASE");
-  const result = await pool.query(
-    "SELECT COUNT(*)::int AS count FROM pg_database WHERE datname = $1",
-    [targetName],
+  await executeDatabaseQueryWithDiagnostic(
+    {
+      phase: "17_PARENT_POST_DROP_CATALOG_CHECK",
+      operation: "VERIFY_TARGET_DATABASE",
+      signal,
+      configurationMetadata: options.configurationMetadata,
+      onDiagnostic: options.onDiagnostic,
+    },
+    () => pool.query(
+      "SELECT COUNT(*)::int AS count FROM pg_database WHERE datname = $1",
+      [targetName],
+    ),
+    (result) => {
+      const row = result.rows?.[0] as { count?: number | string } | undefined;
+      const count = Number(row?.count ?? -1);
+      if (count !== 0) {
+        throw new Error(`Post-drop verification failed: target database still present in pg_database (count = ${count}).`);
+      }
+    },
   );
-  const row = result.rows?.[0] as { count?: number | string } | undefined;
-  const count = Number(row?.count ?? -1);
-  if (count !== 0) {
-    throw new Error(`Post-drop verification failed: target database still present in pg_database (count = ${count}).`);
-  }
 }
 
 export const CANONICAL_SEQUENCE_STEPS = [
@@ -2256,8 +2511,8 @@ export interface CanonicalSequenceExecutionResult {
 }
 
 export const CANONICAL_RUNTIME_RESULT_SCHEMA = "m07-a2-canonical-runtime-result" as const;
-export const CANONICAL_RUNTIME_RESULT_VERSION = 2 as const;
-export const CANONICAL_RUNTIME_RESULT_PREFIX = "M07_A2_RESULT_V2 " as const;
+export const CANONICAL_RUNTIME_RESULT_VERSION = 3 as const;
+export const CANONICAL_RUNTIME_RESULT_PREFIX = "M07_A2_RESULT_V3 " as const;
 export const CANONICAL_RUNTIME_FAILURE_CODES = [
   "PRIMARY_ERROR",
   "CLEANUP_ERROR",
@@ -2332,6 +2587,10 @@ function toPublicDatabaseDiagnostic(
     driverFamily: diagnostic.driverFamily,
     sqlState: diagnostic.sqlState,
     systemCode: diagnostic.systemCode,
+    failureStage: diagnostic.failureStage,
+    errorKind: diagnostic.errorKind,
+    originFamily: diagnostic.originFamily,
+    configurationMetadata: { ...diagnostic.configurationMetadata },
   };
 }
 
@@ -2465,6 +2724,8 @@ export async function runCanonicalEvidenceSequence(
   let databaseDiagnostic: DatabaseQueryDiagnostic | undefined;
   let primaryFailureContext: CanonicalFailureContext | undefined;
   let cleanupFailureContext: CanonicalFailureContext | undefined;
+  let databaseConfigurationMetadata: DatabaseQueryConfigurationMetadata =
+    buildDatabaseQueryConfigurationMetadata({ connectionConfigurationKind: "UNKNOWN" });
 
   const childAbortController = new AbortController();
 
@@ -2474,21 +2735,18 @@ export async function runCanonicalEvidenceSequence(
     signal: AbortSignal,
     query: () => Promise<T>,
   ): Promise<T> => {
-    if (signal.aborted) {
-      databaseDiagnostic ??= createDatabaseQueryCancelledDiagnostic(phase, operation);
-      throw new Error(`Database query '${operation}' was cancelled before execution.`);
-    }
-    try {
-      return await query();
-    } catch (error) {
-      databaseDiagnostic ??= {
+    return executeDatabaseQueryWithDiagnostic(
+      {
         phase,
         operation,
-        failureCode: "DATABASE_QUERY_FAILURE",
-        ...classifyDatabaseQueryError(error),
-      };
-      throw error;
-    }
+        signal,
+        configurationMetadata: databaseConfigurationMetadata,
+        onDiagnostic: (diagnostic) => {
+          databaseDiagnostic ??= diagnostic;
+        },
+      },
+      query,
+    );
   };
 
   let activeStep: CanonicalSequenceStep | null = null;
@@ -2546,11 +2804,16 @@ export async function runCanonicalEvidenceSequence(
         // 3. Post-drop catalog assertion
         try {
           beginStep("17_PARENT_POST_DROP_CATALOG_CHECK");
-          await executeDatabaseQuery(
-            "17_PARENT_POST_DROP_CATALOG_CHECK",
-            "VERIFY_TARGET_DATABASE",
+          await verifyDatabaseDroppedInCatalog(
+            pool,
+            databaseName,
             cleanupAbortController.signal,
-            () => verifyDatabaseDroppedInCatalog(pool, databaseName, cleanupAbortController.signal),
+            {
+              configurationMetadata: databaseConfigurationMetadata,
+              onDiagnostic: (diagnostic) => {
+                databaseDiagnostic ??= diagnostic;
+              },
+            },
           );
           recordStep("17_PARENT_POST_DROP_CATALOG_CHECK");
         } catch (err) {
@@ -2727,6 +2990,12 @@ export async function runCanonicalEvidenceSequence(
           connectionTimeoutMillis: DISPOSABLE_TIMEOUTS.poolConnectionMs,
         });
     adminPool = pool;
+    databaseConfigurationMetadata = {
+      connectionConfigurationKind: "CONNECTION_STRING",
+      passwordPresent: true,
+      passwordType: "STRING",
+      passwordNonEmpty: true,
+    };
 
     await executeDatabaseQuery(
       "5_CREATE_TARGET_DATABASE_AND_MARKER",

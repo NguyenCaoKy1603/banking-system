@@ -1,8 +1,8 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: BLOCKED — M07-A2 RUNTIME-BOUND CAPTURE HELPER AWAITING OWNER REVIEW
-- Chế độ hiện tại: IMPLEMENT_AND_VERIFY — TEMPORARY CAPTURE TOOL ONLY — NO DATABASE
-- An toàn thực thi database: BLOCKED — RUNTIME RETRY NOT AUTHORIZED
+- Trạng thái: IN_PROGRESS — M07-A2 V3 ERROR-ORIGIN INSTRUMENTATION VERIFIED — AWAITING CHECKPOINT COMMIT
+- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
@@ -5093,3 +5093,393 @@ canonical runtime child.
   Owner review nhưng chưa cấp quyền runtime retry.
 - M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B,
   M07-C và M07-D chưa bắt đầu.
+
+## 74. M07-A2 V2 DIAGNOSTIC ONE-SHOT RUNTIME RETRY — EXECUTION RECORD
+
+- Documentation baseline trước runtime: commit
+  `1131955d4fdb5e8c616fa0d69c9f0385ca9a0ea1`.
+- Authorization này thực hiện đúng một helper invocation và đúng một
+  canonical child; không retry, fallback, lệnh runner trực tiếp hoặc manual
+  PostgreSQL query.
+- Helper: `C:\Users\admin\AppData\Local\Temp\m07-a2-v2-runtime-capture-9bb4e2c75d1d45a396caf17353eea1cc\m07-a2-v2-runtime-capture.mjs`;
+  SHA-256 sau runtime
+  `634194a08ad638e325130dc8290afd92c89603f9509ce07396c540b9107dc4b0`;
+  size `13055` bytes — vẫn `MATCH`.
+
+### 74.1 Invocation và V2 capture
+
+- Supervisor start: `2026-09-06T11:34:17.2505242+07:00`.
+- Supervisor end: `2026-09-06T11:34:20.2241849+07:00`.
+- Supervisor duration: `2974 ms (~2.974 s)`; capture-core duration:
+  `2890 ms`.
+- Helper exit code: `0`; captured canonical child exit code: `1`, signal
+  `null`, timeout `false`.
+- Helper invocation count `1`; canonical child count `1`; old-helper count `0`;
+  retry/fallback count `0`.
+- V2 prefix count `1`; V1 prefix count `0`; envelope count `1`; JSON parse
+  `PASS`; single-line protocol `PASS`; schema
+  `m07-a2-canonical-runtime-result`; version `2`; closed allowlist `PASS`.
+- Captured stdout byte count `1173`; stderr byte count `0`. Không ghi raw
+  stdout/stderr, SQL, params, URL, credential hoặc full identity vào record.
+
+### 74.2 Phase evidence và semantic consistency
+
+- PASS: `1_VERIFY_LOCAL_IMAGE`, `2_CREATE_EPHEMERAL_CONTAINER`,
+  `3_INSPECT_VALIDATE_CONTAINER`, `4_WAIT_READINESS`.
+- Attestation diagnostic: phase `3_INSPECT_VALIDATE_CONTAINER`,
+  `failureCode=NONE`; không được chọn làm failure source.
+- FAIL tại phase `5_CREATE_TARGET_DATABASE_AND_MARKER`, operation
+  `CREATE_TARGET_DATABASE`, generic failure code `PRIMARY_ERROR`.
+- Database diagnostic độc lập: phase `5_CREATE_TARGET_DATABASE_AND_MARKER`,
+  operation `CREATE_TARGET_DATABASE`, failure code
+  `DATABASE_QUERY_FAILURE`, `driverFamily=UNKNOWN`, `sqlState=null`,
+  `systemCode=null`.
+- `completedSteps` chính xác gồm:
+  `1_VERIFY_LOCAL_IMAGE`, `2_CREATE_EPHEMERAL_CONTAINER`,
+  `3_INSPECT_VALIDATE_CONTAINER`, `4_WAIT_READINESS`,
+  `18_REMOVE_CONTAINER`. Failed phase 5 không xuất hiện; phase 18 chỉ xuất
+  hiện sau cleanup thành công. Các phase 6–17 và 19 không có evidence vì bị
+  chặn sau phase 5.
+- Cleanup envelope: `attempted=true`, `succeeded=true`, `failureCode=null`;
+  cleanup không ghi đè primary failure. Semantic consistency: `PASS`.
+- Vì database diagnostic chỉ có `driverFamily=UNKNOWN`, `sqlState=null` và
+  `systemCode=null`, database root cause vẫn `UNKNOWN`; không phân tích nguyên
+  nhân từ stderr hoặc timing.
+
+### 74.3 Resource reconciliation
+
+- Container sau run: `22`, fingerprint
+  `bb73d7f83cb20653e530c0f2dc1880c81e9828f4beda2c686fea427198e6af04`.
+- Volumes: `48`, fingerprint
+  `e34864a892be18f2177c7ffd082691e896d2c9010f60277e7cf1759b098b50d4`;
+  dangling volumes: `37`, fingerprint
+  `a99ce38de9d854005f415a244bf2eb90caf7b2aae8164eeea4f129c4b8417f7d`.
+- Networks: `7`, fingerprint
+  `3a589a653ab49fec9b96964bafc6fcf33b978dcaad6fead1a4b79035444f8990`;
+  image references: `56`, fingerprint
+  `ec6c35d765897132d0a782b0d0b6e11996d7e7fe6a198e57b6ecd8cd35d64cf2`.
+- M07-A2/probe/run-label leftovers: `0`; resource baseline match: `true`;
+  không cleanup thủ công.
+- Bounded Docker events: create `1`, start `1`, die `1`, destroy `1`;
+  mountinfo exec create/start/die mỗi loại `1`; network connect/disconnect
+  mỗi loại `1`; kill `1`. Không có volume create/destroy mới.
+
+### 74.4 Trạng thái bàn giao
+
+- Trạng thái: `BLOCKED — M07-A2 RUNTIME 5_CREATE_TARGET_DATABASE_AND_MARKER /
+  DATABASE_QUERY_FAILURE`.
+- M07-A2 runtime chỉ có static/local và runtime evidence đến phase 5 cùng
+  cleanup; chưa đạt toàn bộ 19 phase. M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B,
+  M07-C và M07-D chưa bắt đầu.
+- CodeGraph chỉ là structural evidence; không thay thế runtime evidence. Không
+  có kết luận pilot hoặc production-ready.
+
+## 75. M07-A2 UNKNOWN CREATE-DATABASE FAILURE DIAGNOSIS
+
+- Đây là chẩn đoán source/dependency và no-socket probe sau invocation V2 duy
+  nhất. V2 evidence trước đó được giữ nguyên: phases `1`–`4` PASS; phase `5`
+  `CREATE_TARGET_DATABASE_AND_MARKER` thất bại tại operation
+  `CREATE_TARGET_DATABASE` với generic `PRIMARY_ERROR`, database
+  `DATABASE_QUERY_FAILURE`, `driverFamily=UNKNOWN`, `sqlState=null`,
+  `systemCode=null`; phase `5` không nằm trong `completedSteps`; cleanup PASS,
+  zero leftover và stderr `0` bytes. Không có runtime retry trong phiên này.
+
+### 75.1 CodeGraph và call path
+
+- `codegraph sync`: `Already up to date`.
+- Query 1: `runCanonicalEvidenceSequence waitForReady createPoolFn Pool
+  PoolConfig adminPool executeDatabaseQuery CREATE_TARGET_DATABASE password
+  connectionString callers callees` — `76 symbols across 5 files`.
+- Query 2: `executeDatabaseQuery classifyDatabaseQueryError
+  DatabaseQueryDiagnostic driverFamily UNKNOWN pool.query error code callers
+  callees` — `49 symbols across 2 files`.
+- Query 3: `runContainer POSTGRES_PASSWORD database password admin connection
+  host port create target database callers callees` — `84 symbols across 5
+  files`.
+- Các symbol/source line chính đã đối chiếu trực tiếp: `quoteDatabaseIdentifier`
+  `backend/src/database/disposableDatabaseGuard.ts:190-195`;
+  `DisposablePoolClient.query` `:406-408`;
+  `DatabaseQueryDiagnostic` `:447-469`;
+  `classifyDatabaseQueryError` `:471-489`;
+  `verifyDatabaseDroppedInCatalog` `:1976-1991`;
+  `waitForReady` `:2203-2228`;
+  `runCanonicalEvidenceSequence` `:2443-2905`;
+  `executeDatabaseQuery` `:2471-2492`; `recordStep` `:2494-2507`;
+  canonical phase 5 `:2719-2748`.
+- Call path đã xác nhận: `runCanonicalEvidenceSequence` tạo run/database
+  identity và Docker adapter → phase 3 attestation → phase 4 TCP readiness →
+  phase 5 tạo admin pool → `executeDatabaseQuery` → `Pool.query` → catch tạo
+  `databaseDiagnostic`. Cleanup được gọi trong `finally`; primary error được
+  giữ riêng và không bị cleanup error ghi đè. CodeGraph không link đầy đủ
+  query-string/dynamic dispatch, nên phần đó được fallback bằng source trace;
+  source là nguồn sự thật cuối cùng.
+- Receiver-specific blast radius chỉ là disposable guard và các caller trực
+  tiếp của `runCanonicalEvidenceSequence`/runner; generic
+  `backend/src/database/pool.ts` và tập callers rộng của `DatabasePool.query`
+  không thuộc phạm vi.
+
+### 75.2 CREATE_TARGET_DATABASE và cấu hình admin pool
+
+- Database name được tạo nội bộ theo dạng `banking_test_<generated-run-id>`.
+  Query shape là `CREATE DATABASE` cộng với identifier đã qua
+  `quoteDatabaseIdentifier`; identifier không dùng `$1` parameter binding,
+  đúng với giới hạn của PostgreSQL identifier, nhưng được validate theo pattern
+  và quote bằng double quote/escape. Lời gọi production dùng tối đa hai
+  arguments: query text và `undefined` params.
+- Canonical admin pool dùng connection string tại source line `2721`, với
+  user cố định, fixed non-empty test credential literal, host/port đã được
+  inspect validate và maintenance database `postgres`; pool được tạo bằng
+  `new Pool({ connectionString, max: 1, connectionTimeoutMillis: ... })` hoặc
+  injected `createPoolFn` cùng connection-string contract. CREATE DATABASE
+  không nằm trong transaction.
+- Safe configuration metadata, không ghi value: `passwordPresent=true`,
+  `passwordType=string`, `passwordNonEmpty=true`; username present/type là
+  `true/string`; host classification là `loopback` theo validated bind host;
+  port type là `number`; maintenance database là `postgres`;
+  `connectionConfigurationKind=CONNECTION_STRING`; URL encoding là
+  `not-applicable` cho fixed literal; `credentialSourceShared=UNPROVEN` vì
+  cùng fixed literal được thấy trong Docker env và admin URL nhưng source không
+  dùng chung một provider/variable.
+- Docker env và admin URL cùng thể hiện fixed non-empty test credential literal,
+  nhưng không có bằng chứng source-level về credential divergence, thiếu
+  credential hoặc non-string credential. TCP `waitForReady` chỉ dùng
+  `net.createConnection` và chứng minh listener/socket mở; nó không chứng minh
+  authentication hoặc query readiness. Authentication/query lần đầu xảy ra ở
+  `Pool.query` của phase 5.
+
+### 75.3 Dependency contract và no-socket probe
+
+- Installed metadata/lockfile: `pg=8.23.0`, `pg-pool=3.14.0`,
+  `@types/pg=8.21.0`; `pg-pool` là dependency transitive và không có
+  `@types/pg-pool` riêng.
+- `backend/node_modules/pg-pool/index.js:431-485` xử lý
+  `query(text, values, cb)`: chỉ coi `values` là callback khi `typeof values`
+  là `function`; với `undefined`, `promisify` tạo callback function nội bộ và
+  trả Promise. Pool gọi `client.query(text, values, callback)` với callback
+  function. `Pool.end` hỗ trợ Promise tại `:488-498`. `pg` client source
+  `:668-700` cũng yêu cầu callback function ở đường callback nội bộ.
+- Các đường dependency liên quan đã đọc: `Client._connect` `:153-229` (real
+  socket khi dùng client thật), password handling `:274-310`, connection
+  parameter normalization `connection-parameters.js:52-80`, và SASL password
+  checks `sasl.js:62-75`. Những đường này có thể tạo `Error`/`TypeError` không
+  có `error.code`, nhưng không chứng minh điều kiện kích hoạt trong runtime
+  vừa qua.
+- No-socket probe duy nhất dùng installed `pg-pool` với `FakeClient`; FakeClient
+  không import/call net, tls hoặc socket. Probe ghi nhận pool-call shape
+  `argumentCount=2`, types `string/undefined`; pg-pool chuyển xuống FakeClient
+  với callback function ở vị trí nội bộ. Case resolve: Promise fulfilled và
+  rows observed. Case reject: Promise rejected với synthetic `Error`, không có
+  error code. Cả hai không có callback-contract failure; `socketCalls=0`,
+  `fakeClientOnly=true`, pool đóng thành công. Helper ở ngoài repository có
+  SHA-256 `7085cd6420e19c165db121663e11b42eb275adc10668282a5812d9bb187f10b8`,
+  size `4477` bytes. Probe không mở database socket và không dùng query text
+  runtime.
+- Kết quả này loại trừ `REMAINING_POOL_QUERY_OVERLOAD_MISMATCH` cho invocation
+  shape hiện tại, nhưng không loại trừ lỗi authentication/configuration/query
+  ở client thật. Không có SQLSTATE hoặc system code trong V2 evidence.
+
+### 75.4 Failure-stage và phân loại
+
+- `executeDatabaseQuery` kiểm tra cancellation trước query, rồi `try/await`
+  toàn bộ `query()`; source có thể bắt cả synchronous throw tại query-call và
+  Promise rejection, nhưng V2 diagnostic chỉ giữ phase, operation,
+  failureCode, driverFamily, sqlState và systemCode. Nó không phát ra
+  `failureStage`, `errorKind` hoặc `originFamily`.
+- Vì vậy failure stage của invocation là `UNKNOWN_QUERY_STAGE`; không được
+  gán `QUERY_CALL_SYNCHRONOUS_THROW` hay `QUERY_PROMISE_REJECTION` từ timing,
+  stderr rỗng hoặc duration. Không có bằng chứng trực tiếp cho identifier,
+  quoting, transaction, credential, pool-factory hoặc query-result defect.
+- Classification duy nhất phù hợp là:
+  `DATABASE_UNKNOWN_ERROR_ORIGIN_NOT_OBSERVABLE`.
+  Database root cause vẫn `UNKNOWN`; không dùng nhãn authentication và không
+  sửa SQL bằng suy đoán.
+
+### 75.5 Safe V3 instrumentation plan — chưa triển khai
+
+- Vì V2 là closed schema, không thêm field ngầm vào version 2. Nếu Owner cấp
+  quyền riêng, đề xuất V3 với closed fields `failureStage` gồm
+  `BEFORE_QUERY|QUERY_CALL|QUERY_AWAIT|AFTER_QUERY|UNKNOWN`, `errorKind` gồm
+  `TYPE_ERROR|RANGE_ERROR|AGGREGATE_ERROR|ABORT_ERROR|STANDARD_ERROR|NON_ERROR|UNKNOWN`,
+  `originFamily` gồm `DISPOSABLE_GUARD|PG_POOL|PG_CLIENT|PG_SASL|NODE_NET|UNKNOWN`,
+  và `configurationMetadata` chỉ gồm các boolean/kind đã nêu ở trên.
+- Classifier phải bắt stage quanh query-call/await, map error bằng closed
+  internal classifier và giữ database/primary/cleanup errors riêng. Không
+  forward message, stack, SQL, params, host, port, URL, username, database
+  name, credential, arbitrary constructor hoặc arbitrary error code.
+- Test-gap plan tối thiểu: synchronous throw; Promise rejection; TypeError
+  không code; password/SASL metadata; non-Error throw; closed origin mapping;
+  raw message/stack leakage; single V3 emission; V2 không dual-emit; và
+  cleanup/primary-error preservation. Chưa viết/chạy test trong phiên này.
+
+### 75.6 Trạng thái
+
+- Recovery/resource lifecycle từ invocation trước đã hoàn tất; không có runtime
+  retry mới và không có database/socket invocation trong phiên diagnosis này.
+- Không sửa source, test, config, migration, CodeGraph report hoặc dependency;
+  chỉ task document được cập nhật. M07-A2 runtime vẫn `BLOCKED`; M01-07 và
+  UC-M01 vẫn `INCOMPLETE`; M07-B, M07-C và M07-D chưa bắt đầu.
+
+## 76. M07-A2 SAFE V3 ERROR-ORIGIN INSTRUMENTATION
+
+### 76.1 Phạm vi và trạng thái
+
+- V2 diagnostic không đủ quan sát để phân biệt synchronous query-call throw,
+  Promise rejection, loại lỗi và origin family. No-socket `pg-pool` probe ở
+  Section 75 đã loại trừ `REMAINING_POOL_QUERY_OVERLOAD_MISMATCH` cho query
+  shape hiện tại; probe không mở database/socket.
+- Phiên này chỉ sửa local/unit trong đúng ba file allowlist: disposable guard,
+  guard test và task document. Không chạy Docker, PostgreSQL, database socket,
+  migration, canonical runtime hoặc V2/V3 helper ở `--runtime` mode.
+- Database runtime root cause vẫn `UNKNOWN`; không có runtime evidence mới.
+
+### 76.2 V3 closed diagnostic contract
+
+- Các field V2 được giữ nguyên: `phase`, `operation`, `failureCode`,
+  `driverFamily`, `sqlState`, `systemCode`.
+- Field V3 bổ sung: `failureStage`, `errorKind`, `originFamily` và
+  `configurationMetadata`.
+- `failureStage` đóng trong `BEFORE_QUERY|QUERY_CALL|QUERY_AWAIT|AFTER_QUERY|UNKNOWN`;
+  `errorKind` đóng trong
+  `TYPE_ERROR|RANGE_ERROR|AGGREGATE_ERROR|ABORT_ERROR|STANDARD_ERROR|NON_ERROR|UNKNOWN`;
+  `originFamily` đóng trong
+  `DISPOSABLE_GUARD|PG_POOL|PG_CLIENT|PG_SASL|NODE_NET|UNKNOWN`.
+- `configurationMetadata` chỉ gồm `connectionConfigurationKind`,
+  `passwordPresent`, `passwordType` và `passwordNonEmpty`. Kind đóng trong
+  `DISCRETE_FIELDS|CONNECTION_STRING|MIXED|UNKNOWN`; password type đóng trong
+  `STRING|FUNCTION|OTHER|ABSENT|UNKNOWN`. Không emit credential, độ dài,
+  connection string, username, host, port hoặc database name.
+- Query boundary giữ nguyên semantics: cancellation check trước query, một
+  `pool.query` duy nhất với tối đa hai arguments, synchronous call boundary,
+  await boundary và after-result boundary. Không truyền `AbortSignal`, không
+  thêm query, không retry và không tuyên bố socket-level cancellation.
+- Canonical production protocol đổi sang đúng một dòng
+  `M07_A2_RESULT_V3 <single-line-json>`, schema
+  `m07-a2-canonical-runtime-result`, version `3`. Không dual-emit V1/V2;
+  legacy path không emit canonical envelope; writer và entrypoint tiếp tục
+  được await.
+
+### 76.3 Test delta và mapping
+
+- Baseline targeted suite: `134`; thêm đúng `14` registration; kết quả cuối
+  `148/148 PASS`, `0` fail, `0` cancelled, `0` skipped, `0` pending tests. Không xóa,
+  rename hoặc skip test cũ.
+- `M07-A2-V3-01`: synchronous `pool.query` TypeError → `QUERY_CALL` /
+  `TYPE_ERROR`.
+- `M07-A2-V3-02`: Promise rejection → `QUERY_AWAIT`, giữ primary error.
+- `M07-A2-V3-03`: cancellation trước query → `BEFORE_QUERY` /
+  `DATABASE_QUERY_CANCELLED`, không gọi pool.
+- `M07-A2-V3-04`: TypeError không code giữ `sqlState/systemCode=null`.
+- `M07-A2-V3-05`: closed error-kind table cho RangeError, AggregateError,
+  Error, AbortError, non-Error và unknown.
+- `M07-A2-V3-06`: stack token SASL nội bộ → `PG_SASL`, không emit stack.
+- `M07-A2-V3-07`: closed origin mapping cho pool, client, network, guard và
+  unknown.
+- `M07-A2-V3-08`: password metadata cho string/non-empty, empty, function,
+  absent và other.
+- `M07-A2-V3-09`: configuration kind cho discrete, connection string, mixed
+  và unknown.
+- `M07-A2-V3-10`: malicious error/config objects không rò rỉ vào diagnostic.
+- `M07-A2-V3-11`: production seam phát đúng một V3 envelope; V1/V2 count bằng
+  zero.
+- `M07-A2-V3-12`: failure precedence, completed steps và cleanup separation
+  được giữ nguyên.
+- `M07-A2-V3-13`: query path gọi pool đúng một lần với tối đa hai arguments.
+- `M07-A2-V3-14`: Error/non-Error không được serialize ngoài closed allowlist.
+
+### 76.4 CodeGraph và source reconciliation
+
+- Post-change `codegraph sync`: `Already up to date`.
+- Query 1 chính xác: `executeDatabaseQuery classifyDatabaseQueryError
+  DatabaseQueryDiagnostic failureStage errorKind originFamily
+  configurationMetadata callers callees` → `32 symbols across 1 file`.
+  Call path chính: `executeDatabaseQueryWithDiagnostic:683` →
+  `createDatabaseQueryFailureDiagnostic:641` →
+  `classifyDatabaseQueryError:610`. Các symbol/configuration line chính:
+  `buildDatabaseQueryConfigurationMetadata:501`,
+  `classifyDatabaseQueryErrorKind:573`,
+  `classifyDatabaseQueryOriginFamily:590`.
+- Query 2 chính xác: `runCanonicalEvidenceSequence createPoolFn PoolConfig
+  databaseDiagnostic cleanup completedSteps callers callees` →
+  `82 symbols across 4 files`. Canonical sequence ở
+  `runCanonicalEvidenceSequence:2702`; `verifyDatabaseDroppedInCatalog:2220`
+  dùng boundary mới; `backend/src/database/pool.ts` chỉ là generic reference,
+  không thuộc blast radius remediation và không thay đổi.
+- Query 3 chính xác: `formatCanonicalRuntimeResultLine
+  createCanonicalRuntimeResultEnvelope runCliMain M07_A2_RESULT_V3 callers
+  callees` → `76 symbols across 5 files`. Envelope/formatter ở
+  `createCanonicalRuntimeResultEnvelope:2666`,
+  `formatCanonicalRuntimeResultLine:2693`; production prefix/version ở
+  `:2514-2515`; `runCliMain:3329` là canonical output seam.
+- Historical pre-change CodeGraph snapshot đã ghi lần lượt `42 symbols across
+  1 file`, `97 symbols across 5 files` và `76 symbols across 5 files`. Post-change
+  graph phản ánh working tree local/unit remediation; source hiện tại là nguồn
+  sự thật cuối cùng. Generic DatabasePool callers không được dùng để mở rộng
+  blast radius.
+- Source đối chiếu xác nhận `executeDatabaseQueryWithDiagnostic` phân biệt
+  cancellation, synchronous call, await rejection và after-result; diagnostic
+  chỉ chứa closed fields; V3 đi qua envelope formatter. Không có thay đổi ở
+  SQL/query ordering, pool/readiness, tmpfs, ownership, migration/checksum,
+  restoration hoặc cleanup contract.
+
+### 76.5 Temporary V3 capture helper
+
+- Helper mới nằm ngoài repository tại:
+  `C:\Users\admin\AppData\Local\Temp\m07-a2-v3-runtime-capture-74b36beff17442d4b66447e09557c9a4\m07-a2-v3-runtime-capture.mjs`.
+- SHA-256: `9ed33e82715b23cacf26fa109c8632805634b76898072a1cd8daf4cc725803fa`;
+  size: `12885` bytes; Node `v24.19.0`; PowerShell `7.6.5`.
+- Helper có runtime spec một nguồn: `process.execPath`, cwd backend tuyệt đối,
+  argv đúng ba phần tử `--import=tsx`,
+  `scripts/run-disposable-postgres-test.ts`,
+  `src/tests/disposableMigrationRuntime.test.ts`; `shell:false`, streams tách
+  biệt và timeout `180000` ms. Runtime mode không được gọi; runtime invocation
+  count bằng `0`, canonical child count bằng `0`.
+- BIND-01..06: `PASS`. Binding dùng fake `spawnFn`, một fake invocation, không
+  tạo canonical child, không fallback; mode lạ/extra argument bị từ chối trước
+  spawn với exit code `2`.
+- CAPTURE-01..06: `PASS`. Success và failure giữ exit code; stdout/stderr tách
+  biệt; chunked output chỉ parse sau `close`; LF/CRLF parse đúng; rendering
+  failure giả lập không làm mất capture record; timeout có kiểm soát, không retry,
+  không envelope giả và child đóng.
+- V1/V2 prefix count bằng `0` trong positive fixtures; V3 envelope/schema/version
+  parse đúng. Helper cũ không bị sửa; hash no-socket helper cũ vẫn là
+  `7085cd6420e19c165db121663e11b42eb275adc10668282a5812d9bb187f10b8`.
+
+### 76.6 Quality gates và giới hạn
+
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS.
+- `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`:
+  `148/148 PASS`.
+- `git diff --check`: PASS tại các lần kiểm tra sau thay đổi.
+- Prohibited TypeScript bypass, conflict marker, placeholder và leakage scan:
+  PASS; V3 không serialize raw error/stack/name, SQL/params, URL, credential,
+  environment value, host/port, database name hoặc full identity.
+- Bằng chứng này chỉ là source/CodeGraph/local-unit/synthetic evidence. Không
+  có Docker/PostgreSQL/socket/runtime evidence mới; database root cause vẫn
+  `UNKNOWN`; M07-A2 runtime retry vẫn `NOT AUTHORIZED`.
+- M07-A2, M01-07 và UC-M01 tiếp tục `INCOMPLETE`; M07-B, M07-C và M07-D chưa
+  bắt đầu. Không có kết luận pilot hoặc production-ready.
+
+### 76.7 OWNER APPROVAL — M07-A2 SAFE V3 ERROR-ORIGIN INSTRUMENTATION ACCEPTED
+
+- Ngày phê duyệt: `2026-09-06`.
+- Baseline HEAD: `1131955d4fdb5e8c616fa0d69c9f0385ca9a0ea1`.
+- Accepted evidence: typecheck PASS; build PASS; targeted suite `148/148 PASS`;
+  delta `134 → 148`; `M07-A2-V3-01..14` PASS.
+- CodeGraph post-change evidence đã được chấp nhận: `32 symbols / 1 file`,
+  `82 symbols / 4 files`, `76 symbols / 5 files`. Truy vấn reconciliation bổ
+  sung đúng theo staging này trả `41 symbols across 1 file`; core symbol/path
+  và source vẫn khớp.
+- Production protocol: prefix `M07_A2_RESULT_V3`, schema
+  `m07-a2-canonical-runtime-result`, version `3`.
+- V3 helper: path đã ghi tại Section 76.5; SHA-256
+  `9ed33e82715b23cacf26fa109c8632805634b76898072a1cd8daf4cc725803fa`; size
+  `12885` bytes; BIND-01..06 PASS; CAPTURE-01..06 PASS; runtime/canonical
+  child invocation `0`.
+- Guard SHA-256 frozen: `7fffd5adf76bc874746986551e4b1cc11f94aa9100e0b5fba3638ca60722d49b`.
+  Guard test SHA-256 frozen:
+  `764699dfc2b9ada7e3d14cadb71c02a6f555eedff0115493ffda0e13b887a963`.
+- Database root cause vẫn `UNKNOWN`; không có runtime evidence mới. Approval
+  này chỉ áp dụng cho local/unit V3 instrumentation và không cấp quyền runtime
+  retry. M07-A2 runtime, M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B, M07-C và
+  M07-D chưa bắt đầu. Không tick runtime acceptance criteria.
