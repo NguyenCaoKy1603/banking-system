@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 FAILURE SEMANTICS AND DATABASE DIAGNOSTIC RECORDED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
-- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT / READ-ONLY PREFLIGHT ONLY
+- Trạng thái: BLOCKED — M07-A2 RESULT_V2 CAPTURE HARNESS VERIFICATION
+- Chế độ hiện tại: DIAGNOSE_AND_VERIFY — SUPERVISORY CAPTURE ONLY — NO DATABASE
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
@@ -4871,3 +4871,143 @@ Post-change source reconciliation confirms:
   `INCOMPLETE`; M07-B, M07-C và M07-D chưa bắt đầu.
 
 **Kết luận:** `M07-A2 FAILURE SEMANTICS RECORDED — READY FOR V2 DIAGNOSTIC RUNTIME RETRY AUTHORIZATION REVIEW`.
+
+## 71. M07-A2 V2 DIAGNOSTIC ONE-SHOT RUNTIME RETRY — CAPTURE FAILURE
+
+- Authorization này đã thực hiện đúng một canonical invocation; không retry,
+  fallback hoặc chạy command thứ hai.
+- Invocation count: `1`.
+- Start: `2026-09-06T09:58:57.8440847+07:00`.
+- End: `2026-09-06T09:58:59.9741644+07:00`.
+- Duration: `2130 ms (~2.130 s)`.
+- Child process đã kết thúc. Exit code không thu hồi được vì supervisory
+  capture script gặp lỗi trong bước report sau khi child kết thúc; đây là
+  lỗi thu thập bằng chứng, không phải kết luận về runtime phase.
+- Stdout/stderr đã được capture trong memory nhưng bị mất khi report wrapper
+  dừng. Vì vậy không thể xác nhận prefix `M07_A2_RESULT_V2`, số envelope,
+  schema, version, outcome, completedSteps hoặc diagnostic phase/code. Không
+  suy diễn các trường này từ timing, Docker events hoặc source.
+- Không có bằng chứng hợp lệ để kết luận runtime PASS hay xác định database
+  root cause; database runtime root cause vẫn `UNKNOWN`.
+
+### 71.1 Resource reconciliation
+
+- Container baseline/post-run: `22`, fingerprint
+  `a6c312758a44394d066c31725a5f9fdb50123fc73513b5b5d2d991e56f9de9e1`;
+  M07-A2/probe/run-label leftovers: `0`.
+- Exact invocation window có container events đã sanitize: create `1`, start
+  `1`, die `1`, destroy `1`.
+- Volume events trong invocation window: create `0`, destroy `0`.
+- Volumes: `48`; dangling volumes: `37`; networks: `7`; image references:
+  `56`. Stable volume-name set fingerprint là
+  `e34864a892be18f2177c7ffd082691e896d2c9010f60277e7cf1759b098b50d4`.
+  Full `Name|Driver|Labels` listing có thứ tự metadata không ổn định giữa
+  các lần đọc; không dùng chênh lệch fingerprint metadata đó để kết luận
+  volume mutation khi counts, name set và volume events không đổi.
+- Không cleanup thủ công sau process; không có leftover cần recovery.
+
+### 71.2 Git và trạng thái
+
+- HEAD không đổi: `b88e67609b5099ed887e48c0128278464fdc68fa`.
+- Trước documentation update, cached và unstaged diff đều rỗng, untracked
+  bằng `0`; không có source/test/config/migration/CodeGraph report thay đổi.
+- Do V2 envelope không thể được xác minh, trạng thái là
+  `BLOCKED — M07-A2 RESULT_V2 CAPTURE FAILED`.
+- M07-A2 runtime retry không được thực hiện lại; M07-A2, M01-07 và UC-M01
+  vẫn `INCOMPLETE`; M07-B, M07-C và M07-D chưa bắt đầu.
+
+## 72. M07-A2 V2 RESULT CAPTURE HARNESS DIAGNOSIS
+
+- Invocation runtime trước đã chạy đúng một lần nhưng không cung cấp được
+  evidence envelope hoặc exit code cho báo cáo. Resource lifecycle cleanup
+  của invocation đó đã hoàn tất; không có database/runtime evidence mới trong
+  phiên chẩn đoán này.
+- Đây là capture blocker độc lập, không phải database failure. Underlying
+  database root cause vẫn `UNKNOWN`.
+
+### 72.1 Phân tích supervisory capture trước đó
+
+- Exact capture path đã dùng process launcher với executable/arguments explicit,
+  redirect stdout và stderr riêng, chờ child kết thúc rồi mới đọc output; không
+  merge `stderr` vào `stdout`.
+- Exit code đã được lưu trước bước dựng báo cáo. Sau khi child đóng, lỗi xảy ra
+  trong biểu thức render PowerShell dùng `if` bên trong phép nối chuỗi của
+  `Write-Output`, làm supervisory script dừng trước khi in kết quả đã capture.
+- Captures vì vậy tồn tại trong memory nhưng bị mất khi wrapper kết thúc; đây
+  không phải bằng chứng stdout/stderr collection failure hoặc exit-code
+  overwrite.
+- Classification: `SUPERVISOR_POST_EXIT_PRINT_FAILURE`.
+- Không suy diễn phase runtime, database failure hoặc root cause từ việc
+  wrapper không in được báo cáo.
+
+### 72.2 CodeGraph emission-boundary verification
+
+- `codegraph sync`: `Already up to date`.
+- Exact query: `runCliMain formatCanonicalRuntimeResultLine
+  writeCanonicalResultFn M07_A2_RESULT_V2 stdout process exitCode callers
+  callees`.
+- Kết quả: `65 symbols across 5 files`. Disposable path liên quan trực tiếp:
+  `formatCanonicalRuntimeResultLine` tại
+  `backend/src/database/disposableDatabaseGuard.ts:2434`,
+  `writeCanonicalResultFn` tại `:2937`, `runCliMain` tại `:3060`, và production
+  entrypoint await `runCliMain` tại
+  `backend/scripts/run-disposable-postgres-test.ts:46`.
+- Static source check xác nhận production chỉ dùng prefix V2, không có V1
+  prefix, writer được await, `runCliMain` không gọi `process.exit()`, và không
+  có source change sau implementation checkpoint `6994801`. Các symbol
+  `main` trong migration/backup scripts được CodeGraph trả về nhưng nằm ngoài
+  disposable capture blast radius.
+- CodeGraph chỉ xác nhận production emission path; không chứng minh
+  invocation runtime trước đã emit thành công.
+
+### 72.3 Replacement capture helper
+
+- Helper duy nhất nằm ngoài repository tại
+  `C:\Users\admin\AppData\Local\Temp\m07-a2-v2-capture-b40993a0ed994037808592bd2746c991\m07-a2-v2-capture.mjs`.
+- Final SHA-256: `4ddf883ef4c554b6dd21e820440f074fb9c77aa94a776db773a099a6ce39fa53`;
+  hash trước và sau ma trận cuối `MATCH`.
+- Môi trường: Node `v24.19.0`; PowerShell `7.6.5`.
+- Helper dùng `child_process.spawn` với `shell: false`, executable/argv array
+  explicit, stdout/stderr là hai Buffer riêng, chờ `close`, lưu exitCode/signal
+  ngay khi child đóng, timeout hữu hạn và không retry. Summary chỉ chứa các
+  field allowlisted: started, closed, exitCode, signal, timedOut, durationMs,
+  stdoutByteCount, stderrByteCount, stdoutLineCount, V1PrefixCount,
+  V2PrefixCount, envelopeCount, jsonParseSucceeded, schema, version, outcome
+  và summarySerializationSucceeded.
+- Không in raw stdout/stderr; không có command secret, URL, credential, ID,
+  mountinfo hoặc error payload trong summary. Helper được giữ nguyên
+  byte-for-byte sau final hash để Owner review.
+
+### 72.4 Synthetic capture evidence
+
+Final matrix gồm 7 helper invocations: mỗi case dưới đây chạy đúng một lần;
+CAPTURE-04 được tách thành hai biến thể line-ending. Các smoke run trước khi
+khóa fixture cuối đã bị loại khỏi evidence accepted.
+
+| Fixture | Closed | Exit/signal | Timeout | Duration | stdout/stderr bytes | Lines | V1/V2/envelopes | Parse/schema/version/outcome | Serialization |
+|---|---:|---|---:|---:|---|---:|---|---|---:|
+| CAPTURE-01 success | true | `0` | false | `60 ms` | `267/0` | 1 | `0/1/1` | PASS / đúng schema / `2` / `PASS` | PASS |
+| CAPTURE-02 failure exit | true | `1` | false | `60 ms` | `327/28` | 1 | `0/1/1` | PASS / đúng schema / `2` / `FAIL` | PASS |
+| CAPTURE-03 chunked stdout | true | `0` | false | `100 ms` | `267/0` | 1 | `0/1/1` | PASS / đúng schema / `2` / `PASS` | PASS |
+| CAPTURE-04 LF | true | `0` | false | `60 ms` | `267/0` | 1 | `0/1/1` | PASS / đúng schema / `2` / `PASS` | PASS |
+| CAPTURE-04 CRLF | true | `0` | false | `63 ms` | `268/0` | 1 | `0/1/1` | PASS / đúng schema / `2` / `PASS` | PASS |
+| CAPTURE-05 rendering | true | `0` | false | `62 ms` | `267/0` | 1 | `0/1/1` | PASS / đúng schema / `2` / `PASS` | PASS |
+| CAPTURE-06 timeout | true | `null/SIGTERM` | true | `180 ms` | `0/0` | 0 | `0/0/0` | parse false / null / null / null | PASS |
+
+- Tất cả envelope bình thường dùng prefix `M07_A2_RESULT_V2`, schema
+  `m07-a2-canonical-runtime-result`, version `2`; không có V1 và không parse
+  stderr. CAPTURE-05 mô phỏng rendering failure sau capture; captured summary
+  vẫn còn và serialization vẫn thành công. CAPTURE-06 kết thúc có kiểm soát
+  sau timeout, không retry và close event xác nhận child đã kết thúc.
+- Không có Docker command, PostgreSQL, database socket, migration, test suite
+  hoặc build được chạy trong phiên diagnosis; không tạo Docker resource mới.
+
+### 72.5 Kết luận và trạng thái
+
+- Evidence xác nhận lỗi cũ nằm ở supervisory post-exit rendering:
+  `ROOT CAUSE CONFIRMED — SUPERVISOR_POST_EXIT_PRINT_FAILURE — REPLACEMENT
+  CAPTURE HARNESS VERIFIED`.
+- Đây chỉ là bằng chứng capture synthetic và static emission-path evidence;
+  không có runtime/database evidence mới. M07-A2 runtime vẫn chưa được cấp
+  quyền retry; M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B, M07-C và M07-D chưa
+  bắt đầu.
