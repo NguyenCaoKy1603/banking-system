@@ -1,8 +1,8 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 V3 ERROR-ORIGIN INSTRUMENTATION VERIFIED — AWAITING CHECKPOINT COMMIT
-- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
-- An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
+- Trạng thái: IN_PROGRESS — M07-A2 V3 ERROR-ORIGIN INSTRUMENTATION RECORDED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
+- Chế độ hiện tại: DOCUMENTATION COMMIT / READ-ONLY PREFLIGHT / ONE-SHOT RUNTIME ONLY
+- An toàn thực thi database: BLOCKED UNTIL PHASE B PASSES
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
@@ -5483,3 +5483,27 @@ canonical runtime child.
   này chỉ áp dụng cho local/unit V3 instrumentation và không cấp quyền runtime
   retry. M07-A2 runtime, M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B, M07-C và
   M07-D chưa bắt đầu. Không tick runtime acceptance criteria.
+
+## 77. M07-A2 SAFE V3 ERROR-ORIGIN IMPLEMENTATION COMMIT
+
+- Implementation commit: `31231bc05c4f46cce97bdd8ffbeed8ebda9291b5`.
+- Parent: `1131955d4fdb5e8c616fa0d69c9f0385ca9a0ea1`.
+- Message: `fix(database): emit V3 database failure diagnostics`.
+- Inventory đúng ba file: `backend/src/database/disposableDatabaseGuard.ts`,
+  `backend/src/tests/disposableDatabaseGuard.test.ts` và task document này.
+  Commit stat: `3 files changed, 1094 insertions(+), 61 deletions(-)`.
+- Commit-tree blobs: guard
+  `2f19c66640c11e39868b442153e4b8353a0dbc4b`; guard test
+  `03725377eb0c5d65d02230c1d2b51e7eb00b29e0`; task
+  `d8e177682b36b10e8ce98cff57a3e15852bb2902`.
+- Accepted local evidence: typecheck PASS; build PASS; targeted suite
+  `148/148 PASS`; `M07-A2-V3-01..14` PASS; CodeGraph pre/post evidence gồm
+  `32 symbols / 1 file`, `82 symbols / 4 files` và `76 symbols / 5 files`.
+- Production protocol: prefix `M07_A2_RESULT_V3`, schema
+  `m07-a2-canonical-runtime-result`, version `3`.
+- V3 helper ngoài repository: SHA-256
+  `9ed33e82715b23cacf26fa109c8632805634b76898072a1cd8daf4cc725803fa`, size
+  `12885` bytes; BIND/CAPTURE PASS; runtime invocation trước checkpoint `0`.
+- Database root cause vẫn `UNKNOWN`. Commit chỉ tồn tại local, chưa push; không
+  có runtime evidence mới và Phase C chưa được thực hiện trong documentation
+  checkpoint này.
