@@ -1,8 +1,8 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 V3 ERROR-ORIGIN INSTRUMENTATION RECORDED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
-- Chế độ hiện tại: DOCUMENTATION COMMIT / READ-ONLY PREFLIGHT / ONE-SHOT RUNTIME ONLY
-- An toàn thực thi database: BLOCKED UNTIL PHASE B PASSES
+- Trạng thái: BLOCKED — M07-A2 V3 FORMATTER–PARSER COMPATIBILITY DIAGNOSIS
+- Chế độ hiện tại: DIAGNOSE_AND_VERIFY — LOCAL/SYNTHETIC ONLY — NO DATABASE
+- An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
@@ -5507,3 +5507,226 @@ canonical runtime child.
 - Database root cause vẫn `UNKNOWN`. Commit chỉ tồn tại local, chưa push; không
   có runtime evidence mới và Phase C chưa được thực hiện trong documentation
   checkpoint này.
+
+## 78. M07-A2 V3 DIAGNOSTIC RUNTIME EXECUTION RECORD
+
+- Documentation baseline trước execution: `cef214b231dc8829c70de1831bac1bc4d8ff13a3`.
+- Helper duy nhất được gọi:
+  `C:\Users\admin\AppData\Local\Temp\m07-a2-v3-runtime-capture-74b36beff17442d4b66447e09557c9a4\m07-a2-v3-runtime-capture.mjs`;
+  SHA-256
+  `9ed33e82715b23cacf26fa109c8632805634b76898072a1cd8daf4cc725803fa`, size
+  `12885` bytes. Hash/size sau execution vẫn khớp.
+- Invocation counts: helper `1`, canonical child `1`, retry `0`, fallback `0`,
+  V1/V2 helper invocation `0`. Child cwd/argv/shell/timeout giữ đúng binding
+  đã được xác minh ở Section 77. Không có environment injection.
+- Runtime window UTC: `2026-09-06T12:58:16.2164623Z` →
+  `2026-09-06T12:58:18.2319585Z`; duration `2015 ms`; helper exit code `1`;
+  captured child exit code `1`; signal `null`; timeout `false`.
+
+### 78.1 V3 capture result
+
+- Safe capture summary: V3 prefix/envelope count `1`; V1 prefix `0`; V2 prefix
+  `0`; stdout `1403` bytes/`1` line; stderr `0` bytes; summary serialization
+  PASS.
+- `jsonParseSucceeded=false`; schema, version, outcome, completedSteps,
+  diagnostics, failure và cleanup không có parsed value an toàn. Vì vậy không
+  có phase/failure code hoặc database diagnostic được phát hành để phân loại;
+  không suy đoán từ output, timing hoặc exit code.
+- Semantic consistency không thể xác minh do envelope không parse được; đây là
+  `M07-A2 RESULT_V3 CAPTURE FAILED`, không phải bằng chứng database root cause.
+  Database root cause vẫn `UNKNOWN`.
+- Không ghi raw stdout/stderr, message, stack, SQL, params, URL, credential
+  hoặc full identity vào tài liệu.
+
+### 78.2 Resource reconciliation
+
+- Post-run exact sorted-set fingerprints khớp baseline trước invocation:
+  containers `0`, volumes `48`, dangling volumes `37`, networks `7`, image
+  references `56`; không có resource delta do runner còn tồn tại.
+- M07-A2 canonical name pattern `0`; probe label `0`; probe-id label `0`;
+  `banking_test_run_id` label `0`. Không còn leftover nên không chạy cleanup
+  thủ công.
+- Docker events trong execution window: `8` event tổng hợp; create `1`, start
+  `1`, destroy `1`; event fingerprint đã redact
+  `1679a6c1c32385470bbd5e8542ddc07e35cb95e1423c5acc2ea320ca0891b415`.
+- Resource inventory không đổi ngoài lifecycle disposable của invocation; image
+  approved vẫn khớp. M07-A2 runtime vẫn `BLOCKED`; không retry.
+
+### 78.3 Trạng thái bàn giao
+
+- Đây là đúng một V3 runtime invocation tại committed snapshot; capture blocker
+  khiến 19 phase không thể được đánh dấu PASS từ envelope. Không có database
+  root-cause classification mới và không có runtime verification hợp lệ.
+- M07-A2, M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B, M07-C và M07-D chưa bắt
+  đầu. Cần owner quyết định bước chẩn đoán capture tiếp theo trước mọi retry.
+
+## 79. M07-A2 V3 FORMATTER–PARSER COMPATIBILITY DIAGNOSIS
+
+- Baseline diagnosis: `cef214b231dc8829c70de1831bac1bc4d8ff13a3`; chỉ task
+  document được cập nhật trong phiên này. Không chạy Docker, PostgreSQL,
+  database socket, migration, canonical runtime, backend test suite hoặc build.
+- Runtime facts được bảo toàn: V3 candidate count `1`, stdout `1403` bytes và
+  một line, stderr `0` bytes, JSON parse report `FAIL`, cleanup hoàn tất,
+  không có parsed phase/diagnostic hợp lệ. Payload 1403 bytes đã mất capture;
+  không dựng lại raw output và không coi đây là database evidence.
+
+### 79.1 Formatter CodeGraph/source trace
+
+- Đã chạy `codegraph sync`: `Already up to date`.
+- Exact query:
+  `formatCanonicalRuntimeResultLine createCanonicalRuntimeResultEnvelope runCliMain writeCanonicalResultFn M07_A2_RESULT_V3 JSON stringify stdout callers callees`.
+- CodeGraph trả `76 symbols across 5 files`. Flow liên quan trực tiếp trong
+  disposable receiver là:
+  `runCliMain` (`guard:3329`) → `formatCanonicalRuntimeResultLine`
+  (`guard:2693`) → `serializeCanonicalRuntimeResult` (`guard:2687`) →
+  `createCanonicalRuntimeResultEnvelope` (`guard:2666`).
+- `CANONICAL_RUNTIME_RESULT_PREFIX` là `M07_A2_RESULT_V3 ` tại
+  `guard:2515`. Formatter tại `guard:2696` nối prefix với kết quả
+  `serializeCanonicalRuntimeResult`; không thêm newline và không có conversion
+  khác giữa formatter và writer.
+- `serializeCanonicalRuntimeResult` tại `guard:2690` gọi
+  `JSON.stringify(createCanonicalRuntimeResultEnvelope(result))`. Envelope
+  public được tạo tại `guard:2671–2684`, chỉ chiếu các field đã allowlist,
+  tách Error/internal result khỏi JSON; không có BigInt, raw Error hoặc raw
+  diagnostic trong đường serialize.
+- Canonical writer mặc định tại `guard:3336–3346` thêm đúng một newline qua
+  `process.stdout.write`; canonical call tại `guard:3352` được `await`. Không
+  tìm thấy second writer hoặc concatenated production output path. Runner
+  entrypoint tiếp tục `await runCliMain(...)` tại
+  `backend/scripts/run-disposable-postgres-test.ts:46`.
+- Blast radius trực tiếp của formatter chỉ là guard và các caller/test đã nêu;
+  các symbol cùng tên ở migration/backup được CodeGraph trả về nhưng không
+  thuộc receiver disposable và không được dùng để mở rộng scope.
+
+### 79.2 Current helper parser trace
+
+- Helper cũ không bị sửa:
+  `C:\Users\admin\AppData\Local\Temp\m07-a2-v3-runtime-capture-74b36beff17442d4b66447e09557c9a4\m07-a2-v3-runtime-capture.mjs`,
+  SHA-256 `9ed33e82715b23cacf26fa109c8632805634b76898072a1cd8daf4cc725803fa`,
+  size `12885` bytes.
+- `parseV3` tại helper cũ `:118–142` decode bằng
+  `toString("utf8")`, split bằng `/\r?\n/`, lọc line bắt đầu bằng exact
+  `M07_A2_RESULT_V3 `, rồi lấy JSON bằng
+  `slice(V3_PREFIX.length)` tại `:133` và gọi `JSON.parse` trong `try/catch`.
+  Nó không kiểm tra BOM, không kiểm tra NUL/UTF-8 fatal, không có structural
+  balance scan và không trim JSON segment trước parse.
+- `runSynthetic` gọi cùng `parseV3` tại `:304`; `runRuntime` gọi cùng function
+  tại `:366`. Vì vậy synthetic và runtime không dùng hai parser function khác
+  nhau. Tuy nhiên synthetic fixtures lịch sử dùng
+  `attestationDiagnostic: null`, nên không đi qua shape thật của attestation.
+- `validDiagnostic` tại `:100–105` yêu cầu mọi diagnostic non-null có
+  `configurationMetadata`; `validEnvelope` tại `:107–116` áp dụng predicate
+  đó cho cả `attestationDiagnostic` và `databaseDiagnostic`. Attestation
+  production tại `guard:2552–2576` không có `configurationMetadata`; đây là
+  một compatibility mismatch có thể tái hiện trên production-shaped fixture.
+- Ngoài ra, `jsonParseSucceeded` của helper cũ chỉ được đặt `true` sau cả
+  `JSON.parse` và `validEnvelope` (`:133–139`). Vì vậy tên field này gộp JSON
+  syntax parse với envelope validation, làm mất phân biệt “JSON hợp lệ nhưng
+  schema validator của helper từ chối”.
+
+### 79.3 Production formatter no-socket matrix
+
+Replacement helper đã import trực tiếp các production functions
+`createCanonicalRuntimeResultEnvelope` và
+`formatCanonicalRuntimeResultLine` qua installed `tsx`; không import runner,
+không mở socket và không gọi Docker. Native `JSON.parse` sau exact prefix
+removal, structural analyzer và closed envelope validation đều được chạy
+trên cùng formatter output.
+
+| Fixture | Kết quả an toàn |
+|---|---|
+| `FORMAT-01` | PASS; `269` bytes; native JSON/schema/version và V3 envelope PASS |
+| `FORMAT-02` | PASS; `790` bytes; phase-5 UNKNOWN/null diagnostic shape hợp lệ |
+| `FORMAT-03` | PASS; `785` bytes; `QUERY_CALL`/`TYPE_ERROR`/`PG_POOL` |
+| `FORMAT-04` | PASS; `793` bytes; `QUERY_AWAIT`/`TYPE_ERROR`/`PG_SASL` với metadata allowlist |
+| `FORMAT-05` | PASS; `1832` bytes; đủ closed enum fields, lớn hơn `1403` |
+| `FORMAT-06` | PASS; không tìm thấy đúng `1403` bằng field schema hiện hữu; dùng envelope `1832` bytes, không thêm padding field giả |
+| `FORMAT-07` | PASS; LF `270` bytes và CRLF `271` bytes, mỗi trường hợp một envelope |
+| `FORMAT-08` | PASS; reassemble `3` chunks, `270` bytes, parse sau khi ghép hoàn tất |
+| `FORMAT-09` | PASS theo negative matrix; BOM → `BOM_POSITION`, trailing garbage → `TRAILING_NON_WHITESPACE`, concatenation → `DUPLICATE_OR_CONCATENATED_RESULT` |
+
+- Mọi positive formatter fixture có prefix V3 đúng một lần, schema
+  `m07-a2-canonical-runtime-result`, version `3`, JSON object cân bằng và
+  `parseFailureKind=NONE`. FORMAT-09 chỉ PASS khi các malformed variants bị
+  từ chối; không có repair.
+- FORMAT-01..04 chứng minh production formatter tạo JSON hợp lệ ở các shape
+  tối thiểu, attestation, database và query-origin diagnostic. Vì vậy không
+  có bằng chứng cho `V3_PRODUCTION_FORMATTER_INVALID_JSON`,
+  `V3_PRODUCTION_DUPLICATE_OR_CONCATENATED_OUTPUT` hoặc
+  `V3_CAPTURE_TRUNCATION`.
+
+### 79.4 Replacement V3 structural capture helper
+
+- Helper mới duy nhất được tạo ngoài repository:
+  `C:\Users\admin\AppData\Local\Temp\m07-a2-v3-formatter-parser-7f8dfbb6f2eb4c09b85e58c331007e62\m07-a2-v3-formatter-parser.mjs`.
+- SHA-256 `89b8a0aec3ca0da568283722cc75f16491edafbdfa5d87e28e278030348208aa`,
+  size `31738` bytes. Node `v24.19.0`; PowerShell `7.6.5`. Hash/size được
+  kiểm tra sau batch verification và không sửa tiếp.
+- Helper dùng một `analyzeV3Buffer`/`parseV3Envelope` chung cho synthetic
+  capture và runtime mode; runtime mode chỉ được định nghĩa, không được gọi.
+  Analyzer chỉ trả các field structural allowlisted:
+  `stdoutByteCount`, `utf8Valid`, `bomPresent`, `nulCount`, `crCount`,
+  `lfCount`, `trailingLf`, `nonEmptyLineCount`, `v3PrefixCount`,
+  `v3CandidateCount`, `prefixOffset`, `delimiterValid`,
+  `jsonSegmentByteCount`, `firstTokenKind`, `lastTokenKind`,
+  `topLevelObjectBalanced`, `stringClosedAtEof`, `escapePendingAtEof`,
+  `trailingNonWhitespace`, `parseSucceeded`, `parseFailureKind`.
+- Closed `parseFailureKind`: `NONE`, `INVALID_UTF8`, `BOM_POSITION`,
+  `PREFIX_MISMATCH`, `DELIMITER_MISMATCH`, `EMPTY_JSON_SEGMENT`,
+  `NON_OBJECT_JSON`, `TRUNCATED_JSON`, `UNTERMINATED_STRING`,
+  `TRAILING_NON_WHITESPACE`, `DUPLICATE_OR_CONCATENATED_RESULT`,
+  `JSON_SYNTAX_OTHER`.
+- Binding/capture final batch: `BIND-01..06 PASS`; `CAPTURE-01..06 PASS`.
+  CAPTURE-01/03/04/05 giữ một V3 envelope parse được; CAPTURE-02 giữ child
+  exit `1` và stderr riêng `16` bytes; CAPTURE-04 chấp nhận CRLF; CAPTURE-05
+  giữ capture sau rendering failure giả lập; CAPTURE-06 timeout `true`,
+  signal `SIGTERM`, kill count `1`, không retry và không để lại child.
+- Runtime invocation count `0`; canonical child invocation count `0`. Helper
+  dùng `spawn`, `shell:false`, argv array, separate stdout/stderr buffers,
+  event `close`, timeout hữu hạn và không ghi raw output ra file.
+- Trong lượt đầu, FORMAT-09 làm lộ lỗi bookkeeping BOM/nhánh rendering của
+  helper mới; hai lỗi chỉ ở helper ngoài repository đã được sửa trước batch
+  cuối. Không có production file nào thay đổi sau đó.
+
+### 79.5 Classification và giới hạn
+
+- Classification được xác nhận trên production-shaped no-socket reproduction:
+  `V3_HELPER_RUNTIME_AND_SYNTHETIC_PARSER_DIVERGENCE`. Ý nghĩa cụ thể là
+  cùng `parseV3` được dùng cho hai mode nhưng synthetic fixtures không mô tả
+  attestation shape production, còn shared `validDiagnostic` của helper cũ
+  từ chối shape hợp lệ đó.
+- Direct formatter output parse được bằng native JSON ở mọi positive matrix;
+  do đó formatter production không phải nguồn lỗi đã quan sát. Payload runtime
+  1403 bytes không còn trong memory/evidence nên không tuyên bố đã tái tạo
+  byte-for-byte nội dung hoặc underlying database failure của invocation cũ.
+- Database root cause vẫn `UNKNOWN`. Không có runtime/database evidence mới,
+  không có socket-level evidence mới và không có quyền retry.
+- M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B,
+  M07-C và M07-D chưa bắt đầu.
+
+### 79.6 Trạng thái bàn giao
+
+- `git diff --check`: PASS sau cập nhật tài liệu; HEAD không đổi, cached area
+  sạch, untracked repository files `0`, và chỉ task document modified.
+- Production source/test, CodeGraph report, runner, migration/config và
+  dependency không thay đổi. Hai helper nằm ngoài repository; helper cũ
+  giữ nguyên hash.
+- Kết luận: `ROOT CAUSE CONFIRMED — V3_HELPER_RUNTIME_AND_SYNTHETIC_PARSER_DIVERGENCE — REPLACEMENT V3 CAPTURE HELPER VERIFIED`.
+
+## 80. M07-A2 V3 PARSER DIAGNOSIS DOCUMENTATION COMMIT
+
+- Production formatter đã PASS native `JSON.parse` trên các production-shaped
+  no-socket fixtures; không có bằng chứng production duplicate hoặc truncation.
+- Helper cũ yêu cầu `configurationMetadata` trên mọi diagnostic non-null, trong
+  khi attestation diagnostic hợp lệ không có field database-specific này.
+- Classification: `V3_HELPER_RUNTIME_AND_SYNTHETIC_PARSER_DIVERGENCE`. Payload
+  runtime cũ `1403` bytes không còn nên không khẳng định byte-for-byte nguyên
+  nhân; database root cause vẫn `UNKNOWN`.
+- Replacement helper ngoài repository:
+  SHA-256
+  `89b8a0aec3ca0da568283722cc75f16491edafbdfa5d87e28e278030348208aa`, size
+  `31738` bytes; `BIND-01..06 PASS`, `CAPTURE-01..06 PASS`,
+  `FORMAT-01..09 PASS`; runtime invocation `0`.
+- Section này là documentation checkpoint trước preflight và đúng một runtime
+  invocation được Owner authorize riêng. Không có runtime evidence mới trong
+  checkpoint này; không retry hoặc fallback.
