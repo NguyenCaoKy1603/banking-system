@@ -406,6 +406,8 @@ export interface DisposableQueryResult {
 export interface DisposablePoolClient {
   query(sql: string, params?: unknown[]): Promise<DisposableQueryResult>;
   end(): Promise<void>;
+  on?(event: "error", listener: (error: unknown) => void): void;
+  removeListener?(event: "error", listener: (error: unknown) => void): void;
 }
 
 export const DATABASE_QUERY_FAILURE_CODES = [
@@ -752,7 +754,71 @@ function assertDatabaseQueryCanStart(signal: AbortSignal | undefined, operation:
   }
 }
 
+function isConnectionTerminationError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return [
+    "Connection terminated",
+    "Connection terminated unexpectedly",
+    "Connection terminated due to connection timeout",
+  ].includes(error.message);
+}
+
+export async function waitForPostgresQueryReady(
+  pool: DisposablePoolClient,
+  signal?: AbortSignal,
+  timeoutMs: number = DISPOSABLE_TIMEOUTS.containerStartupMs,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (signal?.aborted) {
+      throw new Error("PostgreSQL authenticated readiness was cancelled before completion.");
+    }
+
+    try {
+      await pool.query("SELECT 1", undefined);
+      return;
+    } catch (error) {
+      if (!isConnectionTerminationError(error)) {
+        throw new Error("PostgreSQL authenticated readiness query failed.");
+      }
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    await new Promise<void>((resolve, reject) => {
+      const delayMs = Math.min(250, remainingMs);
+      let abortListener: (() => void) | undefined;
+      const timer = setTimeout(() => {
+        if (signal && abortListener) signal.removeEventListener("abort", abortListener);
+        resolve();
+      }, delayMs);
+      abortListener = () => {
+        clearTimeout(timer);
+        if (signal && abortListener) signal.removeEventListener("abort", abortListener);
+        reject(new Error("PostgreSQL authenticated readiness was cancelled before completion."));
+      };
+
+      if (signal) {
+        if (signal.aborted) {
+          abortListener();
+          return;
+        }
+        signal.addEventListener("abort", abortListener, { once: true });
+      }
+    });
+  }
+
+  throw new Error(`PostgreSQL authenticated readiness did not complete within ${timeoutMs}ms.`);
+}
+
 export type CreatePoolFunction = (adminUrl: string, ssl: unknown) => DisposablePoolClient;
+
+export type DatabaseReadinessFunction = (
+  pool: DisposablePoolClient,
+  signal: AbortSignal,
+  timeoutMs: number,
+) => Promise<void>;
 
 export type RunCommandFunction = (
   command: string,
@@ -2488,6 +2554,7 @@ export interface CanonicalSequenceDependencies {
   readonly dockerAdapter?: DockerAdapter;
   readonly runCommandFn?: RunCommandWithOutputFunction;
   readonly createPoolFn?: CreatePoolFunction;
+  readonly databaseReadinessFn?: DatabaseReadinessFunction;
   readonly mountNamespaceValidatorFn?: (mountInfo: string) => MountNamespaceAttestationRecord;
   readonly runIdGenerator?: () => string;
   readonly processEmitter?: ProcessInterruptionEmitter;
@@ -2720,6 +2787,8 @@ export async function runCanonicalEvidenceSequence(
   let targetUrl: string | undefined;
   let mainError: Error | undefined;
   let cleanupError: Error | undefined;
+  let adminPoolError: Error | undefined;
+  let cleanupInProgress = false;
   let attestationDiagnostic: AttestationDiagnostic | undefined;
   let databaseDiagnostic: DatabaseQueryDiagnostic | undefined;
   let primaryFailureContext: CanonicalFailureContext | undefined;
@@ -2729,13 +2798,18 @@ export async function runCanonicalEvidenceSequence(
 
   const childAbortController = new AbortController();
 
+  const assertAdminPoolHealthy = (): void => {
+    if (adminPoolError) throw adminPoolError;
+  };
+
   const executeDatabaseQuery = async <T>(
     phase: DatabaseQueryDiagnostic["phase"],
     operation: DatabaseQueryDiagnostic["operation"],
     signal: AbortSignal,
     query: () => Promise<T>,
   ): Promise<T> => {
-    return executeDatabaseQueryWithDiagnostic(
+    assertAdminPoolHealthy();
+    const result = await executeDatabaseQueryWithDiagnostic(
       {
         phase,
         operation,
@@ -2747,6 +2821,8 @@ export async function runCanonicalEvidenceSequence(
       },
       query,
     );
+    assertAdminPoolHealthy();
+    return result;
   };
 
   let activeStep: CanonicalSequenceStep | null = null;
@@ -2764,6 +2840,32 @@ export async function runCanonicalEvidenceSequence(
     }
   };
 
+  const handleAdminPoolError = (_error: unknown): void => {
+    const safeError = new Error("Canonical admin pool emitted an idle connection error.");
+    adminPoolError ??= safeError;
+    if (cleanupInProgress) {
+      cleanupError ??= safeError;
+      return;
+    }
+    mainError ??= safeError;
+    if (!primaryFailureContext && activeStep) {
+      primaryFailureContext = {
+        phase: activeStep,
+        operation: databaseDiagnostic?.operation ?? null,
+      };
+      activeStep = null;
+    }
+  };
+
+  const isPoolErrorEmitter = (
+    pool: DisposablePoolClient,
+  ): pool is DisposablePoolClient & {
+    on(event: "error", listener: (error: unknown) => void): void;
+    removeListener(event: "error", listener: (error: unknown) => void): void;
+  } => typeof pool.on === "function" && typeof pool.removeListener === "function";
+
+  let detachAdminPoolErrorListener: (() => void) | undefined;
+
   const performCanonicalCleanup = async (): Promise<void> => {
     const cleanupAbortController = new AbortController();
     let cleanupTimer: NodeJS.Timeout | undefined;
@@ -2777,78 +2879,86 @@ export async function runCanonicalEvidenceSequence(
     });
 
     const cleanupActions = async (): Promise<void> => {
-      // 1–2. The existing WITH (FORCE) drop closes target connections and
-      // drops the target database; record both steps only after that action
-      // succeeds, without changing the cleanup SQL or ordering.
-      if (adminPool && targetUrl) {
-        const pool = adminPool;
-        try {
-          beginStep("16_CLEANUP_TARGET_DATABASE");
-          await executeDatabaseQuery(
-            "16_CLEANUP_TARGET_DATABASE",
-            "DROP_TARGET_DATABASE",
-            cleanupAbortController.signal,
-            () => pool.query(`DROP DATABASE IF EXISTS ${quoteDatabaseIdentifier(databaseName)} WITH (FORCE)`, undefined),
-          );
-          recordStep("15_CLOSE_TARGET_CONNECTIONS");
-          recordStep("16_CLEANUP_TARGET_DATABASE");
-        } catch (err) {
-          cleanupFailureContext ??= {
-            phase: "16_CLEANUP_TARGET_DATABASE",
-            operation: "DROP_TARGET_DATABASE",
-          };
-          activeStep = null;
-          if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
-        }
+      cleanupInProgress = true;
+      try {
+        // 1–2. The existing WITH (FORCE) drop closes target connections and
+        // drops the target database; record both steps only after that action
+        // succeeds, without changing the cleanup SQL or ordering.
+        if (adminPool && targetUrl) {
+          const pool = adminPool;
+          try {
+            beginStep("16_CLEANUP_TARGET_DATABASE");
+            await executeDatabaseQuery(
+              "16_CLEANUP_TARGET_DATABASE",
+              "DROP_TARGET_DATABASE",
+              cleanupAbortController.signal,
+              () => pool.query(`DROP DATABASE IF EXISTS ${quoteDatabaseIdentifier(databaseName)} WITH (FORCE)`, undefined),
+            );
+            recordStep("15_CLOSE_TARGET_CONNECTIONS");
+            recordStep("16_CLEANUP_TARGET_DATABASE");
+          } catch (err) {
+            cleanupFailureContext ??= {
+              phase: "16_CLEANUP_TARGET_DATABASE",
+              operation: "DROP_TARGET_DATABASE",
+            };
+            activeStep = null;
+            if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
+          }
 
-        // 3. Post-drop catalog assertion
-        try {
-          beginStep("17_PARENT_POST_DROP_CATALOG_CHECK");
-          await verifyDatabaseDroppedInCatalog(
-            pool,
-            databaseName,
-            cleanupAbortController.signal,
-            {
-              configurationMetadata: databaseConfigurationMetadata,
-              onDiagnostic: (diagnostic) => {
-                databaseDiagnostic ??= diagnostic;
+          // 3. Post-drop catalog assertion
+          try {
+            beginStep("17_PARENT_POST_DROP_CATALOG_CHECK");
+            await verifyDatabaseDroppedInCatalog(
+              pool,
+              databaseName,
+              cleanupAbortController.signal,
+              {
+                configurationMetadata: databaseConfigurationMetadata,
+                onDiagnostic: (diagnostic) => {
+                  databaseDiagnostic ??= diagnostic;
+                },
               },
-            },
-          );
-          recordStep("17_PARENT_POST_DROP_CATALOG_CHECK");
-        } catch (err) {
-          cleanupFailureContext ??= {
-            phase: "17_PARENT_POST_DROP_CATALOG_CHECK",
-            operation: "VERIFY_TARGET_DATABASE",
-          };
-          activeStep = null;
-          if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
+            );
+            recordStep("17_PARENT_POST_DROP_CATALOG_CHECK");
+          } catch (err) {
+            cleanupFailureContext ??= {
+              phase: "17_PARENT_POST_DROP_CATALOG_CHECK",
+              operation: "VERIFY_TARGET_DATABASE",
+            };
+            activeStep = null;
+            if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
+          }
         }
-      }
 
-      // 4. Remove exact launched container (NEVER untrusted inspect ID, Correction B)
-      if (launchedContainerId) {
-        try {
-          beginStep("18_REMOVE_CONTAINER");
-          await docker.removeContainer(launchedContainerId, cleanupAbortController.signal, cleanupTimeoutMs);
-          recordStep("18_REMOVE_CONTAINER");
-        } catch (err) {
-          cleanupFailureContext ??= {
-            phase: "18_REMOVE_CONTAINER",
-            operation: null,
-          };
-          activeStep = null;
-          if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
+        // 4. Close admin pool before removing the container. pg-pool can
+        // emit idle-client errors while a client is being disconnected.
+        if (adminPool) {
+          try {
+            await adminPool.end();
+          } catch {
+            // Best effort pool close
+          }
         }
-      }
 
-      // 5. Close admin pool
-      if (adminPool) {
-        try {
-          await adminPool.end();
-        } catch {
-          // Best effort pool close
+        // 5. Remove exact launched container (NEVER untrusted inspect ID, Correction B)
+        if (launchedContainerId) {
+          try {
+            beginStep("18_REMOVE_CONTAINER");
+            await docker.removeContainer(launchedContainerId, cleanupAbortController.signal, cleanupTimeoutMs);
+            recordStep("18_REMOVE_CONTAINER");
+          } catch (err) {
+            cleanupFailureContext ??= {
+              phase: "18_REMOVE_CONTAINER",
+              operation: null,
+            };
+            activeStep = null;
+            if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
+          }
         }
+      } finally {
+        detachAdminPoolErrorListener?.();
+        detachAdminPoolErrorListener = undefined;
+        cleanupInProgress = false;
       }
     };
 
@@ -2974,12 +3084,14 @@ export async function runCanonicalEvidenceSequence(
     }
     recordStep("3_INSPECT_VALIDATE_CONTAINER");
 
-    // Step 4: Wait readiness
+    // Step 4: Wait for TCP readiness before creating the authenticated admin pool.
     beginStep("4_WAIT_READINESS");
     await docker.waitForReady(validated.bindHost, validated.hostPort, 60_000, childAbortController.signal);
     recordStep("4_WAIT_READINESS");
 
-    // Step 5: Create target database & ownership marker
+    // Step 5: Create target database & ownership marker. The production pool
+    // receives an authenticated readiness barrier first so a TCP listener from
+    // the image's startup transition cannot race the first database query.
     beginStep("5_CREATE_TARGET_DATABASE_AND_MARKER");
     const adminUrl = `postgresql://postgres:banking_test_secret@${validated.bindHost}:${validated.hostPort}/postgres`;
     const pool = deps.createPoolFn
@@ -2990,12 +3102,28 @@ export async function runCanonicalEvidenceSequence(
           connectionTimeoutMillis: DISPOSABLE_TIMEOUTS.poolConnectionMs,
         });
     adminPool = pool;
+    if (isPoolErrorEmitter(pool)) {
+      const poolErrorListener = (error: unknown): void => handleAdminPoolError(error);
+      pool.on("error", poolErrorListener);
+      detachAdminPoolErrorListener = () => pool.removeListener("error", poolErrorListener);
+    }
     databaseConfigurationMetadata = {
       connectionConfigurationKind: "CONNECTION_STRING",
       passwordPresent: true,
       passwordType: "STRING",
       passwordNonEmpty: true,
     };
+
+    const databaseReadinessFn = deps.databaseReadinessFn
+      ?? (deps.createPoolFn ? undefined : waitForPostgresQueryReady);
+    if (databaseReadinessFn) {
+      await databaseReadinessFn(
+        pool,
+        childAbortController.signal,
+        DISPOSABLE_TIMEOUTS.containerStartupMs,
+      );
+    }
+    assertAdminPoolHealthy();
 
     await executeDatabaseQuery(
       "5_CREATE_TARGET_DATABASE_AND_MARKER",
@@ -3035,11 +3163,14 @@ export async function runCanonicalEvidenceSequence(
       args: readonly string[],
       envOverrides: NodeJS.ProcessEnv = {},
     ): Promise<CommandExecutionOutput> => {
+      assertAdminPoolHealthy();
       const execEnv: NodeJS.ProcessEnv = {
         ...childEnv,
         ...envOverrides,
       };
-      return runCmd(process.execPath, args, execEnv, commandTimeoutMs, childAbortController.signal);
+      const result = await runCmd(process.execPath, args, execEnv, commandTimeoutMs, childAbortController.signal);
+      assertAdminPoolHealthy();
+      return result;
     };
 
     // Step 6: Apply migrations run 1
@@ -3126,6 +3257,7 @@ export async function runCanonicalEvidenceSequence(
     }
     recordStep("14_VERIFY_ONLY_POST_RESTORE_SUCCESS");
 
+    assertAdminPoolHealthy();
     beginStep("19_VALIDATE_COMPLETION");
     recordStep("19_VALIDATE_COMPLETION");
   } catch (err) {

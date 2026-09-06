@@ -66,6 +66,7 @@ import {
   buildDatabaseQueryConfigurationMetadata,
   classifyDatabaseQueryError,
   executeDatabaseQueryWithDiagnostic,
+  waitForPostgresQueryReady,
   CANONICAL_TMPFS_DESTINATION,
   CANONICAL_TMPFS_OPTIONS,
   CANONICAL_TMPFS_FLAG_VALUE,
@@ -4970,6 +4971,179 @@ test("M07-A2-PGPOOL-04: catalog verification uses two arguments and cancellation
     /cancelled before execution/,
   );
   assert.equal(queryCount, 1, "An already-cancelled query must not reach the pool");
+});
+
+test("M07-A2-FIX-01: authenticated readiness tolerates a transient connection termination", async () => {
+  let queryCount = 0;
+  const pool: DisposablePoolClient = {
+    async query(_sql: string, params?: unknown[]) {
+      assert.equal(arguments.length, 2);
+      assert.equal(params, undefined);
+      queryCount += 1;
+      if (queryCount === 1) throw new Error("Connection terminated");
+      return { rows: [] };
+    },
+    async end() {},
+  };
+
+  await waitForPostgresQueryReady(pool, undefined, 1_000);
+  assert.equal(queryCount, 2);
+});
+
+test("M07-A2-FIX-02: authenticated readiness does not retry a non-transient query failure", async () => {
+  let queryCount = 0;
+  const pool: DisposablePoolClient = {
+    async query(_sql: string, params?: unknown[]) {
+      assert.equal(arguments.length, 2);
+      assert.equal(params, undefined);
+      queryCount += 1;
+      throw new Error("authentication failure");
+    },
+    async end() {},
+  };
+
+  await assert.rejects(
+    () => waitForPostgresQueryReady(pool, undefined, 1_000),
+    /authenticated readiness query failed/,
+  );
+  assert.equal(queryCount, 1);
+});
+
+test("M07-A2-FIX-03: canonical flow gates CREATE DATABASE on authenticated readiness", async () => {
+  const runId = "30000000000000000000000000000003";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture());
+  const querySql: string[] = [];
+  let readinessCalls = 0;
+  let createDatabaseCalls = 0;
+  const pool: DisposablePoolClient = {
+    async query(sql: string, params?: unknown[]) {
+      assert.equal(arguments.length, 2);
+      assert.equal(params === undefined || Array.isArray(params), true);
+      querySql.push(sql);
+      if (sql === "SELECT 1") return { rows: [] };
+      if (sql.includes("CREATE DATABASE")) createDatabaseCalls += 1;
+      if (sql.includes("COUNT(*)")) return { rows: [{ count: 0 }] };
+      return { rows: [] };
+    },
+    async end() {},
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: () => pool,
+      databaseReadinessFn: async (readyPool, signal, timeoutMs) => {
+        readinessCalls += 1;
+        await waitForPostgresQueryReady(readyPool, signal, timeoutMs);
+      },
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+    },
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(readinessCalls, 1);
+  assert.equal(createDatabaseCalls, 1);
+  assert.equal(querySql[0], "SELECT 1");
+  assert.match(querySql[1] ?? "", /^CREATE DATABASE "/);
+});
+
+test("M07-A2-LIFECYCLE-01: admin pool closes before the container is removed", async () => {
+  const runId = "30000000000000000000000000000004";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture());
+  let poolEndStarted = false;
+  let poolEndCompleted = false;
+  const pool: DisposablePoolClient = {
+    async query(sql: string, _params?: unknown[]) {
+      if (sql.includes("COUNT(*)")) return { rows: [{ count: 0 }] };
+      return { rows: [] };
+    },
+    async end() {
+      poolEndStarted = true;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      poolEndCompleted = true;
+      harness.events.push("pool-end");
+    },
+  };
+  harness.mockDocker.removeContainer = async (containerId: string) => {
+    assert.equal(containerId, harness.launchId);
+    assert.equal(poolEndStarted, true);
+    assert.equal(poolEndCompleted, true, "Container removal must wait for pool.end() completion");
+    harness.events.push("cleanup");
+    harness.removedContainerIds.push(containerId);
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: () => pool,
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+    },
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(poolEndStarted, true);
+  assert.equal(poolEndCompleted, true);
+  assert.equal(harness.removedContainerIds.length, 1);
+  assert.ok(
+    harness.events.indexOf("pool-end") < harness.events.indexOf("cleanup"),
+    "The awaited pool close must precede container removal",
+  );
+});
+
+test("M07-A2-LIFECYCLE-02: idle pool errors stay inside the canonical error boundary", async () => {
+  const runId = "30000000000000000000000000000005";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture());
+  const listeners = new Set<(error: unknown) => void>();
+  let queryCount = 0;
+  let poolEndCalled = false;
+  const pool: DisposablePoolClient = {
+    async query(sql: string, _params?: unknown[]) {
+      assert.equal(arguments.length, 2);
+      queryCount += 1;
+      if (sql === "SELECT 1") {
+        assert.equal(listeners.size, 1, "Canonical flow must subscribe to pool errors");
+        for (const listener of listeners) listener(new Error("Connection terminated unexpectedly"));
+        return { rows: [] };
+      }
+      throw new Error("unexpected query after idle pool error");
+    },
+    async end() {
+      poolEndCalled = true;
+    },
+    on(event: "error", listener: (error: unknown) => void) {
+      assert.equal(event, "error");
+      listeners.add(listener);
+    },
+    removeListener(event: "error", listener: (error: unknown) => void) {
+      assert.equal(event, "error");
+      listeners.delete(listener);
+    },
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: () => pool,
+      databaseReadinessFn: async (readyPool, signal, timeoutMs) => {
+        await waitForPostgresQueryReady(readyPool, signal, timeoutMs);
+      },
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(queryCount, 1, "An idle pool error must stop the next database action");
+  assert.equal(result.error?.message, "Canonical admin pool emitted an idle connection error.");
+  assert.equal(result.primaryFailureContext?.phase, "5_CREATE_TARGET_DATABASE_AND_MARKER");
+  assert.equal(poolEndCalled, true);
+  assert.equal(harness.removedContainerIds.length, 1);
+  assert.equal(listeners.size, 0, "The pool error listener must be detached after cleanup");
 });
 
 test("M07-A2-SEM-01: failing database diagnostic wins over attestation PASS/NONE", () => {
