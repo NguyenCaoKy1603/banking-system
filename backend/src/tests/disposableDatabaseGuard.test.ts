@@ -7,6 +7,9 @@ import {
   CANONICAL_SEQUENCE_STEPS,
   CONTAINER_NAME_PATTERN,
   type ContainerRemovalFunction,
+  type CanonicalSequenceExecutionResult,
+  type DatabaseQueryDiagnostic,
+  type AttestationDiagnostic,
   type CreatePoolFunction,
   type ProcessFacade,
   type DisposablePoolClient,
@@ -57,6 +60,8 @@ import {
   runCliMain,
   executeCommandWithOutput,
   CANONICAL_RUNTIME_RESULT_PREFIX,
+  createCanonicalRuntimeResultEnvelope,
+  createDatabaseQueryCancelledDiagnostic,
   CANONICAL_TMPFS_DESTINATION,
   CANONICAL_TMPFS_OPTIONS,
   CANONICAL_TMPFS_FLAG_VALUE,
@@ -113,6 +118,52 @@ const makeExpandedMountInfoFixture = (lineEnding = "\n"): string => {
   );
   return [...nonTargetRecords, targetRecord].join(lineEnding) + lineEnding;
 };
+
+const makeAttestationDiagnostic = (
+  failureCode: AttestationDiagnostic["failureCode"] = "NONE",
+): AttestationDiagnostic => ({
+  phase: "3_INSPECT_VALIDATE_CONTAINER",
+  commandExitCode: 0,
+  commandTimedOut: false,
+  commandCancelled: false,
+  stdoutKind: "string",
+  stdoutByteLength: 128,
+  lineCount: 1,
+  crCount: 0,
+  lfCount: 1,
+  trailingNewline: "LF",
+  stderrPresent: false,
+  validatorCalled: true,
+  validatorPassed: failureCode === "NONE",
+  failureCode,
+  targetRecordCount: 1,
+  targetRecordFingerprint: "b".repeat(64),
+  filesystemType: "tmpfs",
+  normalizedSizeBytes: 536870912,
+  normalizedModeOctal: "0700",
+});
+
+const makeDatabaseDiagnostic = (
+  overrides: Partial<DatabaseQueryDiagnostic> = {},
+): DatabaseQueryDiagnostic => ({
+  phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+  operation: "CREATE_TARGET_DATABASE",
+  failureCode: "DATABASE_QUERY_FAILURE",
+  driverFamily: "UNKNOWN",
+  sqlState: null,
+  systemCode: null,
+  ...overrides,
+});
+
+const makeCanonicalFailureResult = (
+  overrides: Partial<CanonicalSequenceExecutionResult> = {},
+): CanonicalSequenceExecutionResult => ({
+  success: false,
+  runId: "40000000000000000000000000000001",
+  databaseName: "banking_test_40000000000000000000000000000001",
+  completedSteps: [],
+  ...overrides,
+});
 
 const makeCanonicalOrchestrationHarness = (
   fixedRunId: string,
@@ -2974,6 +3025,9 @@ test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam
             phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
             operation: "CREATE_TARGET_DATABASE",
             failureCode: "DATABASE_QUERY_FAILURE",
+            driverFamily: "UNKNOWN",
+            sqlState: null,
+            systemCode: null,
           },
           error: sensitiveError,
         };
@@ -3007,13 +3061,16 @@ test("M07-A2-CLI-05: runner import is side-effect-free, and production main seam
     "version",
   ].sort());
   assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
-  assert.equal(envelope.version, 1);
+  assert.equal(envelope.version, 2);
   assert.equal(envelope.outcome, "FAIL");
   assert.deepEqual(envelope.completedSteps, ["1_VERIFY_LOCAL_IMAGE"]);
   assert.deepEqual(envelope.databaseDiagnostic, {
     phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
     operation: "CREATE_TARGET_DATABASE",
     failureCode: "DATABASE_QUERY_FAILURE",
+    driverFamily: "UNKNOWN",
+    sqlState: null,
+    systemCode: null,
   });
   assert.deepEqual(envelope.failure, {
     kind: "PRIMARY",
@@ -3062,7 +3119,7 @@ test("M07-A2-EMIT-01: canonical success preserves the complete result and emits 
   assert.equal(serializedEnvelopes.length, 1);
   const envelope = parseCanonicalResultLine(serializedEnvelopes[0]);
   assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
-  assert.equal(envelope.version, 1);
+  assert.equal(envelope.version, 2);
   assert.equal(envelope.outcome, "PASS");
   assert.deepEqual(envelope.completedSteps, ["1_VERIFY_LOCAL_IMAGE", "19_VALIDATE_COMPLETION"]);
   assert.equal(envelope.failure, null);
@@ -3101,6 +3158,9 @@ test("M07-A2-EMIT-02: returned canonical failure forwards attestation and databa
     phase: "5_CREATE_TARGET_DATABASE_AND_MARKER" as const,
     operation: "CREATE_TARGET_DATABASE" as const,
     failureCode: "DATABASE_QUERY_FAILURE" as const,
+    driverFamily: "UNKNOWN" as const,
+    sqlState: null,
+    systemCode: null,
   };
 
   const result = await runCliMain(
@@ -3128,7 +3188,7 @@ test("M07-A2-EMIT-02: returned canonical failure forwards attestation and databa
   assert.equal(facade.exitCode, 1);
   assert.equal(serializedEnvelopes.length, 1);
   assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
-  assert.equal(envelope.version, 1);
+  assert.equal(envelope.version, 2);
   assert.equal(envelope.outcome, "FAIL");
   assert.deepEqual(envelope.completedSteps, ["1_VERIFY_LOCAL_IMAGE"]);
   assert.deepEqual(envelope.attestationDiagnostic, attestationDiagnostic);
@@ -3136,7 +3196,7 @@ test("M07-A2-EMIT-02: returned canonical failure forwards attestation and databa
   assert.deepEqual(envelope.failure, {
     kind: "PRIMARY",
     code: "PRIMARY_ERROR",
-    phase: "3_INSPECT_VALIDATE_CONTAINER",
+    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
     operation: "CREATE_TARGET_DATABASE",
   });
   assert.deepEqual(envelope.cleanup, {
@@ -3451,7 +3511,7 @@ test("M07-A2-EMIT-09: legacy path and CLI import remain side-effect-free and emi
   assert.equal(facade.exitCode, 1);
   assert.equal(writerCalls, 0);
   assert.deepEqual(legacyLogs, ["synthetic legacy failure"]);
-  assert.doesNotMatch(legacyLogs.join("\n"), /M07_A2_RESULT_V1/);
+  assert.doesNotMatch(legacyLogs.join("\n"), /M07_A2_RESULT_V2/);
 });
 
 // ============================================================================
@@ -4841,6 +4901,9 @@ test("M07-A2-PGPOOL-03: database setup rejection preserves the primary error and
     phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
     operation: "CREATE_TARGET_DATABASE",
     failureCode: "DATABASE_QUERY_FAILURE",
+    driverFamily: "UNKNOWN",
+    sqlState: null,
+    systemCode: null,
   });
   assert.deepEqual(Object.keys(result.databaseDiagnostic ?? {}).sort(), [...DATABASE_QUERY_DIAGNOSTIC_KEYS].sort());
   assert.deepEqual([...DATABASE_QUERY_FAILURE_CODES], ["DATABASE_QUERY_FAILURE", "DATABASE_QUERY_CANCELLED"]);
@@ -4872,4 +4935,335 @@ test("M07-A2-PGPOOL-04: catalog verification uses two arguments and cancellation
     /cancelled before execution/,
   );
   assert.equal(queryCount, 1, "An already-cancelled query must not reach the pool");
+});
+
+test("M07-A2-SEM-01: failing database diagnostic wins over attestation PASS/NONE", () => {
+  const envelope = createCanonicalRuntimeResultEnvelope(
+    makeCanonicalFailureResult({
+      attestationDiagnostic: makeAttestationDiagnostic("NONE"),
+      databaseDiagnostic: makeDatabaseDiagnostic(),
+      error: new Error("synthetic primary error"),
+    }),
+  );
+
+  assert.equal(envelope.version, 2);
+  assert.equal(envelope.attestationDiagnostic?.failureCode, "NONE");
+  assert.deepEqual(envelope.failure, {
+    kind: "PRIMARY",
+    code: "PRIMARY_ERROR",
+    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    operation: "CREATE_TARGET_DATABASE",
+  });
+});
+
+test("M07-A2-SEM-02: failing attestation is selected and PASS/NONE is ignored", () => {
+  const failingAttestation = createCanonicalRuntimeResultEnvelope(
+    makeCanonicalFailureResult({
+      attestationDiagnostic: makeAttestationDiagnostic("SIZE_MISMATCH"),
+      error: new Error("synthetic attestation error"),
+    }),
+  );
+  assert.deepEqual(failingAttestation.failure, {
+    kind: "PRIMARY",
+    code: "PRIMARY_ERROR",
+    phase: "3_INSPECT_VALIDATE_CONTAINER",
+    operation: null,
+  });
+
+  const passAttestation = createCanonicalRuntimeResultEnvelope(
+    makeCanonicalFailureResult({
+      attestationDiagnostic: makeAttestationDiagnostic("NONE"),
+      error: new Error("synthetic primary error"),
+    }),
+  );
+  assert.deepEqual(passAttestation.failure, {
+    kind: "PRIMARY",
+    code: "PRIMARY_ERROR",
+    phase: null,
+    operation: null,
+  });
+});
+
+test("M07-A2-SEM-03: explicit primary context is retained and UNKNOWN is the final fallback", () => {
+  const explicitContext = createCanonicalRuntimeResultEnvelope(
+    makeCanonicalFailureResult({
+      primaryFailureContext: {
+        phase: "6_APPLY_MIGRATIONS_RUN_1",
+        operation: null,
+      },
+      error: new Error("synthetic phase error"),
+    }),
+  );
+  assert.equal(explicitContext.failure?.phase, "6_APPLY_MIGRATIONS_RUN_1");
+  assert.equal(explicitContext.failure?.operation, null);
+
+  const unknownContext = createCanonicalRuntimeResultEnvelope(makeCanonicalFailureResult());
+  assert.deepEqual(unknownContext.failure, {
+    kind: "PRIMARY",
+    code: "PRIMARY_ERROR",
+    phase: null,
+    operation: null,
+  });
+});
+
+test("M07-A2-SEM-04: failed phase is excluded from completedSteps while prior success remains ordered", async () => {
+  const runId = "40000000000000000000000000000002";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture());
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: harness.createPoolFn,
+      runCommandFn: async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: "synthetic phase failure",
+      }),
+      runIdGenerator: () => runId,
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.deepEqual(result.completedSteps, [
+    "1_VERIFY_LOCAL_IMAGE",
+    "2_CREATE_EPHEMERAL_CONTAINER",
+    "3_INSPECT_VALIDATE_CONTAINER",
+    "4_WAIT_READINESS",
+    "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    "15_CLOSE_TARGET_CONNECTIONS",
+    "16_CLEANUP_TARGET_DATABASE",
+    "17_PARENT_POST_DROP_CATALOG_CHECK",
+    "18_REMOVE_CONTAINER",
+  ]);
+  assert.equal(result.completedSteps.includes("6_APPLY_MIGRATIONS_RUN_1"), false);
+  assert.deepEqual(result.primaryFailureContext, {
+    phase: "6_APPLY_MIGRATIONS_RUN_1",
+    operation: null,
+  });
+});
+
+test("M07-A2-SEM-05: cleanup records only successful steps and cannot replace primary failure", async () => {
+  const runId = "40000000000000000000000000000003";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture(), {
+    failAfterAttestation: true,
+    cleanupFailure: true,
+  });
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: harness.createPoolFn,
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.equal(result.completedSteps.includes("14_VERIFY_ONLY_POST_RESTORE_SUCCESS"), false);
+  assert.equal(result.completedSteps.includes("18_REMOVE_CONTAINER"), false);
+  assert.equal(result.completedSteps.includes("15_CLOSE_TARGET_CONNECTIONS"), true);
+  assert.equal(result.completedSteps.includes("16_CLEANUP_TARGET_DATABASE"), true);
+  assert.equal(result.completedSteps.includes("17_PARENT_POST_DROP_CATALOG_CHECK"), true);
+  assert.deepEqual(result.primaryFailureContext, {
+    phase: "14_VERIFY_ONLY_POST_RESTORE_SUCCESS",
+    operation: null,
+  });
+  assert.deepEqual(result.cleanupFailureContext, {
+    phase: "18_REMOVE_CONTAINER",
+    operation: null,
+  });
+
+  const envelope = createCanonicalRuntimeResultEnvelope(result);
+  assert.deepEqual(envelope.failure, {
+    kind: "PRIMARY",
+    code: "PRIMARY_ERROR",
+    phase: "14_VERIFY_ONLY_POST_RESTORE_SUCCESS",
+    operation: null,
+  });
+  assert.deepEqual(envelope.cleanup, {
+    attempted: true,
+    succeeded: false,
+    failureCode: "CLEANUP_ERROR",
+  });
+});
+
+test("M07-A2-DBDIAG-01: PostgreSQL SQLSTATE is emitted without raw driver fields", async () => {
+  const runId = "40000000000000000000000000000004";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture());
+  const driverError = Object.assign(new Error("synthetic driver detail"), {
+    code: "23505",
+    detail: "private driver detail",
+  });
+  const failingPool: DisposablePoolClient = {
+    async query() {
+      throw driverError;
+    },
+    async end() {},
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: () => failingPool,
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+    },
+  );
+
+  assert.deepEqual(result.databaseDiagnostic, {
+    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    operation: "CREATE_TARGET_DATABASE",
+    failureCode: "DATABASE_QUERY_FAILURE",
+    driverFamily: "POSTGRES",
+    sqlState: "23505",
+    systemCode: null,
+  });
+  const serialized = JSON.stringify(createCanonicalRuntimeResultEnvelope(result));
+  assert.doesNotMatch(serialized, /synthetic driver detail|private driver detail/);
+});
+
+test("M07-A2-DBDIAG-02: allowlisted Node system code uses the closed diagnostic contract", async () => {
+  const runId = "40000000000000000000000000000005";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture());
+  const systemError = Object.assign(new Error("synthetic connection detail"), { code: "ECONNREFUSED" });
+  const failingPool: DisposablePoolClient = {
+    async query() {
+      throw systemError;
+    },
+    async end() {},
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: () => failingPool,
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+    },
+  );
+
+  assert.equal(result.databaseDiagnostic?.driverFamily, "NODE_SYSTEM");
+  assert.equal(result.databaseDiagnostic?.sqlState, null);
+  assert.equal(result.databaseDiagnostic?.systemCode, "ECONNREFUSED");
+});
+
+test("M07-A2-DBDIAG-03: unknown or malicious error codes become UNKNOWN without leakage", async () => {
+  const runId = "40000000000000000000000000000006";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture());
+  const unknownError = Object.assign(new Error("unexpected driver metadata"), {
+    code: "NOT_ALLOWLISTED",
+    detail: "private detail",
+  });
+  const failingPool: DisposablePoolClient = {
+    async query() {
+      throw unknownError;
+    },
+    async end() {},
+  };
+
+  const result = await runCanonicalEvidenceSequence(
+    { NODE_ENV: "test", PATH: "C:\\Windows\\System32" },
+    {
+      dockerAdapter: harness.mockDocker,
+      createPoolFn: () => failingPool,
+      runCommandFn: harness.runCommandFn,
+      runIdGenerator: () => runId,
+    },
+  );
+  assert.deepEqual(result.databaseDiagnostic, {
+    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    operation: "CREATE_TARGET_DATABASE",
+    failureCode: "DATABASE_QUERY_FAILURE",
+    driverFamily: "UNKNOWN",
+    sqlState: null,
+    systemCode: null,
+  });
+  const serialized = JSON.stringify(createCanonicalRuntimeResultEnvelope(result));
+  assert.doesNotMatch(serialized, /unexpected driver metadata|NOT_ALLOWLISTED|private detail/);
+});
+
+test("M07-A2-DBDIAG-04: orchestration cancellation emits ORCHESTRATION diagnostic and blocks the query", async () => {
+  const diagnostic = createDatabaseQueryCancelledDiagnostic(
+    "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    "CREATE_TARGET_DATABASE",
+  );
+  assert.deepEqual(diagnostic, {
+    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    operation: "CREATE_TARGET_DATABASE",
+    failureCode: "DATABASE_QUERY_CANCELLED",
+    driverFamily: "ORCHESTRATION",
+    sqlState: null,
+    systemCode: null,
+  });
+
+  let queryCount = 0;
+  const pool: DisposablePoolClient = {
+    async query() {
+      queryCount += 1;
+      return { rows: [{ count: 0 }] };
+    },
+    async end() {},
+  };
+  const controller = new AbortController();
+  controller.abort(new Error("synthetic cancellation"));
+  await assert.rejects(
+    () => verifyDatabaseDroppedInCatalog(pool, "banking_test_target", controller.signal),
+    /cancelled before execution/,
+  );
+  assert.equal(queryCount, 0);
+});
+
+test("M07-A2-DBDIAG-05: production-faithful rejection uses two query arguments and a V2 closed envelope", async () => {
+  const runId = "40000000000000000000000000000007";
+  const harness = makeCanonicalOrchestrationHarness(runId, makeExpandedMountInfoFixture());
+  const querySql: string[] = [];
+  const queryError = Object.assign(new Error("synthetic query rejection"), { code: "23505" });
+  const strictPool: DisposablePoolClient = {
+    async query(sql: string, params?: unknown[]) {
+      assert.equal(arguments.length, 2);
+      assert.equal(params, undefined);
+      querySql.push(sql);
+      throw queryError;
+    },
+    async end() {},
+  };
+  const lines: string[] = [];
+  const facade: ProcessFacade = { exitCode: 0 };
+  const result = await runCliMain(
+    ["node", "runner", CANONICAL_RUNTIME_TEST_PATH],
+    {},
+    {
+      processFacade: facade,
+      canonicalDeps: {
+        dockerAdapter: harness.mockDocker,
+        createPoolFn: () => strictPool,
+        runCommandFn: harness.runCommandFn,
+        runIdGenerator: () => runId,
+      },
+      writeCanonicalResultFn: (protocolLine: string) => {
+        lines.push(protocolLine);
+      },
+    },
+  );
+
+  assert.equal(result.success, false);
+  assert.deepEqual(querySql, [`CREATE DATABASE "banking_test_${runId}"`]);
+  assert.equal(lines.length, 1);
+  const envelope = parseCanonicalResultLine(lines[0]);
+  assert.equal(envelope.schema, "m07-a2-canonical-runtime-result");
+  assert.equal(envelope.version, 2);
+  assert.deepEqual(envelope.databaseDiagnostic, {
+    phase: "5_CREATE_TARGET_DATABASE_AND_MARKER",
+    operation: "CREATE_TARGET_DATABASE",
+    failureCode: "DATABASE_QUERY_FAILURE",
+    driverFamily: "POSTGRES",
+    sqlState: "23505",
+    systemCode: null,
+  });
+  assert.deepEqual(Object.keys(envelope.databaseDiagnostic as Record<string, unknown>).sort(), [
+    ...DATABASE_QUERY_DIAGNOSTIC_KEYS,
+  ].sort());
+  assert.doesNotMatch(lines[0], /synthetic query rejection|postgresql:\/\//);
 });

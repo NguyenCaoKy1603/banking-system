@@ -414,10 +414,34 @@ export const DATABASE_QUERY_FAILURE_CODES = [
 ] as const;
 export type DatabaseQueryFailureCode = (typeof DATABASE_QUERY_FAILURE_CODES)[number];
 
+export const DATABASE_QUERY_DRIVER_FAMILIES = [
+  "POSTGRES",
+  "NODE_SYSTEM",
+  "ORCHESTRATION",
+  "UNKNOWN",
+] as const;
+export type DatabaseQueryDriverFamily = (typeof DATABASE_QUERY_DRIVER_FAMILIES)[number];
+
+export const DATABASE_QUERY_SYSTEM_CODES = [
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ECONNABORTED",
+  "ETIMEDOUT",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EPIPE",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+] as const;
+export type DatabaseQuerySystemCode = (typeof DATABASE_QUERY_SYSTEM_CODES)[number];
+
 export const DATABASE_QUERY_DIAGNOSTIC_KEYS = [
   "phase",
   "operation",
   "failureCode",
+  "driverFamily",
+  "sqlState",
+  "systemCode",
 ] as const;
 
 export type DatabaseQueryDiagnostic = {
@@ -431,7 +455,52 @@ export type DatabaseQueryDiagnostic = {
     | "DROP_TARGET_DATABASE"
     | "VERIFY_TARGET_DATABASE";
   readonly failureCode: DatabaseQueryFailureCode;
+  readonly driverFamily: DatabaseQueryDriverFamily;
+  readonly sqlState: string | null;
+  readonly systemCode: DatabaseQuerySystemCode | null;
 };
+
+const POSTGRES_SQL_STATE_PATTERN = /^[0-9A-Z]{5}$/;
+const DATABASE_QUERY_SYSTEM_CODE_SET = new Set<string>(DATABASE_QUERY_SYSTEM_CODES);
+
+type DatabaseQueryFailureDetails = Pick<
+  DatabaseQueryDiagnostic,
+  "driverFamily" | "sqlState" | "systemCode"
+>;
+
+function classifyDatabaseQueryError(error: unknown): DatabaseQueryFailureDetails {
+  if (error === null || typeof error !== "object") {
+    return { driverFamily: "UNKNOWN", sqlState: null, systemCode: null };
+  }
+
+  const errorRecord = error as { readonly code?: unknown };
+  const code = typeof errorRecord.code === "string" ? errorRecord.code : undefined;
+  if (code && POSTGRES_SQL_STATE_PATTERN.test(code)) {
+    return { driverFamily: "POSTGRES", sqlState: code, systemCode: null };
+  }
+  if (code && DATABASE_QUERY_SYSTEM_CODE_SET.has(code)) {
+    return {
+      driverFamily: "NODE_SYSTEM",
+      sqlState: null,
+      systemCode: code as DatabaseQuerySystemCode,
+    };
+  }
+  return { driverFamily: "UNKNOWN", sqlState: null, systemCode: null };
+}
+
+export function createDatabaseQueryCancelledDiagnostic(
+  phase: DatabaseQueryDiagnostic["phase"],
+  operation: DatabaseQueryDiagnostic["operation"],
+): DatabaseQueryDiagnostic {
+  return {
+    phase,
+    operation,
+    failureCode: "DATABASE_QUERY_CANCELLED",
+    driverFamily: "ORCHESTRATION",
+    sqlState: null,
+    systemCode: null,
+  };
+}
 
 function assertDatabaseQueryCanStart(signal: AbortSignal | undefined, operation: DatabaseQueryDiagnostic["operation"]): void {
   if (signal?.aborted) {
@@ -2180,13 +2249,15 @@ export interface CanonicalSequenceExecutionResult {
   readonly completedSteps: readonly CanonicalSequenceStep[];
   readonly attestationDiagnostic?: AttestationDiagnostic;
   readonly databaseDiagnostic?: DatabaseQueryDiagnostic;
+  readonly primaryFailureContext?: CanonicalFailureContext;
+  readonly cleanupFailureContext?: CanonicalFailureContext;
   readonly error?: Error;
   readonly cleanupError?: Error;
 }
 
 export const CANONICAL_RUNTIME_RESULT_SCHEMA = "m07-a2-canonical-runtime-result" as const;
-export const CANONICAL_RUNTIME_RESULT_VERSION = 1 as const;
-export const CANONICAL_RUNTIME_RESULT_PREFIX = "M07_A2_RESULT_V1 " as const;
+export const CANONICAL_RUNTIME_RESULT_VERSION = 2 as const;
+export const CANONICAL_RUNTIME_RESULT_PREFIX = "M07_A2_RESULT_V2 " as const;
 export const CANONICAL_RUNTIME_FAILURE_CODES = [
   "PRIMARY_ERROR",
   "CLEANUP_ERROR",
@@ -2216,6 +2287,11 @@ export type CanonicalRuntimeResultEnvelope = {
   readonly databaseDiagnostic: DatabaseQueryDiagnostic | null;
   readonly failure: CanonicalRuntimeFailure | null;
   readonly cleanup: CanonicalRuntimeCleanupEnvelope;
+};
+
+export type CanonicalFailureContext = {
+  readonly phase: CanonicalSequenceStep | null;
+  readonly operation: DatabaseQueryDiagnostic["operation"] | null;
 };
 
 function toPublicAttestationDiagnostic(
@@ -2253,16 +2329,33 @@ function toPublicDatabaseDiagnostic(
     phase: diagnostic.phase,
     operation: diagnostic.operation,
     failureCode: diagnostic.failureCode,
+    driverFamily: diagnostic.driverFamily,
+    sqlState: diagnostic.sqlState,
+    systemCode: diagnostic.systemCode,
   };
 }
 
-function canonicalFailureContext(result: CanonicalSequenceExecutionResult): {
-  readonly phase: CanonicalSequenceStep | null;
-  readonly operation: DatabaseQueryDiagnostic["operation"] | null;
-} {
+function hasFailureCode(diagnostic: { readonly failureCode: string } | undefined): boolean {
+  return Boolean(diagnostic && diagnostic.failureCode !== "NONE");
+}
+
+function canonicalFailureContext(
+  result: CanonicalSequenceExecutionResult,
+  contextKind: "PRIMARY" | "CLEANUP" = "PRIMARY",
+): CanonicalFailureContext {
+  const databaseDiagnostic = hasFailureCode(result.databaseDiagnostic)
+    ? result.databaseDiagnostic
+    : undefined;
+  const attestationDiagnostic = hasFailureCode(result.attestationDiagnostic)
+    ? result.attestationDiagnostic
+    : undefined;
+  const explicitContext = contextKind === "CLEANUP"
+    ? result.cleanupFailureContext
+    : result.primaryFailureContext;
+
   return {
-    phase: result.attestationDiagnostic?.phase ?? result.databaseDiagnostic?.phase ?? null,
-    operation: result.databaseDiagnostic?.operation ?? null,
+    phase: databaseDiagnostic?.phase ?? attestationDiagnostic?.phase ?? explicitContext?.phase ?? null,
+    operation: databaseDiagnostic?.operation ?? explicitContext?.operation ?? null,
   };
 }
 
@@ -2289,7 +2382,7 @@ function toCanonicalRuntimeFailure(
   }
 
   if (result.cleanupError) {
-    const context = canonicalFailureContext(result);
+    const context = canonicalFailureContext(result, "CLEANUP");
     return {
       kind: "CLEANUP",
       code: "CLEANUP_ERROR",
@@ -2370,6 +2463,8 @@ export async function runCanonicalEvidenceSequence(
   let cleanupError: Error | undefined;
   let attestationDiagnostic: AttestationDiagnostic | undefined;
   let databaseDiagnostic: DatabaseQueryDiagnostic | undefined;
+  let primaryFailureContext: CanonicalFailureContext | undefined;
+  let cleanupFailureContext: CanonicalFailureContext | undefined;
 
   const childAbortController = new AbortController();
 
@@ -2380,19 +2475,35 @@ export async function runCanonicalEvidenceSequence(
     query: () => Promise<T>,
   ): Promise<T> => {
     if (signal.aborted) {
-      databaseDiagnostic ??= { phase, operation, failureCode: "DATABASE_QUERY_CANCELLED" };
+      databaseDiagnostic ??= createDatabaseQueryCancelledDiagnostic(phase, operation);
       throw new Error(`Database query '${operation}' was cancelled before execution.`);
     }
     try {
       return await query();
     } catch (error) {
-      databaseDiagnostic ??= { phase, operation, failureCode: "DATABASE_QUERY_FAILURE" };
+      databaseDiagnostic ??= {
+        phase,
+        operation,
+        failureCode: "DATABASE_QUERY_FAILURE",
+        ...classifyDatabaseQueryError(error),
+      };
       throw error;
     }
   };
 
+  let activeStep: CanonicalSequenceStep | null = null;
+
+  const beginStep = (step: CanonicalSequenceStep) => {
+    activeStep = step;
+  };
+
   const recordStep = (step: CanonicalSequenceStep) => {
-    completedSteps.push(step);
+    if (!completedSteps.includes(step)) {
+      completedSteps.push(step);
+    }
+    if (activeStep === step) {
+      activeStep = null;
+    }
   };
 
   const performCanonicalCleanup = async (): Promise<void> => {
@@ -2408,34 +2519,46 @@ export async function runCanonicalEvidenceSequence(
     });
 
     const cleanupActions = async (): Promise<void> => {
-      // 1. Close target connections
-      recordStep("15_CLOSE_TARGET_CONNECTIONS");
-
-      // 2. Drop target database via admin pool
+      // 1–2. The existing WITH (FORCE) drop closes target connections and
+      // drops the target database; record both steps only after that action
+      // succeeds, without changing the cleanup SQL or ordering.
       if (adminPool && targetUrl) {
         const pool = adminPool;
         try {
-          recordStep("16_CLEANUP_TARGET_DATABASE");
+          beginStep("16_CLEANUP_TARGET_DATABASE");
           await executeDatabaseQuery(
             "16_CLEANUP_TARGET_DATABASE",
             "DROP_TARGET_DATABASE",
             cleanupAbortController.signal,
             () => pool.query(`DROP DATABASE IF EXISTS ${quoteDatabaseIdentifier(databaseName)} WITH (FORCE)`, undefined),
           );
+          recordStep("15_CLOSE_TARGET_CONNECTIONS");
+          recordStep("16_CLEANUP_TARGET_DATABASE");
         } catch (err) {
+          cleanupFailureContext ??= {
+            phase: "16_CLEANUP_TARGET_DATABASE",
+            operation: "DROP_TARGET_DATABASE",
+          };
+          activeStep = null;
           if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
         }
 
         // 3. Post-drop catalog assertion
         try {
-          recordStep("17_PARENT_POST_DROP_CATALOG_CHECK");
+          beginStep("17_PARENT_POST_DROP_CATALOG_CHECK");
           await executeDatabaseQuery(
             "17_PARENT_POST_DROP_CATALOG_CHECK",
             "VERIFY_TARGET_DATABASE",
             cleanupAbortController.signal,
             () => verifyDatabaseDroppedInCatalog(pool, databaseName, cleanupAbortController.signal),
           );
+          recordStep("17_PARENT_POST_DROP_CATALOG_CHECK");
         } catch (err) {
+          cleanupFailureContext ??= {
+            phase: "17_PARENT_POST_DROP_CATALOG_CHECK",
+            operation: "VERIFY_TARGET_DATABASE",
+          };
+          activeStep = null;
           if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
         }
       }
@@ -2443,9 +2566,15 @@ export async function runCanonicalEvidenceSequence(
       // 4. Remove exact launched container (NEVER untrusted inspect ID, Correction B)
       if (launchedContainerId) {
         try {
-          recordStep("18_REMOVE_CONTAINER");
+          beginStep("18_REMOVE_CONTAINER");
           await docker.removeContainer(launchedContainerId, cleanupAbortController.signal, cleanupTimeoutMs);
+          recordStep("18_REMOVE_CONTAINER");
         } catch (err) {
+          cleanupFailureContext ??= {
+            phase: "18_REMOVE_CONTAINER",
+            operation: null,
+          };
+          activeStep = null;
           if (!cleanupError) cleanupError = err instanceof Error ? err : new Error(String(err));
         }
       }
@@ -2471,18 +2600,20 @@ export async function runCanonicalEvidenceSequence(
 
   try {
     // Step 1: Verify local image and capture immutable image ID (Correction A)
-    recordStep("1_VERIFY_LOCAL_IMAGE");
+    beginStep("1_VERIFY_LOCAL_IMAGE");
     const imageInspectJson = await docker.inspectImage("postgres:16", childAbortController.signal);
     approvedLocalImageId = validateDockerImageInspectOutput(imageInspectJson, "postgres:16");
+    recordStep("1_VERIFY_LOCAL_IMAGE");
 
     // Step 2: Create ephemeral container and validate launched container ID (Correction B)
-    recordStep("2_CREATE_EPHEMERAL_CONTAINER");
+    beginStep("2_CREATE_EPHEMERAL_CONTAINER");
     const runArgs = buildDockerRunArgs({ containerName, runId });
     const runStdout = await docker.runContainer(runArgs, childAbortController.signal);
     launchedContainerId = parseAndValidateLaunchedContainerId(runStdout);
+    recordStep("2_CREATE_EPHEMERAL_CONTAINER");
 
     // Step 3: Inspect & validate container using exact launched container ID & approved local image ID
-    recordStep("3_INSPECT_VALIDATE_CONTAINER");
+    beginStep("3_INSPECT_VALIDATE_CONTAINER");
     const inspectJson = await docker.inspectContainer(launchedContainerId, childAbortController.signal);
     const validated = validateDockerInspectOutput(
       inspectJson,
@@ -2578,13 +2709,15 @@ export async function runCanonicalEvidenceSequence(
       }
       throw error;
     }
+    recordStep("3_INSPECT_VALIDATE_CONTAINER");
 
     // Step 4: Wait readiness
-    recordStep("4_WAIT_READINESS");
+    beginStep("4_WAIT_READINESS");
     await docker.waitForReady(validated.bindHost, validated.hostPort, 60_000, childAbortController.signal);
+    recordStep("4_WAIT_READINESS");
 
     // Step 5: Create target database & ownership marker
-    recordStep("5_CREATE_TARGET_DATABASE_AND_MARKER");
+    beginStep("5_CREATE_TARGET_DATABASE_AND_MARKER");
     const adminUrl = `postgresql://postgres:banking_test_secret@${validated.bindHost}:${validated.hostPort}/postgres`;
     const pool = deps.createPoolFn
       ? deps.createPoolFn(adminUrl, undefined)
@@ -2612,6 +2745,7 @@ export async function runCanonicalEvidenceSequence(
       childAbortController.signal,
       () => pool.query(`COMMENT ON DATABASE ${quoteDatabaseIdentifier(databaseName)} IS '${marker}'`, undefined),
     );
+    recordStep("5_CREATE_TARGET_DATABASE_AND_MARKER");
 
     targetUrl = `postgresql://postgres:banking_test_secret@${validated.bindHost}:${validated.hostPort}/${databaseName}`;
     const childEnv = buildCleanChildEnvironment(
@@ -2640,14 +2774,15 @@ export async function runCanonicalEvidenceSequence(
     };
 
     // Step 6: Apply migrations run 1
-    recordStep("6_APPLY_MIGRATIONS_RUN_1");
+    beginStep("6_APPLY_MIGRATIONS_RUN_1");
     const m1Res = await executeChild([applyMigrationScript]);
     if (m1Res.exitCode !== 0) {
       throw new Error(`Initial migration apply failed with exit code ${m1Res.exitCode}: ${sanitizeLogOutput(m1Res.stderr)}`);
     }
+    recordStep("6_APPLY_MIGRATIONS_RUN_1");
 
     // Step 7: Child test phase INITIAL_HISTORY
-    recordStep("7_CHILD_TEST_INITIAL_HISTORY");
+    beginStep("7_CHILD_TEST_INITIAL_HISTORY");
     const t1Res = await executeChild(
       [tsxCli, "--test", "--test-concurrency=1", runtimeTestPath],
       { DISPOSABLE_TEST_PHASE: "INITIAL_HISTORY" },
@@ -2655,16 +2790,18 @@ export async function runCanonicalEvidenceSequence(
     if (t1Res.exitCode !== 0) {
       throw new Error(`INITIAL_HISTORY runtime test failed with exit code ${t1Res.exitCode}: ${sanitizeLogOutput(t1Res.stderr)}`);
     }
+    recordStep("7_CHILD_TEST_INITIAL_HISTORY");
 
     // Step 8: Apply migrations run 2 (rerun)
-    recordStep("8_APPLY_MIGRATIONS_RUN_2");
+    beginStep("8_APPLY_MIGRATIONS_RUN_2");
     const m2Res = await executeChild([applyMigrationScript]);
     if (m2Res.exitCode !== 0) {
       throw new Error(`Rerun migration apply failed with exit code ${m2Res.exitCode}: ${sanitizeLogOutput(m2Res.stderr)}`);
     }
+    recordStep("8_APPLY_MIGRATIONS_RUN_2");
 
     // Step 9: Child test phase RERUN_HISTORY
-    recordStep("9_CHILD_TEST_RERUN_HISTORY");
+    beginStep("9_CHILD_TEST_RERUN_HISTORY");
     const t2Res = await executeChild(
       [tsxCli, "--test", "--test-concurrency=1", runtimeTestPath],
       { DISPOSABLE_TEST_PHASE: "RERUN_HISTORY" },
@@ -2672,16 +2809,18 @@ export async function runCanonicalEvidenceSequence(
     if (t2Res.exitCode !== 0) {
       throw new Error(`RERUN_HISTORY runtime test failed with exit code ${t2Res.exitCode}: ${sanitizeLogOutput(t2Res.stderr)}`);
     }
+    recordStep("9_CHILD_TEST_RERUN_HISTORY");
 
     // Step 10: Verify-only pre-mismatch
-    recordStep("10_VERIFY_ONLY_PRE_MISMATCH");
+    beginStep("10_VERIFY_ONLY_PRE_MISMATCH");
     const v1Res = await executeChild([applyMigrationScript, "--verify-only"]);
     if (v1Res.exitCode !== 0) {
       throw new Error(`Pre-mismatch verify-only failed with exit code ${v1Res.exitCode}: ${sanitizeLogOutput(v1Res.stderr)}`);
     }
+    recordStep("10_VERIFY_ONLY_PRE_MISMATCH");
 
     // Step 11: Child test phase INJECT_CHECKSUM_MISMATCH
-    recordStep("11_CHILD_TEST_INJECT_CHECKSUM_MISMATCH");
+    beginStep("11_CHILD_TEST_INJECT_CHECKSUM_MISMATCH");
     const t3Res = await executeChild(
       [tsxCli, "--test", "--test-concurrency=1", runtimeTestPath],
       { DISPOSABLE_TEST_PHASE: "INJECT_CHECKSUM_MISMATCH" },
@@ -2689,16 +2828,18 @@ export async function runCanonicalEvidenceSequence(
     if (t3Res.exitCode !== 0) {
       throw new Error(`INJECT_CHECKSUM_MISMATCH runtime test failed with exit code ${t3Res.exitCode}: ${sanitizeLogOutput(t3Res.stderr)}`);
     }
+    recordStep("11_CHILD_TEST_INJECT_CHECKSUM_MISMATCH");
 
     // Step 12: Verify-only expect refusal
-    recordStep("12_VERIFY_ONLY_EXPECT_REFUSAL");
+    beginStep("12_VERIFY_ONLY_EXPECT_REFUSAL");
     const v2Res = await executeChild([applyMigrationScript, "--verify-only"]);
     if (!isExpectedChecksumMismatchRefusal(v2Res, "001_banking_mvp")) {
       throw new Error(`Expected checksum mismatch refusal was not met: exitCode=${v2Res.exitCode}, stderr=${sanitizeLogOutput(v2Res.stderr)}`);
     }
+    recordStep("12_VERIFY_ONLY_EXPECT_REFUSAL");
 
     // Step 13: Child test phase RESTORE_CHECKSUM
-    recordStep("13_CHILD_TEST_RESTORE_CHECKSUM");
+    beginStep("13_CHILD_TEST_RESTORE_CHECKSUM");
     const t4Res = await executeChild(
       [tsxCli, "--test", "--test-concurrency=1", runtimeTestPath],
       { DISPOSABLE_TEST_PHASE: "RESTORE_CHECKSUM" },
@@ -2706,17 +2847,27 @@ export async function runCanonicalEvidenceSequence(
     if (t4Res.exitCode !== 0) {
       throw new Error(`RESTORE_CHECKSUM runtime test failed with exit code ${t4Res.exitCode}: ${sanitizeLogOutput(t4Res.stderr)}`);
     }
+    recordStep("13_CHILD_TEST_RESTORE_CHECKSUM");
 
     // Step 14: Verify-only post-restore success
-    recordStep("14_VERIFY_ONLY_POST_RESTORE_SUCCESS");
+    beginStep("14_VERIFY_ONLY_POST_RESTORE_SUCCESS");
     const v3Res = await executeChild([applyMigrationScript, "--verify-only"]);
     if (v3Res.exitCode !== 0) {
       throw new Error(`Post-restore verify-only failed with exit code ${v3Res.exitCode}: ${sanitizeLogOutput(v3Res.stderr)}`);
     }
+    recordStep("14_VERIFY_ONLY_POST_RESTORE_SUCCESS");
 
+    beginStep("19_VALIDATE_COMPLETION");
     recordStep("19_VALIDATE_COMPLETION");
   } catch (err) {
     mainError = err instanceof Error ? err : new Error(String(err));
+    if (!primaryFailureContext && activeStep) {
+      primaryFailureContext = {
+        phase: activeStep,
+        operation: databaseDiagnostic?.operation ?? null,
+      };
+      activeStep = null;
+    }
     if (facade && !facade.exitCode) {
       facade.exitCode = 1;
     }
@@ -2737,6 +2888,8 @@ export async function runCanonicalEvidenceSequence(
       completedSteps,
       attestationDiagnostic,
       databaseDiagnostic,
+      ...(primaryFailureContext ? { primaryFailureContext } : {}),
+      ...(cleanupFailureContext ? { cleanupFailureContext } : {}),
       error: finalError,
       cleanupError,
     };

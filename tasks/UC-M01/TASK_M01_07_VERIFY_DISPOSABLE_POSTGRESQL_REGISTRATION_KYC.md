@@ -1,10 +1,10 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 STRUCTURED RESULT EMISSION COMMITTED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
-- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 FAILURE SEMANTICS AND DATABASE DIAGNOSTIC VERIFIED — AWAITING CHECKPOINT COMMIT
+- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
-- M01-07: INCOMPLETE
-- UC-M01: INCOMPLETE
+- Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
+- Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
 
 ## OWNER APPROVAL RECORD — M07-A2 PG-POOL REMEDIATION (2026-09-05)
@@ -4300,3 +4300,549 @@ PostgreSQL, migration, cleanup hoặc socket-level cancellation.
 - Underlying runtime failure vẫn `UNKNOWN`; runtime retry chưa được cấp quyền.
 - Đây là checkpoint local đã ghi nhận; không có bằng chứng runtime mới và
   không được xem là M07-A2 runtime verification.
+
+## 66. M07-A2 POST-EMISSION ONE-SHOT RUNTIME RETRY — EXECUTION RECORD
+
+- Invocation này đã chạy đúng một lần tại snapshot documentation commit
+  `4853b5b477d33664c6cebe25e0f3cd0d7271a1de`; không retry hoặc fallback.
+- Working directory: `C:\Projects\banking-system\backend`.
+- Command contract giữ nguyên một positional argument:
+  `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/disposableMigrationRuntime.test.ts`.
+- Start: `2026-09-06T07:09:15.2971429+07:00`.
+- End: `2026-09-06T07:09:18.9491778+07:00`.
+- Duration: `3652 ms`.
+- Overall exit code: `1`.
+
+### 66.1 Structured envelope
+
+- Stdout có `1` non-empty line và prefix count `1`.
+- Envelope count: `1`; JSON parse: PASS; JSON single-line: PASS.
+- Schema: `m07-a2-canonical-runtime-result`; version: `1`.
+- Closed-key validation: PASS; không có field ngoài allowlist.
+- Outcome: `FAIL`.
+- Completed steps được emit:
+  `1_VERIFY_LOCAL_IMAGE`, `2_CREATE_EPHEMERAL_CONTAINER`,
+  `3_INSPECT_VALIDATE_CONTAINER`, `4_WAIT_READINESS`,
+  `5_CREATE_TARGET_DATABASE_AND_MARKER`, `15_CLOSE_TARGET_CONNECTIONS`,
+  `18_REMOVE_CONTAINER`.
+- Các phase 6–14, 16–17 và 19 không được tuyên bố PASS; không có bằng chứng
+  migration/checksum/restoration/post-drop catalog đầy đủ.
+- Attestation diagnostic: phase `3_INSPECT_VALIDATE_CONTAINER`,
+  `validatorCalled=true`, `validatorPassed=true`, target record count `1`,
+  filesystem `tmpfs`, normalized size `536870912`, mode `0700`,
+  failure code `NONE`.
+- Database diagnostic: phase `5_CREATE_TARGET_DATABASE_AND_MARKER`,
+  operation `CREATE_TARGET_DATABASE`, failure code
+  `DATABASE_QUERY_FAILURE`.
+- Envelope failure object được ghi nhận đúng như đã emit: kind `PRIMARY`, code
+  `PRIMARY_ERROR`, phase `3_INSPECT_VALIDATE_CONTAINER`, operation
+  `CREATE_TARGET_DATABASE`. Database diagnostic là bằng chứng phase/code dùng
+  cho phân loại runtime; không tự suy luận nguyên nhân thấp hơn lớp này.
+- Cleanup: `attempted=true`, `succeeded=true`, failure code `null`.
+- Stderr: `0` byte, `0` non-empty line; không có raw stderr trong báo cáo.
+
+### 66.2 Resource reconciliation
+
+- Pre-run counts/fingerprints đã được chụp bằng normalized sorted sets không
+  chứa timestamp/runtime state:
+
+  | Resource | Pre count | Pre SHA-256 | Post count | Post SHA-256 |
+  | --- | ---: | --- | ---: | --- |
+  | Containers | 22 | `792d8e9ce5df3b83cd87ebdd5a7c6d69b116e1077a09e2fadbedc1e2f7f95d05` | 22 | `792d8e9ce5df3b83cd87ebdd5a7c6d69b116e1077a09e2fadbedc1e2f7f95d05` |
+  | Volumes | 48 | `b38fe0d1496b0421fe4676a642cfbc8da8f4ffc64dcae5e1447a5cdb6c1cf63f` | 48 | metadata representation không ổn định |
+  | Dangling volumes | 37 | `88295eda3abb51d4c58ded84d0730aaf9d891e9f84f7fb8f009904d380e43a72` | 37 | metadata representation không ổn định |
+  | Networks | 7 | `f9933b1d0cf5227d4e2146e54ca40fd8a1a5318bb51c77367c4265b70fc56ee7` | 7 | `f9933b1d0cf5227d4e2146e54ca40fd8a1a5318bb51c77367c4265b70fc56ee7` |
+  | Image references | 56 | `a0ad7476640b11aab65bc394205c380bcb49ee1fed26c1142fadeb77da659df9` | 56 | `a0ad7476640b11aab65bc394205c380bcb49ee1fed26c1142fadeb77da659df9` |
+
+- Docker label serialization cho volume không ổn định: hai truy vấn
+  read-only liên tiếp cho metadata hash khác nhau. Stable name-only
+  fingerprints sau run là volumes
+  `e34864a892be18f2177c7ffd082691e896d2c9010f60277e7cf1759b098b50d4` và
+  dangling volumes
+  `a99ce38de9d854005f415a244bf2eb90caf7b2aae8164eeea4f129c4b8417f7d`,
+  phù hợp baseline reference; volume event trong execution window: `0`.
+- M07-A2 container, probe và run-label leftovers sau run đều `0`.
+- Approved image vẫn đúng immutable image đã xác minh; không có resource delta
+  do runner cần recovery và không cleanup thủ công.
+
+### 66.3 Git và giới hạn
+
+- Runtime không làm thay đổi source, test, migration hoặc config; sau execution
+  chỉ task document này được phép modified.
+- `PHASE_NOT_EMITTED` của các lần lịch sử đã được thay bằng failure phase/code
+  do envelope lần này emit; underlying database failure root cause vẫn chưa
+  được chẩn đoán ở mức thấp hơn `DATABASE_QUERY_FAILURE`.
+- CodeGraph chỉ là structural evidence, không thay thế runtime evidence.
+- M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`;
+  M07-B, M07-C và M07-D chưa bắt đầu.
+
+## 67. M07-A2 CREATE-DATABASE AND ENVELOPE SEMANTICS DIAGNOSIS — NO DATABASE
+
+### 67.1 Phạm vi, baseline và evidence boundary
+
+- Chế độ: `DIAGNOSE_AND_PLAN — CODEGRAPH + SOURCE/DEPENDENCY INSPECTION ONLY — NO DATABASE`.
+- Snapshot được đối chiếu: branch `codex/staging-academic-completion`, HEAD
+  `4853b5b477d33664c6cebe25e0f3cd0d7271a1de`.
+- Cached area sạch, untracked bằng `0`; chỉ task document này có diff trước
+  khi ghi section hiện tại. Source, test, config và migration không thay đổi.
+- Invocation runtime trong Section 66 đã chạy đúng `1` lần; envelope đã được
+  emit, cleanup và resource reconciliation đạt theo evidence đã ghi.
+- Không chạy database, Docker, migration, test, build hoặc runtime retry trong
+  phiên diagnosis này. Không stage, commit hoặc push.
+- Ba finding dưới đây được giữ độc lập; không suy luận nguyên nhân database
+  từ generic envelope phase hoặc từ duration/stderr.
+
+### 67.2 CodeGraph integration
+
+`codegraph sync` trả về `Already up to date`.
+
+Các query exact đã chạy:
+
+1. `runCanonicalEvidenceSequence executeDatabaseQuery CREATE_TARGET_DATABASE CREATE DATABASE ownership marker completedSteps push callers callees`
+   - Kết quả: `92 symbols across 5 files`.
+   - Symbol chính: `runCanonicalEvidenceSequence` tại
+     `backend/src/database/disposableDatabaseGuard.ts:2350`,
+     `CANONICAL_SEQUENCE_STEPS:1924`,
+     `TargetDatabaseVerificationQuery:1778`,
+     `assertRuntimeDatabaseOwnership:1783`.
+   - Graph cho thấy canonical sequence có caller production trong
+     `backend/scripts/run-disposable-postgres-test.ts` và các caller test;
+     helper `executeDatabaseQuery` là nested function nên được xác minh thêm
+     trực tiếp bằng source trace.
+
+2. `formatCanonicalRuntimeResultLine CanonicalSequenceExecutionResult attestationDiagnostic databaseDiagnostic PRIMARY_ERROR failure phase precedence callers callees`
+   - Kết quả: `42 symbols across 1 file`.
+   - Symbol chính: `CanonicalSequenceExecutionResult:2175`,
+     `toCanonicalRuntimeFailure:2269`,
+     `canonicalFailureContext:2259`,
+     `formatCanonicalRuntimeResultLine:2341` và
+     `createCanonicalRuntimeResultEnvelope:2314` trong
+     `disposableDatabaseGuard.ts`.
+
+3. `createPoolFn adminPool PoolConfig connection string readiness CREATE DATABASE query callers callees`
+   - Kết quả: `81 symbols across 5 files`.
+   - Graph bao phủ `poolConfig`/`DatabasePool.query` trong
+     `backend/src/database/pool.ts` và các receiver khác; đây là blast radius
+     tổng quát, không phải phạm vi remediation. Canonical disposable receiver
+     được khoanh lại bằng source tại `disposableDatabaseGuard.ts:2350`.
+
+Số lượng symbol khác nhau là do token coverage và blast radius của từng query;
+source/type là nguồn sự thật cuối cùng. Không dùng khoảng `196 callers` của
+generic `backend/src/database/pool.ts` làm phạm vi sửa.
+
+### 67.3 Finding A — CREATE_TARGET_DATABASE database failure
+
+- Phase: `5_CREATE_TARGET_DATABASE_AND_MARKER`.
+- Operation: `CREATE_TARGET_DATABASE`.
+- Code: `DATABASE_QUERY_FAILURE`.
+- Classification: `DATABASE_FAILURE_DIAGNOSTIC_INSUFFICIENT`.
+- Root cause: `UNKNOWN`.
+
+#### Call path đã xác minh
+
+`waitForReady` tại `disposableDatabaseGuard.ts:2134` chỉ mở TCP socket tới
+loopback host/port và coi sự kiện connect là ready; nó không xác minh
+authentication hoặc một query thành công.
+
+Sau readiness, canonical path tại khoảng `2586–2603`:
+
+1. Tạo admin pool từ `createPoolFn(adminUrl, undefined)` hoặc `new Pool` với
+   `max: 1` và `connectionTimeoutMillis: 5_000`.
+2. Kết nối tới database maintenance `postgres`; giá trị credential/URL không
+   được ghi vào tài liệu này.
+3. Gọi `executeDatabaseQuery` với phase/operation tương ứng.
+4. Gọi `pool.query` bằng đúng hai arguments: query text và `undefined` params.
+5. Query shape là `CREATE DATABASE "<TARGET_DATABASE>"`.
+
+`quoteDatabaseIdentifier` tại `disposableDatabaseGuard.ts:190` chỉ cho phép tên
+database theo pattern an toàn và bao identifier bằng double quote, đồng thời
+escape double quote. Identifier không dùng `$1`; PostgreSQL không hỗ trợ
+parameter binding cho identifier. Generated target name đã được kiểm soát
+trước khi quote.
+
+Query create database không nằm trong transaction do source không gọi
+`BEGIN`/`COMMIT` và gọi trực tiếp trên admin pool. Marker được ghi bằng query
+riêng sau khi create thành công. Vì vậy lỗi có thể xảy ra trước khi database
+được tạo hoặc sau khi server đã xử lý một phần request; source hiện tại không
+đủ dữ liệu để phân biệt hai trường hợp đó.
+
+`executeDatabaseQuery` tại khoảng `2376–2391` chỉ đặt
+`DATABASE_QUERY_FAILURE` khi query thunk throw/reject. Pool construction nằm
+trước helper. Do đó code này chứng minh query boundary thất bại, nhưng không
+chứng minh identifier quoting, transaction context, authentication, readiness
+race hay một lỗi driver cụ thể.
+
+Các canonical query hiện vẫn dùng Promise-compatible two-argument shape; không
+có `AbortSignal` ở callback slot. `pg 8.23.0`/`pg-pool 3.14.0` và installed
+types hỗ trợ Promise overload này. `REMAINING_PGPOOL_QUERY_CONTRACT_ERROR`
+không được xác nhận trong snapshot hiện tại.
+
+### 67.4 Finding B — generic failure phase conflict
+
+Đã xác nhận classification: `FAILURE_PRECEDENCE_SELECTS_PASS_ATTESTATION`.
+
+`canonicalFailureContext` tại `disposableDatabaseGuard.ts:2259–2266` chọn:
+
+```text
+attestationDiagnostic.phase ?? databaseDiagnostic.phase ?? null
+```
+
+Nó không kiểm tra `failureCode !== "NONE"` trước khi chọn attestation
+diagnostic. Vì vậy attestation `PASS/NONE` ở phase 3 có thể thắng database
+diagnostic đang fail ở phase 5. `toCanonicalRuntimeFailure` tại
+`2269–2312` sau đó tạo generic `PRIMARY_ERROR`; `result.error` được ưu tiên
+trước `cleanupError`, nhưng originating phase không được lưu riêng trong
+`Error`.
+
+Hệ quả đã quan sát:
+
+| Thành phần | Giá trị đúng cần giữ | Giá trị generic hiện có |
+|---|---|---|
+| Attestation | PASS / `NONE` / phase 3 | PASS / `NONE` / phase 3 |
+| Database | FAIL / `DATABASE_QUERY_FAILURE` / phase 5 | FAIL / `DATABASE_QUERY_FAILURE` / phase 5 |
+| Generic failure | Phase 5 khi database diagnostic fail | `PRIMARY_ERROR` tại phase 3 |
+
+Cleanup error chỉ được chọn khi không có primary error; nó không nên thay thế
+primary database failure. Finding này là lỗi mapping envelope độc lập với
+underlying database failure.
+
+### 67.5 Finding C — completedSteps semantics
+
+Đã xác nhận classification: `COMPLETED_STEPS_RECORDED_ON_ENTRY`.
+
+`recordStep` tại `disposableDatabaseGuard.ts:2394–2396` push ngay lập tức vào
+`completedSteps`. Canonical step 5 được push tại `2587`, trước khi tạo pool và
+trước `pool.query(CREATE DATABASE, undefined)` tại `2602`. Các cleanup steps
+15–18 cũng được record trước hành động tương ứng trong
+`performCanonicalCleanup` khoảng `2410–2457`.
+
+Vì vậy semantics thực tế hiện tại là entered/attempted steps, trong khi tên
+field là `completedSteps`. Nó không phải danh sách hoàn thành thuần túy và
+không phải lỗi database root cause.
+
+Contract được đề xuất, chờ Owner chốt:
+
+- Ưu tiên: chỉ thêm vào `completedSteps` sau khi phase hoàn tất thành công;
+  failed phase chỉ nằm trong `failure.phase` hoặc database/attestation
+  diagnostic.
+- Phương án thay thế: giữ danh sách entry hiện tại nhưng đổi schema thành
+  `enteredSteps` và bổ sung `completedSteps` riêng.
+
+Không đổi schema hoặc source trong phiên diagnosis.
+
+### 67.6 Database diagnostic sufficiency
+
+Nếu cần phân biệt nguyên nhân ở lần runtime được Owner cấp quyền sau này, chỉ
+đề xuất enrich closed fields an toàn:
+
+- `driverFamily`: closed enum.
+- `sqlState`: chỉ giữ khi khớp `^[0-9A-Z]{5}$`.
+- `systemCode`: closed allowlist cho connection/auth/query categories.
+- `operation` và `phase` hiện có.
+
+Không emit raw message/stack, SQL, params, URL/host/port, database name,
+credential, secret hoặc full ID. Không triển khai instrumentation trong phiên
+này.
+
+### 67.7 Test-gap trace
+
+Đã đối chiếu các test hiện hành:
+
+- `M07-A2-PGPOOL-03` kiểm tra database query rejection và
+  `databaseDiagnostic` phase 5.
+- `M07-A2-PGPOOL-04` kiểm tra catalog query two-argument và cancellation
+  trước query.
+- `M07-A2-ORCH-01..03` kiểm tra attestation/readiness gating, late failure và
+  cleanup.
+- `M07-A2-EMIT-01..09` kiểm tra envelope, no-result throw, writer và cleanup
+  precedence.
+- Chưa có assertion trực tiếp rằng database diagnostic fail phải thắng
+  attestation `PASS/NONE` trong generic failure context.
+- Chưa có assertion trực tiếp cho `completedSteps` khi phase 5 query fail.
+- Chưa có test safe classification cho SQLSTATE/system-code vì các field này
+  chưa tồn tại.
+
+### 67.8 Minimal remediation plan — chưa triển khai
+
+Phạm vi dự kiến chỉ gồm:
+
+- `backend/src/database/disposableDatabaseGuard.ts`:
+  `canonicalFailureContext`, `toCanonicalRuntimeFailure`, `recordStep` và
+  canonical result types nếu Owner chọn schema mới.
+- `backend/src/tests/disposableDatabaseGuard.test.ts`: regression tests dùng
+  strict pg-pool-compatible fake, không gọi database thật.
+- Task document này để ghi quyết định và evidence sau implementation.
+
+Test IDs dự kiến, không chạy trong phiên này:
+
+1. `M07-A2-DBENV-01`: failing database diagnostic thắng attestation PASS/NONE.
+2. `M07-A2-DBENV-02`: diagnostic `NONE` không được chọn làm failure phase.
+3. `M07-A2-DBENV-03`: failed phase không nằm trong `completedSteps` theo
+   contract mới, hoặc được phân biệt rõ nếu Owner chọn `enteredSteps`.
+4. `M07-A2-DBENV-04`: query rejection giữ originating phase/operation.
+5. `M07-A2-DBENV-05`: safe SQLSTATE/system-code classification chỉ nhận
+   closed values và không lộ raw error.
+6. `M07-A2-DBENV-06`: create-database query shape production-faithful và
+   identifier quote boundary.
+
+Baseline targeted suite: `124`. Expected remediation delta: `+6` nếu Owner
+chấp thuận toàn bộ test IDs trên; không có test count delta trong phiên này.
+Quality gates cho phiên implementation sau: `npm run typecheck`,
+`npm run build` và `node --import=tsx --test
+src/tests/disposableDatabaseGuard.test.ts`, không Docker/database/runtime.
+Sau source change phải `codegraph sync` và query lại cùng receiver-specific
+path trước staging. Runtime retry vẫn cần Owner authorization riêng.
+
+### 67.9 Trạng thái, giới hạn và kết luận
+
+- Finding A: `DATABASE_FAILURE_DIAGNOSTIC_INSUFFICIENT`; underlying root cause
+  vẫn `UNKNOWN`.
+- Finding B: `FAILURE_PRECEDENCE_SELECTS_PASS_ATTESTATION` đã được chứng minh
+  bằng source mapping.
+- Finding C: `COMPLETED_STEPS_RECORDED_ON_ENTRY` đã được chứng minh bằng vị trí
+  `recordStep` trước database action.
+- Envelope Section 66 đã hoạt động và resource cleanup đã đạt; không có runtime
+  evidence mới trong phiên này.
+- CodeGraph chỉ là structural evidence; không thay thế PostgreSQL/runtime
+  evidence.
+- M07-A2 runtime vẫn `BLOCKED` và `NOT AUTHORIZED`; M01-07 và UC-M01 vẫn
+  `INCOMPLETE`; M07-B, M07-C và M07-D chưa bắt đầu.
+
+**Kết luận:** `PARTIAL ROOT CAUSE CONFIRMED — ENVELOPE SEMANTICS CONFIRMED; DATABASE FAILURE DIAGNOSTIC INSUFFICIENT`.
+
+## 68. M07-A2 failure semantics và safe database diagnostic remediation
+
+### 68.1 Phạm vi và baseline
+
+- Phiên này chỉ chạy local/unit/test-double; không chạy Docker, PostgreSQL,
+  database socket, migration hoặc canonical runtime command.
+- Baseline Git theo task: branch `codex/staging-academic-completion`, HEAD
+  `4853b5b477d33664c6cebe25e0f3cd0d7271a1de`; cached area và untracked area
+  sạch trước khi bắt đầu remediation. Section 67 và toàn bộ runtime/recovery
+  evidence lịch sử được bảo toàn.
+- Allowlist thực tế chỉ gồm:
+  `backend/src/database/disposableDatabaseGuard.ts`,
+  `backend/src/tests/disposableDatabaseGuard.test.ts` và task document này.
+- Không sửa runner CLI, generic `backend/src/database/pool.ts`, runtime test,
+  migration runner, migrations, package/lockfile, dependency hoặc CodeGraph
+  report.
+
+### 68.2 Hai semantic findings đã sửa
+
+- `FAILURE_PRECEDENCE_SELECTS_PASS_ATTESTATION`: selector hiện bỏ qua
+  diagnostic có `failureCode = NONE`, sau đó chọn theo thứ tự đóng:
+  database diagnostic lỗi → attestation diagnostic lỗi → explicit primary
+  failure context → `null`/UNKNOWN fallback. Database failure ở phase
+  `5_CREATE_TARGET_DATABASE_AND_MARKER` với operation
+  `CREATE_TARGET_DATABASE` không còn bị phase 3 PASS/NONE che khuất.
+- `COMPLETED_STEPS_RECORDED_ON_ENTRY`: `completedSteps` chỉ được append sau
+  khi action tương ứng thành công. Phase 5 chỉ được ghi sau CREATE DATABASE
+  và ownership marker; phase 10–14 chỉ được ghi sau verify/test thành công;
+  cleanup steps chỉ được ghi sau cleanup action thành công, không ghi trùng.
+  Failed phase được giữ trong failure context/diagnostic và không xuất hiện
+  trong `completedSteps`.
+- Cleanup error vẫn được giữ riêng, không ghi đè primary error hoặc primary
+  phase.
+
+### 68.3 Safe database diagnostic contract
+
+`DatabaseQueryDiagnostic` hiện chỉ public sáu field:
+
+| Field | Contract |
+| --- | --- |
+| `phase` | Canonical database phase đã allowlist |
+| `operation` | Canonical database operation đã allowlist |
+| `failureCode` | `DATABASE_QUERY_FAILURE` hoặc `DATABASE_QUERY_CANCELLED` |
+| `driverFamily` | `POSTGRES`, `NODE_SYSTEM`, `ORCHESTRATION` hoặc `UNKNOWN` |
+| `sqlState` | Chỉ mã khớp `^[0-9A-Z]{5}$`, nếu không thì `null` |
+| `systemCode` | Chỉ một trong chín Node system code đã allowlist, nếu không thì `null` |
+
+- SQLSTATE hợp lệ được phân loại `POSTGRES`; system code hợp lệ được phân
+  loại `NODE_SYSTEM`; cancellation ở orchestration boundary dùng
+  `ORCHESTRATION` và `DATABASE_QUERY_CANCELLED`; trường hợp khác dùng
+  `UNKNOWN` với hai code phụ `null`.
+- Không phân loại theo substring của error message và không emit message,
+  stack, SQL, params, detail/hint/position, host/port/URL, username,
+  database name, password, token, environment value hoặc raw driver object.
+- Các query canonical tiếp tục dùng tối đa hai arguments; không thay đổi
+  CREATE DATABASE SQL shape, identifier quoting, marker SQL, pool config,
+  readiness, transaction/order, tmpfs, migration/checksum/restoration hoặc
+  cleanup contract.
+
+### 68.4 Protocol V2
+
+- Canonical output dùng đúng prefix `M07_A2_RESULT_V2 `, schema
+  `m07-a2-canonical-runtime-result`, version `2`, và chỉ emit một envelope.
+- `runCliMain` vẫn là sink duy nhất cho canonical envelope; writer được
+  await, writer failure không retry/emit lần hai; legacy path không emit
+  canonical envelope.
+- Internal `Error` và execution result không được JSON-serialize trực tiếp;
+  envelope chỉ chứa field đã đóng của protocol.
+
+### 68.5 Regression tests và quality gates
+
+Baseline targeted suite là `124`; remediation thêm đúng `10` test
+registration, tổng `134/134 PASS`, delta `+10`, với `0` fail, cancelled,
+skipped hoặc todo. Các test mới:
+
+| Test ID | Phạm vi đã kiểm tra |
+| --- | --- |
+| `M07-A2-SEM-01` | Database failure thắng attestation PASS/NONE và map phase 5/CREATE_TARGET_DATABASE |
+| `M07-A2-SEM-02` | Failing attestation được chọn; diagnostic NONE bị bỏ qua |
+| `M07-A2-SEM-03` | Explicit primary context và UNKNOWN fallback |
+| `M07-A2-SEM-04` | Failed phase không vào `completedSteps`; prior success giữ thứ tự |
+| `M07-A2-SEM-05` | Cleanup chỉ ghi step thành công; cleanup failure không ghi đè primary |
+| `M07-A2-DBDIAG-01` | SQLSTATE hợp lệ và loại bỏ raw driver fields |
+| `M07-A2-DBDIAG-02` | Node system code trong closed set |
+| `M07-A2-DBDIAG-03` | Unknown/malicious code thành UNKNOWN/null, không leakage |
+| `M07-A2-DBDIAG-04` | Orchestration cancellation thành `DATABASE_QUERY_CANCELLED`, query bị chặn |
+| `M07-A2-DBDIAG-05` | Production-faithful two-argument query, identifier boundary và V2 envelope |
+
+Quality gates đã chạy trong `backend/`:
+
+- `npm run typecheck`: PASS.
+- `npm run build`: PASS.
+- `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`:
+  `134/134 PASS`, `0` fail/cancelled/skipped/todo.
+- `git diff --check`: PASS trước khi cập nhật phần documentation này.
+- SHA-256 sau implementation và trước/sau documentation update (không đổi
+  byte trong hai file code/test): guard
+  `9599e89b0aebf32475482b0dd85721217b54693c3f49e6aad6967a489c18943c`, test
+  `b7c30486e27dc4968ff98df26b4881dafb03079eb581c84066da44708d64a82c`;
+  pre/post documentation update đều `MATCH`.
+- Prohibited TypeScript pattern scan trên added lines: `0`; conflict-marker
+  scan: `0`.
+- Placeholder scan không còn unresolved task placeholder. Ba kết quả `{{...}}`
+  trong audit history là cú pháp template của Docker `--format`, không phải
+  placeholder tài liệu chưa điền.
+- Leakage review không phát hiện raw credential, URL, environment value, full
+  ID, raw error, SQL hoặc params trong public diagnostic; các chuỗi `stderr`,
+  `SQL` và `params` còn thấy trong diff chỉ là tên field/contract hoặc
+  assertion fixture đã sanitize.
+
+### 68.6 CodeGraph pre/post evidence
+
+CodeGraph đã được sync trước và sau source change. Query pre-change được
+chạy trên snapshot trước remediation; query post-change dưới đây phản ánh
+working tree hiện tại sau remediation, chưa có runtime evidence:
+
+1. `runCanonicalEvidenceSequence completedSteps recordStep canonicalFailureContext toCanonicalRuntimeFailure createCanonicalRuntimeResultEnvelope callers callees`
+   — post-change `48 symbols across 1 file`; các symbol chính:
+   `CanonicalFailureContext` tại guard `:2292`,
+   `canonicalFailureContext` `:2342`,
+   `toCanonicalRuntimeFailure` `:2362`,
+   `createCanonicalRuntimeResultEnvelope` `:2407`,
+   `runCanonicalEvidenceSequence` `:2443`.
+2. `executeDatabaseQuery DatabaseQueryDiagnostic DATABASE_QUERY_FAILURE DATABASE_QUERY_CANCELLED sqlState systemCode callers callees`
+   — post-change `41 symbols across 1 file`; các symbol chính:
+   `DatabaseQueryDiagnostic` `:447`,
+   `DATABASE_QUERY_DIAGNOSTIC_KEYS` `:438`,
+   `createDatabaseQueryCancelledDiagnostic` `:491`,
+   `classifyDatabaseQueryError` `:471`,
+   `DATABASE_QUERY_FAILURE_CODES` `:411`,
+   `DATABASE_QUERY_SYSTEM_CODES` `:425`.
+3. `formatCanonicalRuntimeResultLine attestationDiagnostic databaseDiagnostic PRIMARY_ERROR failure phase precedence callers callees`
+   — post-change `42 symbols across 1 file`; các symbol chính:
+   `formatCanonicalRuntimeResultLine` `:2434`,
+   `toCanonicalRuntimeFailure` `:2362`,
+   `CanonicalRuntimeResultEnvelope` `:2281`.
+
+Historical pre-change CodeGraph output was separately captured before patch:
+query 1 returned `50 symbols across 2 files`, query 2 `85 symbols across 3
+files`, query 3 `41 symbols across 1 file`; historical line positions for
+`canonicalFailureContext`/`toCanonicalRuntimeFailure` were approximately
+`2259`/`2269`, and `runCanonicalEvidenceSequence` was `2350`. Those positions
+are historical and are not claims about the current source.
+
+Post-change source reconciliation confirms:
+
+- Failure selector checks non-`NONE` diagnostic codes before explicit context;
+  `beginStep`/`recordStep` are at `:2496`/`:2500`, and completed-step writes
+  are after successful actions.
+- Database classifier uses only the closed driver/system-code sets and the
+  six-field public mapper.
+- Canonical V2 envelope remains formatter → awaited writer → stdout; no
+  database/runtime evidence was produced by CodeGraph.
+- `backend/src/database/pool.ts` is outside the remediation blast radius and
+  unchanged. Blast radius is limited to the disposable guard, its targeted
+  tests and this task record.
+
+### 68.7 Verification boundary and status
+
+- Database root cause remains `UNKNOWN`; no SQL or pool/readiness change was
+  made to infer it.
+- No new PostgreSQL, Docker, mount-namespace, migration, checksum,
+  ownership-marker, restoration or cleanup-runtime evidence exists.
+- M07-A2 runtime retry remains `NOT AUTHORIZED`; M01-07 and UC-M01 remain
+  `INCOMPLETE`; M07-B, M07-C and M07-D have not started.
+- Header status reflects local/unit verification only:
+  `IN_PROGRESS — M07-A2 FAILURE SEMANTICS AND DATABASE DIAGNOSTIC REMEDIATION VERIFIED — AWAITING OWNER REVIEW`.
+
+**Kết luận:** `READY FOR M07-A2 FAILURE SEMANTICS AND DATABASE DIAGNOSTIC OWNER REVIEW`.
+
+## 69. OWNER APPROVAL — M07-A2 FAILURE SEMANTICS AND DATABASE DIAGNOSTIC ACCEPTED
+
+- Approval date: `2026-09-06`.
+- Baseline HEAD: `4853b5b477d33664c6cebe25e0f3cd0d7271a1de`.
+- Accepted local/unit evidence: typecheck PASS, build PASS, targeted suite
+  `134/134 PASS`, gồm đúng 10 test mới `M07-A2-SEM-01..05` và
+  `M07-A2-DBDIAG-01..05`.
+- Hai semantic findings đã được xử lý trong local/unit scope:
+  `FAILURE_PRECEDENCE_SELECTS_PASS_ATTESTATION` và
+  `COMPLETED_STEPS_RECORDED_ON_ENTRY`.
+- CodeGraph pre/post reconciliation đã được ghi nhận; database runtime root
+  cause vẫn `UNKNOWN`.
+- Không có runtime evidence mới; M07-A2 runtime retry vẫn
+  `NOT AUTHORIZED`.
+- Không tick acceptance criterion runtime nào. M01-07 và UC-M01 vẫn
+  `INCOMPLETE`; M07-B, M07-C và M07-D chưa bắt đầu.
+
+### 69.1 CodeGraph reconciliation
+
+- Exact command: `codegraph sync` — kết quả `Already up to date`.
+- Exact query:
+  `canonicalFailureContext toCanonicalRuntimeFailure createCanonicalRuntimeResultEnvelope runCanonicalEvidenceSequence recordStep DatabaseQueryDiagnostic driverFamily sqlState systemCode callers callees`
+  — kết quả `48 symbols across 1 file`.
+- Symbol/line chính trong committed baseline snapshot đang được kiểm tra:
+  `DatabaseQueryDiagnostic` `:447`,
+  `classifyDatabaseQueryError` `:471`,
+  `createDatabaseQueryCancelledDiagnostic` `:491`,
+  `CanonicalRuntimeResultEnvelope` `:2281`,
+  `canonicalFailureContext` `:2342`,
+  `toCanonicalRuntimeFailure` `:2362`,
+  `createCanonicalRuntimeResultEnvelope` `:2407`,
+  `runCanonicalEvidenceSequence` `:2443`,
+  `beginStep` `:2496` và `recordStep` `:2500`.
+- Reconciliation xác nhận database diagnostic lỗi được ưu tiên trước
+  attestation PASS/NONE; phase chỉ vào `completedSteps` sau action thành công;
+  diagnostic dùng closed fields; canonical output là V2 schema/version 2;
+  DisposablePoolClient query tối đa hai arguments.
+- `backend/src/database/pool.ts` không thuộc blast radius và không thay đổi;
+  generic DatabasePool callers không được dùng để mở rộng scope. CodeGraph
+  report không được sửa trong checkpoint này.
+
+### 69.2 Freeze và evidence boundary
+
+- SHA-256 trước/sau documentation update của guard là
+  `9599e89b0aebf32475482b0dd85721217b54693c3f49e6aad6967a489c18943c`;
+  của guard test là
+  `b7c30486e27dc4968ff98df26b4881dafb03079eb581c84066da44708d64a82c`;
+  cả hai phải `MATCH`.
+- Runner CLI, generic pool, runtime test, migration runner, migrations và
+  CodeGraph report không thay đổi.
+- Accepted evidence chỉ là local/unit/test-double evidence; không chứng minh
+  PostgreSQL runtime, Docker runtime, socket-level cancellation hoặc database
+  root cause.
+
+### 69.3 Checkpoint staging handoff
+
+- Exact staging allowlist:
+  `backend/src/database/disposableDatabaseGuard.ts`,
+  `backend/src/tests/disposableDatabaseGuard.test.ts` và
+  `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`.
+- Cached area phải chứa đúng ba file trên; không stage `.codegraph`, CodeGraph
+  report hoặc bất kỳ file ngoài allowlist.
+- Working tree sau staging phải không còn unstaged/untracked file; không
+  commit, push, amend, rebase, merge hoặc tag trong phiên này.
+
+**Kết luận:** `READY FOR M07-A2 FAILURE SEMANTICS AND DATABASE DIAGNOSTIC CHECKPOINT COMMIT`.
