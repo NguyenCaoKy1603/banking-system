@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: IN_PROGRESS — M07-A2 FAILURE SEMANTICS AND DATABASE DIAGNOSTIC VERIFIED — AWAITING CHECKPOINT COMMIT
-- Chế độ hiện tại: DOCUMENTATION UPDATE AND CHECKPOINT STAGING ONLY
+- Trạng thái: IN_PROGRESS — M07-A2 FAILURE SEMANTICS AND DATABASE DIAGNOSTIC RECORDED — RUNTIME RETRY AWAITING OWNER AUTHORIZATION
+- Chế độ hiện tại: DIAGNOSE_AND_PLAN — DOCUMENTATION COMMIT / READ-ONLY PREFLIGHT ONLY
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
@@ -4846,3 +4846,28 @@ Post-change source reconciliation confirms:
   commit, push, amend, rebase, merge hoặc tag trong phiên này.
 
 **Kết luận:** `READY FOR M07-A2 FAILURE SEMANTICS AND DATABASE DIAGNOSTIC CHECKPOINT COMMIT`.
+
+## 70. M07-A2 FAILURE SEMANTICS AND DATABASE DIAGNOSTIC IMPLEMENTATION COMMIT
+
+- Implementation commit: `6994801cff712fb33fc3688893f6b01bb8460f99`.
+- Parent: `4853b5b477d33664c6cebe25e0f3cd0d7271a1de`.
+- Message: `fix(database): correct canonical runtime failure semantics`.
+- Inventory đúng ba file:
+  `backend/src/database/disposableDatabaseGuard.ts`,
+  `backend/src/tests/disposableDatabaseGuard.test.ts` và
+  `tasks/UC-M01/TASK_M01_07_VERIFY_DISPOSABLE_POSTGRESQL_REGISTRATION_KYC.md`.
+- Stat: `3 files changed, 1135 insertions(+), 42 deletions(-)`.
+- Commit-tree blobs:
+  - Guard: `2b9a5899a4af42c13700a7ae49dc4a421ee8a073`.
+  - Guard test: `33648f69acf47eead2c2fdf38b27d4a901c0233d`.
+  - Task: `a4560e7a7d409f2970eab129506e48016634cdd2`.
+- Accepted evidence: typecheck PASS; build PASS; targeted suite
+  `134/134 PASS`; CodeGraph reconciliation `48 symbols across 1 file`.
+- Failure precedence và `completedSteps` semantics đã được sửa; safe database
+  diagnostic và V2 envelope đã được commit.
+- Database runtime root cause vẫn `UNKNOWN`; không có runtime evidence mới.
+- Implementation commit chỉ tồn tại local và chưa push.
+- M07-A2 runtime retry vẫn `NOT AUTHORIZED`; M01-07 và UC-M01 vẫn
+  `INCOMPLETE`; M07-B, M07-C và M07-D chưa bắt đầu.
+
+**Kết luận:** `M07-A2 FAILURE SEMANTICS RECORDED — READY FOR V2 DIAGNOSTIC RUNTIME RETRY AUTHORIZATION REVIEW`.
