@@ -1,7 +1,7 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: BLOCKED — M07-A2 V3 FORMATTER–PARSER COMPATIBILITY DIAGNOSIS
-- Chế độ hiện tại: DIAGNOSE_AND_VERIFY — LOCAL/SYNTHETIC ONLY — NO DATABASE
+- Trạng thái: BLOCKED — M07-A2 V3 SAFE EVIDENCE PROJECTION AWAITING OWNER REVIEW
+- Chế độ hiện tại: IMPLEMENT_AND_VERIFY — TEMPORARY CAPTURE HELPER ONLY — NO DATABASE
 - An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
@@ -5730,3 +5730,201 @@ trên cùng formatter output.
 - Section này là documentation checkpoint trước preflight và đúng một runtime
   invocation được Owner authorize riêng. Không có runtime evidence mới trong
   checkpoint này; không retry hoặc fallback.
+
+## 81. M07-A2 V3 DIAGNOSTIC RUNTIME EXECUTION — NESTED SAFE EVIDENCE NOT EXPOSED
+
+- Documentation baseline trước execution: `6ac309f6db60d81956455cd28bca921670cad905`.
+  Đây là đúng một runtime invocation được Owner authorize; không retry,
+  fallback hoặc direct canonical invocation.
+- Replacement helper duy nhất:
+  `C:\Users\admin\AppData\Local\Temp\m07-a2-v3-formatter-parser-7f8dfbb6f2eb4c09b85e58c331007e62\m07-a2-v3-formatter-parser.mjs`;
+  SHA-256
+  `89b8a0aec3ca0da568283722cc75f16491edafbdfa5d87e28e278030348208aa`,
+  size `31738` bytes trước và sau execution đều MATCH.
+- Invocation counts: replacement helper `1`, canonical child `1`, old helper
+  `0`, direct canonical `0`, retry/fallback `0`. Runtime window UTC:
+  `2026-09-06T15:14:03.7728958Z` → `2026-09-06T15:14:05.6838447Z`;
+  supervisory duration `1910.9489 ms`. Helper exit code `1`; captured child
+  exit code `1`; signal `null`; timeout `false`.
+
+### 81.1 V3 capture summary
+
+- Helper capture summary: V3 candidate/prefix count `1`, envelope count `1`,
+  V1/V2 prefix count `0`, stdout `1403` bytes/`1` line, stderr `0` bytes,
+  UTF-8/structural parse `PASS`, `parseFailureKind=NONE`, schema
+  `m07-a2-canonical-runtime-result`, version `3`, outcome `FAIL`.
+- Top-level and diagnostic-type-specific allowlist validation trong helper
+  đã PASS; không có raw stdout/stderr, message, stack, SQL, params, URL,
+  credential hoặc full identity được phát ra.
+- Safe summary của helper không forward `completedSteps`, generic failure
+  phase/operation/code, attestation diagnostic, database diagnostic hoặc
+  cleanup state. Các nested fields này vì vậy là `NOT EXPOSED`; không được
+  suy đoán từ outcome, exit code, timing hay lịch sử runtime.
+- Semantic consistency không thể kết luận: không có bằng chứng mâu thuẫn,
+  nhưng cũng không có nested evidence để xác minh database failure precedence,
+  failed-phase membership hoặc cleanup precedence. Không gán
+  `ENVELOPE_V3_SEMANTIC_INCONSISTENCY`.
+
+### 81.2 Resource reconciliation
+
+- Post-run exact sorted-set fingerprints khớp pre-run baseline:
+  containers `22` /
+  `a6c312758a44394d066c31725a5f9fdb50123fc73513b5b5d2d991e56f9de9e1`;
+  volumes `48` /
+  `e34864a892be18f2177c7ffd082691e896d2c9010f60277e7cf1759b098b50d4`;
+  dangling volumes `37` /
+  `a99ce38de9d854005f415a244bf2eb90caf7b2aae8164eeea4f129c4b8417f7d`;
+  networks `7` /
+  `20ae0584dbfd7a19445d221f9bdd55166a54582114c9ea76817b7b99b661d6f0`;
+  image references `56` /
+  `6011c9ce13fbf0ec609255cad80962b658f5115da86acce75a128b1e94919279`.
+- M07-A2 leftover `0`, probe leftover `0`, run-label leftover `0`. Không
+  chạy cleanup thủ công vì không còn leftover.
+- Trong execution window mở rộng ±30 giây: container events `8`; M07 events
+  `8`, gồm create `1`, start `1`, destroy `1`. Event fingerprint đã redact:
+  `df95931bad9b308f9f8a89cc672f8d5d5e5d1f311ddf5853021e6f3dc263905c`.
+  Không có resource delta sau lifecycle disposable.
+
+### 81.3 Trạng thái và giới hạn
+
+- Đây là `BLOCKED — M07-A2 RESULT_V3 CAPTURE FAILED` theo nghĩa required
+  nested runtime evidence không được safe summary expose; JSON/schema/version
+  ở mức structural vẫn parse PASS. Không có emitted phase/failure code an toàn
+  để báo cáo và không được suy diễn failure tại phase 5.
+ - Database root cause vẫn `UNKNOWN`. Không có runtime/database root-cause
+   evidence mới ngoài outcome/exit và lifecycle reconciliation.
+ - M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B,
+   M07-C và M07-D chưa bắt đầu. Runtime retry tiếp theo cần Owner
+   authorization riêng.
+
+## 82. M07-A2 V3 SAFE EVIDENCE PROJECTION REMEDIATION
+
+- Snapshot bắt đầu phiên: HEAD
+  `6ac309f6db60d81956455cd28bca921670cad905`, branch
+  `codex/staging-academic-completion`. Chỉ task document đã modified; cached
+  area sạch, untracked repository files `0`, và `.codegraph/` tiếp tục được
+  local-ignore xử lý.
+- Finding được ghi nhận chính xác là
+  `V3_HELPER_SAFE_PROJECTION_INCOMPLETE`. V3 runtime trước đó đã có prefix và
+  envelope parse ở mức JSON/schema/version, nhưng phần evidence projection bị
+  thiếu; raw envelope không còn để phục hồi. Không dùng finding này để phân
+  loại production formatter hay database failure. Database root cause vẫn
+  `UNKNOWN`.
+
+### 82.1 CodeGraph và production envelope contract
+
+- `codegraph sync`: `Already up to date`.
+- Exact query đã dùng:
+  `CanonicalSequenceExecutionResult createCanonicalRuntimeResultEnvelope serializeCanonicalRuntimeResult completedSteps attestationDiagnostic databaseDiagnostic cleanupError outcome failure M07_A2_RESULT_V3 callers callees`.
+- Kết quả CodeGraph: `48 symbols across 1 file`, tất cả trong
+  `backend/src/database/disposableDatabaseGuard.ts`; receiver-specific blast
+  radius không mở sang generic `backend/src/database/pool.ts`.
+- Source/type production là contract cuối cùng. Public V3 envelope có đúng
+  các key bắt buộc: `schema`, `version`, `outcome`, `completedSteps`,
+  `attestationDiagnostic`, `databaseDiagnostic`, `failure`, `cleanup`.
+
+| Object | Exact fields/values | Required and nullable semantics |
+|---|---|---|
+| V3 envelope | `schema`, `version`, `outcome`, `completedSteps`, `attestationDiagnostic`, `databaseDiagnostic`, `failure`, `cleanup` | Tất cả key bắt buộc; ba diagnostic/result fields có thể `null`; `cleanup` là object bắt buộc |
+| `completedSteps` | 19 closed phase values, theo thứ tự source | Array bắt buộc; helper không tạo default khi field nguồn thiếu; phase values được giữ nguyên và không forward phase lạ |
+| `failure` (production) | `kind`, `code`, `phase`, `operation` | Object hoặc `null`; `phase` và `operation` có thể `null`; safe summary chỉ project `code`, `phase`, `operation` theo projection contract |
+| Attestation diagnostic | `phase`, `commandExitCode`, `commandTimedOut`, `commandCancelled`, `stdoutKind`, `stdoutByteLength`, `lineCount`, `crCount`, `lfCount`, `trailingNewline`, `stderrPresent`, `validatorCalled`, `validatorPassed`, `failureCode`, `targetRecordCount`, `targetRecordFingerprint`, `filesystemType`, `normalizedSizeBytes`, `normalizedModeOctal` | Object hoặc `null`; các trường nullable được giữ `null`; không có `configurationMetadata` |
+| Database diagnostic | `phase`, `operation`, `failureCode`, `driverFamily`, `sqlState`, `systemCode`, `failureStage`, `errorKind`, `originFamily`, `configurationMetadata` | Object hoặc `null`; `sqlState`/`systemCode` có thể `null`; `configurationMetadata` là object bắt buộc khi diagnostic tồn tại |
+| Database configuration metadata | `connectionConfigurationKind`, `passwordPresent`, `passwordType`, `passwordNonEmpty` | Closed enums/booleans; không có credential, URL, username, host, port hoặc database name |
+| Cleanup (production) | `attempted`, `succeeded`, `failureCode` | Object bắt buộc; `failureCode` là `CLEANUP_ERROR` hoặc `null`; safe summary map field này thành `failure` |
+
+- Closed values được đối chiếu trực tiếp với source: database failure code
+  `DATABASE_QUERY_FAILURE`/`DATABASE_QUERY_CANCELLED`; driver family
+  `POSTGRES`/`NODE_SYSTEM`/`ORCHESTRATION`/`UNKNOWN`; failure stage
+  `BEFORE_QUERY`/`QUERY_CALL`/`QUERY_AWAIT`/`AFTER_QUERY`/`UNKNOWN`; error
+  kind `TYPE_ERROR`/`RANGE_ERROR`/`AGGREGATE_ERROR`/`ABORT_ERROR`/
+  `STANDARD_ERROR`/`NON_ERROR`/`UNKNOWN`; origin family
+  `DISPOSABLE_GUARD`/`PG_POOL`/`PG_CLIENT`/`PG_SASL`/`NODE_NET`/`UNKNOWN`.
+  Attestation failure codes và configuration enums cũng chỉ dùng các giá trị
+  closed trong source.
+- Forbidden trong projection: raw runtime stdout/stderr hoặc envelope, Error
+  object, message/stack/path, SQL/params, URL/credential/environment value,
+  username/host/port/database name, full identity và unknown properties.
+
+### 82.2 Replacement helper và shared projection path
+
+- Helper cũ không bị sửa và vẫn có SHA-256
+  `89b8a0aec3ca0da568283722cc75f16491edafbdfa5d87e28e278030348208aa`, size
+  `31738` bytes.
+- Helper revision mới nằm ngoài repository tại:
+  `C:\Users\admin\AppData\Local\Temp\m07-a2-v3-safe-projection-49519e0efe564549ac88236acce47139\m07-a2-v3-safe-projection.mjs`.
+  SHA-256 frozen: `e2cd01f7fad9ef01030c33caaa39fa9a3d99e6e9666644eb459240d5b7504bd3`;
+  size `40814` bytes. Node `v24.19.0`; PowerShell `7.6.5`; hash/size được
+  kiểm tra lại sau verification và vẫn MATCH.
+- Phase A bounded search trong các thư mục `C:\Users\admin\AppData\Local\Temp\m07-a2-*`
+  xác nhận đúng một candidate khớp đồng thời tên, SHA-256, size và regular
+  non-reparse file. Binding recheck bằng đúng helper path đạt `BIND-01..06
+  PASS`, fake spawn `1`, real canonical child `0`, runtime `0`; rehash sau
+  binding vẫn MATCH.
+- Synthetic và fake-child paths dùng cùng function
+  `parseValidateAndProjectV3(stdoutBuffer)`, theo thứ tự decode UTF-8, exact
+  V3-line detection, JSON parse, schema/version, exact closed-key validation,
+  diagnostic-specific validation, safe projection và một summary serialization.
+  Không repair malformed JSON, không default absent source field và không
+  forward unknown field.
+- Closed modes đã triển khai: `--synthetic-child`,
+  `--verify-runtime-binding`, `--verify-runtime-projection`, `--runtime`.
+  Runtime spec được tạo tại một function duy nhất với `process.execPath`, cwd
+  `C:\Projects\banking-system\backend`, exact argv
+  `--import=tsx scripts/run-disposable-postgres-test.ts src/tests/disposableMigrationRuntime.test.ts`,
+  `shell:false`, separate `pipe` streams, `windowsHide:true`, timeout
+  `180000`, không environment injection và không retry. Phiên này không gọi
+  `--runtime`.
+- Safe output có đúng một line mỗi helper invocation:
+  `M07_A2_CAPTURE_SUMMARY_V1 <single-line-json>`. Summary dùng đúng các key
+  `captureSchema`, `captureVersion`, `captureSucceeded`, `childExitCode`,
+  `signal`, `timedOut`, `durationMs`, `stdoutByteCount`, `stderrByteCount`,
+  `v3PrefixCount`, `v3EnvelopeCount`, `jsonParseSucceeded`,
+  `envelopeValidationSucceeded`, `projectionSucceeded`, `runtimeSchema`,
+  `runtimeVersion`, `outcome`, `completedSteps`, `failure`,
+  `attestationDiagnostic`, `databaseDiagnostic`, `cleanup`. Không in raw
+  stream hoặc raw envelope.
+
+### 82.3 Synthetic verification matrix
+
+- BIND-01..06: `PASS`. Fake spawn kiểm tra executable/argv/cwd/options đúng
+  contract; một fake spawn cho binding, mode lạ và extra argument bị từ chối
+  trước spawn. Real canonical child `0`.
+- CAPTURE-01..06: `PASS`. Success, exit-1 với stderr tách riêng, chunked
+  stdout, LF/CRLF, post-exit rendering preservation và timeout đều dùng
+  capture sau `close`, không retry; CAPTURE-06 kết thúc có kiểm soát và không
+  để lại child.
+- FORMAT-01..09: `PASS`. Positive fixtures được tạo qua production
+  `createCanonicalRuntimeResultEnvelope` và
+  `formatCanonicalRuntimeResultLine`, sau đó native JSON.parse và shared
+  parser/projector cùng PASS; LF/CRLF/chunking PASS; BOM/trailing garbage/
+  duplicate concatenation bị reject fail-closed.
+- PROJECT-01..10: `PASS`. Full completed steps/cleanup, deep-equal database
+  diagnostic, attestation không có `configurationMetadata`, cleanup failure
+  tách khỏi primary failure, null/absent semantics, invalid diagnostic shape,
+  extra-field rejection, leakage scan, fake canonical child và exactly-one
+  summary trên child exit `1` đều đạt.
+- Mỗi ID trong ba nhóm fixture trên được chạy đúng một lần trong verification
+  cuối; mỗi invocation trả đúng một summary line. `--verify-runtime-binding`
+  và `--verify-runtime-projection` cũng mỗi mode trả một summary line. Không có
+  runtime invocation và không có real canonical child; chỉ có synthetic Node
+  children và fake spawn theo matrix.
+
+### 82.4 Giới hạn và trạng thái
+
+- Đây là bằng chứng local/synthetic/no-database. Không có evidence để khôi
+  phục phase hoặc root cause từ runtime V3 cũ; database root cause tiếp tục
+  `UNKNOWN`.
+- Không sửa production source, test, config, CodeGraph report, migration,
+  dependency hay runtime harness. Không chạy Docker, PostgreSQL, database
+  socket, migration, canonical runtime, backend test suite hoặc build trong
+  phiên này. Docker/database/runtime invocation count đều `0`.
+- Final repository state tại thời điểm ghi nhận: HEAD không đổi, cached area
+  sạch, chỉ task document modified, untracked repository files `0`,
+  `.codegraph/` local-only. Helper mới và helper cũ đều ngoài repository.
+- M07-A2 runtime vẫn `NOT AUTHORIZED`; M01-07 và UC-M01 vẫn `INCOMPLETE`;
+  M07-B/C/D chưa bắt đầu. Không có tuyên bố runtime fixed/verified, pilot hoặc
+  production-ready.
+- `git diff --check`: PASS sau cập nhật tài liệu.
+
+Kết luận: `READY FOR M07-A2 V3 SAFE EVIDENCE PROJECTION HELPER OWNER REVIEW`.
