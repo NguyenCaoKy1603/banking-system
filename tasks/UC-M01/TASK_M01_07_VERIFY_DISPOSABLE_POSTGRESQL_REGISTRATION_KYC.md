@@ -1,8 +1,8 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: BLOCKED — M07-A2 RESULT_V2 CAPTURE HARNESS VERIFICATION
-- Chế độ hiện tại: DIAGNOSE_AND_VERIFY — SUPERVISORY CAPTURE ONLY — NO DATABASE
-- An toàn thực thi database: BLOCKED — M07-A2 RUNTIME RETRY NOT AUTHORIZED
+- Trạng thái: BLOCKED — M07-A2 RUNTIME-BOUND CAPTURE HELPER AWAITING OWNER REVIEW
+- Chế độ hiện tại: IMPLEMENT_AND_VERIFY — TEMPORARY CAPTURE TOOL ONLY — NO DATABASE
+- An toàn thực thi database: BLOCKED — RUNTIME RETRY NOT AUTHORIZED
 - Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
 - Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
@@ -5011,3 +5011,85 @@ khóa fixture cuối đã bị loại khỏi evidence accepted.
   không có runtime/database evidence mới. M07-A2 runtime vẫn chưa được cấp
   quyền retry; M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B, M07-C và M07-D chưa
   bắt đầu.
+
+## 73. M07-A2 RUNTIME-BOUND CAPTURE HELPER REMEDIATION
+
+- Phase B trước bị chặn vì helper cũ chỉ hỗ trợ synthetic child; helper cũ
+  không bị sửa hoặc xóa. Classification: `CAPTURE_HELPER_CANONICAL_BINDING_ABSENT`.
+- Baseline của phiên này là HEAD
+  `abc8336c60318570fbdbac70f9989cffc4fab22a`, working tree/index/untracked
+  sạch và implementation commit `6994801cff712fb33fc3688893f6b01bb8460f99`
+  là ancestor. Helper cũ giữ nguyên SHA-256
+  `4ddf883ef4c554b6dd21e820440f074fb9c77aa94a776db773a099a6ce39fa53`.
+
+### 73.1 CodeGraph và canonical contract
+
+- `codegraph sync`: `Already up to date`.
+- Exact query: `runCliMain dispatchCliRun runCanonicalEvidenceSequence
+  M07_A2_RESULT_V2 canonical runtime target argv cwd writer stdout callers
+  callees`.
+- Kết quả target: `41 symbols across 1 file`. Source/CodeGraph reconciliation
+  đóng băng contract: `process.execPath`; child cwd
+  `C:\Projects\banking-system\backend`; argv đúng thứ tự
+  `--import=tsx`, `scripts/run-disposable-postgres-test.ts`,
+  `src/tests/disposableMigrationRuntime.test.ts`; `shell:false`,
+  `windowsHide:true`, `ignore/pipe/pipe`, timeout `180000 ms`.
+- Các symbol/source line liên quan: V2 prefix tại guard `:2260`,
+  `runCanonicalEvidenceSequence` `:2443`, `dispatchCliRun` `:2948`,
+  `writeCanonicalResultFn` `:2937`, `runCliMain` `:3060`, awaited writer
+  `:3083`, và production entrypoint await tại runner `:46`.
+- Canonical target là positional argument duy nhất, không legacy fallback,
+  retry wrapper, external URL hoặc caller identity; expected protocol là
+  `M07_A2_RESULT_V2`, schema `m07-a2-canonical-runtime-result`, version `2`.
+  CodeGraph chỉ xác nhận repository call path, không phải runtime evidence.
+
+### 73.2 Replacement helper và binding verification
+
+- Helper mới duy nhất nằm ngoài repository tại
+  `C:\Users\admin\AppData\Local\Temp\m07-a2-v2-runtime-capture-9bb4e2c75d1d45a396caf17353eea1cc\m07-a2-v2-runtime-capture.mjs`.
+- SHA-256 frozen: `634194a08ad638e325130dc8290afd92c89603f9509ce07396c540b9107dc4b0`;
+  kích thước `13055` bytes; hash trước/sau verification `MATCH`. Node
+  `v24.19.0`; PowerShell `7.6.5`.
+- `buildCanonicalRuntimeSpec()` là single source cho executable, argv, cwd,
+  inherited environment, shell, windowsHide, stdio và timeout; cả verify
+  binding và runtime mode dùng cùng function. Runtime mode không được gọi.
+- BIND-01..06: tất cả `PASS`. Fake spawn ghi nhận đúng `1` invocation,
+  `fallbackCallCount=0`, `realChildCreated=false`; mode lạ và `--runtime`
+  kèm extra argument bị từ chối trước spawn, rejected invocation count `0`.
+- Capture core dùng `spawn`, `shell:false`, argv array, stdout/stderr Buffer
+  riêng, event `close`, exitCode/signal được lưu khi close, timeout hữu hạn,
+  không `$LASTEXITCODE`, không merge stream, không retry và không ghi raw output
+  ra filesystem. Rendering failure không làm mất capture record.
+
+### 73.3 Synthetic capture matrix
+
+`--verify-runtime-binding` đã chạy một lần bằng fake binding và tạo đúng 7
+synthetic child invocations; mỗi fixture dưới đây chạy đúng một lần. Không có
+canonical runtime child.
+
+| Fixture | Closed | Exit/signal | Timeout | Duration | stdout/stderr bytes | V1/V2/envelopes | Parse/schema/version/outcome | Timeout kills | Rendering/serialization |
+|---|---:|---|---:|---:|---|---|---|---:|---|
+| CAPTURE-01 | true | `0` | false | `80 ms` | `267/0` | `0/1/1` | PASS / đúng schema / `2` / `PASS` | 0 | false / PASS |
+| CAPTURE-02 | true | `1` | false | `79 ms` | `335/28` | `0/1/1` | PASS / đúng schema / `2` / `FAIL` | 0 | false / PASS |
+| CAPTURE-03 | true | `0` | false | `106 ms` | `267/0` | `0/1/1` | PASS / đúng schema / `2` / `PASS` | 0 | false / PASS |
+| CAPTURE-04 LF | true | `0` | false | `76 ms` | `267/0` | `0/1/1` | PASS / đúng schema / `2` / `PASS` | 0 | false / PASS |
+| CAPTURE-04 CRLF | true | `0` | false | `74 ms` | `268/0` | `0/1/1` | PASS / đúng schema / `2` / `PASS` | 0 | false / PASS |
+| CAPTURE-05 | true | `0` | false | `79 ms` | `267/0` | `0/1/1` | PASS / đúng schema / `2` / `PASS` | 0 | true / PASS |
+| CAPTURE-06 | true | `null/SIGTERM` | true | `170 ms` | `0/0` | `0/0/0` | false / null / null / null | 1 | false / PASS |
+
+- V2 prefix xuất hiện đúng một lần ở CAPTURE-01..05, V1 luôn `0`, envelope
+  được parse sau `close`, không tạo default PASS khi thiếu envelope. CAPTURE-02
+  giữ exit code `1` và stderr tách biệt; CAPTURE-03 giữ đủ chunked bytes;
+  CAPTURE-04 parse đúng cả LF/CRLF; CAPTURE-05 bảo toàn capture sau simulated
+  post-exit rendering failure; CAPTURE-06 timeout được xử lý không retry và
+  child close xác nhận không để lại child.
+- `--runtime` invocation count: `0`; canonical runtime child count: `0`;
+  Docker invocation/mutation count: `0`; database/PostgreSQL/migration/test
+  suite/build count: `0`. Database root cause vẫn `UNKNOWN`.
+
+### 73.4 Trạng thái bàn giao
+
+- Helper mới đạt cả binding và synthetic capture verification, sẵn sàng cho
+  Owner review nhưng chưa cấp quyền runtime retry.
+- M07-A2 runtime vẫn `BLOCKED`; M01-07 và UC-M01 vẫn `INCOMPLETE`; M07-B,
+  M07-C và M07-D chưa bắt đầu.
