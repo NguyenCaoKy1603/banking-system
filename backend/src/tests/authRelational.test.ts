@@ -206,3 +206,286 @@ test("relational auth suite: refresh rotation, reuse revocation persistence and 
   );
   assert.equal(deviceBStillActive, true, "Device B must remain active after mismatched device attempt");
 });
+
+test("relational auth suite: logout current device, relational persistence, and pre-existing session isolation (Matrix A & C)", { skip: !databaseUrl }, async (t) => {
+  let pool: DatabasePool | null = new DatabasePool({ connectionString: databaseUrl!, max: 8 });
+  t.after(async () => {
+    if (pool) {
+      await pool.close();
+      pool = null;
+    }
+  });
+
+  const database = pool;
+  const unitOfWork = new UnitOfWork(database);
+  const auth = new RelationalAuthService(unitOfWork);
+
+  // -------------------------------------------------------------------------
+  // 1. Setup: Customer U with 2 active families (Family A and Family B)
+  // -------------------------------------------------------------------------
+  const customerU = await createCustomer(database);
+  const deviceA = `device-a-${randomUUID()}`;
+  const deviceB = `device-b-${randomUUID()}`;
+
+  const sessionA0 = await auth.issueSession(customerU.id, deviceA);
+  const sessionB0 = await auth.issueSession(customerU.id, deviceB);
+
+  const authA0Before = await auth.authenticate(sessionA0.accessToken, deviceA).then(
+    (u) => u.id === customerU.id,
+    () => false,
+  );
+  const authB0Before = await auth.authenticate(sessionB0.accessToken, deviceB).then(
+    (u) => u.id === customerU.id,
+    () => false,
+  );
+  assert.equal(authA0Before, true, "Session A must be active before revoke");
+  assert.equal(authB0Before, true, "Session B must be active before revoke");
+
+  const familyAResult = await database.query<{ family_id: string }>(
+    `SELECT family_id FROM auth_sessions WHERE access_token_hash = $1`,
+    [hashOpaqueToken(sessionA0.accessToken)],
+  );
+  const familyBResult = await database.query<{ family_id: string }>(
+    `SELECT family_id FROM auth_sessions WHERE access_token_hash = $1`,
+    [hashOpaqueToken(sessionB0.accessToken)],
+  );
+  const familyAId = familyAResult.rows[0]?.family_id;
+  const familyBId = familyBResult.rows[0]?.family_id;
+  assert.ok(familyAId && familyBId);
+  assert.notEqual(familyAId, familyBId, "Family A and B must be distinct");
+
+  // -------------------------------------------------------------------------
+  // 2. Boundary checks before valid revoke (Matrix C1, C2)
+  // -------------------------------------------------------------------------
+  // C1: Mismatched device id does not revoke
+  const wrongDeviceRevoke = await auth.revoke(sessionA0.refreshToken, deviceB);
+  assert.equal(wrongDeviceRevoke, false, "Revoke with mismatched device must return false");
+
+  // C2: Non-existent token does not revoke
+  const unknownTokenRevoke = await auth.revoke(`unknown-token-${randomUUID()}`, deviceA);
+  assert.equal(unknownTokenRevoke, false, "Revoke with unknown token must return false");
+
+  // Confirm Family A is still active after boundary attempts
+  const authA0StillActive = await auth.authenticate(sessionA0.accessToken, deviceA).then(
+    (u) => u.id === customerU.id,
+    () => false,
+  );
+  assert.equal(authA0StillActive, true, "Family A must remain active after failed boundary revoke attempts");
+
+  // -------------------------------------------------------------------------
+  // 3. Action: Revoke Family A (Matrix A)
+  // -------------------------------------------------------------------------
+  const revokedA = await auth.revoke(sessionA0.refreshToken, deviceA);
+  assert.equal(revokedA, true, "auth.revoke must return true for valid token and device");
+
+  // -------------------------------------------------------------------------
+  // 4. Verify persisted state in PostgreSQL via independent queries
+  // -------------------------------------------------------------------------
+  const authSessionsARows = await database.query<{ revoked_at: Date | null }>(
+    `SELECT revoked_at FROM auth_sessions WHERE family_id = $1`,
+    [familyAId],
+  );
+  const familyARows = await database.query<{ revoked_at: Date | null }>(
+    `SELECT revoked_at FROM refresh_session_families WHERE family_id = $1`,
+    [familyAId],
+  );
+  const refreshRecordsARows = await database.query<{ revoked_at: Date | null }>(
+    `SELECT revoked_at FROM refresh_session_records WHERE family_id = $1`,
+    [familyAId],
+  );
+
+  const authSessionsAPersistedRevoked = authSessionsARows.rows.length > 0 && authSessionsARows.rows.every((r) => r.revoked_at !== null);
+  const familyAPersistedRevoked = familyARows.rows.length > 0 && familyARows.rows.every((r) => r.revoked_at !== null);
+  const refreshRecordsAPersistedRevoked = refreshRecordsARows.rows.length > 0 && refreshRecordsARows.rows.every((r) => r.revoked_at !== null);
+
+  assert.equal(authSessionsAPersistedRevoked, true, "All auth_sessions for Family A must have revoked_at IS NOT NULL");
+  assert.equal(familyAPersistedRevoked, true, "refresh_session_families for Family A must have revoked_at IS NOT NULL");
+  assert.equal(refreshRecordsAPersistedRevoked, true, "refresh_session_records for Family A must have revoked_at IS NOT NULL");
+
+  // Audit event check
+  const auditEventARows = await database.query<{ event_type: string; actor_customer_id: string; resource_id: string }>(
+    `SELECT event_type, actor_customer_id, resource_id FROM audit_events WHERE actor_customer_id = $1 AND resource_id = $2`,
+    [customerU.id, familyAId],
+  );
+  const hasAuditSessionRevoked = auditEventARows.rows.some((e) => e.event_type === "SESSION_REVOKED");
+  assert.equal(hasAuditSessionRevoked, true, "Audit event SESSION_REVOKED must be persisted with correct actor and resource");
+
+  // -------------------------------------------------------------------------
+  // 5. Invalidation of Family A tokens
+  // -------------------------------------------------------------------------
+  const authAAfterRevoke = await auth.authenticate(sessionA0.accessToken, deviceA).then(
+    () => false,
+    (err) => err instanceof DomainError && err.status === 401,
+  );
+  assert.equal(authAAfterRevoke, true, "Access token of revoked Family A must be rejected with 401");
+
+  const refreshAAfterRevoke = await auth.refresh(sessionA0.refreshToken, deviceA).then(
+    () => false,
+    (err) => err instanceof DomainError && err.status === 401,
+  );
+  assert.equal(refreshAAfterRevoke, true, "Refresh token of revoked Family A must be rejected with 401");
+
+  // -------------------------------------------------------------------------
+  // 6. Pre-existing Family B remains completely active and unrevoked
+  // -------------------------------------------------------------------------
+  const familyBRows = await database.query<{ revoked_at: Date | null }>(
+    `SELECT revoked_at FROM refresh_session_families WHERE family_id = $1`,
+    [familyBId],
+  );
+  const familyBStillUnrevoked = familyBRows.rows[0]?.revoked_at === null;
+  assert.equal(familyBStillUnrevoked, true, "Pre-existing Family B must NOT be revoked by Family A logout");
+
+  const authBStillActive = await auth.authenticate(sessionB0.accessToken, deviceB).then(
+    (u) => u.id === customerU.id,
+    () => false,
+  );
+  assert.equal(authBStillActive, true, "Family B access token must still authenticate");
+
+  const refreshBStillWorks = await auth.refresh(sessionB0.refreshToken, deviceB).then(
+    (res) => typeof res.accessToken === "string" && typeof res.refreshToken === "string",
+    () => false,
+  );
+  assert.equal(refreshBStillWorks, true, "Family B refresh token must still rotate and issue new tokens");
+
+  // -------------------------------------------------------------------------
+  // 7. Repeated current logout (Matrix C3: Idempotency)
+  // -------------------------------------------------------------------------
+  const repeatedRevokeA = await auth.revoke(sessionA0.refreshToken, deviceA);
+  assert.equal(repeatedRevokeA, true, "Repeated revoke with already revoked token must return true");
+
+  const familyAAfterRepeated = await database.query<{ revoked_at: Date | null }>(
+    `SELECT revoked_at FROM refresh_session_families WHERE family_id = $1`,
+    [familyAId],
+  );
+  assert.ok(familyAAfterRepeated.rows[0]?.revoked_at !== null, "Family A must stay revoked");
+});
+
+test("relational auth suite: logout all sessions, cross-customer isolation, and bearer boundary (Matrix B & C)", { skip: !databaseUrl }, async (t) => {
+  let pool: DatabasePool | null = new DatabasePool({ connectionString: databaseUrl!, max: 8 });
+  t.after(async () => {
+    if (pool) {
+      await pool.close();
+      pool = null;
+    }
+  });
+
+  const database = pool;
+  const unitOfWork = new UnitOfWork(database);
+  const auth = new RelationalAuthService(unitOfWork);
+
+  // -------------------------------------------------------------------------
+  // 1. Setup: Customer U (Family A on Device A, Family B on Device B)
+  //           Customer V (Family C on Device C)
+  // -------------------------------------------------------------------------
+  const customerU = await createCustomer(database);
+  const customerV = await createCustomer(database);
+
+  const deviceUA = `device-ua-${randomUUID()}`;
+  const deviceUB = `device-ub-${randomUUID()}`;
+  const deviceVC = `device-vc-${randomUUID()}`;
+
+  const sessionUA = await auth.issueSession(customerU.id, deviceUA);
+  const sessionUB = await auth.issueSession(customerU.id, deviceUB);
+  const sessionVC = await auth.issueSession(customerV.id, deviceVC);
+
+  const authUA = await auth.authenticate(sessionUA.accessToken, deviceUA).then((u) => u.id === customerU.id, () => false);
+  const authUB = await auth.authenticate(sessionUB.accessToken, deviceUB).then((u) => u.id === customerU.id, () => false);
+  const authVC = await auth.authenticate(sessionVC.accessToken, deviceVC).then((u) => u.id === customerV.id, () => false);
+  assert.equal(authUA, true, "Customer U session A must be active");
+  assert.equal(authUB, true, "Customer U session B must be active");
+  assert.equal(authVC, true, "Customer V session C must be active");
+
+  // -------------------------------------------------------------------------
+  // 2. Action: Revoke all sessions of Customer U (Matrix B)
+  // -------------------------------------------------------------------------
+  await auth.revokeAllSessions(customerU.id);
+
+  // -------------------------------------------------------------------------
+  // 3. Verify Customer U sessions are persisted as revoked in PostgreSQL
+  // -------------------------------------------------------------------------
+  const uSessions = await database.query<{ revoked_at: Date | null }>(
+    `SELECT revoked_at FROM auth_sessions WHERE customer_id = $1`,
+    [customerU.id],
+  );
+  const uFamilies = await database.query<{ revoked_at: Date | null }>(
+    `SELECT revoked_at FROM refresh_session_families WHERE customer_id = $1`,
+    [customerU.id],
+  );
+  const uRecords = await database.query<{ revoked_at: Date | null }>(
+    `SELECT revoked_at FROM refresh_session_records WHERE customer_id = $1`,
+    [customerU.id],
+  );
+
+  const uSessionsAllRevoked = uSessions.rows.length >= 2 && uSessions.rows.every((r) => r.revoked_at !== null);
+  const uFamiliesAllRevoked = uFamilies.rows.length >= 2 && uFamilies.rows.every((r) => r.revoked_at !== null);
+  const uRecordsAllRevoked = uRecords.rows.length >= 2 && uRecords.rows.every((r) => r.revoked_at !== null);
+
+  assert.equal(uSessionsAllRevoked, true, "All auth_sessions of Customer U must be revoked");
+  assert.equal(uFamiliesAllRevoked, true, "All refresh_session_families of Customer U must be revoked");
+  assert.equal(uRecordsAllRevoked, true, "All refresh_session_records of Customer U must be revoked");
+
+  // Audit event check
+  const auditU = await database.query<{ event_type: string; actor_customer_id: string }>(
+    `SELECT event_type, actor_customer_id FROM audit_events WHERE actor_customer_id = $1 AND event_type = 'ALL_SESSIONS_REVOKED'`,
+    [customerU.id],
+  );
+  assert.ok(auditU.rows.length > 0, "Audit event ALL_SESSIONS_REVOKED must be persisted for Customer U");
+
+  // -------------------------------------------------------------------------
+  // 4. Invalidation of Customer U tokens (Matrix B)
+  // -------------------------------------------------------------------------
+  const authUAAfter = await auth.authenticate(sessionUA.accessToken, deviceUA).then(
+    () => false,
+    (err) => err instanceof DomainError && err.status === 401,
+  );
+  const authUBAfter = await auth.authenticate(sessionUB.accessToken, deviceUB).then(
+    () => false,
+    (err) => err instanceof DomainError && err.status === 401,
+  );
+  const refreshUAAfter = await auth.refresh(sessionUA.refreshToken, deviceUA).then(
+    () => false,
+    (err) => err instanceof DomainError && err.status === 401,
+  );
+  const refreshUBAfter = await auth.refresh(sessionUB.refreshToken, deviceUB).then(
+    () => false,
+    (err) => err instanceof DomainError && err.status === 401,
+  );
+
+  assert.equal(authUAAfter, true, "Access token of Customer U Device A must be rejected with 401");
+  assert.equal(authUBAfter, true, "Access token of Customer U Device B must be rejected with 401");
+  assert.equal(refreshUAAfter, true, "Refresh token of Customer U Device A must be rejected with 401");
+  assert.equal(refreshUBAfter, true, "Refresh token of Customer U Device B must be rejected with 401");
+
+  // -------------------------------------------------------------------------
+  // 5. Cross-Customer Isolation: Customer V sessions remain active (Matrix B)
+  // -------------------------------------------------------------------------
+  const vFamilies = await database.query<{ revoked_at: Date | null }>(
+    `SELECT revoked_at FROM refresh_session_families WHERE customer_id = $1`,
+    [customerV.id],
+  );
+  const vFamiliesUnrevoked = vFamilies.rows.length > 0 && vFamilies.rows.every((r) => r.revoked_at === null);
+  assert.equal(vFamiliesUnrevoked, true, "Customer V families must remain completely unrevoked");
+
+  const authVCAfter = await auth.authenticate(sessionVC.accessToken, deviceVC).then(
+    (u) => u.id === customerV.id,
+    () => false,
+  );
+  assert.equal(authVCAfter, true, "Customer V must still authenticate successfully");
+
+  const refreshVCWorks = await auth.refresh(sessionVC.refreshToken, deviceVC).then(
+    (res) => typeof res.accessToken === "string" && typeof res.refreshToken === "string",
+    () => false,
+  );
+  assert.equal(refreshVCWorks, true, "Customer V must still refresh successfully");
+
+  // -------------------------------------------------------------------------
+  // 6. Bearer Boundary: Revoked bearer token rejected on subsequent auth (Matrix C4)
+  // -------------------------------------------------------------------------
+  // Once Customer U's session is revoked, presenting that bearer token fails authentication
+  // ensuring that repeated logout-all with the same revoked bearer is rejected with 401
+  const bearerRevokedStatus = await auth.authenticate(sessionUA.accessToken, deviceUA).then(
+    () => undefined,
+    (err) => (err instanceof DomainError ? err.status : undefined),
+  );
+  assert.equal(bearerRevokedStatus, 401, "Revoked bearer token cannot pass authentication (HTTP 401)");
+});

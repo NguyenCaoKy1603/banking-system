@@ -227,3 +227,154 @@ test("RelationalAuthService.refresh: device mismatch rejects with 401 and rolls 
   assert.equal(mockClient.committed, false, "Must not commit on device mismatch");
   assert.equal(mockClient.rolledBack, true, "Must rollback on device mismatch");
 });
+
+test("RelationalAuthService.revoke: valid token and matching device commits revocation on session tables and appends audit", async () => {
+  const customerId = randomUUID();
+  const familyId = randomUUID();
+  const deviceId = "device-rev-valid";
+  const token = "refresh-token-for-revoke";
+  const tokenHash = hashOpaqueToken(token);
+
+  const executedUpdates: string[] = [];
+  let auditAppended = false;
+
+  const mockClient = new MockPoolClient((sql, params) => {
+    if (sql.includes("FROM auth_sessions s") && sql.includes("FOR UPDATE")) {
+      return {
+        rows: [
+          {
+            id: randomUUID(),
+            family_id: familyId,
+            customer_id: customerId,
+            device_id: deviceId,
+          },
+        ],
+      };
+    }
+    if (sql.includes("UPDATE")) {
+      executedUpdates.push(sql);
+      return { rows: [] };
+    }
+    if (sql.includes("INSERT INTO audit_events")) {
+      auditAppended = true;
+      return { rows: [] };
+    }
+    return { rows: [] };
+  });
+
+  const pool = new MockDatabasePool(mockClient as unknown as PoolClient);
+  const unitOfWork = new UnitOfWork(pool);
+  const auth = new RelationalAuthService(unitOfWork);
+
+  const revoked = await auth.revoke(token, deviceId);
+
+  assert.equal(revoked, true, "Revoke must return true for matching session");
+  assert.equal(mockClient.committed, true, "Revocation transaction must be committed");
+  assert.equal(mockClient.rolledBack, false, "Must not rollback on successful revoke");
+
+  const hasAuthSessionsUpdate = executedUpdates.some((s) => s.includes("UPDATE auth_sessions SET revoked_at = NOW()"));
+  const hasFamiliesUpdate = executedUpdates.some((s) => s.includes("UPDATE refresh_session_families SET revoked_at = NOW()"));
+  const hasRecordsUpdate = executedUpdates.some((s) => s.includes("UPDATE refresh_session_records SET revoked_at = NOW()"));
+  assert.equal(hasAuthSessionsUpdate, true, "Must update auth_sessions");
+  assert.equal(hasFamiliesUpdate, true, "Must update refresh_session_families");
+  assert.equal(hasRecordsUpdate, true, "Must update refresh_session_records");
+  assert.equal(auditAppended, true, "Must append SESSION_REVOKED audit event");
+});
+
+test("RelationalAuthService.revoke: unknown token returns false without executing updates", async () => {
+  const deviceId = "device-rev-unknown";
+  const token = "non-existent-token";
+
+  let updatesCount = 0;
+
+  const mockClient = new MockPoolClient((sql) => {
+    if (sql.includes("FROM auth_sessions s") && sql.includes("FOR UPDATE")) {
+      return { rows: [] };
+    }
+    if (sql.includes("UPDATE")) {
+      updatesCount += 1;
+    }
+    return { rows: [] };
+  });
+
+  const pool = new MockDatabasePool(mockClient as unknown as PoolClient);
+  const unitOfWork = new UnitOfWork(pool);
+  const auth = new RelationalAuthService(unitOfWork);
+
+  const revoked = await auth.revoke(token, deviceId);
+
+  assert.equal(revoked, false, "Revoke must return false for unknown token");
+  assert.equal(updatesCount, 0, "Must not execute updates when token not found");
+  assert.equal(mockClient.committed, true, "Transaction finishes cleanly returning false");
+});
+
+test("RelationalAuthService.revoke: mismatched device returns false without revoking family", async () => {
+  const customerId = randomUUID();
+  const familyId = randomUUID();
+  const boundDeviceId = "device-bound-original";
+  const attackerDeviceId = "device-bound-attacker";
+  const token = "valid-token-mismatched-device";
+
+  let updatesCount = 0;
+
+  const mockClient = new MockPoolClient((sql) => {
+    if (sql.includes("FROM auth_sessions s") && sql.includes("FOR UPDATE")) {
+      return {
+        rows: [
+          {
+            id: randomUUID(),
+            family_id: familyId,
+            customer_id: customerId,
+            device_id: boundDeviceId,
+          },
+        ],
+      };
+    }
+    if (sql.includes("UPDATE")) {
+      updatesCount += 1;
+    }
+    return { rows: [] };
+  });
+
+  const pool = new MockDatabasePool(mockClient as unknown as PoolClient);
+  const unitOfWork = new UnitOfWork(pool);
+  const auth = new RelationalAuthService(unitOfWork);
+
+  const revoked = await auth.revoke(token, attackerDeviceId);
+
+  assert.equal(revoked, false, "Revoke must return false when device does not match");
+  assert.equal(updatesCount, 0, "Must not execute updates on device mismatch");
+});
+
+test("RelationalAuthService.revokeAllSessions: updates all sessions for customer and appends audit event", async () => {
+  const customerId = randomUUID();
+  const executedUpdates: string[] = [];
+  let auditAppended = false;
+
+  const mockClient = new MockPoolClient((sql) => {
+    if (sql.includes("UPDATE")) {
+      executedUpdates.push(sql);
+      return { rows: [] };
+    }
+    if (sql.includes("INSERT INTO audit_events")) {
+      auditAppended = true;
+      return { rows: [] };
+    }
+    return { rows: [] };
+  });
+
+  const pool = new MockDatabasePool(mockClient as unknown as PoolClient);
+  const unitOfWork = new UnitOfWork(pool);
+  const auth = new RelationalAuthService(unitOfWork);
+
+  await auth.revokeAllSessions(customerId);
+
+  assert.equal(mockClient.committed, true, "revokeAllSessions transaction must be committed");
+  const hasAuthSessionsUpdate = executedUpdates.some((s) => s.includes("UPDATE auth_sessions SET revoked_at = NOW() WHERE customer_id = $1"));
+  const hasFamiliesUpdate = executedUpdates.some((s) => s.includes("UPDATE refresh_session_families SET revoked_at = NOW() WHERE customer_id = $1"));
+  const hasRecordsUpdate = executedUpdates.some((s) => s.includes("UPDATE refresh_session_records SET revoked_at = NOW() WHERE customer_id = $1"));
+  assert.equal(hasAuthSessionsUpdate, true, "Must update auth_sessions for customer");
+  assert.equal(hasFamiliesUpdate, true, "Must update refresh_session_families for customer");
+  assert.equal(hasRecordsUpdate, true, "Must update refresh_session_records for customer");
+  assert.equal(auditAppended, true, "Must append ALL_SESSIONS_REVOKED audit event");
+});
