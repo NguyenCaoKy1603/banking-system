@@ -84,6 +84,11 @@ function RootNavigator() {
           <Stack.Screen name="cards" />
           <Stack.Screen name="cards/apply" />
           <Stack.Screen name="cards/[cardId]" />
+          <Stack.Screen name="cards/[cardId]/transactions" />
+          <Stack.Screen name="cards/[cardId]/statements" />
+          <Stack.Screen name="cards/[cardId]/statements/[statementId]" />
+          <Stack.Screen name="cards/[cardId]/payments/[paymentId]" />
+          <Stack.Screen name="cards/[cardId]/pay" />
           <Stack.Screen name="transaction/[transactionId]" />
           <Stack.Screen name="notifications" />
           <Stack.Screen name="notifications/[notificationId]" />
