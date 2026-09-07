@@ -375,3 +375,40 @@ Không chạy trong phiên này: PostgreSQL integration cần reset/provision, f
 - Hành vi chưa hoàn toàn xác minh: persistence/concurrency mới nhất, full UI screen behavior, restart giữa registration OTP, KYC error mapping và privacy contract.
 - Không có secret, OTP, password, token, số định danh thật hoặc dữ liệu người dùng thật trong kết quả này.
 - Không stage, commit, push, merge, tag, reset, clean, xóa hoặc thay đổi source trong phiên audit.
+
+---
+
+## 12. Bổ sung đối soát hiện tại tại thời điểm hoàn tất M01-09 (2026-09-07)
+
+- **Thời điểm**: `2026-09-07 17:25:00 +07:00`
+- **Branch**: `codex/staging-academic-completion`
+- **HEAD**: `b5ef30cb78eaa43932a2ba14f3989aab6e648994`
+- **Nhiệm vụ thực hiện**: M01-09 — Tổng kiểm toán đối soát và đóng Use Case UC-M01.
+
+### Bảng đối soát 16 kịch bản ban đầu từ M01-01 chuyển sang trạng thái hiện tại
+
+Toàn bộ 16 kịch bản ban đầu đã được giải quyết triệt để thông qua chuỗi nhiệm vụ M01-02 đến M01-08:
+
+| # | Kịch bản kiểm thử (Scenario M01-01) | Trạng thái ban đầu (M01-01) | Trạng thái hiện tại (M01-09) | Giải pháp triển khai & Bằng chứng kiểm chứng |
+|---:|:---|:---:|:---:|:---|
+| 1 | Người chưa đăng nhập mở registration | `PARTIAL` | **VERIFIED** | Route pre-auth trong Expo Router `(auth)/register`. Kiểm chứng qua Jest `RegisterScreen.test.tsx` (test: `shows the registration form when storage is empty`) và Emulator E2E runtime `TASK_M01_08` (`E2E-REG-01`). |
+| 2 | Registration form xử lý thiếu/sai định dạng | `VERIFIED` | **VERIFIED** | Client validation `validateRegisterForm` và Server validation trong `registrationService.ts`. Kiểm chứng qua `authValidation.test.ts` và `registrationContract.test.ts`. |
+| 3 | Dữ liệu không hợp lệ không gửi request ngoài dự kiến | `PARTIAL` | **VERIFIED** | Client return sớm nếu form không hợp lệ; Backend verify có runtime body guard trả 422 trước service (D-06). Kiểm chứng qua Jest `RegisterScreen.test.tsx` (test: `T-REG-FE-VAL-01`) và `registrationContract.test.ts`. |
+| 4 | Registration thành công đúng API contract | `PARTIAL` | **VERIFIED** | API client gọi `/auth/register` (202), verify OTP (201), điều hướng về `/login`. Kiểm chứng qua `registrationRelational.test.ts` (test: `relational registration persists only OTP digest, uses outbox intent and completes once`) và Emulator runtime `TASK_M01_08` (`E2E-REG-01`). |
+| 5 | Email/phone/account đã tồn tại xử lý đúng | `CONFLICT` | **VERIFIED** | Pre-check kết hợp unique index PostgreSQL; endpoint `POST /auth/register/cancel` giải phóng pending registration an toàn; race condition trả HTTP 409 (D-07, D-08, D-09). Kiểm chứng qua `registrationRelational.test.ts` (assertion duplicate begin rejected 409 `CONFLICT`) và `registrationContract.test.ts`. |
+| 6 | Server validation error map đúng UI | `PARTIAL` | **VERIFIED** | Registration map `fieldErrors` về form; KYC map `fieldErrors` về từng ô nhập liệu (D-14). Kiểm chứng qua Jest tests trong `RegisterScreen.test.tsx` (test: `T-REG-FE-ERR-422`) và `KycScreen.test.tsx` (test: `T-KYC-FE-01`). |
+| 7 | Offline/timeout rõ ràng | `PARTIAL` | **VERIFIED** | `httpClient` xử lý mã lỗi mạng ổn định; UI hiển thị thông báo lỗi; màn hình KYC có nút thử lại khi tải thất bại lần đầu (D-14). Kiểm chứng qua `httpClient.test.ts`, `RegisterScreen.test.tsx` (tests: `T-REG-FE-ERR-NETWORK`, `T-REG-FE-ERR-TIMEOUT`) và `KycScreen.test.tsx` (test: `T-KYC-FE-02`). |
+| 8 | Retry không tạo submit đồng thời/account trùng | `PARTIAL` | **VERIFIED** | Nút bấm disable khi đang gửi yêu cầu; PostgreSQL khóa dòng `FOR UPDATE`; cancel và completion được thiết kế idempotent. Kiểm chứng qua `RegisterScreen.test.tsx` (test: `T-REG-FE-DBL-01`) và `registrationRelational.test.ts` (concurrent verify race assertion: 1 fulfilled, 1 rejected). |
+| 9 | Registration response runtime-validated | `PARTIAL` | **VERIFIED** | `authResponseValidators.ts` chuẩn hóa kiểm tra chặt chẽ theo enum OpenAPI (D-05), loại bỏ alias ngoài contract. Kiểm chứng qua `authResponseValidators.test.ts` và `authApi.test.ts`. |
+| 10 | Synthetic KYC input/validate đúng contract | `CONFLICT` | **VERIFIED** | Thống nhất quy tắc CCCD 6–24 chữ số và document URI `mock://` / `synthetic://` ở cả 3 tầng (D-01, D-02). Kiểm chứng qua `kycValidators.test.ts` (test: `uses the canonical identity boundary and document URI schemes`) và `kycRelational.test.ts` (tiêu chí `KYC-03`, `KYC-04`). |
+| 11 | KYC states được lưu và hiển thị đúng | `PARTIAL` | **ACCEPTED LIMITATION** | Backend hỗ trợ đầy đủ vòng đời trạng thái; migration 038 partial unique index; UI phân biệt DRAFT, SUBMITTED, NEEDS_MORE_INFO, REJECTED (D-10, D-11, D-14). Kiểm chứng qua `kycRelational.test.ts` (tiêu chí `KYC-01` đến `KYC-12`), `KycScreen.test.tsx` (test: `T-KYC-FE-03`), và Emulator runtime `TASK_M01_08` (`E2E-KYC-01`, `E2E-KYC-02`). Giới hạn KYC-15 được Owner duyệt. |
+| 12 | Unauthorized/session behavior của KYC | `VERIFIED` | **VERIFIED** | Endpoints KYC yêu cầu Bearer token và header `X-Device-ID`; Mobile lấy token từ `AuthContext`; 401 tự động refresh single-flight. Kiểm chứng qua HTTP route tests trong `kycContract.test.ts` và `httpClient.test.ts`. |
+| 13 | Đóng/khởi động lại giữa flow không làm sai state | `CONFLICT` | **ACCEPTED LIMITATION** | `registrationSessionStorage` lưu metadata phase `BEGIN_UNKNOWN` hoặc `CHALLENGE_RECEIVED`; cho phép khôi phục OTP hoặc reset form an toàn (D-12); server-side cancel giải phóng challenge cũ (D-08, D-09). Nghiệm thu qua Jest `RegisterScreen.test.tsx` (tests: `saves BEGIN_UNKNOWN before calling register()`, `shows OTP field with restored challengeId`, `T-REG-FE-REC-01`), Owner chấp thuận chưa chạy trên emulator runtime. |
+| 14 | Điều hướng sau registration/KYC | `PARTIAL` | **VERIFIED** | Registration thành công bấm Alert điều hướng về `/login`; KYC nộp hồ sơ giữ trạng thái "Đang chờ duyệt" (SUBMITTED) và hiển thị ghi chú thẩm quyền. Kiểm chứng trực tiếp trên Emulator runtime `TASK_M01_08` (`E2E-REG-01`, `E2E-KYC-02`). |
+| 15 | Secret/PII không vào log/telemetry/evidence | `CONFLICT` | **ACCEPTED LIMITATION** | Response KYC chuyển sang `identityNumberLast4` (D-03); CCCD full được persist ở backend trong cột JSONB `synthetic_payload` (`synthetic_payload.identityNumber`) theo schema nghiệp vụ 038 nhưng là write-only đối với public response (D-04); SecureStore không lưu password/OTP/CCCD (D-12); audit registration dùng keyed fingerprint (D-13); script `validate:public-env` quét 216 file PASS. Owner chấp thuận phân tầng bằng chứng, không cam kết zero leakage tuyệt đối. |
+| 16 | Test bao phủ đúng các claim | `PARTIAL` | **VERIFIED** | Bổ sung đầy đủ unit tests, screen tests, contract tests, relational PostgreSQL tests và emulator E2E tests qua M01-03 đến M01-08. Toàn bộ các suite Mobile (51 suites / 373 tests PASS theo M01-06/M01-08) và các suite Backend đạt PASS 100%. |
+
+### Kết luận đối soát M01-01 và Đóng Use Case
+- 100% các điểm `CONFLICT` và `PARTIAL` đã được chuyển sang `VERIFIED` hoặc `ACCEPTED LIMITATION` được Owner phê duyệt.
+- Chi tiết đối soát 15 quyết định kiến trúc và toàn bộ bằng chứng cổng chất lượng được lưu trữ tại `tasks/UC-M01/TASK_M01_09_AUDIT_AND_CLOSE_UC_M01.md`.
+- **Trạng thái Use Case UC-M01**: **COMPLETED** (Chính thức đóng theo phê duyệt của Owner ngày 2026-09-07).

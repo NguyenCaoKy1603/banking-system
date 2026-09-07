@@ -6765,3 +6765,16 @@ Kết luận: `BLOCKED — M07-B FUNCTIONAL VERIFICATION FAILED`.
 - Trạng thái nghiệm thu:
   - **M01-07**: **COMPLETE** (Toàn bộ các checkpoint M07-A1, M07-A2, M07-B, M07-C, M07-D hoàn thành đạt chuẩn).
   - **UC-M01**: **INCOMPLETE** (Các task M01-08 và M01-09 chưa thực hiện).
+
+## 96. QUYẾT ĐỊNH OWNER CLOSURE VÀ GHI NHẬN GIỚI HẠN KYC-15 (2026-09-07)
+
+- **Quyết định của Owner**: Chấp thuận nghiệm thu kết hợp cho tiêu chí `KYC-15` và chính thức đóng Task M01-07:
+  1. Contract/unit test (`backend/src/tests/kycContract.test.ts:T-KYC-BE-13`) đã chứng minh lỗi `23505` của constraint khác (primary key `kyc_applications_pkey`) và unknown DB errors được rethrow trực tiếp, không bị map thành 409 Conflict.
+  2. PostgreSQL relational test (`backend/src/tests/kycRelational.test.ts`) đã chứng minh lỗi vi phạm partial open index `kyc_applications_customer_open_idx` (`23505`) được map thành 409 Conflict (trong `KYC-03`) và lỗi khóa ngoại (`23503`) được rethrow trực tiếp, transaction rollback sạch sẽ.
+- **Giới hạn kiểm thử được chấp nhận**:
+  - Không yêu cầu bổ sung fault injection cho `23505` trên primary key tại tầng PostgreSQL disposable trong phạm vi đồ án tốt nghiệp hiện tại.
+  - Ghi nhận rõ ràng đây là giới hạn phạm vi được Owner phê duyệt; không tuyên bố đã kiểm chứng trực tiếp đụng độ pkey `23505` trên PostgreSQL relational.
+  - Không dùng monkey-patch UUID hay can thiệp vào production code để tạo va chạm giả tạo.
+- **Trạng thái đóng task chính thức**:
+  - **M01-07**: **COMPLETED (CLOSED)** sau Checkpoint M07-E và Owner closure review.
+  - **UC-M01**: **COMPLETED** (Chính thức đóng tại Task M01-09 theo quyết định phê duyệt của Owner ngày 2026-09-07).

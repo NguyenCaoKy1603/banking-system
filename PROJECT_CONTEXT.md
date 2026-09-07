@@ -46,6 +46,19 @@ Admin có 63 route được permission-registry kiểm soát, staff TOTP, HttpOn
 
 Các kết quả trên là **local/emulator evidence được repository báo cáo quanh `62ed13d`**, không phải full-suite rerun ở `6ee6c22`, thiết bị thật hoặc staging. Chưa có managed PostgreSQL, HTTPS staging endpoint, Secret Manager/KMS, signed staging APK, immutable registry digest gắn với current staging deployment, core/partner integration, production monitoring/on-call, legal/compliance approval hoặc cloud backup/PITR rehearsal. RC.4 có artifact/digest lịch sử nhưng không xác minh source hoặc staging hiện tại.
 
+### Cập nhật hoàn thành Use Case UC-M01 (2026-09-07)
+
+- **Trạng thái**: Use Case **UC-M01 — Registration và Synthetic KYC** đã chính thức hoàn thành và đóng nghiệm thu (**COMPLETED — OWNER APPROVED**) tại commit HEAD `b5ef30cb78eaa43932a2ba14f3989aab6e648994` theo biên bản kiểm toán `tasks/UC-M01/TASK_M01_09_AUDIT_AND_CLOSE_UC_M01.md`.
+- **Phạm vi kiểm chứng và kết quả kế thừa**:
+  - Chuỗi nhiệm vụ `M01-01` đến `M01-08` đã đối soát và giải quyết 15/15 quyết định kiến trúc chuẩn hóa (D-01 đến D-15).
+  - Toàn bộ suite kiểm thử Mobile đạt 51 suites / 373 tests PASS (mở rộng từ baseline 45 suites / 259 tests).
+  - PostgreSQL relational verification (M01-07): áp dụng 40/40 migration trên disposable PostgreSQL; mỗi tệp kiểm thử `src/tests/registrationRelational.test.ts` và `src/tests/kycRelational.test.ts` báo 1/1 top-level test PASS từ runner, kiểm chứng tuần tự 16 tiêu chí `KYC-01` đến `KYC-16` và vòng đời đăng ký relational.
+  - Android Emulator runtime verification (M01-08): APK build mới từ HEAD `b5ef30cb` trên Pixel 7 API 34 đạt PASS luồng Registration Happy Path (`E2E-REG-01`) và KYC Draft → Submit (`E2E-KYC-01`, `E2E-KYC-02` hiển thị `••••8901`, khóa form và hiển thị ghi chú thẩm quyền; không phát sinh `INVALID_RESPONSE`).
+- **Giới hạn đồ án đã được Owner phê duyệt (Accepted Limitations)**:
+  1. Giới hạn KYC-15: Vi phạm ràng buộc 23505 trên primary key (`kyc_applications_pkey`) được kiểm chứng qua unit/contract test (`T-KYC-BE-13` rethrow không map thành 409), trong khi open-index conflict 23505 và lỗi ngoại khóa 23503 rollback được kiểm chứng trên PostgreSQL thật.
+  2. Kịch bản biên phục hồi `BEGIN_UNKNOWN` (`E2E-REG-04`), khôi phục OTP sau process-kill (`E2E-REG-02`) và hủy challenge (`E2E-REG-03`) được nghiệm thu qua Jest unit suite `RegisterScreen.test.tsx`, chưa chạy độc lập trên emulator runtime.
+  3. Bảo mật dữ liệu: Full synthetic identity number được lưu trữ hợp lệ tại backend database trong cột JSONB `kyc_applications.synthetic_payload` (`synthetic_payload.identityNumber`) theo migration 038 và nghiệp vụ đồ án, nhưng public response chỉ trả `identityNumberLast4`; client local storage không lưu CCCD; quét `validate:public-env` đạt 216 file PASS nhưng không cam kết zero leakage tuyệt đối toàn hệ thống runtime.
+
 ## 5. Xung đột và rủi ro đang mở
 
 1. Auth contract/code hiện là password-only login; `mobile-app/README.md` và 5 Maestro flow cũ vẫn tham chiếu `login-mfa-code`/`login-mfa-submit`, nhưng `LoginScreen` không có các test ID này. Owner phải quyết định sửa docs/E2E hay khôi phục login MFA; không tự đoán.
