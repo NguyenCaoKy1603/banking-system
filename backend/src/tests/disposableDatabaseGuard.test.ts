@@ -5828,3 +5828,16 @@ test("M02-REG-02: Non-allowlisted arbitrary test path continues to be rejected f
     /not in the approved fixed allowlist/,
   );
 });
+
+test("M03-REG-01: Runtime test path allowlist accepts mfaPersistence.test.ts", () => {
+  const approved = assertApprovedTestPath("src/tests/mfaPersistence.test.ts");
+  assert.equal(approved, "src/tests/mfaPersistence.test.ts");
+  assert.equal(assertApprovedTestPath("backend/src/tests/mfaPersistence.test.ts"), "src/tests/mfaPersistence.test.ts");
+});
+
+test("M03-REG-02: Non-allowlisted arbitrary mfa test path continues to be rejected fail-closed", () => {
+  assert.throws(
+    () => assertApprovedTestPath("src/tests/mfaExploit.test.ts"),
+    /not in the approved fixed allowlist/,
+  );
+});

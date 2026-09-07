@@ -67,6 +67,7 @@ export const APPROVED_TEST_PATHS = [
   "src/tests/disposableMigrationRuntime.test.ts",
   "src/tests/authRelational.test.ts",
   "src/tests/databaseFoundation.test.ts",
+  "src/tests/mfaPersistence.test.ts",
 ] as const;
 
 export type ApprovedTestPath = (typeof APPROVED_TEST_PATHS)[number];
