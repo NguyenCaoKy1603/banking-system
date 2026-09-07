@@ -31,6 +31,7 @@ export function MfaRecoveryScreen() {
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
   const [enrollment, setEnrollment] = useState<{ credentialId: string; manualSetupKey: string; otpauthUri: string } | null>(null);
   const [totpCode, setTotpCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | undefined>();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -87,13 +88,26 @@ export function MfaRecoveryScreen() {
     setIsSubmitting(true);
     setError(undefined);
     try {
-      await confirmRecoveryTotpEnrollment({ recoveryToken, credentialId: enrollment.credentialId, code: totpCode }, deviceOptions);
-      router.replace("/login");
+      const response = await confirmRecoveryTotpEnrollment(
+        { recoveryToken, credentialId: enrollment.credentialId, code: totpCode },
+        deviceOptions,
+      );
+      setRecoveryCodes(response.recoveryCodes);
+      setPassword("");
+      setTotpCode("");
+      setRecoveryCode("");
+      setRecoveryToken(null);
+      setEnrollment(null);
     } catch (confirmError: unknown) {
       setError(errorMessage(confirmError));
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  function handleAcknowledgeRecoveryCodes() {
+    setRecoveryCodes(null);
+    router.replace("/login");
   }
 
   return (
@@ -109,7 +123,25 @@ export function MfaRecoveryScreen() {
 
           {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
 
-          {!recoveryToken ? (
+          {recoveryCodes ? (
+            <View style={styles.recoveryCard}>
+              <Text style={styles.sectionTitle}>Lưu mã khôi phục mới</Text>
+              <Text style={styles.recoveryWarning}>
+                Mã khôi phục chỉ hiển thị một lần duy nhất tại đây. Hãy ghi lại hoặc lưu trữ ngoại tuyến ở nơi an toàn.
+              </Text>
+              <Text style={styles.description}>
+                Sau khi rời khỏi bước này, bạn sẽ không thể xem lại các mã này từ ứng dụng.
+              </Text>
+              <Text selectable style={styles.recoveryCodes} testID="mfa-recovery-codes">
+                {recoveryCodes.join("\n")}
+              </Text>
+              <PrimaryButton
+                label="Tôi đã lưu mã — Đăng nhập lại"
+                onPress={handleAcknowledgeRecoveryCodes}
+                testID="mfa-recovery-done"
+              />
+            </View>
+          ) : !recoveryToken ? (
             <View style={styles.card}>
               <TextField autoCapitalize="none" autoComplete="email" keyboardType="email-address" label="Email" onChangeText={setEmail} placeholder="email@example.com" testID="mfa-recovery-email" value={email} />
               <TextField autoCapitalize="none" label="Mật khẩu" onChangeText={setPassword} placeholder="Nhập mật khẩu" secureTextEntry testID="mfa-recovery-password" value={password} />
@@ -131,11 +163,13 @@ export function MfaRecoveryScreen() {
               <View style={styles.qrFrame}><QRCode value={enrollment.otpauthUri} size={210} /></View>
               <Text selectable style={styles.secret}>{enrollment.manualSetupKey}</Text>
               <TextField keyboardType="number-pad" label="Mã TOTP đầu tiên" onChangeText={(value) => setTotpCode(value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" secureTextEntry testID="mfa-recovery-totp" value={totpCode} />
-              <PrimaryButton disabled={isSubmitting} label="Kích hoạt và quay lại đăng nhập" onPress={() => void handleConfirm()} testID="mfa-recovery-confirm" />
+              <PrimaryButton disabled={isSubmitting} label="Kích hoạt và xem mã khôi phục" onPress={() => void handleConfirm()} testID="mfa-recovery-confirm" />
             </View>
           )}
 
-          <Link href="./login" replace asChild><Pressable accessibilityRole="link"><Text style={styles.link}>Quay về đăng nhập</Text></Pressable></Link>
+          {!recoveryCodes ? (
+            <Link href="./login" replace asChild><Pressable accessibilityRole="link"><Text style={styles.link}>Quay về đăng nhập</Text></Pressable></Link>
+          ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>
@@ -151,6 +185,9 @@ const styles = StyleSheet.create({
   description: { ...typography.body, color: colors.muted },
   sectionTitle: { ...typography.subheading, color: colors.text },
   card: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, ...shadows.card },
+  recoveryCard: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.lg, backgroundColor: colors.primarySoft, ...shadows.card },
+  recoveryWarning: { ...typography.body, color: colors.text, fontWeight: "600" },
+  recoveryCodes: { color: colors.text, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace", fontSize: 15, lineHeight: 24 },
   qrFrame: { alignSelf: "center", padding: spacing.md, borderWidth: 2, borderColor: colors.primarySoft, borderRadius: radius.lg, backgroundColor: colors.surface },
   secret: { color: colors.text, fontSize: 16, fontWeight: "700", letterSpacing: 1.5 },
   error: { ...typography.body, padding: spacing.md, borderRadius: radius.md, color: colors.danger, backgroundColor: colors.dangerSoft },
