@@ -3,30 +3,87 @@ appId: ${APP_ID}
 ---
 - launchApp:
     clearState: true
+- extendedWaitUntil:
+    visible:
+      id: login-email
+    timeout: 30000
+
+# =========================================================================
+# Scenario A: Password-only Login
+# =========================================================================
 - tapOn:
     id: login-email
 - inputText: ${TEST_EMAIL}
+- pressKey: BACK
 - tapOn:
     id: login-password
 - inputText: ${TEST_PASSWORD}
+- pressKey: BACK
 - tapOn:
     id: login-submit
 - extendedWaitUntil:
     visible:
-      id: login-mfa-submit
+      id: quick-transfer
+    timeout: 15000
+
+# =========================================================================
+# Scenario B: Current-device Logout
+# =========================================================================
+- tapOn:
+    id: tab-profile
+- scrollUntilVisible:
+    element:
+      id: logout-current-device
+    direction: DOWN
     timeout: 10000
 - tapOn:
-    id: login-mfa-code
-- inputText: ${MFA_TOTP}
+    id: logout-current-device
+- extendedWaitUntil:
+    visible:
+      id: login-submit
+    timeout: 15000
+- assertNotVisible:
+    id: quick-transfer
+- assertNotVisible:
+    text: "Ứng dụng đã chuyển về màn hình đăng nhập"
+
+# =========================================================================
+# Scenario C: Re-login without clearState, then Logout All Devices
+# =========================================================================
 - tapOn:
-    id: login-mfa-submit
+    id: login-email
+- inputText: ${TEST_EMAIL}
+- pressKey: BACK
+- tapOn:
+    id: login-password
+- inputText: ${TEST_PASSWORD}
+- pressKey: BACK
+- tapOn:
+    id: login-submit
 - extendedWaitUntil:
     visible:
       id: quick-transfer
     timeout: 15000
 - tapOn:
+    id: tab-profile
+- scrollUntilVisible:
+    element:
+      id: logout-all-devices
+    direction: DOWN
+    timeout: 10000
+- tapOn:
     id: logout-all-devices
 - extendedWaitUntil:
     visible:
-      id: login-submit
+      text: "Đăng xuất tất cả"
     timeout: 10000
+- tapOn:
+    text: "Đăng xuất tất cả"
+- extendedWaitUntil:
+    visible:
+      id: login-submit
+    timeout: 15000
+- assertNotVisible:
+    id: quick-transfer
+- assertNotVisible:
+    text: "Ứng dụng đã chuyển về màn hình đăng nhập"

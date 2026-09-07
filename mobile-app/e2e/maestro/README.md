@@ -49,7 +49,7 @@ Lệnh dùng credential ngẫu nhiên trong bộ nhớ, gọi `backend` seed, l�
 
 ## Coverage
 
-- `critical-auth-and-logout.yaml`: login MFA, session entry và logout tất cả thiết bị.
+- `critical-auth-and-logout.yaml`: login password-only, session entry, logout thiết bị hiện tại và logout tất cả thiết bị (kèm xác nhận Native Alert).
 - `critical-registration.yaml`: đăng ký customer, nhận OTP từ HTTP email capture local, xác minh OTP một lần và quay về màn hình đăng nhập.
 - `critical-transfer-retry.yaml`: quote, step-up, double-tap, pending status và khôi phục sau stop/start app.
 - `critical-fraud-report.yaml`: mở chi tiết giao dịch và gửi fraud report.
