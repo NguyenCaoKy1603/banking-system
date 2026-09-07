@@ -65,6 +65,7 @@ export const APPROVED_TEST_PATHS = [
   "src/tests/registrationRelational.test.ts",
   "src/tests/kycRelational.test.ts",
   "src/tests/disposableMigrationRuntime.test.ts",
+  "src/tests/authRelational.test.ts",
 ] as const;
 
 export type ApprovedTestPath = (typeof APPROVED_TEST_PATHS)[number];
@@ -1205,6 +1206,7 @@ export async function runDisposablePostgresTest(
       "remainingRelational",
       "registrationRelational",
       "kycRelational",
+      "authRelational",
       "lifecycleRelational",
       "lifecycleScheduler",
       "integratedDisposable",

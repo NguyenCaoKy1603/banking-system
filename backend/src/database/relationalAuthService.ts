@@ -185,7 +185,7 @@ export class RelationalAuthService {
   async refresh(refreshToken: string, deviceId: string): Promise<LoginResponse> {
     const normalizedDeviceId = normalizeDeviceId(deviceId);
     const refreshHash = hashOpaqueToken(String(refreshToken ?? ""));
-    return this.unitOfWork.transaction(async ({ client }) => {
+    const outcome = await this.unitOfWork.transaction(async ({ client }) => {
       const sessionResult = await client.query(
         `SELECT s.*, r.expires_at AS refresh_expires_at, r.revoked_at AS refresh_revoked_at,
                 c.full_name, c.email, c.phone_number, c.created_at,
@@ -211,7 +211,7 @@ export class RelationalAuthService {
         await client.query("UPDATE auth_sessions SET revoked_at = NOW() WHERE family_id = $1 AND revoked_at IS NULL", [row.family_id]);
         await client.query("UPDATE refresh_session_families SET revoked_at = NOW() WHERE family_id = $1 AND revoked_at IS NULL", [row.family_id]);
         await client.query("UPDATE refresh_session_records SET revoked_at = NOW() WHERE family_id = $1 AND revoked_at IS NULL", [row.family_id]);
-        throw unauthorized("Refresh token reuse detected.");
+        return { kind: "REUSE_DETECTED" as const };
       }
       const expiresAt = new Date(String(row.refresh_expires_at)).getTime();
       if (Number.isNaN(expiresAt) || expiresAt <= Date.now()) {
@@ -267,12 +267,20 @@ export class RelationalAuthService {
         createdAt: new Date(String(row.created_at)).toISOString(),
       };
       return {
-        accessToken,
-        refreshToken: nextRefreshToken,
-        expiresInSeconds: ACCESS_TOKEN_TTL_MS / 1000,
-        user: publicUser(customer),
+        kind: "SUCCESS" as const,
+        session: {
+          accessToken,
+          refreshToken: nextRefreshToken,
+          expiresInSeconds: ACCESS_TOKEN_TTL_MS / 1000,
+          user: publicUser(customer),
+        },
       };
     }, { maxRetries: 1 });
+
+    if (outcome.kind === "REUSE_DETECTED") {
+      throw unauthorized("Refresh token reuse detected.");
+    }
+    return outcome.session;
   }
 
   async revoke(refreshToken: string, deviceId: string): Promise<boolean> {
