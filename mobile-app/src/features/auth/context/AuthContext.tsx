@@ -116,18 +116,26 @@ async function revokeAllSessionsForLogout(
   }
 }
 
+export type CompleteMfaRevocationInput = {
+  recoveryCodes?: string[];
+  notice?: string;
+};
+
 type AuthContextValue = {
   status: AuthStatus;
   session: AuthSession | null;
   logoutNotice: string | null;
   deviceId: string | null;
   isAuthenticated: boolean;
+  pendingRecoveryCodes: string[] | null;
   refreshAccessToken: RefreshAccessToken;
   login: (request: LoginRequest) => Promise<void>;
   register: (request: RegisterRequest) => Promise<AuthChallengeResponse>;
   verifyRegistrationChallenge: (request: VerifyAuthChallengeRequest) => Promise<RegisterResponse>;
   resendRegistrationChallenge: (challengeId: string) => Promise<AuthChallengeResponse>;
   cancelRegistration?: (challengeId: string) => Promise<void>;
+  completeMfaRevocation: (input?: CompleteMfaRevocationInput) => Promise<void>;
+  clearPendingRecoveryCodes: () => void;
   logout: () => Promise<LogoutResult>;
   logoutAll: () => Promise<LogoutResult>;
 };
@@ -139,6 +147,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [logoutNotice, setLogoutNotice] = useState<string | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [pendingRecoveryCodes, setPendingRecoveryCodes] = useState<string[] | null>(null);
   const sessionRef = useRef<AuthSession | null>(null);
   const statusRef = useRef<AuthStatus>("booting");
   const appStateRef = useRef<AppStateStatus>(AppState.currentState ?? "active");
@@ -149,6 +158,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const invalidatedSessionEpochsRef = useRef(new Set<string>());
   const sessionLifecycleEpochRef = useRef(0);
   const logoutOperationRef = useRef<Promise<LogoutResult> | null>(null);
+  const pendingStorageClearRef = useRef<Promise<void> | null>(null);
   const isMountedRef = useRef(true);
 
   const setActiveSession = useCallback(
@@ -369,7 +379,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const login = useCallback(
     async (request: LoginRequest) => {
+      sessionLifecycleEpochRef.current += 1;
       setLogoutNotice(null);
+      setPendingRecoveryCodes(null);
+
+      if (pendingStorageClearRef.current) {
+        await pendingStorageClearRef.current.catch(() => undefined);
+      }
+
       const currentDeviceId = await ensureDeviceId();
       const response = await loginRequest(request, { deviceId: currentDeviceId });
       const nextSession = createAuthSession(response);
@@ -437,10 +454,21 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const clearLocalSession = useCallback(async () => {
     let localSessionCleared = true;
+    const clearOperation = (async () => {
+      try {
+        await clearAuthSession();
+      } catch {
+        localSessionCleared = false;
+      }
+    })();
+
+    pendingStorageClearRef.current = clearOperation;
     try {
-      await clearAuthSession();
-    } catch {
-      localSessionCleared = false;
+      await clearOperation;
+    } finally {
+      if (pendingStorageClearRef.current === clearOperation) {
+        pendingStorageClearRef.current = null;
+      }
     }
     setActiveSession(null, "anonymous");
     return localSessionCleared;
@@ -530,6 +558,65 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [beginLogout],
   );
 
+  const clearPendingRecoveryCodes = useCallback(() => {
+    if (isMountedRef.current) {
+      setPendingRecoveryCodes(null);
+    }
+  }, []);
+
+  const completeMfaRevocation = useCallback(
+    async (input?: CompleteMfaRevocationInput) => {
+      const currentSession = sessionRef.current;
+      const sessionEpoch = currentSession?.sessionEpoch ?? null;
+      if (sessionEpoch) {
+        invalidatedSessionEpochsRef.current.add(sessionEpoch);
+      }
+      const completionLifecycleEpoch = (sessionLifecycleEpochRef.current += 1);
+
+      sessionRef.current = null;
+      statusRef.current = "anonymous";
+      if (isMountedRef.current) {
+        setSession(null);
+        setStatus("anonymous");
+        setPendingRecoveryCodes(input?.recoveryCodes ?? null);
+      }
+
+      let storageCleared = true;
+      const clearOperation = (async () => {
+        try {
+          await clearAuthSession();
+        } catch {
+          storageCleared = false;
+        }
+      })();
+
+      pendingStorageClearRef.current = clearOperation;
+      try {
+        await clearOperation;
+      } finally {
+        if (pendingStorageClearRef.current === clearOperation) {
+          pendingStorageClearRef.current = null;
+        }
+      }
+
+      if (sessionLifecycleEpochRef.current !== completionLifecycleEpoch) {
+        return;
+      }
+
+      let notice: string | null = null;
+      if (!storageCleared) {
+        notice = "Phiên đã kết thúc nhưng chưa thể dọn bộ nhớ an toàn trên thiết bị. Vui lòng đăng nhập lại.";
+      } else if (input?.notice) {
+        notice = input.notice;
+      }
+
+      if (isMountedRef.current) {
+        setLogoutNotice(notice);
+      }
+    },
+    [],
+  );
+
   const value = useMemo(
     () => ({
       status,
@@ -538,21 +625,27 @@ export function AuthProvider({ children }: PropsWithChildren) {
       deviceId,
       isAuthenticated:
         status === "authenticated" && session !== null,
+      pendingRecoveryCodes,
       refreshAccessToken,
       login,
       register,
       verifyRegistrationChallenge,
       resendRegistrationChallenge,
       cancelRegistration,
+      completeMfaRevocation,
+      clearPendingRecoveryCodes,
       logout,
       logoutAll,
     }),
     [
+      clearPendingRecoveryCodes,
+      completeMfaRevocation,
       deviceId,
       login,
       logout,
       logoutAll,
       logoutNotice,
+      pendingRecoveryCodes,
       refreshAccessToken,
       register,
       session,

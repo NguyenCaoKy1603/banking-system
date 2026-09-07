@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "expo-router";
-import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 
 import { AppHeader } from "@/components/ui/AppHeader";
@@ -44,12 +44,11 @@ function getMessage(error: unknown, fallback: string): string {
 
 export function MfaMethodsScreen() {
   const router = useRouter();
-  const { deviceId, refreshAccessToken, session } = useAuth();
+  const { completeMfaRevocation, deviceId, refreshAccessToken, session } = useAuth();
   const [credentials, setCredentials] = useState<MfaCredentialSummary[]>([]);
   const [password, setPassword] = useState("");
   const [enrollment, setEnrollment] = useState<TotpEnrollmentResponse | null>(null);
   const [confirmationCode, setConfirmationCode] = useState("");
-  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [challenge, setChallenge] = useState<AuthChallengeResponse | null>(null);
   const [challengeCode, setChallengeCode] = useState("");
@@ -114,9 +113,10 @@ export function MfaMethodsScreen() {
       }, auth);
       setEnrollment(null);
       setConfirmationCode("");
-      setRecoveryCodes(response.recoveryCodes);
       setPassword("");
-      await loadCredentials();
+      await completeMfaRevocation({
+        recoveryCodes: response.recoveryCodes,
+      });
     } catch (confirmError: unknown) {
       setError(getMessage(confirmError, "Mã TOTP không hợp lệ hoặc đã hết hạn."));
     } finally {
@@ -157,20 +157,27 @@ export function MfaMethodsScreen() {
           challengeId: challenge.challengeId,
           code: challengeCode,
         }, auth);
-        Alert.alert("Đã xóa Authenticator", "Phương thức MFA đã được thu hồi.");
+        setPendingAction(null);
+        setChallenge(null);
+        setChallengeCode("");
+        setPassword("");
+        await completeMfaRevocation({
+          notice: "Phương thức Authenticator đã được thu hồi. Vui lòng đăng nhập lại.",
+        });
       } else {
         const response = await rotateRecoveryCodes({
           password,
           challengeId: challenge.challengeId,
           code: challengeCode,
         }, auth);
-        setRecoveryCodes(response.recoveryCodes);
+        setPendingAction(null);
+        setChallenge(null);
+        setChallengeCode("");
+        setPassword("");
+        await completeMfaRevocation({
+          recoveryCodes: response.recoveryCodes,
+        });
       }
-      setPendingAction(null);
-      setChallenge(null);
-      setChallengeCode("");
-      setPassword("");
-      await loadCredentials();
     } catch (actionError: unknown) {
       setError(getMessage(actionError, "Không thể hoàn tất thay đổi MFA."));
     } finally {
@@ -303,19 +310,6 @@ export function MfaMethodsScreen() {
           </View>
         ) : null}
 
-        {recoveryCodes ? (
-          <View style={styles.recoveryCard}>
-            <Text style={styles.sectionTitle}>Lưu mã khôi phục ngay</Text>
-            <Text style={styles.description}>Bạn sẽ không thể xem lại các mã này sau khi đóng.</Text>
-            <Text selectable style={styles.recoveryCodes}>{recoveryCodes.join("\n")}</Text>
-            <PrimaryButton
-              label="Đã lưu, ẩn mã"
-              onPress={() => setRecoveryCodes(null)}
-              testID="mfa-recovery-hide"
-            />
-          </View>
-        ) : null}
-
         <PrimaryButton
           disabled={isLoading}
           label="Làm mới"
@@ -333,7 +327,6 @@ const styles = StyleSheet.create({
   description: { ...typography.body, color: colors.muted },
   sectionTitle: { ...typography.subheading, color: colors.text },
   card: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, ...shadows.card },
-  recoveryCard: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.lg, backgroundColor: colors.primarySoft, ...shadows.card },
   factorRow: { gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
   factorText: { gap: spacing.xs },
   factorName: { ...typography.bodyStrong, color: colors.text },
@@ -342,5 +335,4 @@ const styles = StyleSheet.create({
   secret: { color: colors.text, fontSize: 16, fontWeight: "700", letterSpacing: 1.5 },
   uri: { color: colors.muted, fontSize: 12, lineHeight: 17 },
   qrFrame: { alignSelf: "center", padding: spacing.md, borderWidth: 2, borderColor: colors.primarySoft, borderRadius: radius.lg, backgroundColor: colors.surface },
-  recoveryCodes: { color: colors.text, fontFamily: "monospace", fontSize: 15, lineHeight: 24 },
 });

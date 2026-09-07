@@ -37,7 +37,7 @@ function isRetryableRequestError(error: unknown): boolean {
 }
 
 export function LoginScreen() {
-  const { login, logoutNotice } = useAuth();
+  const { clearPendingRecoveryCodes, login, logoutNotice, pendingRecoveryCodes } = useAuth();
   const [values, setValues] = useState<LoginFormValues>(initialValues);
   const [errors, setErrors] = useState<LoginFieldErrors>({});
   const [serverError, setServerError] = useState<string | undefined>();
@@ -116,90 +116,117 @@ export function LoginScreen() {
             </Text>
           ) : null}
 
-          <Card elevated style={styles.form}>
-            <Text style={styles.formTitle}>Thông tin đăng nhập</Text>
-            <TextField
-              accessibilityLabel="Email đăng nhập"
-              autoCapitalize="none"
-              autoComplete="email"
-              error={errors.email}
-              keyboardType="email-address"
-              label="Email"
-              onChangeText={(value) => updateField("email", value)}
-              placeholder="tenban@example.com"
-              returnKeyType="next"
-              testID="login-email"
-              value={values.email}
-            />
-            <TextField
-              accessibilityLabel="Mật khẩu đăng nhập"
-              autoCapitalize="none"
-              autoComplete="current-password"
-              error={errors.password}
-              label="Mật khẩu"
-              onChangeText={(value) => updateField("password", value)}
-              onSubmitEditing={() => void handleLogin()}
-              placeholder="Nhập mật khẩu"
-              returnKeyType="done"
-              secureTextEntry={!isPasswordVisible}
-              testID="login-password"
-              trailing={
-                <Pressable
-                  accessibilityLabel={isPasswordVisible ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
-                  accessibilityRole="button"
-                  hitSlop={8}
-                  onPress={() => setIsPasswordVisible((current) => !current)}
-                  testID="login-toggle-password"
-                >
-                  <AppIcon color={colors.muted} name={isPasswordVisible ? "eyeOff" : "eye"} size={21} />
-                </Pressable>
-              }
-              value={values.password}
-            />
-            {serverError ? (
-              <Text accessibilityLiveRegion="polite" style={styles.serverError}>
-                {serverError}
+          {pendingRecoveryCodes && pendingRecoveryCodes.length > 0 ? (
+            <Card elevated style={styles.recoveryCard}>
+              <View style={styles.recoveryHeader}>
+                <AppIcon color={colors.primary} name="shield" size={24} />
+                <Text style={styles.recoveryTitle}>Lưu mã khôi phục mới</Text>
+              </View>
+              <Text style={styles.recoveryDescription}>
+                Cấu hình MFA đã được cập nhật thành công. Toàn bộ phiên đăng nhập cũ đã được thu hồi an toàn.
+                Mã khôi phục chỉ hiển thị một lần trên bộ nhớ tạm và sẽ không thể xem lại sau khi đóng. Hãy lưu ngoại tuyến ngay bây giờ.
               </Text>
-            ) : null}
-            {requestError ? (
-              <RequestErrorNotice
-                error={requestError}
-                fallbackMessage="Không thể kết nối để đăng nhập. Vui lòng thử lại."
-                isRetrying={isSubmitting}
-                onRetry={() => void handleLogin()}
-                testID="login-request-error"
+              <View style={styles.recoveryCodesList}>
+                {pendingRecoveryCodes.map((code, index) => (
+                  <Text key={`${index}-${code.slice(0, 4)}`} selectable style={styles.recoveryCode}>
+                    {code}
+                  </Text>
+                ))}
+              </View>
+              <Button
+                label="Tôi đã lưu mã — Đăng nhập lại"
+                onPress={() => clearPendingRecoveryCodes()}
+                testID="mfa-recovery-codes-acknowledge"
               />
-            ) : null}
-            <Button
-              disabled={isSubmitting}
-              label="Đăng nhập"
-              loading={isSubmitting}
-              onPress={handleLogin}
-              testID="login-submit"
-            />
-          </Card>
+            </Card>
+          ) : (
+            <>
+              <Card elevated style={styles.form}>
+                <Text style={styles.formTitle}>Thông tin đăng nhập</Text>
+                <TextField
+                  accessibilityLabel="Email đăng nhập"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  error={errors.email}
+                  keyboardType="email-address"
+                  label="Email"
+                  onChangeText={(value) => updateField("email", value)}
+                  placeholder="tenban@example.com"
+                  returnKeyType="next"
+                  testID="login-email"
+                  value={values.email}
+                />
+                <TextField
+                  accessibilityLabel="Mật khẩu đăng nhập"
+                  autoCapitalize="none"
+                  autoComplete="current-password"
+                  error={errors.password}
+                  label="Mật khẩu"
+                  onChangeText={(value) => updateField("password", value)}
+                  onSubmitEditing={() => void handleLogin()}
+                  placeholder="Nhập mật khẩu"
+                  returnKeyType="done"
+                  secureTextEntry={!isPasswordVisible}
+                  testID="login-password"
+                  trailing={
+                    <Pressable
+                      accessibilityLabel={isPasswordVisible ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                      accessibilityRole="button"
+                      hitSlop={8}
+                      onPress={() => setIsPasswordVisible((current) => !current)}
+                      testID="login-toggle-password"
+                    >
+                      <AppIcon color={colors.muted} name={isPasswordVisible ? "eyeOff" : "eye"} size={21} />
+                    </Pressable>
+                  }
+                  value={values.password}
+                />
+                {serverError ? (
+                  <Text accessibilityLiveRegion="polite" style={styles.serverError}>
+                    {serverError}
+                  </Text>
+                ) : null}
+                {requestError ? (
+                  <RequestErrorNotice
+                    error={requestError}
+                    fallbackMessage="Không thể kết nối để đăng nhập. Vui lòng thử lại."
+                    isRetrying={isSubmitting}
+                    onRetry={() => void handleLogin()}
+                    testID="login-request-error"
+                  />
+                ) : null}
+                <Button
+                  disabled={isSubmitting}
+                  label="Đăng nhập"
+                  loading={isSubmitting}
+                  onPress={handleLogin}
+                  testID="login-submit"
+                />
+              </Card>
 
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Chưa có tài khoản?</Text>
-            <Link href="./register" asChild>
-              <Pressable accessibilityRole="link" hitSlop={8} testID="login-register">
-                <Text style={styles.link}>Đăng ký ngay</Text>
-              </Pressable>
-            </Link>
-          </View>
+              <View style={styles.footer}>
+                <Text style={styles.footerText}>Chưa có tài khoản?</Text>
+                <Link href="./register" asChild>
+                  <Pressable accessibilityRole="link" hitSlop={8} testID="login-register">
+                    <Text style={styles.link}>Đăng ký ngay</Text>
+                  </Pressable>
+                </Link>
+              </View>
 
-          <Link href="./recover" asChild>
-            <Pressable accessibilityRole="link" hitSlop={8}>
-              <Text style={styles.recoveryLink}>Mất Authenticator? Khôi phục bảo mật</Text>
-            </Pressable>
-          </Link>
+              <Link href="./recover" asChild>
+                <Pressable accessibilityRole="link" hitSlop={8}>
+                  <Text style={styles.recoveryLink}>Mất Authenticator? Khôi phục bảo mật</Text>
+                </Pressable>
+              </Link>
 
-          <View style={styles.notice}>
-            <View style={styles.noticeIcon}>
-              <AppIcon color={colors.success} name="shield" size={20} />
-            </View>
-            <Text style={styles.noticeText}>Phiên đăng nhập được mã hóa và lưu trong vùng bảo mật của thiết bị.</Text>
-          </View>
+              <View style={styles.notice}>
+                <View style={styles.noticeIcon}>
+                  <AppIcon color={colors.success} name="shield" size={20} />
+                </View>
+                <Text style={styles.noticeText}>Phiên đăng nhập được mã hóa và lưu trong vùng bảo mật của thiết bị.</Text>
+              </View>
+            </>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>
@@ -301,5 +328,38 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     color: colors.warning,
     backgroundColor: colors.warningSoft,
+  },
+  recoveryCard: {
+    gap: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.surface,
+    ...shadows.card,
+  },
+  recoveryHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  recoveryTitle: {
+    ...typography.subheading,
+    color: colors.text,
+  },
+  recoveryDescription: {
+    ...typography.body,
+    color: colors.muted,
+  },
+  recoveryCodesList: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+  },
+  recoveryCode: {
+    color: colors.text,
+    fontFamily: Platform.select({ ios: "Courier", default: "monospace" }),
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "600",
   },
 });
