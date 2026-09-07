@@ -66,6 +66,7 @@ export const APPROVED_TEST_PATHS = [
   "src/tests/kycRelational.test.ts",
   "src/tests/disposableMigrationRuntime.test.ts",
   "src/tests/authRelational.test.ts",
+  "src/tests/databaseFoundation.test.ts",
 ] as const;
 
 export type ApprovedTestPath = (typeof APPROVED_TEST_PATHS)[number];

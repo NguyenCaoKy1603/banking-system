@@ -59,16 +59,30 @@ Các kết quả trên là **local/emulator evidence được repository báo c�
   2. Kịch bản biên phục hồi `BEGIN_UNKNOWN` (`E2E-REG-04`), khôi phục OTP sau process-kill (`E2E-REG-02`) và hủy challenge (`E2E-REG-03`) được nghiệm thu qua Jest unit suite `RegisterScreen.test.tsx`, chưa chạy độc lập trên emulator runtime.
   3. Bảo mật dữ liệu: Full synthetic identity number được lưu trữ hợp lệ tại backend database trong cột JSONB `kyc_applications.synthetic_payload` (`synthetic_payload.identityNumber`) theo migration 038 và nghiệp vụ đồ án, nhưng public response chỉ trả `identityNumberLast4`; client local storage không lưu CCCD; quét `validate:public-env` đạt 216 file PASS nhưng không cam kết zero leakage tuyệt đối toàn hệ thống runtime.
 
+### Cập nhật hoàn thành Use Case UC-M02 (2026-09-07)
+
+- **Trạng thái**: Use Case **UC-M02 — Đăng nhập, quản lý phiên và đăng xuất** đã chính thức hoàn thành và đóng nghiệm thu (**COMPLETED — OWNER APPROVED**) theo biên bản kiểm toán `tasks/UC-M02/TASK_M02_07_AUDIT_AND_CLOSE_UC_M02.md`.
+- **Phạm vi kiểm chứng và kết quả kế thừa**:
+  - Chuỗi nhiệm vụ `M02-01` đến `M02-07` đã đối soát và hoàn thiện đầy đủ các khía cạnh kỹ thuật của luồng xác thực và vòng đời phiên.
+  - Phía Mobile Client: bảo toàn 51 suites / 379 unit tests PASS (bao gồm 12/12 `AuthContext.test.tsx` và 7/7 `httpClient.test.ts`), lint và typecheck đạt 0 lỗi; cấu hình và bảo vệ 5 route Credit sâu qua `<Stack.Protected guard={isAuthenticated}>` trong `_layout.tsx` (kiểm chứng trực tiếp trên emulator: 5/5 anonymous checks bị chặn tại Login, 4 positive controls hiển thị dữ liệu hợp lệ, 1 payment-result error-state navigation đạt).
+  - Phía Backend & Relational: xác minh token reuse revocation bền vững, logout current session và logout-all trên PostgreSQL 16 disposable với 40 migrations (`authRelational.test.ts`). Căn chỉnh allowlist runner tối thiểu cho `databaseFoundation.test.ts` và thực thi thành công test `login rate-limit buckets lock before password verification, expire safely and reset on success` (11/11 tests pass trong suite `databaseFoundation.test.ts`).
+- **Giới hạn đồ án đã được Owner phê duyệt (Accepted Limitations)**:
+  1. Đăng xuất: Bằng chứng kết hợp giữa HTTP in-memory mock (`http.test.ts`) và relational service PostgreSQL (`authRelational.test.ts`); chưa có test suite HTTP server tích hợp chạy qua `RelationalHttpBoundary` kết nối PostgreSQL disposable cho 2 endpoint logout.
+  2. Lưu trữ an toàn Client: Kiểm chứng qua mock của `authSessionStorage` và kiểm thử UI automation trên emulator; không tuyên bố tính bền vững hoặc chống giả mạo trên chip bảo mật phần cứng gốc (Hardware Keystore/Keychain/HSM).
+  3. Vòng đời ứng dụng: Logic cold start và AppState transition được kiểm chứng ở tầng React Native component unit test (`AuthContext.test.tsx`); chưa có E2E test tự động kill process OS và restart trên emulator.
+  4. Bảo vệ route: Kiểm chứng thực nghiệm trực tiếp trên 5 route Credit sâu đã nhận diện khoảng trống; các route còn lại được bảo vệ thông qua cấu trúc khai báo tường minh trong `_layout.tsx`.
+
 ## 5. Xung đột và rủi ro đang mở
 
-1. Auth contract/code hiện là password-only login; `mobile-app/README.md` và 5 Maestro flow cũ vẫn tham chiếu `login-mfa-code`/`login-mfa-submit`, nhưng `LoginScreen` không có các test ID này. Owner phải quyết định sửa docs/E2E hay khôi phục login MFA; không tự đoán.
-2. Năm deep Credit route có khả năng chưa nằm rõ trong `Stack.Protected`; cần kiểm chứng direct deep-link trước khi sửa.
-3. `EXPO_PUBLIC_SANDBOX_HTTP=1` vẫn là bypass HTTPS công khai và chưa được chứng minh bị release gate chặn trong production-like build.
-4. Evidence mới ghi 20 Maestro flow trong khi Git/validator hiện thấy 16; README E2E cũng còn số lượng và mô tả login cũ.
-5. `artifacts/` hiện có legacy raw local output, khoảng 45 MB; audit metadata đã phát hiện nhiều file có marker/password/OTP fixture plaintext. Không mở rộng phát tán, upload hoặc đóng gói. Chỉ quarantine/xóa/rotate sau khi owner cho phép.
-6. Không có core/payment provider thật; QR luôn `UNVERIFIED`; KYC là synthetic; telemetry Mobile mặc định no-op; dashboard/alert hiện chủ yếu là contract; performance transfer baseline từng vượt ngưỡng p95 và harness còn cần rà soát replay `409`.
+1. Auth contract/code hiện là password-only login; `mobile-app/README.md` và 5 Maestro flow cũ vẫn tham chiếu `login-mfa-code`/`login-mfa-submit`, nhưng `LoginScreen` không có các test ID này (UC-M02 đã đồng bộ và chuẩn hóa flow password-only; quản lý MFA/TOTP thuộc về UC-M03).
+2. `EXPO_PUBLIC_SANDBOX_HTTP=1` vẫn là bypass HTTPS công khai và chưa được chứng minh bị release gate chặn trong production-like build.
+3. Evidence mới ghi 20 Maestro flow trong khi Git/validator hiện thấy 16; README E2E cũng còn số lượng và mô tả login cũ.
+4. `artifacts/` hiện có legacy raw local output, khoảng 45 MB; audit metadata đã phát hiện nhiều file có marker/password/OTP fixture plaintext. Không mở rộng phát tán, upload hoặc đóng gói. Chỉ quarantine/xóa/rotate sau khi owner cho phép.
+5. Không có core/payment provider thật; QR luôn `UNVERIFIED`; KYC là synthetic; telemetry Mobile mặc định no-op; dashboard/alert hiện chủ yếu là contract; performance transfer baseline từng vượt ngưỡng p95 và harness còn cần rà soát replay `409`.
 
 ## 6. Source of truth và cách bắt đầu task
+
+Điểm tiếp tục sau closure UC-M02: đọc `USE_CASE_ROADMAP.md` tại repository root. File này lưu danh mục đề xuất 16 use case Mobile + 6 Admin và bước tiếp theo **UC-M03 — Quản lý phương thức xác thực và khôi phục MFA**. UC-M01 và UC-M02 đã hoàn tất; UC-M03 chưa có task chi tiết hoặc quyền implementation. Danh mục mới không đồng nhất với milestone cũ M0–M11/S1–S5 và không tự mở rộng phạm vi đã duyệt.
 
 Ưu tiên đối chiếu theo loại dữ liệu, không dùng một thứ làm nguồn duy nhất cho mọi vấn đề:
 

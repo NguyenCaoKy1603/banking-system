@@ -5815,3 +5815,16 @@ test("M07-A2-V3-14: Error and non-Error inputs remain outside the closed seriali
   ));
   assert.doesNotMatch(serialized, /RAW_ERROR_OBJECT|RAW_CODE_OBJECT|RAW_NON_ERROR_OBJECT/);
 });
+
+test("M02-REG-01: Runtime test path allowlist accepts databaseFoundation.test.ts", () => {
+  const approved = assertApprovedTestPath("src/tests/databaseFoundation.test.ts");
+  assert.equal(approved, "src/tests/databaseFoundation.test.ts");
+  assert.equal(assertApprovedTestPath("backend/src/tests/databaseFoundation.test.ts"), "src/tests/databaseFoundation.test.ts");
+});
+
+test("M02-REG-02: Non-allowlisted arbitrary test path continues to be rejected fail-closed", () => {
+  assert.throws(
+    () => assertApprovedTestPath("src/tests/unapprovedArbitraryPath.test.ts"),
+    /not in the approved fixed allowlist/,
+  );
+});
