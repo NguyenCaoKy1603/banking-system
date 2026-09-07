@@ -1,4 +1,5 @@
 import {
+  beginTotpEnrollment as beginTotpEnrollmentApi,
   login as loginApi,
   refreshSession as refreshSessionApi,
   revokeAllSessions,
@@ -15,6 +16,7 @@ import type {
   RegisterFormValues,
   RegisterRequest,
   RegisterResponse,
+  TotpEnrollmentResponse,
 } from "@/features/auth/types/auth";
 import { ApiError } from "@/services/api/ApiError";
 
@@ -594,5 +596,74 @@ describe("authApi", () => {
     fetchMock.mockRejectedValueOnce(normalizedError);
 
     await expect(login(loginRequest)).rejects.toBe(normalizedError);
+  });
+
+  describe("beginTotpEnrollment", () => {
+    const authOptions = {
+      accessToken: "access-token-active",
+      deviceId: "device-test",
+    };
+
+    const enrollmentResponse: TotpEnrollmentResponse = {
+      credentialId: "cred-new-1",
+      manualSetupKey: "SETUPKEY123",
+      otpauthUri: "otpauth://totp/NOVA:user?secret=SETUPKEY123",
+      status: "PENDING",
+      expiresAt: "2026-09-08T00:05:00Z",
+    };
+
+    it("gửi request tạo TOTP không có step-up challenge khi chưa có factor active", async () => {
+      fetchMock.mockResolvedValueOnce(createJsonResponse(enrollmentResponse, 201));
+
+      const result = await beginTotpEnrollmentApi(
+        { password: "Password1" },
+        authOptions,
+      );
+
+      expect(result).toEqual(enrollmentResponse);
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${API_BASE_URL}/auth/mfa/totp/enroll`,
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            Authorization: "Bearer access-token-active",
+            "X-Device-ID": "device-test",
+            "Content-Type": "application/json",
+          }),
+          body: JSON.stringify({ password: "Password1" }),
+        }),
+      );
+    });
+
+    it("gửi request tạo TOTP kèm challengeId và code khi thực hiện step-up", async () => {
+      fetchMock.mockResolvedValueOnce(createJsonResponse(enrollmentResponse, 201));
+
+      const result = await beginTotpEnrollmentApi(
+        {
+          password: "Password1",
+          challengeId: "challenge-stepup-1",
+          code: "123456",
+        },
+        authOptions,
+      );
+
+      expect(result).toEqual(enrollmentResponse);
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${API_BASE_URL}/auth/mfa/totp/enroll`,
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            Authorization: "Bearer access-token-active",
+            "X-Device-ID": "device-test",
+            "Content-Type": "application/json",
+          }),
+          body: JSON.stringify({
+            password: "Password1",
+            challengeId: "challenge-stepup-1",
+            code: "123456",
+          }),
+        }),
+      );
+    });
   });
 });

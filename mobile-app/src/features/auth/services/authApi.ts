@@ -202,8 +202,15 @@ export function listMfaMethods(
   );
 }
 
+export type BeginTotpEnrollmentRequest = {
+  password: string;
+  displayName?: string;
+  challengeId?: string;
+  code?: string;
+};
+
 export function beginTotpEnrollment(
-  request: { password: string; displayName?: string },
+  request: BeginTotpEnrollmentRequest,
   options: AuthenticatedRequestOptions,
 ): Promise<TotpEnrollmentResponse> {
   return requestJson<TotpEnrollmentResponse>(

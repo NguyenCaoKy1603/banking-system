@@ -4,6 +4,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { MfaMethodsScreen } from "@/features/auth/screens/MfaMethodsScreen";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import * as authApi from "@/features/auth/services/authApi";
+import type { TotpEnrollmentResponse } from "@/features/auth/types/auth";
 import { ApiError } from "@/services/api/ApiError";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
@@ -70,6 +71,12 @@ function getTextInput(renderer: ReactTestRenderer, testID: string) {
     throw new Error(`TextInput not found for testID: ${testID}`);
   }
   return input;
+}
+
+function hasTextInput(renderer: ReactTestRenderer, testID: string): boolean {
+  return renderer.root.findAllByProps({ testID }).some(
+    (node) => typeof node.props.onChangeText === "function",
+  );
 }
 
 function getButton(renderer: ReactTestRenderer, testID: string) {
@@ -379,5 +386,356 @@ describe("MfaMethodsScreen — Post-revocation flow", () => {
 
     expect(confirmTotpEnrollmentMock).not.toHaveBeenCalled();
     expect(mockCompleteMfaRevocation).not.toHaveBeenCalled();
+  });
+
+  test("enrollment with active factor triggers MFA_FACTOR_CHANGE step-up challenge", async () => {
+    listMfaMethodsMock.mockResolvedValue({
+      items: [
+        {
+          id: "cred-active-1",
+          customerId: "customer-1",
+          status: "ACTIVE",
+          displayName: "Authenticator 1",
+          credentialType: "TOTP",
+          algorithm: "SHA1",
+          digits: 6,
+          periodSeconds: 30,
+          createdAt: new Date().toISOString(),
+          lastUsedAt: null,
+          revokedAt: null,
+          lastAcceptedTimeStep: null,
+          enrolledAt: new Date().toISOString(),
+          compromisedAt: null,
+        },
+      ],
+    });
+    createMfaChallengeMock.mockResolvedValueOnce({
+      challengeId: "challenge-enroll-stepup-1",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      method: "TOTP",
+      methods: ["TOTP"],
+      purpose: "MFA_FACTOR_CHANGE",
+    });
+    beginTotpEnrollmentMock.mockResolvedValueOnce({
+      credentialId: "cred-new-2",
+      manualSetupKey: "SETUPKEY456",
+      otpauthUri: "otpauth://totp/NOVA:user?secret=SETUPKEY456",
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    });
+
+    const renderer = await renderScreen();
+
+    // Enter password
+    const passwordInput = getTextInput(renderer, "mfa-current-password");
+    await act(async () => {
+      passwordInput.props.onChangeText("SecretPass123!");
+    });
+
+    // Press "Tạo khóa TOTP"
+    const beginBtn = getButton(renderer, "mfa-enroll-start");
+    await act(async () => {
+      await beginBtn.props.onPress();
+    });
+
+    // Step-up challenge must be created with MFA_FACTOR_CHANGE
+    expect(createMfaChallengeMock).toHaveBeenCalledTimes(1);
+    expect(createMfaChallengeMock).toHaveBeenCalledWith(
+      { purpose: "MFA_FACTOR_CHANGE" },
+      expect.objectContaining({ accessToken: "access-token-active" }),
+    );
+    // beginTotpEnrollment must not be called yet
+    expect(beginTotpEnrollmentMock).not.toHaveBeenCalled();
+
+    // Enter challenge code from existing TOTP
+    const challengeInput = getTextInput(renderer, "mfa-lifecycle-code");
+    await act(async () => {
+      challengeInput.props.onChangeText("112233");
+    });
+
+    // Confirm button has label "Xác nhận tạo khóa mới"
+    const confirmStepUpBtn = getButton(renderer, "mfa-lifecycle-confirm");
+    await act(async () => {
+      await confirmStepUpBtn.props.onPress();
+    });
+
+    // beginTotpEnrollment must be called with password, challengeId, and code
+    expect(beginTotpEnrollmentMock).toHaveBeenCalledTimes(1);
+    expect(beginTotpEnrollmentMock).toHaveBeenCalledWith(
+      {
+        password: "SecretPass123!",
+        challengeId: "challenge-enroll-stepup-1",
+        code: "112233",
+      },
+      expect.objectContaining({ accessToken: "access-token-active" }),
+    );
+
+    // Challenge card is cleared, enrollment card is now displayed
+    expect(hasTextInput(renderer, "mfa-lifecycle-code")).toBe(false);
+    expect(hasTextInput(renderer, "mfa-enroll-code")).toBe(true);
+  });
+
+  test("canceling step-up challenge resets challenge state and restores screen", async () => {
+    listMfaMethodsMock.mockResolvedValue({
+      items: [
+        {
+          id: "cred-active-1",
+          customerId: "customer-1",
+          status: "ACTIVE",
+          displayName: "Authenticator 1",
+          credentialType: "TOTP",
+          algorithm: "SHA1",
+          digits: 6,
+          periodSeconds: 30,
+          createdAt: new Date().toISOString(),
+          lastUsedAt: null,
+          revokedAt: null,
+          lastAcceptedTimeStep: null,
+          enrolledAt: new Date().toISOString(),
+          compromisedAt: null,
+        },
+      ],
+    });
+    createMfaChallengeMock.mockResolvedValueOnce({
+      challengeId: "challenge-enroll-stepup-2",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      method: "TOTP",
+      methods: ["TOTP"],
+      purpose: "MFA_FACTOR_CHANGE",
+    });
+
+    const renderer = await renderScreen();
+
+    const passwordInput = getTextInput(renderer, "mfa-current-password");
+    await act(async () => {
+      passwordInput.props.onChangeText("SecretPass123!");
+    });
+
+    const beginBtn = getButton(renderer, "mfa-enroll-start");
+    await act(async () => {
+      await beginBtn.props.onPress();
+    });
+
+    expect(hasTextInput(renderer, "mfa-lifecycle-code")).toBe(true);
+
+    // Press cancel
+    const cancelBtn = getButton(renderer, "mfa-lifecycle-cancel");
+    await act(async () => {
+      cancelBtn.props.onPress();
+    });
+
+    // Challenge card is dismissed
+    expect(hasTextInput(renderer, "mfa-lifecycle-code")).toBe(false);
+    expect(beginTotpEnrollmentMock).not.toHaveBeenCalled();
+  });
+
+  test("step-up failure leaves form intact for retry without resetting password", async () => {
+    listMfaMethodsMock.mockResolvedValue({
+      items: [
+        {
+          id: "cred-active-1",
+          customerId: "customer-1",
+          status: "ACTIVE",
+          displayName: "Authenticator 1",
+          credentialType: "TOTP",
+          algorithm: "SHA1",
+          digits: 6,
+          periodSeconds: 30,
+          createdAt: new Date().toISOString(),
+          lastUsedAt: null,
+          revokedAt: null,
+          lastAcceptedTimeStep: null,
+          enrolledAt: new Date().toISOString(),
+          compromisedAt: null,
+        },
+      ],
+    });
+    createMfaChallengeMock.mockResolvedValueOnce({
+      challengeId: "challenge-enroll-stepup-3",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      method: "TOTP",
+      methods: ["TOTP"],
+      purpose: "MFA_FACTOR_CHANGE",
+    });
+    beginTotpEnrollmentMock.mockRejectedValueOnce(
+      new ApiError({
+        status: 409,
+        code: "STEP_UP_VERIFICATION_FAILED",
+        message: "Xác thực giao dịch không thành công.",
+      }),
+    );
+
+    const renderer = await renderScreen();
+
+    const passwordInput = getTextInput(renderer, "mfa-current-password");
+    await act(async () => {
+      passwordInput.props.onChangeText("SecretPass123!");
+    });
+
+    const beginBtn = getButton(renderer, "mfa-enroll-start");
+    await act(async () => {
+      await beginBtn.props.onPress();
+    });
+
+    const challengeInput = getTextInput(renderer, "mfa-lifecycle-code");
+    await act(async () => {
+      challengeInput.props.onChangeText("999999");
+    });
+
+    const confirmStepUpBtn = getButton(renderer, "mfa-lifecycle-confirm");
+    await act(async () => {
+      await confirmStepUpBtn.props.onPress();
+    });
+
+    expect(beginTotpEnrollmentMock).toHaveBeenCalledTimes(1);
+    // Challenge card remains visible so user can re-enter code
+    expect(hasTextInput(renderer, "mfa-lifecycle-code")).toBe(true);
+    // No completeMfaRevocation
+    expect(mockCompleteMfaRevocation).not.toHaveBeenCalled();
+  });
+
+  test("terminal challenge error (expired/consumed/replay) clears challenge card so user can start a new challenge", async () => {
+    listMfaMethodsMock.mockResolvedValue({
+      items: [
+        {
+          id: "cred-active-1",
+          customerId: "customer-1",
+          status: "ACTIVE",
+          displayName: "Authenticator 1",
+          credentialType: "TOTP",
+          algorithm: "SHA1",
+          digits: 6,
+          periodSeconds: 30,
+          createdAt: new Date().toISOString(),
+          lastUsedAt: null,
+          revokedAt: null,
+          lastAcceptedTimeStep: null,
+          enrolledAt: new Date().toISOString(),
+          compromisedAt: null,
+        },
+      ],
+    });
+    createMfaChallengeMock.mockResolvedValueOnce({
+      challengeId: "challenge-enroll-stepup-4",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      method: "TOTP",
+      methods: ["TOTP"],
+      purpose: "MFA_FACTOR_CHANGE",
+    });
+    beginTotpEnrollmentMock.mockRejectedValueOnce(
+      new ApiError({
+        status: 409,
+        code: "MFA_REPLAY_DETECTED",
+        message: "Mã xác thực đã được sử dụng.",
+      }),
+    );
+
+    const renderer = await renderScreen();
+
+    const passwordInput = getTextInput(renderer, "mfa-current-password");
+    await act(async () => {
+      passwordInput.props.onChangeText("SecretPass123!");
+    });
+
+    const beginBtn = getButton(renderer, "mfa-enroll-start");
+    await act(async () => {
+      await beginBtn.props.onPress();
+    });
+
+    const challengeInput = getTextInput(renderer, "mfa-lifecycle-code");
+    await act(async () => {
+      challengeInput.props.onChangeText("123456");
+    });
+
+    const confirmStepUpBtn = getButton(renderer, "mfa-lifecycle-confirm");
+    await act(async () => {
+      await confirmStepUpBtn.props.onPress();
+    });
+
+    expect(beginTotpEnrollmentMock).toHaveBeenCalledTimes(1);
+    // Terminal challenge is cleared; card dismissed to prevent reuse
+    expect(hasTextInput(renderer, "mfa-lifecycle-code")).toBe(false);
+    expect(mockCompleteMfaRevocation).not.toHaveBeenCalled();
+  });
+
+  test("buttons in challenge card are disabled while request is pending", async () => {
+    listMfaMethodsMock.mockResolvedValue({
+      items: [
+        {
+          id: "cred-active-1",
+          customerId: "customer-1",
+          status: "ACTIVE",
+          displayName: "Authenticator 1",
+          credentialType: "TOTP",
+          algorithm: "SHA1",
+          digits: 6,
+          periodSeconds: 30,
+          createdAt: new Date().toISOString(),
+          lastUsedAt: null,
+          revokedAt: null,
+          lastAcceptedTimeStep: null,
+          enrolledAt: new Date().toISOString(),
+          compromisedAt: null,
+        },
+      ],
+    });
+    createMfaChallengeMock.mockResolvedValueOnce({
+      challengeId: "challenge-enroll-stepup-5",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      method: "TOTP",
+      methods: ["TOTP"],
+      purpose: "MFA_FACTOR_CHANGE",
+    });
+
+    let resolveEnrollment!: (val: TotpEnrollmentResponse) => void;
+    beginTotpEnrollmentMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveEnrollment = resolve;
+      }),
+    );
+
+    const renderer = await renderScreen();
+
+    const passwordInput = getTextInput(renderer, "mfa-current-password");
+    await act(async () => {
+      passwordInput.props.onChangeText("SecretPass123!");
+    });
+
+    const beginBtn = getButton(renderer, "mfa-enroll-start");
+    await act(async () => {
+      await beginBtn.props.onPress();
+    });
+
+    const challengeInput = getTextInput(renderer, "mfa-lifecycle-code");
+    await act(async () => {
+      challengeInput.props.onChangeText("123456");
+    });
+
+    const confirmStepUpBtn = getButton(renderer, "mfa-lifecycle-confirm");
+    const cancelBtn = getButton(renderer, "mfa-lifecycle-cancel");
+
+    // Initiate submit without awaiting completion immediately
+    let submitPromise!: Promise<void>;
+    await act(async () => {
+      submitPromise = confirmStepUpBtn.props.onPress();
+    });
+
+    // While pending, buttons must be disabled to prevent concurrent actions
+    expect(confirmStepUpBtn.props.disabled).toBe(true);
+    expect(cancelBtn.props.disabled).toBe(true);
+
+    // Resolve enrollment to clean up
+    await act(async () => {
+      resolveEnrollment({
+        credentialId: "cred-new-5",
+        manualSetupKey: "SETUPKEY555",
+        otpauthUri: "otpauth://totp/NOVA:user?secret=SETUPKEY555",
+        status: "PENDING",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      });
+      await submitPromise;
+    });
+
+    expect(hasTextInput(renderer, "mfa-enroll-code")).toBe(true);
   });
 });

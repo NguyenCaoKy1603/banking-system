@@ -28,7 +28,8 @@ import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 type PendingAction =
   | { kind: "remove"; credential: MfaCredentialSummary }
-  | { kind: "rotate" };
+  | { kind: "rotate" }
+  | { kind: "enroll" };
 
 function authenticatedOptions(
   accessToken: string,
@@ -40,6 +41,11 @@ function authenticatedOptions(
 
 function getMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
+}
+
+function isTerminalChallengeError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  return error.status === 401 || error.code === "MFA_REPLAY_DETECTED";
 }
 
 export function MfaMethodsScreen() {
@@ -86,6 +92,13 @@ export function MfaMethodsScreen() {
       setError("Nhập mật khẩu hiện tại để thêm Authenticator.");
       return;
     }
+
+    const hasActiveFactor = credentials.some((credential) => credential.status === "ACTIVE");
+    if (hasActiveFactor) {
+      await handleStartLifecycleAction({ kind: "enroll" }, "MFA_FACTOR_CHANGE");
+      return;
+    }
+
     setIsLoading(true);
     setError(undefined);
     try {
@@ -143,6 +156,13 @@ export function MfaMethodsScreen() {
     }
   }
 
+  function handleCancelLifecycleAction() {
+    setPendingAction(null);
+    setChallenge(null);
+    setChallengeCode("");
+    setError(undefined);
+  }
+
   async function handleLifecycleAction() {
     if (!auth || !pendingAction || !challenge || !/^\d{6}$/.test(challengeCode)) {
       setError("Mã TOTP phải gồm đúng 6 chữ số.");
@@ -151,7 +171,18 @@ export function MfaMethodsScreen() {
     setIsLoading(true);
     setError(undefined);
     try {
-      if (pendingAction.kind === "remove") {
+      if (pendingAction.kind === "enroll") {
+        const response = await beginTotpEnrollment({
+          password,
+          challengeId: challenge.challengeId,
+          code: challengeCode,
+        }, auth);
+        setPendingAction(null);
+        setChallenge(null);
+        setChallengeCode("");
+        setEnrollment(response);
+        setConfirmationCode("");
+      } else if (pendingAction.kind === "remove") {
         await revokeMfaMethod(pendingAction.credential.id, {
           password,
           challengeId: challenge.challengeId,
@@ -180,6 +211,11 @@ export function MfaMethodsScreen() {
       }
     } catch (actionError: unknown) {
       setError(getMessage(actionError, "Không thể hoàn tất thay đổi MFA."));
+      if (isTerminalChallengeError(actionError)) {
+        setPendingAction(null);
+        setChallenge(null);
+        setChallengeCode("");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -303,9 +339,21 @@ export function MfaMethodsScreen() {
             />
             <PrimaryButton
               disabled={isLoading}
-              label={pendingAction.kind === "remove" ? "Thu hồi Authenticator" : "Tạo lại mã khôi phục"}
+              label={
+                pendingAction.kind === "enroll"
+                  ? "Xác nhận tạo khóa mới"
+                  : pendingAction.kind === "remove"
+                    ? "Thu hồi Authenticator"
+                    : "Tạo lại mã khôi phục"
+              }
               onPress={() => void handleLifecycleAction()}
               testID="mfa-lifecycle-confirm"
+            />
+            <PrimaryButton
+              disabled={isLoading}
+              label="Hủy"
+              onPress={handleCancelLifecycleAction}
+              testID="mfa-lifecycle-cancel"
             />
           </View>
         ) : null}
