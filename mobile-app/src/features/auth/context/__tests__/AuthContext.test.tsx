@@ -4,7 +4,7 @@ import {
   create,
   type ReactTestRenderer,
 } from "react-test-renderer";
-import { AppState } from "react-native";
+import { AppState, type AppStateStatus } from "react-native";
 
 import { AuthProvider, useAuth } from "@/features/auth/context/AuthContext";
 import {
@@ -370,5 +370,176 @@ describe("AuthProvider logout coordination", () => {
     expect(saveAuthSessionMock).not.toHaveBeenCalled();
     expect(result.remoteRevoked).toBe(true);
     expect(getAuth().status).toBe("anonymous");
+  });
+});
+
+describe("AuthProvider session restore and lifecycle", () => {
+  it("khởi động với session lưu sẵn: giữ trạng thái refreshing/chưa authenticated và chỉ mở khóa sau khi refresh thành công", async () => {
+    const refreshDeferred = createDeferred<LoginResponse>();
+    refreshSessionRequestMock.mockReturnValue(refreshDeferred.promise);
+
+    await renderProvider();
+
+    expect(loadAuthSessionMock).toHaveBeenCalledTimes(1);
+    expect(refreshSessionRequestMock).toHaveBeenCalledTimes(1);
+    expect(refreshSessionRequestMock).toHaveBeenCalledWith(
+      storedSession.refreshToken,
+      { deviceId: "device-id" },
+    );
+    expect(getAuth().status).toBe("refreshing");
+    expect(getAuth().isAuthenticated).toBe(false);
+    expect(getAuth().session).toEqual(storedSession);
+    expect(saveAuthSessionMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      refreshDeferred.resolve(refreshedResponse);
+    });
+
+    expect(saveAuthSessionMock).toHaveBeenCalledTimes(1);
+    expect(saveAuthSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessToken: refreshedResponse.accessToken,
+        refreshToken: refreshedResponse.refreshToken,
+      }),
+    );
+    expect(getAuth().status).toBe("authenticated");
+    expect(getAuth().isAuthenticated).toBe(true);
+    expect(getAuth().session?.accessToken).toBe(refreshedResponse.accessToken);
+  });
+
+  const transientErrors = [
+    {
+      label: "lỗi mạng (status null)",
+      error: new ApiError({
+        status: null,
+        code: "NETWORK_ERROR",
+        message: "Không thể kết nối máy chủ.",
+      }),
+    },
+    {
+      label: "hết thời gian kết nối timeout (status null)",
+      error: new ApiError({
+        status: null,
+        code: "TIMEOUT",
+        message: "Hết thời gian kết nối.",
+      }),
+    },
+    {
+      label: "giới hạn tần suất 429",
+      error: new ApiError({
+        status: 429,
+        code: "RATE_LIMITED",
+        message: "Quá nhiều yêu cầu.",
+      }),
+    },
+    {
+      label: "lỗi máy chủ 500",
+      error: new ApiError({
+        status: 500,
+        code: "INTERNAL_ERROR",
+        message: "Lỗi máy chủ nội bộ.",
+      }),
+    },
+  ];
+
+  it.each(transientErrors)(
+    "giữ nguyên phiên ở trạng thái locked khi restore gặp $label và mở khóa khi retry thành công",
+    async ({ error }) => {
+      refreshSessionRequestMock.mockRejectedValueOnce(error);
+
+      await renderProvider();
+
+      expect(clearAuthSessionMock).not.toHaveBeenCalled();
+      expect(saveAuthSessionMock).not.toHaveBeenCalled();
+      expect(getAuth().status).toBe("locked");
+      expect(getAuth().isAuthenticated).toBe(false);
+      expect(getAuth().session).toEqual(storedSession);
+
+      refreshSessionRequestMock.mockResolvedValueOnce(refreshedResponse);
+
+      let retryToken: string | null = null;
+      await act(async () => {
+        retryToken = await getAuth().refreshAccessToken();
+      });
+
+      expect(retryToken).toBe(refreshedResponse.accessToken);
+      expect(saveAuthSessionMock).toHaveBeenCalledTimes(1);
+      expect(saveAuthSessionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accessToken: refreshedResponse.accessToken,
+          refreshToken: refreshedResponse.refreshToken,
+        }),
+      );
+      expect(getAuth().status).toBe("authenticated");
+      expect(getAuth().isAuthenticated).toBe(true);
+      expect(clearAuthSessionMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("khóa session khi chuyển sang background/inactive và tự động refresh khi quay lại active", async () => {
+    const addEventListenerSpy = jest.spyOn(AppState, "addEventListener");
+    refreshSessionRequestMock.mockResolvedValue(refreshedResponse);
+
+    await renderProvider();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(getAuth().status).toBe("authenticated");
+    expect(getAuth().isAuthenticated).toBe(true);
+
+    const changeListener = addEventListenerSpy.mock.calls.find(
+      ([type]) => type === "change",
+    )?.[1] as ((state: AppStateStatus) => void) | undefined;
+
+    expect(changeListener).toBeDefined();
+
+    // 1. Chuyển sang background: session bị khóa, không còn authenticated
+    act(() => {
+      changeListener!("background");
+    });
+
+    expect(getAuth().status).toBe("locked");
+    expect(getAuth().isAuthenticated).toBe(false);
+    expect(getAuth().session).toEqual(
+      expect.objectContaining({
+        accessToken: refreshedResponse.accessToken,
+      }),
+    );
+
+    // 2. Chuẩn bị deferred refresh promise cho lần active
+    const foregroundRefreshDeferred = createDeferred<LoginResponse>();
+    refreshSessionRequestMock.mockReturnValueOnce(foregroundRefreshDeferred.promise);
+
+    // 3. Chuyển về active: kích hoạt refresh, trong lúc pending chưa authenticated
+    act(() => {
+      changeListener!("active");
+    });
+
+    expect(getAuth().status).toBe("refreshing");
+    expect(getAuth().isAuthenticated).toBe(false);
+
+    // 4. Hoàn tất refresh: session được lưu và chuyển sang authenticated
+    const foregroundResponse: LoginResponse = {
+      ...refreshedResponse,
+      accessToken: "access-token-foreground",
+      refreshToken: "refresh-token-foreground",
+    };
+
+    saveAuthSessionMock.mockClear();
+    await act(async () => {
+      foregroundRefreshDeferred.resolve(foregroundResponse);
+    });
+
+    expect(saveAuthSessionMock).toHaveBeenCalledTimes(1);
+    expect(saveAuthSessionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessToken: foregroundResponse.accessToken,
+        refreshToken: foregroundResponse.refreshToken,
+      }),
+    );
+    expect(getAuth().status).toBe("authenticated");
+    expect(getAuth().isAuthenticated).toBe(true);
+    expect(getAuth().session?.accessToken).toBe(foregroundResponse.accessToken);
   });
 });
