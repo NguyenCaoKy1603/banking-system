@@ -10,6 +10,7 @@ import { LocalDevelopmentKeyEncryptionAdapter, OtpDigestKeyring } from "../mfa/c
 import { FakeEmailProvider } from "../mfa/delivery.js";
 import { PersistentMfaService } from "../mfa/persistentMfaService.js";
 import { hashOpaqueToken } from "../security.js";
+import { DomainError } from "../errors.js";
 
 const databaseUrl = process.env.RELATIONAL_DATABASE_URL?.trim();
 if (databaseUrl) assertDisposableDatabaseResetAllowed(databaseUrl, process.env, { targetEnvName: "RELATIONAL_DATABASE_URL" });
@@ -104,7 +105,13 @@ test("relational registration persists only OTP digest, uses outbox intent and c
   );
   await assert.rejects(
     registration.begin({ fullName: "Duplicate", email, phoneNumber: `09${randomUUID().replaceAll("-", "").slice(0, 8)}`, password: "Password1!" }, "another-device", mfa, "a".repeat(64)),
-    /already exists/i,
+    (err: unknown) => {
+      assert.ok(err instanceof DomainError, "Must reject with DomainError");
+      assert.equal(err.status, 409, "Must return HTTP status 409");
+      assert.equal(err.code, "CONFLICT", "Must return CONFLICT error code");
+      assert.equal(err.message, "Registration conflict.", "Must return generic privacy-preserving conflict message");
+      return true;
+    },
   );
 
   // Registration completion leaves the new customer ready for the persistent

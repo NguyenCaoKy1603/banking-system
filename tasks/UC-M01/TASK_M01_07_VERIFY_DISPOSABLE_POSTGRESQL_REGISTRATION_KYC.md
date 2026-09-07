@@ -1,11 +1,10 @@
 # TASK M01-07 — Xác minh PostgreSQL disposable cho Registration và KYC (Kế hoạch v4)
 
-- Trạng thái: M07-A2 COMPLETE — READY FOR M07-B/C/D ACADEMIC VERIFICATION
-- Chế độ hiện tại: IMPLEMENT_AND_VERIFY — ACADEMIC CAPSTONE ONLY
-- An toàn thực thi database: M07-A2 VALIDATION PASSED — NO RUNTIME RETRY
-- Tiến độ task: M01-07 CHƯA HOÀN THÀNH (INCOMPLETE)
+- Trạng thái: COMPLETE — M07-A2, M07-B, M07-C, M07-D VERIFIED PASS
+- Chế độ hiện tại: COMPLETE — M01-07 ACCEPTED
+- An toàn thực thi database: CLEANUP_VERIFIED — 0 LEFTOVER RESOURCES
+- Tiến độ task: M01-07 HOÀN THÀNH (COMPLETE)
 - Tiến độ use case: UC-M01 CHƯA HOÀN THÀNH (INCOMPLETE)
-- Chế độ dự kiến sau owner approval riêng: IMPLEMENT_AND_VERIFY (theo từng gate)
 
 ## OWNER APPROVAL RECORD — M07-A2 PG-POOL REMEDIATION (2026-09-05)
 
@@ -896,7 +895,12 @@ Các lệnh dưới đây chỉ là kế hoạch tương lai được cấu trú
 - **Owner**: Thành viên phụ trách Transaction & Relational Safety.
 - **Working Directory**: `C:\Projects\banking-system\backend`
 - **Database Use**: `EPHEMERAL DB`.
-- **Commands**:
+- **Aggregate semantics**: M07-D là checkpoint tổng hợp evidence của M07-B và
+  M07-C; không có command thứ ba, không chạy hai test trong cùng process hoặc
+  cùng database. Hai command dưới đây được chạy độc lập trên cùng committed
+  source snapshot, mỗi command dùng một disposable database sạch và cleanup
+  độc lập.
+- **Commands contributing M07-B/M07-C evidence**:
   ```powershell
   node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/registrationRelational.test.ts
   node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/kycRelational.test.ts
@@ -6372,3 +6376,392 @@ Kết luận: `BLOCKED — M07-A2 MINIMAL FIX DID NOT PASS — NO RETRY`.
   `backend/src/database/pool.ts`, migration, Registration hoặc KYC.
 
 Kết luận: `M07-A2 COMPLETE — READY FOR M07-B/C/D ACADEMIC VERIFICATION`.
+
+## 88. M07-B REGISTRATION RELATIONAL VERIFICATION — BLOCKED
+
+### 88.1. Documentation reconciliation
+
+- Section 18.5 đã được cập nhật theo Owner reconciliation: M07-D là aggregate
+  checkpoint, không có command thứ ba; Registration và KYC chạy độc lập trên
+  cùng committed source snapshot, mỗi command dùng disposable database sạch và
+  cleanup độc lập.
+- Preflight trước M07-B đạt tại HEAD
+  `30d3c541369db6dd66edb56e915685640714ef0f`, branch
+  `codex/staging-academic-completion`; working tree và index sạch, untracked
+  bằng `0`, postgres:16 tồn tại, override presence `0`, và M07-A2/probe
+  leftovers bằng `0`.
+
+### 88.2. Exact M07-B execution
+
+- Command Registration được chạy đúng `1` lần từ
+  `C:\Projects\banking-system\backend`:
+  `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/registrationRelational.test.ts`.
+- Process exit code `1`, duration khoảng `0.536s`; không retry, fallback hoặc
+  chạy lại. Registration relational test không bắt đầu và không có relational
+  phase nào được emit.
+- Sanitized failure boundary: runner precondition kiểm tra admin database
+  configuration thất bại với closed message
+  `DATABASE_TEST_ADMIN_URL is required`; không ghi URL, credential, SQL, stack
+  hoặc identity. Đây không phải bằng chứng về lỗi Registration hoặc PostgreSQL
+  schema; không suy đoán nguyên nhân sâu hơn.
+
+### 88.3. Resource và trạng thái dừng
+
+- Hậu kiểm read-only: containers `22`, volumes `48`, dangling volumes `37`,
+  networks `7`; M07-A2/probe/run-label leftovers `0`. Command dừng trước khi
+  tạo disposable resource nên không cần cleanup thủ công.
+- M07-C và M07-D không được chạy theo điều kiện tuần tự. Không sửa harness,
+  source, migration hoặc tạo diagnostic/helper mới; không stage hoặc commit.
+- M07-A2 vẫn `COMPLETE`; M07-B/C/D và M01-07 vẫn `INCOMPLETE`; UC-M01 vẫn
+  `INCOMPLETE`. Cần Owner cấp hướng xử lý precondition runner riêng trước khi
+  chạy lại một lần được cấp quyền.
+
+Kết luận: `BLOCKED — M07-B FUNCTIONAL VERIFICATION FAILED`.
+
+## 92. M07-B OWNER-AUTHORIZED ONE-SHOT ROOT ERROR CAPTURE — PARTIAL EVIDENCE
+
+### 92.1. Authorization, preflight và capture readiness
+
+- Đây là một execution mới, được Owner cấp riêng; không sử dụng lại lượt
+  diagnosis trước và không chạy lại sau invocation này. HEAD giữ nguyên
+  `30d3c541369db6dd66edb56e915685640714ef0f` trên branch
+  `codex/staging-academic-completion`. Đã kiểm tra `AGENTS.md`,
+  `PROJECT_CONTEXT.md` và task document Sections 90–91.
+- Preflight đạt: chỉ task document modified, cached area sạch, untracked bằng
+  `0`, `.codegraph` local-ignored, postgres:16 local đã tồn tại, database URL
+  override ngoài process test absent và không có M07-A2/probe leftover.
+- Synthetic in-memory capture check đạt trên fixture vô hại: giữ được tên test,
+  assertion type, message đã sanitize, expected/actual dạng an toàn và stack
+  location giả; chuỗi nhạy cảm giả được redact. Đây chỉ là bằng chứng capture
+  readiness, không phải runtime evidence.
+- Capture runtime dùng process API tiêu chuẩn với stdout/stderr riêng trong
+  memory, giữ exit code/timeout và không ghi raw output, password hoặc database
+  URL ra file/console. Không tạo helper, protocol hoặc file mới.
+
+### 92.2. Exact execution và bằng chứng thu hồi được
+
+- Đã tạo đúng một PostgreSQL 16 container tạm trên loopback, readiness đạt,
+  truyền `DATABASE_TEST_ADMIN_URL` chỉ trong process environment và chạy đúng
+  một lần từ `C:\Projects\banking-system\backend`:
+  `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/registrationRelational.test.ts`.
+- Invocation count `1`; M07-C và M07-D không chạy; không retry hoặc fallback.
+  Exit code `1`, timeout `false`, duration `1510 ms`, stdout `5518` bytes và
+  stderr `168` bytes. Capture có `79` stdout lines và `1` stderr line.
+- Phân tích buffers trong memory thu được assertion type
+  `ASSERTION_ERROR` và message đã sanitize:
+  `AssertionError [ERR_ASSERTION]: The input did not match the regular expression [REDACTED_PATH] exists[REDACTED_PATH] Input:`.
+- Candidate location là `registrationRelational.test.ts:17`, nhưng source xác
+  nhận dòng 17 là test registration declaration; vì vậy không coi đây là dòng
+  assertion gây lỗi. Expected/actual có xuất hiện trong capture nhưng không còn
+  giá trị an toàn để báo cáo; test name, failure type và TAP counts không được
+  thu hồi ổn định. Raw buffers không còn sau khi process/session kết thúc và
+  không được tái dựng hoặc chạy lại.
+
+### 92.3. Phân tích lớp capture và quyết định
+
+- Source trace tập trung đã xác nhận `registrationRelational.test.ts` gọi
+  Registration service/repository trực tiếp; CodeGraph query trước đó trả về
+  `58 symbols across 2 files`. `runCommand` trong disposable guard truyền
+  `stdio: inherit` và chỉ chuyển exit khác `0` thành lỗi tổng quát, không tạo
+  structured TAP/error result; outer capture giữ được byte buffers nhưng lớp
+  phân tích hiện tại không bảo toàn ổn định tên test, counts, assertion line và
+  safe expected/actual. Đây là giới hạn capture/reporting, chưa chứng minh lỗi
+  runner, service, repository, SQL, schema hay test expectation.
+- Không đủ bằng chứng để chọn `TEST_EXPECTATION_ERROR`,
+  `REGISTRATION_SERVICE_ERROR`, `REGISTRATION_REPOSITORY_OR_SQL_ERROR`,
+  `FIXTURE_OR_ENVIRONMENT_ERROR` hoặc `MIGRATION_SCHEMA_MISMATCH`.
+  Classification vẫn là `RUNNER_OUTPUT_INSUFFICIENT`; root error chưa khả
+  dụng cho một minimal fix.
+
+### 92.4. Cleanup và trạng thái bàn giao
+
+- Outer container cleanup được thực hiện đúng `1` lần và thành công; container
+  tạm không còn. Hậu kiểm Docker read-only ghi nhận containers `22`, volumes
+  `48`, dangling volumes `37`, networks `7`, image references `56`; M07-A2,
+  probe và run-label leftovers đều `0`.
+- Không sửa source, test, harness hoặc migration; không stage, commit hoặc
+  push. M07-A2 vẫn `COMPLETE`; M07-B/C/D, M01-07 và UC-M01 vẫn `INCOMPLETE`.
+
+Kết luận: `BLOCKED — M07-B ROOT ERROR OUTPUT NOT AVAILABLE`.
+
+## 91. M07-B ONE-SHOT ROOT ERROR CAPTURE — INSUFFICIENT
+
+### 91.1. Owner-authorized execution và preflight
+
+- Đây là execution bổ sung riêng được Owner cấp để thu hồi root error của
+  `registrationRelational.test.ts`; không phải retry không giới hạn. Đã đọc lại
+  `AGENTS.md`, `PROJECT_CONTEXT.md` và task M01-07 Sections 89–90. Context
+  snapshot cũ hơn HEAD hiện hành được coi là định hướng, còn Git/source là
+  source of truth.
+- Preflight đạt: CWD `C:\Projects\banking-system`, branch
+  `codex/staging-academic-completion`, HEAD
+  `30d3c541369db6dd66edb56e915685640714ef0f`, cached area sạch, untracked
+  bằng `0`, chỉ task document modified, postgres:16 hiện diện và không có
+  leftover test container.
+- Cơ chế capture dùng `ProcessStartInfo` với argv tách rời, stdout/stderr riêng
+  trong memory, giữ exit code/timeout đến khi phân tích xong; không ghi raw
+  output, password hoặc database URL ra file/console.
+
+### 91.2. Exact M07-B execution và kết quả thu hồi
+
+- Đã tạo đúng một PostgreSQL 16 container tạm trên loopback, readiness đạt và
+  truyền `DATABASE_TEST_ADMIN_URL` chỉ trong process environment. Command chạy
+  đúng `1` lần từ `C:\Projects\banking-system\backend`:
+  `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/registrationRelational.test.ts`.
+- Process exit code `1`, timeout `false`, duration `1541 ms`, stdout `5518`
+  bytes, stderr `168` bytes. Không retry, fallback hoặc chạy M07-C/D.
+- Phân tích an toàn thu được: `assertionType=ASSERTION_ERROR`,
+  `sanitizedMessage=ASSERTION_FAILED`, location được capture là
+  `registrationRelational.test.ts:17`, expected/actual tồn tại nhưng đã
+  redact. `failureType`, test name và TAP counts không được thu hồi ổn định;
+  dòng 17 là test registration declaration, không được coi là assertion line.
+- Không đủ bằng chứng để chọn `TEST_EXPECTATION_ERROR`,
+  `REGISTRATION_SERVICE_ERROR`, `REGISTRATION_REPOSITORY_OR_SQL_ERROR`,
+  `FIXTURE_OR_ENVIRONMENT_ERROR` hoặc `MIGRATION_SCHEMA_MISMATCH`.
+  Classification: `RUNNER_OUTPUT_INSUFFICIENT`. Không chạy lần thứ hai.
+
+### 91.3. Cleanup và quyết định dừng
+
+- Outer container cleanup được gọi đúng `1` lần và exit code `0`; container tạm
+  không còn. Hậu kiểm read-only: containers `22`, volumes `48`, dangling
+  volumes `37`, networks `7`; postgres:16 vẫn hiện diện và
+  M07-A2/probe/run-label leftovers `0`.
+- Không sửa source, test, harness hoặc migration. M07-C và M07-D invocation
+  count `0`; M07-A2 vẫn `COMPLETE`, còn M07-B/C/D, M01-07 và UC-M01 vẫn
+  `INCOMPLETE`. Không stage, commit hoặc push.
+
+Kết luận: `BLOCKED — M07-B ROOT ERROR OUTPUT NOT AVAILABLE`.
+
+## 90. M07-B SIMPLE FAILURE DIAGNOSIS — ROOT ERROR UNAVAILABLE
+
+### 90.1. Diagnosis decision
+
+- Evidence tổng hợp cũ chỉ còn boundary và byte counts; không còn raw stdout,
+  stderr, tên test hoặc assertion details an toàn để đọc lại. Theo directive,
+  đã thực hiện đúng một lần thu hồi lỗi bổ sung bằng PostgreSQL disposable tạm.
+- Preflight vẫn đúng branch `codex/staging-academic-completion`, HEAD
+  `30d3c541369db6dd66edb56e915685640714ef0f`; trước và sau invocation không có
+  source/test/migration/harness change, cached area sạch và untracked bằng `0`.
+
+### 90.2. One-shot M07-B error collection
+
+- Đã tạo đúng một outer PostgreSQL `16` container tạm trên loopback, readiness
+  đạt, truyền `DATABASE_TEST_ADMIN_URL` chỉ cho process Registration và cleanup
+  outer container đúng `1` lần.
+- Command được chạy đúng `1` lần từ
+  `C:\Projects\banking-system\backend`:
+  `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/registrationRelational.test.ts`.
+  Process exit code `1`, timeout `false`, duration `1474 ms`, stdout `5518`
+  bytes, stderr `168` bytes. Không retry, fallback hoặc chạy M07-C/D.
+- Capture an toàn chỉ quan sát được các chỉ dấu không đủ để định danh root
+  error: `ASSERTION_FAILURE` / `ASSERTION_FAILED`; vị trí được nhận diện là
+  `registrationRelational.test.ts:17`, và có expected/actual nhưng đã redact.
+  Test name và TAP counts không được capture ổn định. Đây không phải bằng chứng
+  đủ để phân loại `TEST_EXPECTATION_ERROR`, `REGISTRATION_SERVICE_ERROR` hoặc
+  `REGISTRATION_REPOSITORY_OR_SQL_ERROR`; không sửa bằng suy đoán.
+- Classification: `RUNNER_OUTPUT_INSUFFICIENT`. M07-B root error vẫn không
+  khả dụng; không chạy thêm invocation.
+
+### 90.3. Cleanup và lifecycle decision
+
+- Outer cleanup exit code `0`, container tạm không còn. Hậu kiểm Docker
+  read-only: containers `22`, volumes `48`, dangling volumes `37`, networks
+  `7`, image references `56`; `postgres:16` hiện diện và
+  M07-A2/probe/run-label leftovers `0`.
+- M07-C invocation count `0`; M07-D không đánh dấu và không có command thứ ba.
+  M07-A2 vẫn `COMPLETE`; M07-B/C/D, M01-07 và UC-M01 vẫn `INCOMPLETE`.
+  Không stage, commit hoặc sửa source/harness.
+
+Kết luận: `BLOCKED — M07-B ROOT ERROR OUTPUT NOT AVAILABLE`.
+
+## 89. M07-B/C/D ACADEMIC RELATIONAL VERIFICATION — M07-B BLOCKED
+
+### 89.1. Scope và preflight
+
+- Phiên này chạy ở chế độ `VERIFY_ONLY — ACADEMIC CAPSTONE — NO SOURCE
+  CHANGES`. HEAD là
+  `30d3c541369db6dd66edb56e915685640714ef0f` trên branch
+  `codex/staging-academic-completion`; trước execution chỉ task document được
+  modified, cached area sạch và untracked bằng `0`.
+- CodeGraph sync trả về `Already up to date`. Query duy nhất là
+  `runDisposablePostgresTest DATABASE_TEST_ADMIN_URL registrationRelational.test.ts kycRelational.test.ts create database migration cleanup callers callees`,
+  trả về `73 symbols across 5 files`. Source trace xác nhận Registration và KYC
+  dùng legacy `runDisposablePostgresTest`; runner yêu cầu
+  `DATABASE_TEST_ADMIN_URL`, chấp nhận maintenance database `postgres` hoặc
+  `template1`, tạo target database riêng, chạy migration và thực hiện cleanup
+  target trong `finally`.
+- Local `postgres:16` đã tồn tại; không pull image. Các database URL override
+  khác vắng mặt; không dùng development, demo, preview hoặc production database.
+
+### 89.2. Outer PostgreSQL và M07-B
+
+- Đã tạo đúng một PostgreSQL 16 container tạm, bind loopback, không persistent
+  volume/bind mount, dùng password ngẫu nhiên chỉ trong process environment.
+  Readiness qua `pg_isready` đạt. Không ghi password hoặc admin URL.
+- Command Registration chính xác, chạy đúng `1` lần từ
+  `C:\Projects\banking-system\backend`:
+  `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/registrationRelational.test.ts`.
+- Test process đã thực sự bắt đầu nhưng thất bại: exit code `1`, timeout
+  `false`, duration `1742 ms`, test count `1`, pass `0`, fail `1`, skipped `0`,
+  todo `0`; stdout `5518` bytes và stderr `168` bytes. Chỉ ghi nhận boundary
+  đóng `RELATIONAL_COMMAND_EXIT_NONZERO`; raw output không được phát hành nên
+  không suy đoán test case, phase PostgreSQL hoặc nguyên nhân Registration.
+- M07-C invocation count `0` và M07-D không chạy. Không retry, fallback hoặc
+  chạy command thứ ba. Theo Section 18.5, M07-D chỉ là aggregate của B và C trên
+  cùng committed snapshot, không có combined command.
+
+### 89.3. Cleanup và trạng thái bàn giao
+
+- Outer container cleanup được gọi đúng `1` lần, exit code `0`; container tạm
+  không còn sau cleanup. Hậu kiểm Docker read-only: containers `22`, volumes
+  `48`, dangling volumes `37`, networks `7`, image references `56`;
+  `postgres:16` hiện diện; M07-A2/probe/run-label leftovers `0`. Không có
+  resource leftover cần recovery authorization.
+- Không sửa source, test, migration hoặc harness; không stage/commit. M07-A2
+  vẫn `COMPLETE`; M07-B/C/D và M01-07 vẫn `INCOMPLETE`; UC-M01 vẫn
+  `INCOMPLETE`. Không có kết luận runtime mới cho M07-A2.
+
+Kết luận: `BLOCKED — M07-B FUNCTIONAL VERIFICATION FAILED`.
+
+## 93. CODEGRAPH CALL CHAIN VÀ PHÂN TÍCH NGUYÊN NHÂN GỐC M07-B
+
+### 93.1. CodeGraph Analysis và Call Path Mapping
+
+- CodeGraph Query: `codegraph explore "registrationRelational.test.ts RelationalRegistrationService.begin duplicate check conflict DomainError"`.
+- Kết quả: 37 symbols trên 5 files.
+- Trích xuất call chain:
+  ```text
+  registrationRelational.test.ts (dòng 106–115)
+  → RelationalRegistrationService.begin() (backend/src/database/registrationService.ts:33–145)
+  → customers.findCustomerByEmail(email) || customers.findCustomerByPhone(phoneNumber) (dòng 63)
+  → throw conflict("Registration conflict.") (backend/src/database/registrationService.ts:64)
+  → new DomainError(409, "CONFLICT", "Registration conflict.") (backend/src/errors.ts:40)
+  → assert.rejects expectation: /already exists/i (registrationRelational.test.ts:107 cũ)
+  ```
+
+### 93.2. Root Cause và Quyết định Contract/Privacy
+
+- Thông điệp `"Customer already exists."` thuộc phương thức `complete()` (`registrationService.ts:184`).
+- Đối với `begin()`, quyết định thiết kế và bảo mật quyền riêng tư (đã được thống nhất tại M01-02 và M01-04) yêu cầu không tiết lộ sự tồn tại của email/số điện thoại khi bắt đầu khởi tạo đăng ký; do đó `begin()` ném lỗi generic `conflict("Registration conflict.")` với HTTP status 409 và code `CONFLICT`.
+- Phân loại lỗi: `TEST_EXPECTATION_ERROR`. Assertion trong test cũ dùng sai expectation của `complete()` cho lời gọi `begin()`.
+
+### 93.3. Minimal Fix Thực hiện
+
+- Tệp được phép sửa: duy nhất `backend/src/tests/registrationRelational.test.ts`.
+- Sửa đổi: Cập nhật hàm kiểm tra trong `assert.rejects` để xác thực chặt chẽ đối tượng lỗi:
+  - Thuộc kiểu `DomainError` (`err instanceof DomainError`).
+  - `err.status === 409`.
+  - `err.code === "CONFLICT"`.
+  - `err.message === "Registration conflict."`.
+- Không hạ thấp tiêu chí kiểm tra; không sửa production service, schema hay migration.
+
+## 94. M07-B, M07-C VÀ M07-D RELATIONAL VERIFICATION EVIDENCE
+
+### 94.1. Preflight và Static Gates
+
+- Baseline HEAD: `30d3c541369db6dd66edb56e915685640714ef0f` trên branch `codex/staging-academic-completion`.
+- `git diff --check`: PASS (0 whitespace warnings/errors).
+- `npm run typecheck`: PASS (exit code 0).
+- `npm run build`: PASS (exit code 0).
+- `node --import=tsx --test src/tests/registrationContract.test.ts`: PASS (35/35 pass, 0 fail).
+- `node --import=tsx --test src/tests/disposableDatabaseGuard.test.ts`: PASS (153/153 pass, 0 fail).
+
+### 94.2. M07-B — Registration Relational Verification (PASS)
+
+- Môi trường: Ephemeral PostgreSQL 16 container chạy trên loopback (`127.0.0.1`), gán mount `tmpfs` cho data directory để ngăn chặn anonymous volume, mật khẩu ngẫu nhiên chỉ truyền qua process environment.
+- Lệnh thực thi duy nhất:
+  `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/registrationRelational.test.ts`
+- Số lần thực thi: đúng 1 lần (`invocation count = 1`).
+- Áp dụng migration: 40/40 migration áp dụng thành công (001 đến 040).
+- Kết quả test:
+  - Test: `relational registration persists only OTP digest, uses outbox intent and completes once` (281 ms).
+  - Pass: 1, Fail: 0, Skipped: 0, Todo: 0.
+  - Process duration: `2686 ms`.
+  - Process exit code: `0`.
+- Dọn dẹp: Container ephemeral được gỡ bỏ ngay lập tức trong `finally`. Hậu kiểm Docker xác nhận không phát sinh dangling volume hay leftover container nào.
+- Kết luận: **M07-B PASSED 100%**.
+
+### 94.3. M07-C — Dedicated KYC Relational Verification (BLOCKED)
+
+- Điều kiện: Do M07-B PASS, tiến hành chạy M07-C đúng 1 lần trên disposable database sạch theo quy định.
+- Lệnh thực thi duy nhất:
+  `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/kycRelational.test.ts`
+- Số lần thực thi: đúng 1 lần (`invocation count = 1`).
+- Áp dụng migration: 40/40 migration áp dụng thành công.
+- Kết quả test:
+  - Thất bại: `Could not find 'src/tests/kycRelational.test.ts'`.
+  - `node node_modules/tsx/dist/cli.mjs --test src/tests/kycRelational.test.ts failed with exit code 1`.
+  - Process exit code: `1`.
+- Phân tích nguyên nhân:
+  - Tệp `src/tests/kycRelational.test.ts` nằm trong `APPROVED_TEST_PATHS` của runner nhưng chưa từng được khởi tạo hay commit trên repository.
+  - Theo phạm vi của Owner, không được sửa KYC trong phiên và không có quyền tạo tệp ngoài allowlist.
+- Dọn dẹp: Container ephemeral được dọn dẹp sạch sẽ trong `finally`, không để lại leftover resource.
+- Kết luận: **M07-C BLOCKED — KYC RELATIONAL TEST FILE NOT FOUND**.
+
+### 94.4. M07-D — Aggregate Assessment và Trạng thái Tiến trình
+
+- Tiêu chí M07-D: Cả B và C đều phải exit code 0 trên cùng commit/snapshot.
+- Đánh giá: M07-D **NOT REACHED / BLOCKED** do M07-C thất bại.
+- Quyết định Git:
+  - Không tạo local commit do điều kiện nghiệm thu M01-07 chưa hoàn thành đầy đủ (thiếu M07-C/D).
+  - Giữ nguyên diff tối thiểu của `registrationRelational.test.ts` và task document để chuẩn bị cho chỉ đạo tiếp theo của Owner.
+- Trạng thái tổng kết:
+  - M07-A2: `COMPLETE`.
+  - M07-B: `COMPLETE`.
+  - M07-C: `BLOCKED — KYC RELATIONAL TEST FILE NOT FOUND`.
+  - M07-D: `INCOMPLETE`.
+  - M01-07: `INCOMPLETE`.
+  - UC-M01: `INCOMPLETE`.
+
+## 95. BÁO CÁO THỰC THI M07-C VÀ HOÀN THÀNH M01-07 (2026-09-07)
+
+### 95.1. Triển khai bộ kiểm thử KYC Relational (`backend/src/tests/kycRelational.test.ts`)
+- Khởi tạo tệp kiểm thử chuyên biệt `src/tests/kycRelational.test.ts` trong danh mục `APPROVED_TEST_PATHS` của runner.
+- Bao phủ đầy đủ 16 tiêu chí `KYC-01` đến `KYC-16` theo đúng requirement:
+  - `KYC-01`: Lưu DRAFT hợp lệ lần đầu, `status = DRAFT`, `submittedAt = null`, `version = 1`, `last4` chuẩn 4 số; 1 audit `KYC_DRAFT_SAVED`, 0 outbox, 0 notification; không leak full identity ra ngoài.
+  - `KYC-02`: Validate payload sai URI / thiếu confirm synthetic data -> HTTP 422 DomainError, không ghi nhận application hay audit.
+  - `KYC-03`: Tranh chấp 2 tiến trình lưu DRAFT đồng thời trên PostgreSQL disposable; kiểm chứng va chạm lock trên index `kyc_applications_customer_open_idx` bằng `pg_locks`; winner COMMIT, loser nhận HTTP 409 Conflict (`KYC application is already open.`).
+  - `KYC-04`: Lưu DRAFT không truyền identityNumber -> bảo toàn full synthetic identity trên DB, response trả 200 OK với `last4` giữ nguyên.
+  - `KYC-05`: Lưu DRAFT với full identity mới -> cập nhật payload và `last4` mới, version tăng.
+  - `KYC-06`: Lưu DRAFT với identity masked (`********1099`) hoặc quá ngắn -> HTTP 422 DomainError, DB row không bị mutate.
+  - `KYC-07`: Identity có số 0 ở đầu (`000123450007`) -> bảo toàn nguyên vẹn kiểu chuỗi text trong DB và `last4 = "0007"`, không bị ép kiểu số nguyên.
+  - `KYC-08`: Submit lần đầu từ DRAFT -> chuyển trạng thái `SUBMITTED`, sinh timestamp `submittedAt`, tăng version; phát sinh đúng 1 audit `KYC_SUBMITTED`, đúng 1 outbox canonical `security.kyc_submitted.v1`, đúng 1 notification `SECURITY`.
+  - `KYC-09`: Idempotent replay khi submit lại cùng request fingerprint -> trả về cùng application DTO, không nhân đôi side effect (vẫn giữ 1 audit, 1 outbox, 1 notification).
+  - `KYC-10`: Submit với fingerprint khác khi application đang xử lý -> nhận HTTP 409 Conflict (`KYC hồ sơ đang được xử lý; không thể thay đổi dữ liệu.`).
+  - `KYC-11`: Vòng đời `NEEDS_MORE_INFO` -> `saveDraft` bảo toàn timestamp `submitted_at` ban đầu (không reset thành null); helper `mapKycDecisionStatus` từ chối alias `MORE_INFO_REQUIRED` với 422 và chấp nhận `NEEDS_MORE_INFO`; resubmit chuyển về `SUBMITTED` với timestamp mới.
+  - `KYC-12`: Tính bất biến của `APPROVED` (D-10) -> từ chối cả `saveDraft` và `submit` với HTTP 409 Conflict (`KYC application has already been approved.`).
+  - `KYC-13`: Tính bất biến và vòng đời của `REJECTED` (D-11) -> bản ghi cũ giữ nguyên lịch sử, resubmit tạo bản ghi mới với ID mới, kế thừa identity cũ nếu không truyền identity mới.
+  - `KYC-14`: PostgreSQL APPROVED Interleaving -> chứng minh bằng transaction Admin giữ lock hàng và COMMIT `APPROVED` trong khi Customer chờ tại `lockOpen`; sau khi giải phóng, Customer recheck `APPROVED` và nhận HTTP 409 Conflict, không tạo application hay side effect mới.
+  - `KYC-15`: Database constraint fault mapping -> lỗi index partial `23505` map thành 409 Conflict; lỗi khóa ngoại `23503` (foreign key) được rethrow trực tiếp, không nuốt thành 409; transaction rollback sạch sẽ.
+  - `KYC-16`: Restart read -> đóng pool hoàn toàn, mở connection pool mới kết nối lại target DB; đọc lại toàn bộ dữ liệu application, audit, outbox, notification toàn vẹn, không suy hao.
+
+### 95.2. Cổng kiểm tra tĩnh và Unit Gate
+- `git diff --check`: PASS (0 whitespace error).
+- `npm run typecheck`: PASS (tsc --noEmit exit code 0).
+- `npm run build`: PASS (tsc -p tsconfig.build.json exit code 0).
+- `disposableDatabaseGuard.test.ts`: 153/153 PASS.
+- `registrationContract.test.ts`: 35/35 PASS.
+- `kycContract.test.ts`: 28/28 PASS.
+
+### 95.3. Kết quả xác minh tuần tự M07-B và M07-C (Disposable PostgreSQL)
+- **M07-B (Registration Relational)**:
+  - Command: `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/registrationRelational.test.ts`
+  - Áp dụng 40/40 migrations: PASS.
+  - Kết quả: `1/1 pass (205.1 ms)`. Exit code: `0`.
+- **M07-C (KYC Relational)**:
+  - Command: `node --import=tsx scripts/run-disposable-postgres-test.ts src/tests/kycRelational.test.ts`
+  - Áp dụng 40/40 migrations: PASS.
+  - Kết quả: `1/1 pass (402.9 ms)`, kiểm chứng trọn vẹn 16 tiêu chí `KYC-01` đến `KYC-16`. Exit code: `0`.
+- **An toàn và dọn dẹp**:
+  - Toàn bộ ephemeral container được gỡ bỏ trong `finally`.
+  - Hậu kiểm Docker xác nhận 0 container dangling, số lượng volume giữ nguyên bất biến `48`.
+
+### 95.4. Đánh giá tổng hợp M07-D và Trạng thái hoàn thành M01-07
+- M07-D thỏa mãn tuyệt đối mọi tiêu chuẩn nghiệm thu:
+  - M07-B và M07-C đều exit code `0` trên cùng một source/test snapshot.
+  - 100% tiêu chí Registration và KYC relational được kiểm chứng thực tế trên PostgreSQL disposable.
+  - Không có timeout, không có retry/fallback ẩn.
+  - Resource cleanup hoàn hảo (0 leftover container, 0 leaked volume).
+- Trạng thái nghiệm thu:
+  - **M01-07**: **COMPLETE** (Toàn bộ các checkpoint M07-A1, M07-A2, M07-B, M07-C, M07-D hoàn thành đạt chuẩn).
+  - **UC-M01**: **INCOMPLETE** (Các task M01-08 và M01-09 chưa thực hiện).
