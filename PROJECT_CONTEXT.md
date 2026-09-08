@@ -114,3 +114,52 @@ Mỗi cuộc trò chuyện nên chọn một kết quả chính. Task mới tố
 Repository hiện không có `README.md` ở root. Khi khởi động task, đọc `AGENTS.md`, file này và README đúng module: `mobile-app/README.md`, `backend/README.md` hoặc `admin-web/README.md`.
 
 `TASK_TEMPLATE.md` là mẫu soạn prompt, không phải task đang hoạt động. Owner phải tạo bản sao, điền toàn bộ placeholder, chọn đúng một chế độ và một priority, rồi xóa lựa chọn/hướng dẫn thừa trước khi giao Codex.
+
+### Cập nhật Đợt 2 — Demo ngân hàng cốt lõi (2026-09-08)
+
+- Trên snapshot `3b38cabc39c9254231e5ef0ccb90e2ae278a532f`, luồng demo local đã
+  được thực hiện trên dữ liệu synthetic: hai customer A/B, KYC, maker–checker,
+  sandbox funding cho A, Mobile login/MFA, internal recipient lookup, quote,
+  TOTP step-up, transfer và receipt.
+- Funding A là `10,000,000` minor VND. Hai transfer thành công có tổng amount
+  `5,500,000` và tổng fee theo quote là `2,000`; sau đó A còn
+  `4,498,000`, B có `5,500,000`. PostgreSQL read-only reconciliation cho thấy
+  account transactions và double-entry ledger cân bằng `15,502,000` mỗi phía.
+- Một lần thử thiếu số dư bị từ chối trên Mobile và không tạo thêm transfer,
+  account-transaction hoặc ledger row. Database demo PostgreSQL 16 và các dịch vụ
+  local vẫn được giữ chạy để Owner xem tiếp.
+- Đây là bằng chứng local/emulator/reference, không phải staging hoặc production.
+  Replay cùng idempotency key/payload, negative cross-account action và negative
+  maker self-approval chưa có execution evidence riêng; không đánh dấu các tiêu chí
+  này PASS. Hồ sơ chi tiết: `tasks/DEMO/TASK_DOT_2_CORE_BANKING_DEMO.md`.
+
+### Cập nhật Đợt 2 — chốt đối soát và negative controls (2026-09-08)
+
+- Đối soát read-only giữ nguyên số dư A `4,498,000 VND` và B `5,500,000 VND`:
+  A = `10,000,000 - 500,000 - 1,000 - 5,000,000 - 1,000`; B nhận `5,500,000`.
+  Ledger trong cùng đơn vị có CREDIT/DEBIT đều `15,502,000`.
+- Idempotency được kiểm chứng trên PostgreSQL disposable bằng test relational hiện
+  hành `databaseFoundation.test.ts`: replay cùng key/payload không tạo transfer,
+  debit hoặc journal thứ hai; suite targeted đạt `11/11 PASS`.
+- Cross-account denial được kiểm chứng qua Public API: phiên B nhận `404 NOT_FOUND`
+  khi đọc account/transactions của A; transfer/account-transaction/ledger counts và
+  balance không đổi. Login session state là side effect auth theo contract, không phải
+  account-data mutation.
+- Maker self-approval được kiểm chứng bằng policy/service test hiện hành (`5/5 PASS`):
+  maker nhận `SELF_APPROVAL_FORBIDDEN`, checker CONTROL độc lập vẫn thực thi một lần.
+- Ba negative controls đã có evidence phù hợp với phạm vi học thuật; disposable
+  container/volume đã được cleanup, database demo và các dịch vụ local vẫn running.
+  Các dòng “chưa có evidence” ở cập nhật trước là trạng thái lịch sử trước lượt bổ sung.
+
+### Owner approval Đợt 2 — 2026-09-08
+
+- Đợt 2 Core Banking Demo: `COMPLETED — OWNER APPROVED` ở phạm vi local/emulator/
+  reference academic evidence; không phải staging, pilot hoặc production readiness.
+- Giữ nguyên đối soát: A `4,498,000 VND`, B `5,500,000 VND`, hai transfer
+  `500,000` và `5,000,000` với fee `1,000` mỗi giao dịch; ledger debit/credit cùng
+  `15,502,000` minor VND.
+- Giới hạn evidence được chấp thuận: idempotency ở service/PostgreSQL disposable,
+  cross-account ở HTTP + PostgreSQL invariant, maker self-approval ở policy/service
+  scope và không phải negative UI E2E.
+- Không tự đóng UC-M04+ hoặc use case khác. Điểm tiếp tục là Đợt 3: UI cần thiết,
+  setup/deployment, CI/Git evidence, báo cáo/UML/ERD, slides và demo rehearsal.

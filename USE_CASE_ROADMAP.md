@@ -107,3 +107,47 @@ Ngoài UC-M01, danh mục không tuyên bố use case nào đã được audit/�
 - `PROJECT_CONTEXT.md` và biên bản closure UC-M01.
 
 Danh mục dựa trên kiểm tra source/contract và tài liệu, không phải một lần chạy runtime toàn dự án.
+
+## Cập nhật Đợt 2 — Demo ngân hàng cốt lõi (2026-09-08)
+
+- Demo local trên snapshot `3b38cabc39c9254231e5ef0ccb90e2ae278a532f` đã chạy
+  được luồng synthetic customer A/B, KYC maker–checker, sandbox funding, Mobile
+  login/MFA, internal beneficiary lookup, quote, TOTP step-up và transfer receipt.
+- Đối soát PostgreSQL cho thấy A giảm đúng amount + fee, B tăng đúng amount;
+  account history và double-entry ledger cân bằng. Lần insufficient-funds không
+  tạo ghi sổ một phần.
+- Bằng chứng này hỗ trợ UC-M04, UC-M06 và UC-M07 ở mức demo local/reference,
+  không tự đóng các use case đó. Replay idempotency cùng payload, negative
+  cross-account action và negative maker self-approval chưa có execution evidence
+  riêng; cần Owner quyết định có mở lượt kiểm chứng bổ sung hay giữ là giới hạn
+  học thuật.
+- Hồ sơ chi tiết: `tasks/DEMO/TASK_DOT_2_CORE_BANKING_DEMO.md`. Database demo
+  và dịch vụ local được giữ chạy; không có tuyên bố staging, pilot hoặc production
+  readiness.
+
+### Cập nhật Đợt 2 — hoàn tất các kiểm tra còn thiếu (2026-09-08)
+
+- Đối soát số dư/ledger đã khớp: A kết thúc `4,498,000 VND`, B kết thúc
+  `5,500,000 VND`, ledger CREDIT và DEBIT cùng `15,502,000` trong minor VND.
+- Idempotency replay cùng key/payload đạt trên PostgreSQL disposable bằng test
+  relational hiện hành; không có side effect transfer/debit/journal thứ hai.
+- Cross-account denial đạt qua HTTP + PostgreSQL invariant: customer B không đọc được
+  account/transactions của A và nhận `404 NOT_FOUND`; dữ liệu protected không đổi.
+- Maker self-approval đạt ở policy/service scope với `SELF_APPROVAL_FORBIDDEN`, và
+  checker độc lập vẫn approve/execute đúng một lần.
+- Ba tiêu chí bổ sung thuộc Đợt 2 đã có evidence theo đúng tầng kiểm chứng; disposable
+  resource đã cleanup, demo DB và local services được giữ nguyên.
+- Các trạng thái UC khác không bị tự động đóng; Đợt 3 chưa bắt đầu. Hồ sơ chi tiết:
+  `tasks/DEMO/TASK_DOT_2_CORE_BANKING_DEMO.md`.
+
+### Owner approval Đợt 2 — 2026-09-08
+
+- Đợt 2 Core Banking Demo: `COMPLETED — OWNER APPROVED` trong phạm vi đồ án học thuật.
+- Nghiệm thu giữ rõ hai transfer `500,000` và `5,000,000 VND`, fee `1,000 VND` mỗi
+  giao dịch, số dư cuối A `4,498,000` và B `5,500,000`; ledger debit/credit cùng
+  `15,502,000` minor VND.
+- Idempotency và cross-account được chấp thuận theo evidence service/PostgreSQL và
+  HTTP tương ứng; maker self-approval chỉ được tuyên bố ở policy/service scope,
+  không phải negative UI E2E.
+- Không tự đóng UC-M04+ hoặc use case khác. Đợt 3 chưa triển khai; điểm tiếp tục là
+  UI cần thiết, setup/deployment, CI/Git evidence, báo cáo/UML/ERD, slides và rehearsal.
