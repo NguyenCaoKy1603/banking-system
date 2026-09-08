@@ -70,7 +70,19 @@ export function MfaRecoveryScreen() {
     setIsSubmitting(true);
     setError(undefined);
     try {
-      await completeMfaRecovery(recoveryToken, deviceOptions);
+      try {
+        await completeMfaRecovery(recoveryToken, deviceOptions);
+      } catch (completeError: unknown) {
+        if (
+          !(
+            completeError instanceof ApiError &&
+            completeError.status === 409 &&
+            completeError.code === "MFA_RECOVERY_ALREADY_COMPLETED"
+          )
+        ) {
+          throw completeError;
+        }
+      }
       const setup = await beginRecoveryTotpEnrollment({ recoveryToken }, deviceOptions);
       setEnrollment(setup);
     } catch (approveError: unknown) {

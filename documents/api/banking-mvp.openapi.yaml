@@ -170,7 +170,7 @@ paths:
               $ref: '#/components/schemas/TotpConfirmRequest'
       responses:
         '200':
-          description: Active TOTP credential and one-time recovery codes.
+          description: Active TOTP credential and one-time recovery codes. Revokes all active customer sessions upon successful confirmation. Supports Bearer auth with device binding, or unauthenticated recovery confirmation with recoveryToken.
           content:
             application/json:
               schema:
@@ -191,7 +191,7 @@ paths:
               $ref: '#/components/schemas/CurrentPasswordRequest'
       responses:
         '204':
-          description: MFA credential revoked.
+          description: MFA credential revoked. Revokes all active customer sessions.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '409':
@@ -209,7 +209,7 @@ paths:
               $ref: '#/components/schemas/RecoveryCodeRequest'
       responses:
         '202':
-          description: Recovery code accepted; the account is placed in recovery state.
+          description: Recovery code accepted; the account is placed in recovery state. All active sessions are revoked. The recovery token expires at cooldownUntil + 15 minutes.
           content:
             application/json:
               schema:
@@ -229,7 +229,7 @@ paths:
               $ref: '#/components/schemas/RecoveryCodeRequest'
       responses:
         '202':
-          description: Recovery code accepted; the account is placed in recovery state.
+          description: Recovery code accepted; the account is placed in recovery state. All active sessions are revoked. The recovery token expires at cooldownUntil + 15 minutes.
           content:
             application/json:
               schema:
@@ -256,6 +256,21 @@ paths:
                 $ref: '#/components/schemas/RecoveryCompletionResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Recovery request is either in cooldown period or has already been completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                cooldown:
+                  value:
+                    code: MFA_RECOVERY_COOLDOWN
+                    message: MFA recovery is still in its cooldown period.
+                alreadyCompleted:
+                  value:
+                    code: MFA_RECOVERY_ALREADY_COMPLETED
+                    message: MFA recovery request has already been completed.
   /auth/mfa/recover/enroll:
     post:
       tags: [Auth]
@@ -269,11 +284,34 @@ paths:
               $ref: '#/components/schemas/RecoveryEnrollmentRequest'
       responses:
         '201':
-          description: Replacement TOTP setup material after recovery cooldown.
+          description: Replacement TOTP setup material after recovery cooldown. Requires recovery request status COMPLETED before expiresAt.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/TotpEnrollmentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/mfa/recovery-codes/rotate:
+    post:
+      tags: [Auth]
+      operationId: rotateRecoveryCodes
+      summary: Rotate MFA recovery codes
+      description: Generates a new batch of 10 recovery codes, revokes all old recovery codes, and revokes all active customer sessions. Requires step-up challenge proof with purpose RECOVERY_CODE_ROTATION.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCodesRotateRequest'
+      responses:
+        '200':
+          description: Recovery codes rotated successfully and all active sessions revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodesRotateResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /auth/challenges/{challengeId}/resend:
@@ -1675,12 +1713,46 @@ components:
         displayName: { type: string, minLength: 1, maxLength: 80 }
     RecoveryStartedResponse:
       type: object
-      required: [status]
+      required: [status, recoveryRequestId, recoveryToken, cooldownUntil]
       properties:
         status: { type: string, enum: [RECOVERY_STARTED] }
         recoveryRequestId: { type: string, format: uuid }
         recoveryToken: { type: string, writeOnly: true }
         cooldownUntil: { type: string, format: date-time }
+    RecoveryCodesRotateRequest:
+      type: object
+      required: [challengeId, code]
+      properties:
+        password: { type: string, minLength: 8, writeOnly: true }
+        challengeId: { type: string, minLength: 1 }
+        code: { type: string, pattern: '^\d{6}$', writeOnly: true }
+      example:
+        password: Password1
+        challengeId: chal-rotate-example
+        code: '123456'
+    RecoveryCodesRotateResponse:
+      type: object
+      required: [status, recoveryCodes]
+      properties:
+        status: { type: string, enum: [ROTATED] }
+        recoveryCodes:
+          type: array
+          minItems: 8
+          maxItems: 10
+          items: { type: string, writeOnly: true }
+      example:
+        status: ROTATED
+        recoveryCodes:
+          - code-rotate-0000000001
+          - code-rotate-0000000002
+          - code-rotate-0000000003
+          - code-rotate-0000000004
+          - code-rotate-0000000005
+          - code-rotate-0000000006
+          - code-rotate-0000000007
+          - code-rotate-0000000008
+          - code-rotate-0000000009
+          - code-rotate-0000000010
     CurrentPasswordRequest:
       type: object
       required: [password]

@@ -156,6 +156,24 @@ test("persistent MFA lifecycle is transactional, one-time and restart-safe", { s
       code: generateTotp(recoveryEnrollment.manualSetupKey, now),
     });
     assert.equal(recoveryConfirmation.status, "ACTIVE");
+
+    // Verify that the recovered factor is genuinely usable for step-up challenges (not just confirmed)
+    now += 30_000;
+    const stepUpChallenge = await restarted.beginTotpChallenge({
+      customerId,
+      deviceId: "recovery-verify-device",
+      purpose: "MFA_FACTOR_CHANGE",
+    });
+    const stepUpProof = generateTotp(recoveryEnrollment.manualSetupKey, now);
+    const stepUpResult = await restarted.verifyChallenge({
+      challengeId: stepUpChallenge.challengeId,
+      customerId,
+      deviceId: "recovery-verify-device",
+      purpose: "MFA_FACTOR_CHANGE",
+      proof: stepUpProof,
+    });
+    assert.equal(stepUpResult.customerId, customerId);
+    assert.ok(stepUpResult.credentialId);
   } finally {
     if (previousCooldown === undefined) delete process.env.BANKING_MFA_RECOVERY_COOLDOWN_MS;
     else process.env.BANKING_MFA_RECOVERY_COOLDOWN_MS = previousCooldown;
@@ -350,4 +368,153 @@ test("revoke credential guards against removing last active factor and revokes c
   );
   assert.equal(audit.rows.length, 1);
   assert.equal(audit.rows[0]?.resource_id, factorA.credentialId);
+});
+
+test("recovery request expiry respects cooldownUntil + 15m window across default and configured cooldowns", { skip: !databaseUrl }, async (t) => {
+  const database = new DatabasePool({ connectionString: databaseUrl!, max: 8 });
+  const unitOfWork = new UnitOfWork(database);
+  const encryption = new LocalDevelopmentKeyEncryptionAdapter(Buffer.alloc(32, 7), "mfa-test-v1");
+  const otpDigestKeyring = new OtpDigestKeyring({
+    current: { id: "otp-test-v1", value: Buffer.alloc(32, 9) },
+  });
+  let now = Date.now();
+  const service = (): PersistentMfaService => new PersistentMfaService({
+    unitOfWork,
+    encryption,
+    otpDigestKeyring,
+    environmentScope: "test",
+    clock: () => now,
+  });
+  async function createCustomerWithMfa(testLabel: string) {
+    now = Date.now();
+    const custId = randomUUID();
+    const pw = hashPassword("Password1");
+    await database.query(
+      `INSERT INTO customers (id, full_name, email, phone_number, password_salt, password_digest, created_at)
+       VALUES ($1, 'MFA TTL Test User', $2, $3, $4, $5, NOW())`,
+      [custId, `mfa-${testLabel}-${custId}@example.test`, `09${custId.replaceAll("-", "").slice(0, 8)}`, pw.salt, pw.digest],
+    );
+    const s = service();
+    const enrollment = await s.beginTotpEnrollment({
+      customerId: custId,
+      email: `mfa-${testLabel}-${custId}@example.test`,
+      displayName: "TTL Authenticator",
+    });
+    const conf = await s.confirmTotpEnrollment({
+      customerId: custId,
+      credentialId: enrollment.credentialId,
+      code: generateTotp(enrollment.manualSetupKey, now),
+    });
+    return { customerId: custId, recoveryCodes: conf.recoveryCodes };
+  }
+
+  const prevCooldown = process.env.BANKING_MFA_RECOVERY_COOLDOWN_MS;
+  try {
+    // ─── Scenario 1: Default cooldown (24h) ──────────────────────────────
+    delete process.env.BANKING_MFA_RECOVERY_COOLDOWN_MS;
+    const { customerId: c1, recoveryCodes: codes1 } = await createCustomerWithMfa("def");
+    const s1 = service();
+    const startTime1 = now;
+    const recovery1 = await s1.verifyRecoveryCode(c1, codes1[0]!);
+
+    const cooldownUntil1 = new Date(recovery1.cooldownUntil).getTime();
+    const requestRow1 = await database.query<{ expires_at: string; cooldown_until: string }>(
+      "SELECT expires_at, cooldown_until FROM mfa_recovery_requests WHERE id = $1",
+      [recovery1.recoveryRequestId],
+    );
+    const expiresAt1 = new Date(requestRow1.rows[0]!.expires_at).getTime();
+
+    // 1. Cooldown mặc định: request không hết hạn trước khi hết cooldown (expiresAt = cooldownUntil + 15m)
+    assert.equal(cooldownUntil1, startTime1 + 24 * 60 * 60 * 1000);
+    assert.equal(expiresAt1, cooldownUntil1 + 15 * 60 * 1000);
+    assert.ok(expiresAt1 > cooldownUntil1);
+
+    // 2. Trước cooldown: chưa được complete (status 409 MFA_RECOVERY_COOLDOWN)
+    now = startTime1 + 10_000;
+    await assert.rejects(
+      s1.completeRecovery({ recoveryToken: recovery1.recoveryToken }),
+      (err: unknown) =>
+        err instanceof Error &&
+        "code" in err &&
+        (err as { code: string }).code === "MFA_RECOVERY_COOLDOWN",
+    );
+    now = cooldownUntil1 - 1_000; // 1 second before cooldown ends
+    await assert.rejects(
+      s1.completeRecovery({ recoveryToken: recovery1.recoveryToken }),
+      (err: unknown) =>
+        err instanceof Error &&
+        "code" in err &&
+        (err as { code: string }).code === "MFA_RECOVERY_COOLDOWN",
+    );
+
+    // 3. Tại cooldownUntil: có thể complete khi các điều kiện khác hợp lệ
+    now = cooldownUntil1;
+    const completed1 = await s1.completeRecovery({ recoveryToken: recovery1.recoveryToken });
+    assert.equal(completed1.customerId, c1);
+
+    // ─── Scenario 2: Hết hạn tại expiresAt ───────────────────────────────
+    delete process.env.BANKING_MFA_RECOVERY_COOLDOWN_MS;
+    const { customerId: c2, recoveryCodes: codes2 } = await createCustomerWithMfa("exp");
+    const s2 = service();
+    const startTime2 = now;
+    const recovery2 = await s2.verifyRecoveryCode(c2, codes2[0]!);
+    const cooldownUntil2 = new Date(recovery2.cooldownUntil).getTime();
+    const expiresAt2 = cooldownUntil2 + 15 * 60 * 1000;
+
+    // 4. Tại expiresAt (và sau đó): request không còn hiệu lực (status 401 unauthorized / expired)
+    now = expiresAt2;
+    await assert.rejects(
+      s2.completeRecovery({ recoveryToken: recovery2.recoveryToken }),
+      (err: unknown) =>
+        err instanceof Error &&
+        "status" in err &&
+        (err as { status: number }).status === 401,
+    );
+    now = expiresAt2 + 60_000; // 1 minute after expiry
+    await assert.rejects(
+      s2.completeRecovery({ recoveryToken: recovery2.recoveryToken }),
+      (err: unknown) =>
+        err instanceof Error &&
+        "status" in err &&
+        (err as { status: number }).status === 401,
+    );
+
+    // ─── Scenario 3: Cấu hình cooldown ngắn/0 vẫn có cửa sổ 15 phút sau cooldown ─
+    process.env.BANKING_MFA_RECOVERY_COOLDOWN_MS = "0";
+    const { customerId: c3, recoveryCodes: codes3 } = await createCustomerWithMfa("zero");
+    const s3 = service();
+    const startTime3 = now;
+    const recovery3 = await s3.verifyRecoveryCode(c3, codes3[0]!);
+    const cooldownUntil3 = new Date(recovery3.cooldownUntil).getTime();
+    const requestRow3 = await database.query<{ expires_at: string; cooldown_until: string }>(
+      "SELECT expires_at, cooldown_until FROM mfa_recovery_requests WHERE id = $1",
+      [recovery3.recoveryRequestId],
+    );
+    const expiresAt3 = new Date(requestRow3.rows[0]!.expires_at).getTime();
+
+    // 5. Cấu hình cooldown 0: cooldownUntil = startTime, expiresAt = cooldownUntil + 15m
+    assert.equal(cooldownUntil3, startTime3);
+    assert.equal(expiresAt3, cooldownUntil3 + 15 * 60 * 1000);
+
+    // Within the 15-minute window (e.g. at 14 minutes): can complete
+    now = cooldownUntil3 + 14 * 60 * 1000;
+    const completed3 = await s3.completeRecovery({ recoveryToken: recovery3.recoveryToken });
+    assert.equal(completed3.customerId, c3);
+
+    // Past the 15-minute window: request no longer valid
+    const { customerId: c4, recoveryCodes: codes4 } = await createCustomerWithMfa("zero-exp");
+    const s4 = service();
+    const recovery4 = await s4.verifyRecoveryCode(c4, codes4[0]!);
+    now = new Date(recovery4.cooldownUntil).getTime() + 15 * 60 * 1000;
+    await assert.rejects(
+      s4.completeRecovery({ recoveryToken: recovery4.recoveryToken }),
+      (err: unknown) =>
+        err instanceof Error &&
+        "status" in err &&
+        (err as { status: number }).status === 401,
+    );
+  } finally {
+    if (prevCooldown === undefined) delete process.env.BANKING_MFA_RECOVERY_COOLDOWN_MS;
+    else process.env.BANKING_MFA_RECOVERY_COOLDOWN_MS = prevCooldown;
+  }
 });

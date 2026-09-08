@@ -272,4 +272,180 @@ describe("MfaRecoveryScreen — Recovery codes display after recovery confirmati
     expect(findByTestId(renderer, "mfa-recovery-codes").length).toBe(0);
     expect(mockReplace).not.toHaveBeenCalled();
   });
+
+  describe("Resume recovery enrollment after completion (M03-10)", () => {
+    it("tiếp tục begin enrollment khi complete trả về 409 MFA_RECOVERY_ALREADY_COMPLETED", async () => {
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(<MfaRecoveryScreen />);
+      });
+
+      startMfaRecoveryMock.mockResolvedValueOnce({
+        recoveryRequestId: "req-1",
+        recoveryToken: "token-secret-recovery",
+        status: "RECOVERY_STARTED",
+        cooldownUntil: new Date(Date.now() - 5000).toISOString(),
+      });
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-email").props.onChangeText("tester@example.test");
+        byTestId(renderer, "mfa-recovery-password").props.onChangeText("Password1");
+        byTestId(renderer, "mfa-recovery-code").props.onChangeText("code-1234567890123456");
+      });
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-start").props.onPress();
+      });
+
+      // Complete returns 409 MFA_RECOVERY_ALREADY_COMPLETED
+      completeMfaRecoveryMock.mockRejectedValueOnce(
+        new ApiError({
+          status: 409,
+          code: "MFA_RECOVERY_ALREADY_COMPLETED",
+          message: "MFA recovery request has already been completed.",
+        }),
+      );
+
+      beginRecoveryTotpEnrollmentMock.mockResolvedValueOnce({
+        credentialId: "cred-test-2",
+        status: "PENDING",
+        expiresAt: new Date(Date.now() + 300000).toISOString(),
+        manualSetupKey: "SETUPKEYRESUME123",
+        otpauthUri: "otpauth://totp/Bank:tester?secret=SETUPKEYRESUME123",
+      });
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-approve").props.onPress();
+      });
+
+      // beginRecoveryTotpEnrollment must be called with the same recoveryToken
+      expect(beginRecoveryTotpEnrollmentMock).toHaveBeenCalledTimes(1);
+      expect(beginRecoveryTotpEnrollmentMock).toHaveBeenCalledWith(
+        { recoveryToken: "token-secret-recovery" },
+        { deviceId: "device-test-uuid" },
+      );
+
+      // Transitions to step 3 (shows TOTP input)
+      expect(findByTestId(renderer, "mfa-recovery-totp").length).toBeGreaterThan(0);
+    });
+
+    it("cho phép người dùng thử lại khi begin enrollment thất bại và lần bấm lại nhận 409 already-completed", async () => {
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(<MfaRecoveryScreen />);
+      });
+
+      startMfaRecoveryMock.mockResolvedValueOnce({
+        recoveryRequestId: "req-1",
+        recoveryToken: "token-secret-recovery",
+        status: "RECOVERY_STARTED",
+        cooldownUntil: new Date(Date.now() - 5000).toISOString(),
+      });
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-email").props.onChangeText("tester@example.test");
+        byTestId(renderer, "mfa-recovery-password").props.onChangeText("Password1");
+        byTestId(renderer, "mfa-recovery-code").props.onChangeText("code-1234567890123456");
+      });
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-start").props.onPress();
+      });
+
+      // First attempt: complete succeeds, but begin fails (e.g. network timeout)
+      completeMfaRecoveryMock.mockResolvedValueOnce({ status: "RECOVERY_COMPLETED" });
+      beginRecoveryTotpEnrollmentMock.mockRejectedValueOnce(
+        new ApiError({ status: null, code: "NETWORK_ERROR", message: "Mạng bị gián đoạn." }),
+      );
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-approve").props.onPress();
+      });
+
+      // Screen remains on step 2 (enrollment is still null, approve button is visible)
+      expect(findByTestId(renderer, "mfa-recovery-approve").length).toBeGreaterThan(0);
+      expect(findByTestId(renderer, "mfa-recovery-totp").length).toBe(0);
+
+      // User presses approve again: complete now returns 409 ALREADY_COMPLETED
+      completeMfaRecoveryMock.mockRejectedValueOnce(
+        new ApiError({
+          status: 409,
+          code: "MFA_RECOVERY_ALREADY_COMPLETED",
+          message: "MFA recovery request has already been completed.",
+        }),
+      );
+      beginRecoveryTotpEnrollmentMock.mockResolvedValueOnce({
+        credentialId: "cred-test-3",
+        status: "PENDING",
+        expiresAt: new Date(Date.now() + 300000).toISOString(),
+        manualSetupKey: "SETUPKEYRESUME456",
+        otpauthUri: "otpauth://totp/Bank:tester?secret=SETUPKEYRESUME456",
+      });
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-approve").props.onPress();
+      });
+
+      // beginRecoveryTotpEnrollment succeeds on second attempt, transitioning to step 3
+      expect(beginRecoveryTotpEnrollmentMock).toHaveBeenCalledTimes(2);
+      expect(findByTestId(renderer, "mfa-recovery-totp").length).toBeGreaterThan(0);
+    });
+
+    it("không gọi begin enrollment khi complete gặp lỗi khác (401, network, hoặc 409 code khác)", async () => {
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(<MfaRecoveryScreen />);
+      });
+
+      startMfaRecoveryMock.mockResolvedValueOnce({
+        recoveryRequestId: "req-1",
+        recoveryToken: "token-secret-recovery",
+        status: "RECOVERY_STARTED",
+        cooldownUntil: new Date(Date.now() - 5000).toISOString(),
+      });
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-email").props.onChangeText("tester@example.test");
+        byTestId(renderer, "mfa-recovery-password").props.onChangeText("Password1");
+        byTestId(renderer, "mfa-recovery-code").props.onChangeText("code-1234567890123456");
+      });
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-start").props.onPress();
+      });
+
+      // Complete fails with 401 Unauthorized (expired request)
+      completeMfaRecoveryMock.mockRejectedValueOnce(
+        new ApiError({
+          status: 401,
+          code: "UNAUTHORIZED",
+          message: "MFA recovery request is invalid or expired.",
+        }),
+      );
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-approve").props.onPress();
+      });
+
+      // beginRecoveryTotpEnrollment must NOT be called
+      expect(beginRecoveryTotpEnrollmentMock).not.toHaveBeenCalled();
+      expect(findByTestId(renderer, "mfa-recovery-totp").length).toBe(0);
+
+      // Complete fails with 409 but code is MFA_RECOVERY_COOLDOWN (not ALREADY_COMPLETED)
+      completeMfaRecoveryMock.mockRejectedValueOnce(
+        new ApiError({
+          status: 409,
+          code: "MFA_RECOVERY_COOLDOWN",
+          message: "MFA recovery is still in its cooldown period.",
+        }),
+      );
+
+      await act(async () => {
+        byTestId(renderer, "mfa-recovery-approve").props.onPress();
+      });
+
+      expect(beginRecoveryTotpEnrollmentMock).not.toHaveBeenCalled();
+      expect(findByTestId(renderer, "mfa-recovery-totp").length).toBe(0);
+    });
+  });
 });

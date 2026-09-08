@@ -33,11 +33,18 @@ Ngày cập nhật: 2026-09-07.
 - Giữ 4 giới hạn đồ án đã được Owner phê duyệt: (1) Đăng xuất kết hợp HTTP in-memory và relational service PG, chưa có HTTP relational boundary test tích hợp; (2) SecureStore mock/UI test, không tuyên bố hardware keystore persistence; (3) Cold start / AppState transition kiểm chứng qua React Native unit state machine test; (4) Deep-link kiểm chứng thực nghiệm 5 route Credit sâu kết hợp layout structure audit.
 - Không mở lại UC-M02 nếu không có bằng chứng regression hoặc yêu cầu mới từ Owner.
 
-**Điểm tiếp tục: UC-M03 — Quản lý phương thức xác thực và khôi phục MFA.**
+**UC-M03 — Quản lý phương thức xác thực và khôi phục MFA: COMPLETED — OWNER APPROVED.**
 
-- Bước đầu: audit/lập kế hoạch dựa trên source, OpenAPI contract (`/auth/mfa/*`), screen TOTP/Recovery và test hiện có; chưa mặc định sửa code.
-- Phạm vi dự kiến: TOTP enrollment, TOTP confirmation, recovery code generation, quản lý phương thức và recovery flow.
-- Chưa tạo task chi tiết UC-M03; chưa triển khai hoặc nghiệm thu UC-M03.
+- Đóng nghiệm thu Đợt 1 ngày 2026-09-08 theo biên bản `tasks/UC-M03/TASK_DOT_1_HOAN_TAT_AUTHENTICATION_MFA.md`.
+- Đã khắc phục lỗi TTL recovery token (`expiresAt = cooldownUntil + 15m`) và lỗi AAD encryption context trong `beginRecoveryTotpEnrollment`.
+- Đã đồng bộ OpenAPI contract (`POST /auth/mfa/recovery-codes/rotate`, 409 conflict responses, required fields).
+- Cập nhật test contract KYC (`kycContract.test.ts`) tường minh, độc lập và đạt PASS toàn bộ 28/28 tests.
+- Kế thừa và kiểm chứng cơ chế client continuation của M03-10 trên Mobile (`MfaRecoveryScreen.tsx`).
+- Kiểm chứng toàn diện: unit regression test, relational test trên PostgreSQL disposable (4/4 PASS), 6 luồng HTTP lifecycle demo end-to-end (PASS), Mobile Jest suite (408/408 PASS), và build/install release APK lên Android emulator-5554 thành công.
+- Giữ 2 giới hạn đồ án đã được Owner phê duyệt:
+  1. MFA UI interactive flow trên emulator chưa chạy; APK mới có build/install/startup smoke PASS; bằng chứng component Jest, HTTP lifecycle và PostgreSQL không thay thế tương đương cho emulator E2E.
+  2. Recovery continuation chỉ hoạt động khi `recoveryToken` còn trong memory state của màn hình; không hỗ trợ khôi phục sau cold restart hoặc process-kill.
+- Điểm tiếp tục Đợt 2: Chuẩn bị backend local phục vụ demo và kiểm chứng tích hợp Mobile trực tiếp trên emulator.
 
 ## Khách hàng Mobile — 16 use case
 

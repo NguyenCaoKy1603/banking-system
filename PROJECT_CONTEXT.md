@@ -72,6 +72,22 @@ Các kết quả trên là **local/emulator evidence được repository báo c�
   3. Vòng đời ứng dụng: Logic cold start và AppState transition được kiểm chứng ở tầng React Native component unit test (`AuthContext.test.tsx`); chưa có E2E test tự động kill process OS và restart trên emulator.
   4. Bảo vệ route: Kiểm chứng thực nghiệm trực tiếp trên 5 route Credit sâu đã nhận diện khoảng trống; các route còn lại được bảo vệ thông qua cấu trúc khai báo tường minh trong `_layout.tsx`.
 
+### Cập nhật hoàn thành Use Case UC-M03 (2026-09-08)
+
+- **Trạng thái**: Use Case **UC-M03 — Quản lý phương thức xác thực và khôi phục MFA** đã chính thức hoàn thành và đóng nghiệm thu Đợt 1 (**COMPLETED — OWNER APPROVED**) theo biên bản `tasks/UC-M03/TASK_DOT_1_HOAN_TAT_AUTHENTICATION_MFA.md`.
+- **Phạm vi kiểm chứng và kết quả kế thừa**:
+  1. Khắc phục lỗi TTL recovery request trong `PersistentMfaService`: `expiresAt = cooldownUntil + 15m`.
+  2. Sửa lỗi AAD encryption context trong `beginRecoveryTotpEnrollment`, đảm bảo credential khôi phục sử dụng được cho mọi thử thách xác thực / step-up.
+  3. Bổ sung endpoint `POST /auth/mfa/recovery-codes/rotate`, mã lỗi 409, schema và tài liệu thu hồi session vào `documents/api/banking-mvp.openapi.yaml`.
+  4. Cập nhật test contract KYC (`kycContract.test.ts`) phản ánh chính xác thay đổi OpenAPI đã duyệt một cách tường minh và độc lập (28/28 tests PASS).
+  5. Kế thừa cơ chế client continuation của M03-10 trên Mobile (`MfaRecoveryScreen.tsx`) khi backend hoàn tất phục hồi (409 `MFA_RECOVERY_ALREADY_COMPLETED`).
+  6. Đạt các quality gates: unit regression (5 mốc clock), relational PostgreSQL disposable (`npm run test:mfa:persistence` 4/4 PASS), demo 6 luồng HTTP lifecycle (PASS), Mobile full suite (54/54 suites, 408/408 tests PASS), backend critical HTTP (11/11 PASS) và OpenAPI validation (PASS).
+  7. APK build release mới đã được biên dịch bằng Gradle và cập nhật thành công lên Android emulator hiện có (`emulator-5554`) qua `adb install -r`, kiểm chứng khởi động và hiển thị đúng màn hình đăng nhập an toàn.
+- **Giới hạn đồ án đã được Owner phê duyệt (Accepted Limitations)**:
+  1. MFA UI interactive flow trên emulator chưa chạy do chưa có daemon backend persistent chạy thường trực tại `http://10.0.2.2:5000`; APK mới chỉ có bằng chứng build, install và startup smoke test PASS; bằng chứng component Jest, HTTP lifecycle và PostgreSQL không thay thế tương đương cho emulator E2E.
+  2. Recovery continuation chỉ hoạt động khi `recoveryToken` còn trong memory state của màn hình; ứng dụng không lưu trữ token ra disk và không hỗ trợ khôi phục sau cold restart / process-kill.
+- **Điểm tiếp tục Đợt 2**: Chuẩn bị backend local phục vụ demo và kiểm chứng tích hợp Mobile trực tiếp trên emulator.
+
 ## 5. Xung đột và rủi ro đang mở
 
 1. Auth contract/code hiện là password-only login; `mobile-app/README.md` và 5 Maestro flow cũ vẫn tham chiếu `login-mfa-code`/`login-mfa-submit`, nhưng `LoginScreen` không có các test ID này (UC-M02 đã đồng bộ và chuẩn hóa flow password-only; quản lý MFA/TOTP thuộc về UC-M03).
@@ -82,7 +98,7 @@ Các kết quả trên là **local/emulator evidence được repository báo c�
 
 ## 6. Source of truth và cách bắt đầu task
 
-Điểm tiếp tục sau closure UC-M02: đọc `USE_CASE_ROADMAP.md` tại repository root. File này lưu danh mục đề xuất 16 use case Mobile + 6 Admin và bước tiếp theo **UC-M03 — Quản lý phương thức xác thực và khôi phục MFA**. UC-M01 và UC-M02 đã hoàn tất; UC-M03 chưa có task chi tiết hoặc quyền implementation. Danh mục mới không đồng nhất với milestone cũ M0–M11/S1–S5 và không tự mở rộng phạm vi đã duyệt.
+Điểm tiếp tục sau Đợt 1: Báo cáo Owner nghiệm thu kết quả Authentication/MFA (UC-M03). `USE_CASE_ROADMAP.md` tại repository root lưu danh mục đề xuất 16 use case Mobile + 6 Admin. UC-M01 và UC-M02 đã hoàn tất; UC-M03 đã hoàn tất Đợt 1 chờ Owner nghiệm thu; các use case tiếp theo (UC-M04 đến UC-M16) chưa triển khai. Danh mục mới không đồng nhất với milestone cũ M0–M11/S1–S5 và không tự mở rộng phạm vi đã duyệt.
 
 Ưu tiên đối chiếu theo loại dữ liệu, không dùng một thứ làm nguồn duy nhất cho mọi vấn đề:
 

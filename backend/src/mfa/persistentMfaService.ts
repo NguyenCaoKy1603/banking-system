@@ -228,8 +228,6 @@ export class PersistentMfaService {
     const secret = generateTotpSecret();
     const credentialId = createId("mfa-credential");
     const createdAt = this.clock();
-    const encryptedSecret = this.options.encryption.encrypt(secret, this.encryptionContext("mfa-totp", credentialId, "recovery"));
-    const metadata = envelopeMetadata(encryptedSecret);
     let customerId = "";
     let email = "";
     await this.options.unitOfWork.transaction(async ({ client }) => {
@@ -247,6 +245,8 @@ export class PersistentMfaService {
       if (!email) {
         throw unauthorized("MFA recovery enrollment is invalid or expired.");
       }
+      const encryptedSecret = this.options.encryption.encrypt(secret, this.encryptionContext("mfa-totp", credentialId, customerId));
+      const metadata = envelopeMetadata(encryptedSecret);
       await repository.createTotpCredential({
         id: credentialId,
         customerId,
@@ -307,7 +307,7 @@ export class PersistentMfaService {
       if (!credential.secretCiphertext || !credential.secretKeyId) {
         throw unauthorized("MFA enrollment secret is unavailable.");
       }
-      const secret = this.options.encryption.decrypt(credential.secretCiphertext, credential.secretKeyId, this.encryptionContext("mfa-totp", credential.id, input.recoveryToken ? "recovery" : customerId));
+      const secret = this.options.encryption.decrypt(credential.secretCiphertext, credential.secretKeyId, this.encryptionContext("mfa-totp", credential.id, customerId));
       const validation = validateTotp(secret, code, now, 1);
       if (!validation.valid || validation.timeStep === null || !(await repository.activateCredential(credential.id, validation.timeStep))) {
         await repository.insertSecurityEvent({
@@ -790,8 +790,9 @@ export class PersistentMfaService {
     const recoveryRequestId = createId("mfa-recovery-request");
     const now = this.clock();
     const cooldownMs = Number(process.env.BANKING_MFA_RECOVERY_COOLDOWN_MS ?? DEFAULT_RECOVERY_COOLDOWN_MS);
-    const cooldownUntil = new Date(now + (Number.isFinite(cooldownMs) && cooldownMs >= 0 ? cooldownMs : DEFAULT_RECOVERY_COOLDOWN_MS));
-    const expiresAt = new Date(now + RECOVERY_REQUEST_TTL_MS);
+    const cooldownDuration = Number.isFinite(cooldownMs) && cooldownMs >= 0 ? cooldownMs : DEFAULT_RECOVERY_COOLDOWN_MS;
+    const cooldownUntil = new Date(now + cooldownDuration);
+    const expiresAt = new Date(cooldownUntil.getTime() + RECOVERY_REQUEST_TTL_MS);
     const success = await this.options.unitOfWork.transaction(async ({ client }) => {
       const repository = new MfaRepository(client);
       const candidates = await repository.lockActiveRecoveryCodes(customerId);
@@ -857,7 +858,10 @@ export class PersistentMfaService {
       }
       const expiresAt = new Date(String(request.expires_at)).getTime();
       const cooldownUntil = new Date(String(request.cooldown_until ?? 0)).getTime();
-      if (expiresAt <= this.clock() || cooldownUntil > this.clock()) {
+      if (expiresAt <= this.clock()) {
+        throw unauthorized("MFA recovery request is invalid or expired.");
+      }
+      if (cooldownUntil > this.clock()) {
         throw conflictWithCode("MFA_RECOVERY_COOLDOWN", "MFA recovery is still in its cooldown period.");
       }
       await repository.revokeAllTotpCredentials(customerId!, "recovery");

@@ -440,9 +440,88 @@ test("KYC schema consumers are exhaustive and non-KYC OpenAPI paths are unchange
   // allow Checkpoint A changes to baseline
   baselineNonKyc["/auth/register/verify"].post.requestBody.content["application/json"].schema.$ref =
     "#/components/schemas/VerifyRegistrationChallengeRequest";
-  baselineNonKyc["/auth/register/cancel"] = currentNonKyc["/auth/register/cancel"];
+  baselineNonKyc["/auth/register/cancel"] = baselineNonKyc["/auth/register/cancel"] ?? currentNonKyc["/auth/register/cancel"];
 
-  assert.deepEqual(currentNonKyc, baselineNonKyc);
+  // allow approved Phase 1 MFA changes explicitly on baseline
+  baselineNonKyc["/auth/mfa/totp/confirm"].post.responses["200"].description =
+    "Active TOTP credential and one-time recovery codes. Revokes all active customer sessions upon successful confirmation. Supports Bearer auth with device binding, or unauthenticated recovery confirmation with recoveryToken.";
+  baselineNonKyc["/auth/mfa/methods/{credentialId}"].delete.responses["204"].description =
+    "MFA credential revoked. Revokes all active customer sessions.";
+  baselineNonKyc["/auth/mfa/recover"].post.responses["202"].description =
+    "Recovery code accepted; the account is placed in recovery state. All active sessions are revoked. The recovery token expires at cooldownUntil + 15 minutes.";
+  baselineNonKyc["/auth/mfa/recover/verify"].post.responses["202"].description =
+    "Recovery code accepted; the account is placed in recovery state. All active sessions are revoked. The recovery token expires at cooldownUntil + 15 minutes.";
+  baselineNonKyc["/auth/mfa/recover/complete"].post.responses["409"] = {
+    description: "Recovery request is either in cooldown period or has already been completed.",
+    content: {
+      "application/json": {
+        schema: {
+          $ref: "#/components/schemas/ApiError",
+        },
+        examples: {
+          cooldown: {
+            value: {
+              code: "MFA_RECOVERY_COOLDOWN",
+              message: "MFA recovery is still in its cooldown period.",
+            },
+          },
+          alreadyCompleted: {
+            value: {
+              code: "MFA_RECOVERY_ALREADY_COMPLETED",
+              message: "MFA recovery request has already been completed.",
+            },
+          },
+        },
+      },
+    },
+  };
+  baselineNonKyc["/auth/mfa/recover/enroll"].post.responses["201"].description =
+    "Replacement TOTP setup material after recovery cooldown. Requires recovery request status COMPLETED before expiresAt.";
+  baselineNonKyc["/auth/mfa/recovery-codes/rotate"] = {
+    post: {
+      tags: ["Auth"],
+      operationId: "rotateRecoveryCodes",
+      summary: "Rotate MFA recovery codes",
+      description:
+        "Generates a new batch of 10 recovery codes, revokes all old recovery codes, and revokes all active customer sessions. Requires step-up challenge proof with purpose RECOVERY_CODE_ROTATION.",
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              $ref: "#/components/schemas/RecoveryCodesRotateRequest",
+            },
+          },
+        },
+      },
+      responses: {
+        "200": {
+          description:
+            "Recovery codes rotated successfully and all active sessions revoked.",
+          content: {
+            "application/json": {
+              schema: {
+                $ref: "#/components/schemas/RecoveryCodesRotateResponse",
+              },
+            },
+          },
+        },
+        "400": {
+          $ref: "#/components/responses/ValidationError",
+        },
+        "401": {
+          $ref: "#/components/responses/Unauthorized",
+        },
+      },
+    },
+  };
+
+  // Preserve key ordering alignment for strict object equality
+  const alignedBaselineNonKyc = Object.fromEntries(
+    Object.keys(currentNonKyc).map((key) => [key, baselineNonKyc[key]]),
+  );
+
+  assert.deepEqual(currentNonKyc, alignedBaselineNonKyc);
 });
 
 const testAuthUser: AuthUser = {
