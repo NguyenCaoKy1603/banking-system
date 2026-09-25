@@ -230,6 +230,13 @@ export function HomeScreen() {
               subtitle="Thêm và quản lý người nhận"
               title="Danh bạ người nhận"
             />
+            <ListRow
+              icon="account"
+              onPress={() => router.push("/assistant")}
+              subtitle="Hỏi đáp về cách sử dụng ứng dụng"
+              testID="home-assistant-entry"
+              title="Trợ lý hướng dẫn NOVA"
+            />
           </Card>
         </View>
       </ScrollView>

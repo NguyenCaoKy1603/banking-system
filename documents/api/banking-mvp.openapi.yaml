@@ -21,6 +21,7 @@ tags:
   - name: Savings
   - name: Credit
   - name: KYC
+  - name: Assistant
 security:
   - bearerAuth: []
     deviceBinding: []
@@ -1342,6 +1343,47 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+  /assistant/help:
+    post:
+      tags: [Assistant]
+      operationId: getAssistantHelp
+      security:
+        - bearerAuth: []
+          deviceBinding: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantHelpRequest'
+      responses:
+        '200':
+          description: Assistant help response with answer text.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantHelpResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
 components:
   securitySchemes:
@@ -1512,6 +1554,30 @@ components:
             $ref: '#/components/schemas/ApiErrorPayload'
     ServerError:
       description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+    UnsupportedMediaType:
+      description: Content-Type must be application/json.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+    BadGateway:
+      description: Assistant AI provider error or invalid output.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+    ServiceUnavailable:
+      description: Assistant help service is currently unavailable or disabled.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+    GatewayTimeout:
+      description: Assistant service request or provider timed out.
       content:
         application/json:
           schema:
@@ -2548,3 +2614,22 @@ components:
       properties:
         quoteId: { type: string, format: uuid }
         stepUp: { $ref: '#/components/schemas/CreditStepUpRequest' }
+    AssistantHelpRequest:
+      type: object
+      required: [question]
+      additionalProperties: false
+      example:
+        question: Làm thế nào để xem lịch sử giao dịch?
+      properties:
+        question:
+          type: string
+          minLength: 1
+    AssistantHelpResponse:
+      type: object
+      required: [answer]
+      additionalProperties: false
+      example:
+        answer: Bạn vào Trang chủ, tìm phần Quản lý và chọn Lịch sử giao dịch.
+      properties:
+        answer:
+          type: string

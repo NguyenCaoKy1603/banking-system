@@ -18,19 +18,13 @@ function RootNavigator() {
 
   if (
     status === "booting" ||
-    status === "refreshing" ||
-    status === "loggingOut"
+    status === "refreshing"
   ) {
     return (
       <View style={styles.loadingScreen}>
         <StatusBar style="dark" />
         <BrandMark />
         <ActivityIndicator color={colors.primary} size="large" />
-        {status === "loggingOut" ? (
-          <Text accessibilityLiveRegion="polite" style={styles.loadingLabel}>
-            Đang đăng xuất an toàn...
-          </Text>
-        ) : null}
       </View>
     );
   }
@@ -64,7 +58,7 @@ function RootNavigator() {
   }
 
   return (
-    <>
+    <View style={styles.navigatorContainer}>
       <StatusBar style="dark" />
       <Stack
         screenOptions={{
@@ -99,13 +93,37 @@ function RootNavigator() {
           <Stack.Screen name="savings" />
           <Stack.Screen name="savings/open" />
           <Stack.Screen name="savings/[depositId]" />
+          <Stack.Screen name="assistant" />
         </Stack.Protected>
       </Stack>
-    </>
+      {status === "loggingOut" ? (
+        <View
+          accessibilityViewIsModal
+          pointerEvents="auto"
+          style={styles.logoutOverlay}
+        >
+          <BrandMark />
+          <ActivityIndicator color={colors.primary} size="large" />
+          <Text accessibilityLiveRegion="polite" style={styles.loadingLabel}>
+            Đang đăng xuất an toàn...
+          </Text>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  navigatorContainer: {
+    flex: 1,
+  },
+  logoutOverlay: {
+    ...StyleSheet.absoluteFill,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: spacing.lg,
+    backgroundColor: colors.background,
+  },
   loadingScreen: {
     flex: 1,
     alignItems: "center",

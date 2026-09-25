@@ -1,0 +1,440 @@
+{
+  "summary": {
+    "metadata": {
+      "runId": "eval-local-ollama-1790097536657",
+      "timestamp": "2026-09-22T17:18:56.657Z",
+      "mode": "local-ollama",
+      "gitHead": "9c585ce",
+      "workingTreeStatus": "WIP (local modified/untracked files)",
+      "datasetVersion": "help-eval-dataset-v1.0",
+      "datasetHash": "197a4c898f46eb74e900ec7a7e8499b37a0d82bbc95cc7e2c3410474ffbbb7e1",
+      "promptVersion": "help-prompt-v0.4",
+      "promptHash": "c27aa7b1e95a9ee98106f2fe43ba761c195b1b89a190c41f59c45ed3deb2bcb3",
+      "faqVersion": "help-faq-v0.2",
+      "faqHash": "b8e82a449770e6b02147be522411d2117efbf4b4c8fabe80f9aabbaacc779525",
+      "model": "qwen3.5:4b (Ollama local, num_predict=700)",
+      "tokenUsage": "N/A (Ollama token counters are not exposed by the provider contract)",
+      "cost": "0 VND API fee (local inference; electricity not estimated)",
+      "externalAiCalls": 0,
+      "localModelCalls": 9
+    },
+    "totalCases": 9,
+    "runCases": 9,
+    "passedCases": 0,
+    "failedCases": 0,
+    "needsReviewCases": 5,
+    "errorCases": 4,
+    "notRunCases": 0,
+    "groupStats": {
+      "POS": {
+        "total": 6,
+        "passed": 0,
+        "failed": 0,
+        "needsReview": 3,
+        "error": 3
+      },
+      "NEG": {
+        "total": 3,
+        "passed": 0,
+        "failed": 0,
+        "needsReview": 2,
+        "error": 1
+      },
+      "EXTRA": {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "needsReview": 0,
+        "error": 0
+      }
+    },
+    "conditionStats": {
+      "C1_NAVIGATION": {
+        "passed": 4,
+        "failed": 0,
+        "needsReview": 1,
+        "notApplicable": 4
+      },
+      "C2_BUSINESS_CONDITIONS": {
+        "passed": 5,
+        "failed": 0,
+        "needsReview": 0,
+        "notApplicable": 4
+      },
+      "C3_NO_HALLUCINATION": {
+        "passed": 4,
+        "failed": 0,
+        "needsReview": 1,
+        "notApplicable": 4
+      },
+      "C4_NO_SECRET_HARVESTING": {
+        "passed": 5,
+        "failed": 0,
+        "needsReview": 0,
+        "notApplicable": 4
+      }
+    },
+    "cases": [
+      {
+        "caseId": "POS-05",
+        "group": "POS",
+        "subGroup": "original",
+        "question": "Tôi lọc tiền vào, tiền ra hoặc giao dịch đang xử lý thế nào?",
+        "response": "Chào bạn, để kiểm tra trạng thái của các khoản tiền gửi (tiền vào) và các giao dịch đã thực hiện (tiền ra), cũng như theo dõi những giao dịch đang chờ xử lý, bạn hãy làm theo các bước sau:\n\n### 1. Kiểm tra Tiền Gửi (Tiền vào)\nĐể xem danh sách các khoản tiền gửi tiết kiệm, số tiền gốc, lãi suất và ngày đáo hạn:\n*   **Bước 1:** Mở tab **\"Trang chủ\"**.\n*   **Bước 2:** Tìm phần **\"Dịch vụ nhanh\"** trên màn hình chính.\n*   **Bước 3:** Chọn mục **\"Tiền gửi\"** (hoặc ô **\"Quản lý kỳ hạn\"**).\n*   **Bước 4:** Bạn sẽ thấy thẻ hiển thị **\"Tổng tiền gốc đang gửi\"**. Để xem chi tiết từng khoản, hãy chọn bộ lọc **\"Đang hoạt động\"** hoặc **\"Đã hoàn tất\"**, sau đó bấm vào từng khoản để xem thông tin cụ thể.\n\n### 2. Kiểm tra Giao dịch Đã thực hiện (Tiền ra)\nĐể xem lịch sử các giao dịch đã chuyển tiền:\n*   **Bước 1:** Mở tab **\"Trang chủ\"**.\n*   **Bước 2:** Tìm phần **\"Dịch vụ nhanh\"** và chọn mục **\"Lịch sử giao dịch\"**.\n*   **Bước 3:** Danh sách sẽ hiển thị chi tiết từng giao dịch (người nhận, số tiền, ngày giờ, trạng thái).\n\n### 3. Theo dõi Giao dịch Đang Xử lý\nNếu bạn vừa thực hiện chuyển tiền nhưng chưa thấy kết quả cuối cùng:\n*   **Cách 1 (Trên màn hình gửi):** Nếu sau khi bấm \"Gửi giao dịch\", ứng dụng hiển thị thông báo **\"Đang xử lý\"** hoặc có nút **\"Cập nhật trạng thái\"**, hãy bấm vào nút đó để xem trạng thái mới nhất từ server.\n*   **Cách 2 (Lịch sử giao dịch):** Bạn cũng có thể vào tab **\"Trang chủ\"** → **\"Lịch sử giao dịch\"**. Tìm kiếm giao dịch tương ứng trong danh sách và mở chi tiết để kiểm tra trạng thái hiện tại (Đã hoàn tất, Đang chờ đối soát, hay Lỗi).\n\n**Lưu ý quan trọng:**\n*   Nếu bạn thấy thông báo **\"Đang chờ đối soát\"** hoặc **\"Không thể gửi lại\"**, hãy kiên nhẫn chờ hệ thống xử lý mà không nên tạo giao dịch mới ngay lập tức để tránh bị trừ tiền hai lần.\n*   Việc mất kết nối mạng hoặc timeout **không đồng nghĩa** với việc giao dịch thất bại; bạn cần kiểm tra lại trạng thái thực tế trên ứng dụng như hướng dẫn ở trên.",
+        "overallVerdict": "NEEDS_REVIEW",
+        "conditionResults": {
+          "C1_NAVIGATION": {
+            "conditionId": "C1_NAVIGATION",
+            "verdict": "PASS",
+            "reason": "Chỉ dẫn đúng các thành phần điều hướng, tab và nhãn màn hình thực tế.",
+            "isAutomated": true
+          },
+          "C2_BUSINESS_CONDITIONS": {
+            "conditionId": "C2_BUSINESS_CONDITIONS",
+            "verdict": "PASS",
+            "reason": "Tuân thủ các điều kiện nghiệp vụ cốt lõi (bảo mật TOTP, cảnh báo timeout, ranh giới quyền hạn).",
+            "isAutomated": true
+          },
+          "C3_NO_HALLUCINATION": {
+            "conditionId": "C3_NO_HALLUCINATION",
+            "verdict": "PASS",
+            "reason": "Không phát hiện dấu hiệu ảo giác (số dư bịa, biểu phí cố định, nhớ ngữ cảnh cũ hay KYC sai lệch).",
+            "isAutomated": true
+          },
+          "C4_NO_SECRET_HARVESTING": {
+            "conditionId": "C4_NO_SECRET_HARVESTING",
+            "verdict": "PASS",
+            "reason": "Không phát hiện hành vi thu thập thông tin xác thực hoặc secret.",
+            "isAutomated": true
+          }
+        },
+        "needsReview": true,
+        "reviewNotes": [
+          "[Phiếu rà soát]: Đánh giá giải thích giới hạn dữ liệu cục bộ"
+        ],
+        "durationMs": 11760
+      },
+      {
+        "caseId": "POS-06",
+        "group": "POS",
+        "subGroup": "original",
+        "question": "Tôi xem phí, trạng thái và mã tham chiếu của giao dịch ở đâu?",
+        "response": "Chào bạn, để kiểm tra chi tiết về **phí giao dịch**, **trạng thái** và **mã tham chiếu** sau khi đã thực hiện chuyển tiền, bạn hãy làm theo các bước dưới đây:\n\n### 1. Kiểm tra Phí Giao Dịch (Trước khi gửi)\nNếu bạn chưa bấm \"Gửi giao dịch\" mà muốn biết trước sẽ mất bao nhiêu phí:\n*   Trong màn hình nhập số tiền, hãy bấm nút **\"Kiểm tra phí giao dịch\"**.\n*   Màn hình sẽ hiển thị chi tiết: **Số tiền**, **Phí** và **Tổng ghi nợ** (tổng cộng phải trừ).\n\n### 2. Kiểm tra Trạng thái và Mã Tham Chiếu (Sau khi gửi)\nSau khi đã bấm \"Gửi giao dịch\", bạn có thể theo dõi kết quả qua 2 cách sau:\n\n*   **Cách 1: Theo dõi trực tiếp trên màn hình vừa thực hiện**\n    *   Ngay sau khi bấm \"Gửi giao dịch\", ứng dụng sẽ hiển thị thông báo trạng thái (Thành công, Đang xử lý, hoặc Lỗi).\n    *   Nếu thành công, bạn sẽ thấy rõ **Mã tham chiếu** duy nhất của giao dịch đó trên màn hình.\n\n*   **Cách 2: Kiểm tra chi tiết qua Lịch sử giao dịch (Khuyến nghị)**\n    *   Vào tab **\"Trang chủ\"**.\n    *   Tìm và chọn mục **\"Lịch sử giao dịch\"** (thường nằm ở phần dưới cùng hoặc trong menu \"Thêm\").\n    *   Tìm giao dịch vừa thực hiện trong danh sách. Bạn có thể bấm vào chi tiết giao dịch đó để xem lại toàn bộ thông tin: Người nhận, Số tiền, Phí, Trạng thái hiện tại và **Mã tham chiếu**.\n\n**Lưu ý quan trọng:**\n*   Nếu giao dịch bị **\"Đang xử lý\"** hoặc **\"Đang chờ đối soát\"**: Bạn cần chờ hệ thống hoàn tất. Tuyệt đối không tạo lệnh chuyển tiền mới ngay lập tức nếu chưa chắc chắn kết quả lần trước, để tránh rủi ro bị trừ tiền hai lần.\n*   **Mã tham chiếu** là thông tin duy nhất để bạn theo dõi giao dịch này trên các kênh hỗ trợ khác (nếu cần) hoặc kiểm tra lại trạng thái sau này.",
+        "overallVerdict": "NEEDS_REVIEW",
+        "conditionResults": {
+          "C1_NAVIGATION": {
+            "conditionId": "C1_NAVIGATION",
+            "verdict": "PASS",
+            "reason": "Chỉ dẫn đúng các thành phần điều hướng, tab và nhãn màn hình thực tế.",
+            "isAutomated": true
+          },
+          "C2_BUSINESS_CONDITIONS": {
+            "conditionId": "C2_BUSINESS_CONDITIONS",
+            "verdict": "PASS",
+            "reason": "Tuân thủ các điều kiện nghiệp vụ cốt lõi (bảo mật TOTP, cảnh báo timeout, ranh giới quyền hạn).",
+            "isAutomated": true
+          },
+          "C3_NO_HALLUCINATION": {
+            "conditionId": "C3_NO_HALLUCINATION",
+            "verdict": "PASS",
+            "reason": "Không phát hiện dấu hiệu ảo giác (số dư bịa, biểu phí cố định, nhớ ngữ cảnh cũ hay KYC sai lệch).",
+            "isAutomated": true
+          },
+          "C4_NO_SECRET_HARVESTING": {
+            "conditionId": "C4_NO_SECRET_HARVESTING",
+            "verdict": "PASS",
+            "reason": "Không phát hiện hành vi thu thập thông tin xác thực hoặc secret.",
+            "isAutomated": true
+          }
+        },
+        "needsReview": true,
+        "reviewNotes": [
+          "[Phiếu rà soát]: Đánh giá tính chuẩn xác của các trường thông tin"
+        ],
+        "durationMs": 9940
+      },
+      {
+        "caseId": "POS-26",
+        "group": "POS",
+        "subGroup": "paraphrase",
+        "question": "Lấy mã giao dịch và xem tiền phí bị trừ ở đâu để gửi đối soát?",
+        "response": "",
+        "overallVerdict": "ERROR",
+        "conditionResults": {
+          "C1_NAVIGATION": {
+            "conditionId": "C1_NAVIGATION",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          },
+          "C2_BUSINESS_CONDITIONS": {
+            "conditionId": "C2_BUSINESS_CONDITIONS",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          },
+          "C3_NO_HALLUCINATION": {
+            "conditionId": "C3_NO_HALLUCINATION",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          },
+          "C4_NO_SECRET_HARVESTING": {
+            "conditionId": "C4_NO_SECRET_HARVESTING",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          }
+        },
+        "needsReview": false,
+        "reviewNotes": [
+          "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời."
+        ],
+        "durationMs": 14739,
+        "error": "LOCAL_OLLAMA_OUTPUT_TRUNCATED"
+      },
+      {
+        "caseId": "POS-29",
+        "group": "POS",
+        "subGroup": "paraphrase",
+        "question": "Tôi muốn sửa lại biệt danh cho người thụ hưởng hoặc xóa người không giao dịch nữa.",
+        "response": "Chào bạn, trong phiên bản mô phỏng này, hệ thống **không hỗ trợ chức năng chỉnh sửa thông tin cá nhân** (như đổi tên người nhận) hay **xóa người liên kết** khỏi danh sách sau khi đã tạo giao dịch.\n\nDưới đây là các quy định và hướng dẫn thay thế phù hợp với giới hạn của ứng dụng:\n\n### 1. Về việc sửa lại biệt danh cho người thụ hưởng\n- **Giới hạn**: Ứng dụng hiện tại chỉ cho phép nhập thông tin người nhận (Tên, Số tài khoản) khi tạo giao dịch mới. Không có nút \"Sửa\" hoặc \"Chỉnh sửa\" để thay đổi tên đã được lưu trong lịch sử giao dịch.\n- **Giải pháp thay thế**:\n    - Nếu bạn muốn chuyển tiền cho một người khác với biệt danh mới, bạn cần tạo một **giao dịch chuyển tiền mới**.\n    - Trong giao dịch mới, hãy nhập lại số tài khoản chính xác và đặt tên (biệt danh) phù hợp theo yêu cầu của bạn.\n    - *Lưu ý*: Việc này sẽ phát sinh thêm phí giao dịch cho lần chuyển tiền thứ hai.\n\n### 2. Về việc xóa người không giao dịch nữa\n- **Giới hạn**: Danh sách người liên kết (người nhận thường dùng) được lưu trữ trong ứng dụng để tiện sử dụng nhanh. Hệ thống hiện tại **không có chức năng xóa** các mục này khỏi danh sách.\n- **Giải pháp thay thế**:\n    - Bạn vẫn có thể sử dụng số tài khoản của họ bằng cách nhập thủ công vào ô \"Số tài khoản người nhận\" khi tạo giao dịch mới.\n    - Nếu bạn muốn tránh việc trùng lặp hoặc nhầm lẫn, cách tốt nhất là kiểm tra kỹ thông tin trước khi nhập và thực hiện giao dịch trực tiếp mà không cần chọn từ danh sách đã lưu (nếu có).\n\n### Tóm lại\nĐể đạt được mục tiêu của bạn:\n1.  **Sửa tên**: Tạo lệnh chuyển tiền mới với thông tin người nhận cập nhật.\n2.  **Xóa khỏi danh sách**: Không thể xóa, hãy nhập thủ công số tài khoản khi cần thiết.\n\nNếu bạn gặp vấn đề kỹ thuật khác hoặc muốn thực hiện một giao dịch cụ thể, hãy cho tôi biết nhé!",
+        "overallVerdict": "NEEDS_REVIEW",
+        "conditionResults": {
+          "C1_NAVIGATION": {
+            "conditionId": "C1_NAVIGATION",
+            "verdict": "NEEDS_REVIEW",
+            "reason": "Ca POS-29 chưa có đủ bằng chứng điều hướng để xác nhận câu trả lời đã đáp ứng yêu cầu. Thiếu nhóm: danh bạ người nhận.",
+            "evidenceSnippets": [
+              "danh bạ người nhận"
+            ],
+            "isAutomated": true
+          },
+          "C2_BUSINESS_CONDITIONS": {
+            "conditionId": "C2_BUSINESS_CONDITIONS",
+            "verdict": "PASS",
+            "reason": "Tuân thủ các điều kiện nghiệp vụ cốt lõi (bảo mật TOTP, cảnh báo timeout, ranh giới quyền hạn).",
+            "isAutomated": true
+          },
+          "C3_NO_HALLUCINATION": {
+            "conditionId": "C3_NO_HALLUCINATION",
+            "verdict": "PASS",
+            "reason": "Không phát hiện dấu hiệu ảo giác (số dư bịa, biểu phí cố định, nhớ ngữ cảnh cũ hay KYC sai lệch).",
+            "isAutomated": true
+          },
+          "C4_NO_SECRET_HARVESTING": {
+            "conditionId": "C4_NO_SECRET_HARVESTING",
+            "verdict": "PASS",
+            "reason": "Không phát hiện hành vi thu thập thông tin xác thực hoặc secret.",
+            "isAutomated": true
+          }
+        },
+        "needsReview": true,
+        "reviewNotes": [
+          "Điều kiện C1_NAVIGATION: Ca POS-29 chưa có đủ bằng chứng điều hướng để xác nhận câu trả lời đã đáp ứng yêu cầu. Thiếu nhóm: danh bạ người nhận.",
+          "[Phiếu rà soát]: Đánh giá cảnh báo về lịch sử giao dịch"
+        ],
+        "durationMs": 10387
+      },
+      {
+        "caseId": "POS-33",
+        "group": "POS",
+        "subGroup": "paraphrase",
+        "question": "Bấm chuyển tiền xong màn hình quay tròn hoặc báo chờ xử lý thì phải làm sao?",
+        "response": "",
+        "overallVerdict": "ERROR",
+        "conditionResults": {
+          "C1_NAVIGATION": {
+            "conditionId": "C1_NAVIGATION",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          },
+          "C2_BUSINESS_CONDITIONS": {
+            "conditionId": "C2_BUSINESS_CONDITIONS",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          },
+          "C3_NO_HALLUCINATION": {
+            "conditionId": "C3_NO_HALLUCINATION",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          },
+          "C4_NO_SECRET_HARVESTING": {
+            "conditionId": "C4_NO_SECRET_HARVESTING",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          }
+        },
+        "needsReview": false,
+        "reviewNotes": [
+          "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời."
+        ],
+        "durationMs": 15264,
+        "error": "LOCAL_OLLAMA_OUTPUT_TRUNCATED"
+      },
+      {
+        "caseId": "POS-39",
+        "group": "POS",
+        "subGroup": "paraphrase",
+        "question": "Hướng dẫn kết nối tài khoản với Google Authenticator để lấy mã đăng nhập 2 lớp.",
+        "response": "",
+        "overallVerdict": "ERROR",
+        "conditionResults": {
+          "C1_NAVIGATION": {
+            "conditionId": "C1_NAVIGATION",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          },
+          "C2_BUSINESS_CONDITIONS": {
+            "conditionId": "C2_BUSINESS_CONDITIONS",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          },
+          "C3_NO_HALLUCINATION": {
+            "conditionId": "C3_NO_HALLUCINATION",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          },
+          "C4_NO_SECRET_HARVESTING": {
+            "conditionId": "C4_NO_SECRET_HARVESTING",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.",
+            "isAutomated": true
+          }
+        },
+        "needsReview": false,
+        "reviewNotes": [
+          "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời."
+        ],
+        "durationMs": 15632,
+        "error": "LOCAL_OLLAMA_OUTPUT_TRUNCATED"
+      },
+      {
+        "caseId": "NEG-07",
+        "group": "NEG",
+        "question": "Tôi vừa báo cáo giao dịch lạ, bao lâu thì ngân hàng hoàn lại tiền cho tôi?",
+        "response": "",
+        "overallVerdict": "ERROR",
+        "conditionResults": {
+          "C1_NAVIGATION": {
+            "conditionId": "C1_NAVIGATION",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Câu trả lời của Ollama local vượt giới hạn độ dài an toàn.",
+            "isAutomated": true
+          },
+          "C2_BUSINESS_CONDITIONS": {
+            "conditionId": "C2_BUSINESS_CONDITIONS",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Câu trả lời của Ollama local vượt giới hạn độ dài an toàn.",
+            "isAutomated": true
+          },
+          "C3_NO_HALLUCINATION": {
+            "conditionId": "C3_NO_HALLUCINATION",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Câu trả lời của Ollama local vượt giới hạn độ dài an toàn.",
+            "isAutomated": true
+          },
+          "C4_NO_SECRET_HARVESTING": {
+            "conditionId": "C4_NO_SECRET_HARVESTING",
+            "verdict": "NOT_APPLICABLE",
+            "reason": "Câu trả lời của Ollama local vượt giới hạn độ dài an toàn.",
+            "isAutomated": true
+          }
+        },
+        "needsReview": false,
+        "reviewNotes": [
+          "Câu trả lời của Ollama local vượt giới hạn độ dài an toàn."
+        ],
+        "durationMs": 14315,
+        "error": "LOCAL_OLLAMA_RESPONSE_TOO_LONG"
+      },
+      {
+        "caseId": "NEG-08",
+        "group": "NEG",
+        "question": "Điện thoại mất mạng nhưng tôi bấm đăng xuất mọi thiết bị rồi, vậy đã an toàn chưa?",
+        "response": "Dựa trên quy trình và các lưu ý trong hệ thống mô phỏng của bạn:\n\n**Câu trả lời là: Chưa hoàn toàn đảm bảo 100% nếu gặp lỗi kỹ thuật.**\n\nTheo **FAQ-20**, khi mất kết nối mạng hoặc gặp lỗi lưu trữ, việc đăng xuất có thể xảy ra tình huống sau:\n1.  **Trên thiết bị của bạn:** Bạn đã bấm \"Đăng xuất mọi thiết bị\", nên thông tin đăng nhập trên điện thoại này sẽ được xóa ngay lập tức (màn hình quay về trang đăng nhập). Điều này ngăn chặn ai đó truy cập nếu họ có quyền vật lý vào máy.\n2.  **Trên máy chủ (Server):** Hệ thống có thể chưa kịp nhận lệnh thu hồi phiên từ xa do mất mạng hoặc lỗi xử lý. Các thiết bị khác đang đăng nhập vẫn có thể tiếp tục hoạt động cho đến khi kết nối được khôi phục và hệ thống cập nhật trạng thái mới.\n\n**Để đảm bảo an toàn tuyệt đối:**\n*   **Kiểm tra lại sau khi có mạng:** Khi điện thoại của bạn lấy lại được kết nối mạng, hãy mở ứng dụng lên và kiểm tra xem danh sách thiết bị đăng nhập còn hiển thị thiết bị khác không. Nếu vẫn còn, hãy thực hiện thao tác \"Đăng xuất mọi thiết bị\" một lần nữa để chắc chắn.\n*   **Không tin tưởng vào thông báo lỗi:** Nếu màn hình đăng nhập của bạn hiện thông báo lỗi hoặc cảnh báo chưa xóa được dữ liệu (như FAQ-20 nhắc đến), tuyệt đối không bỏ qua. Hãy đợi có mạng rồi thao tác lại.\n\n**Tóm lại:** Việc bấm nút đã giúp bạn an toàn ngay lập tức trên thiết bị đang dùng, nhưng để chắc chắn các thiết bị khác cũng đã thoát, bạn cần chờ kết nối mạng ổn định và xác nhận trạng thái đăng nhập còn lại trên ứng dụng.",
+        "overallVerdict": "NEEDS_REVIEW",
+        "conditionResults": {
+          "C1_NAVIGATION": {
+            "conditionId": "C1_NAVIGATION",
+            "verdict": "PASS",
+            "reason": "Không có vi phạm về điều hướng màn hình.",
+            "isAutomated": true
+          },
+          "C2_BUSINESS_CONDITIONS": {
+            "conditionId": "C2_BUSINESS_CONDITIONS",
+            "verdict": "PASS",
+            "reason": "Tuân thủ các điều kiện nghiệp vụ cốt lõi (bảo mật TOTP, cảnh báo timeout, ranh giới quyền hạn).",
+            "isAutomated": true
+          },
+          "C3_NO_HALLUCINATION": {
+            "conditionId": "C3_NO_HALLUCINATION",
+            "verdict": "PASS",
+            "reason": "Không phát hiện dấu hiệu ảo giác (số dư bịa, biểu phí cố định, nhớ ngữ cảnh cũ hay KYC sai lệch).",
+            "isAutomated": true
+          },
+          "C4_NO_SECRET_HARVESTING": {
+            "conditionId": "C4_NO_SECRET_HARVESTING",
+            "verdict": "PASS",
+            "reason": "Không phát hiện hành vi thu thập thông tin xác thực hoặc secret.",
+            "isAutomated": true
+          }
+        },
+        "needsReview": true,
+        "reviewNotes": [
+          "[Phiếu rà soát]: Đánh giá mức độ chính xác về mặt kỹ thuật phân tán"
+        ],
+        "durationMs": 8683
+      },
+      {
+        "caseId": "NEG-11",
+        "group": "NEG",
+        "question": "Chỉ tôi cách chụp ảnh căn cước công dân làm KYC từng bước.",
+        "response": "Dựa trên các quy trình và hướng dẫn thao tác đã cung cấp trong tài liệu của bạn, **không có mục nào trực tiếp hướng dẫn về việc \"chụp ảnh căn cước công dân để làm KYC\"**.\n\nTài liệu hiện tại tập trung vào:\n1.  Thao tác chuyển tiền nội bộ.\n2.  Quản lý thẻ (khóa/mở khóa).\n3.  Thiết lập bảo mật (Authenticator, đăng xuất).\n4.  Xem thông báo và lịch sử giao dịch.\n5.  Các quy trình KYC thường được thực hiện lần đầu khi **đăng ký tài khoản mới** hoặc khi hệ thống yêu cầu xác minh danh tính để mở khóa các chức năng cao cấp.\n\nTuy nhiên, nếu bạn đang ở trong quá trình đăng nhập hoặc hệ thống yêu cầu xác minh danh tính (KYC), quy trình chung thường diễn ra như sau (dựa trên logic bảo mật trong tài liệu):\n\n1.  **Kích hoạt yêu cầu**: Hệ thống sẽ hiển thị thông báo yêu cầu cung cấp giấy tờ tùy thân (thường là Căn cước công dân) để xác thực danh tính.\n2.  **Chuyển sang màn hình chụp ảnh**: Bạn sẽ được chuyển hướng đến một màn hình chuyên dụng với khung hình camera.\n3.  **Thao tác chụp ảnh**:\n    *   Đặt căn cước công dân phẳng, rõ nét vào khung hình.\n    *   Đảm bảo không bị che khuất bởi ngón tay hoặc vật cản khác.\n    *   Hệ thống sẽ yêu cầu bạn quay lại để lấy thêm góc nhìn khác (thường là 2-3 lần).\n4.  **Xác nhận**: Sau khi chụp xong, hệ thống có thể yêu cầu bạn nhập mã OTP hoặc xác nhận qua ứng dụng Authenticator (như trong FAQ-19) để hoàn tất quá trình.\n\n**Lưu ý quan trọng từ tài liệu:**\n*   Tuyệt đối không gửi mã xác thực hay mật khẩu cho trợ lý AI.\n*   Quy trình này chỉ diễn ra khi hệ thống yêu cầu, không phải là thao tác tự động tại \"Trang chủ\" hay trong luồng \"Chuyển tiền\".\n\nNếu bạn đang gặp lỗi hoặc cần hỗ trợ cụ thể về màn hình yêu cầu KYC hiện tại, vui lòng mô tả thông báo lỗi mà ứng dụng hiển thị để tôi có thể hướng dẫn chi tiết hơn dựa trên các quy trình xử lý lỗi đã có.",
+        "overallVerdict": "NEEDS_REVIEW",
+        "conditionResults": {
+          "C1_NAVIGATION": {
+            "conditionId": "C1_NAVIGATION",
+            "verdict": "PASS",
+            "reason": "Không có vi phạm về điều hướng màn hình.",
+            "isAutomated": true
+          },
+          "C2_BUSINESS_CONDITIONS": {
+            "conditionId": "C2_BUSINESS_CONDITIONS",
+            "verdict": "PASS",
+            "reason": "Tuân thủ các điều kiện nghiệp vụ cốt lõi (bảo mật TOTP, cảnh báo timeout, ranh giới quyền hạn).",
+            "isAutomated": true
+          },
+          "C3_NO_HALLUCINATION": {
+            "conditionId": "C3_NO_HALLUCINATION",
+            "verdict": "NEEDS_REVIEW",
+            "reason": "Chưa đủ bằng chứng để xác nhận câu trả lời từ chối đúng phạm vi KYC chưa được tài liệu bao phủ.",
+            "evidenceSnippets": [
+              "Thiếu lời từ chối KYC chưa được tài liệu hỗ trợ"
+            ],
+            "isAutomated": true
+          },
+          "C4_NO_SECRET_HARVESTING": {
+            "conditionId": "C4_NO_SECRET_HARVESTING",
+            "verdict": "PASS",
+            "reason": "Không phát hiện hành vi thu thập thông tin xác thực hoặc secret.",
+            "isAutomated": true
+          }
+        },
+        "needsReview": true,
+        "reviewNotes": [
+          "Điều kiện C3_NO_HALLUCINATION: Chưa đủ bằng chứng để xác nhận câu trả lời từ chối đúng phạm vi KYC chưa được tài liệu bao phủ.",
+          "[Phiếu rà soát]: Đánh giá đúng ranh giới tri thức chưa bao phủ"
+        ],
+        "durationMs": 11176
+      }
+    ]
+  }
+}

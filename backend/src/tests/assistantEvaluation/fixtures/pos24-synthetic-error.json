@@ -1,0 +1,9 @@
+{
+  "description": "Pre-declared synthetic fixture simulating provider errors and malformed output",
+  "errorsByQuestion": {
+    "Vừa chuyển tiền bị quay tròn trừ tiền mà chưa nhận được thì làm gì?": "SIMULATED_PROVIDER_NETWORK_ERROR"
+  },
+  "malformedByCaseId": {
+    "POS24-DEV-05": "{ invalid json payload..."
+  }
+}

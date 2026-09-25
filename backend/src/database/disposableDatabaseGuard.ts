@@ -68,6 +68,8 @@ export const APPROVED_TEST_PATHS = [
   "src/tests/authRelational.test.ts",
   "src/tests/databaseFoundation.test.ts",
   "src/tests/mfaPersistence.test.ts",
+  "src/tests/assistantHelpHttp.test.ts",
+  "src/tests/assistantHelpRelational.database.test.ts",
 ] as const;
 
 export type ApprovedTestPath = (typeof APPROVED_TEST_PATHS)[number];
@@ -1212,6 +1214,7 @@ export async function runDisposablePostgresTest(
       "lifecycleRelational",
       "lifecycleScheduler",
       "integratedDisposable",
+      "assistantHelpRelational",
     ].some((name) => file.includes(name)))) {
       targetEnvironmentVariable = "RELATIONAL_DATABASE_URL";
     }

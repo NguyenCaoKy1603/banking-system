@@ -1,0 +1,275 @@
+{
+  "$schema": "assistant-pos24-reference-catalog-v1",
+  "description": "Locked reference catalog for POS-24 offline evaluator. Immutable answers and answerHashes against which all candidate snapshots are verified.",
+  "provenance": {
+    "sourceFileSha256": "d0109c9a5a5a72a8a344ad790329a1efb62701cb00cc41a36966b45c59b86d6a",
+    "pos23BaselineSnapshotSha256": "df5fd88ccbbf84624b83fd03e0f07bd2c83121ab8cda010efb8a44abdfb7c156",
+    "selectorPromptHash": "32d40a43d5e67de9f1c126be46d6e8ec88091e0c6d3dcb61e62f67cef95b5418",
+    "answerCatalogHash": "7a5560870f47c2dd7da685869a97391604a100d1063813e5b22ba82c792ab85d",
+    "catalogVersion": "nova-faq-answer-catalog-v1",
+    "faqVersion": "help-faq-v0.2",
+    "faqHash": "b8e82a449770e6b02147be522411d2117efbf4b4c8fabe80f9aabbaacc779525",
+    "promptVersion": "help-prompt-v0.4",
+    "promptHash": "c27aa7b1e95a9ee98106f2fe43ba761c195b1b89a190c41f59c45ed3deb2bcb3",
+    "extractedAt": "2026-09-24T03:50:00.000Z"
+  },
+  "entriesCount": 25,
+  "entries": [
+    {
+      "id": "FAQ-01",
+      "sourceFaqIds": [
+        "FAQ-01"
+      ],
+      "selectionHint": "Xem hoặc ẩn số dư tài khoản thanh toán (khả dụng, hiện tại) trên Trang chủ (không phải sổ tiết kiệm hay lịch sử giao dịch).",
+      "answer": "Trên tab “Trang chủ”, tìm thẻ đầu tiên trong “Tài khoản thanh toán”. Chọn biểu tượng “Hiện số dư” để xem số dư “Khả dụng” và “Hiện tại”; chọn lại để ẩn. Đây là số dư của tài khoản thanh toán đầu tiên đang hiển thị, không phải tổng số dư của nhiều tài khoản.",
+      "answerHash": "652e7420ef3ca9a5f60735df160f37c7bd1d245d58ceda127f074e925ccc1d7a",
+      "sourceNote": "FAQ-01, phần Hướng dẫn thao tác và Lưu ý."
+    },
+    {
+      "id": "FAQ-02",
+      "sourceFaqIds": [
+        "FAQ-02"
+      ],
+      "selectionHint": "Xem đầy đủ hoặc sao chép số tài khoản của mình.",
+      "answer": "Trên “Trang chủ”, tại thẻ tài khoản, chọn “Hiện đầy đủ” để xem số tài khoản hoặc “Sao chép” để chép vào bộ nhớ tạm; bạn có thể sao chép mà không cần hiện đầy đủ trước. Chọn “Ẩn” để che lại. Không gửi số tài khoản trong cuộc trò chuyện.",
+      "answerHash": "1a526b868a529b315f9c4a598b7aac2454ba07647ac046c622480bd88f21e668",
+      "sourceNote": "FAQ-02, phần Hướng dẫn thao tác và Lưu ý."
+    },
+    {
+      "id": "FAQ-03",
+      "sourceFaqIds": [
+        "FAQ-03"
+      ],
+      "selectionHint": "Mở màn hình Chi tiết tài khoản và các tác vụ nhanh.",
+      "answer": "Mở “Trang chủ”, rồi chọn dòng tên và số tài khoản trong thẻ tài khoản. Màn hình “Chi tiết tài khoản” hiển thị thông tin chủ tài khoản, ngân hàng, loại tiền, số dư và trạng thái. Tại đây có các tác vụ nhanh như “Chuyển tiền”, “Nhận tiền / QR” và “Xem lịch sử giao dịch”.",
+      "answerHash": "0ac07c095e3bd5bbfb2d55a1921ea5676d0a328c26b1f79872084f2ff7132903",
+      "sourceNote": "FAQ-03, phần Hướng dẫn thao tác."
+    },
+    {
+      "id": "FAQ-04",
+      "sourceFaqIds": [
+        "FAQ-04"
+      ],
+      "selectionHint": "Mở danh sách lịch sử giao dịch và tải thêm giao dịch cũ.",
+      "answer": "Mở “Trang chủ”, cuộn tới phần “Quản lý” và chọn “Lịch sử giao dịch”. Chọn một giao dịch để xem chi tiết. Nếu có giao dịch cũ hơn, nút “Tải thêm giao dịch” xuất hiện ở cuối danh sách để tải tiếp.",
+      "answerHash": "ea3507e5b9e1f8f7e111ad1c0d22a6ea0645c151ef594a56823d5b93cce4c9e1",
+      "sourceNote": "FAQ-04, phần Hướng dẫn thao tác."
+    },
+    {
+      "id": "FAQ-05",
+      "sourceFaqIds": [
+        "FAQ-05"
+      ],
+      "selectionHint": "Lọc lịch sử giao dịch theo trạng thái hoặc dòng tiền vào/tiền ra (xem các khoản tiền vừa nhận về, tiền chuyển đi).",
+      "answer": "Trong “Lịch sử giao dịch”, dùng “Bộ lọc giao dịch” để chọn trạng thái như “Thành công”, “Đang xử lý”, “Thất bại” hoặc “Hoàn tác”, rồi chọn “Tiền vào” hoặc “Tiền ra”. Bộ lọc chỉ áp dụng trên giao dịch đã tải về máy; nếu chưa thấy kết quả, hãy chọn “Tải thêm giao dịch” để lấy dữ liệu cũ hơn.",
+      "answerHash": "3acda1afbbf7ee13ba4feb2b69296ef9ee13fd49c37f7fed88ba439aa1d4e51c",
+      "sourceNote": "FAQ-05, phần Hướng dẫn thao tác và Lưu ý."
+    },
+    {
+      "id": "FAQ-06",
+      "sourceFaqIds": [
+        "FAQ-06"
+      ],
+      "selectionHint": "Xem phí, trạng thái và mã tham chiếu của một giao dịch.",
+      "answer": "Mở “Trang chủ” → “Lịch sử giao dịch”, chọn giao dịch để vào “Chi tiết giao dịch”, rồi cuộn tới “Thông tin giao dịch”. Tại đó có “Phí”, “Mã tham chiếu”, “Thời gian tạo” và “Thời gian hoàn tất”; trạng thái và số tiền nằm ở phần đầu trang.",
+      "answerHash": "5326b119ead91cd8f0504ffff1324ef49646f2f7c5ff04fa87c77719bb9455b2",
+      "sourceNote": "FAQ-06, phần Hướng dẫn thao tác."
+    },
+    {
+      "id": "FAQ-07",
+      "sourceFaqIds": [
+        "FAQ-07"
+      ],
+      "selectionHint": "Gửi báo cáo cho giao dịch mà người dùng không nhận ra.",
+      "answer": "Trong “Lịch sử giao dịch”, mở giao dịch cần báo cáo, vào “Chi tiết giao dịch” và chọn “Báo cáo giao dịch đáng ngờ”. Nhập lý do từ 5 đến 1.000 ký tự, chọn “Gửi báo cáo” và chờ kết quả. Việc tiếp nhận báo cáo không đồng nghĩa với hoàn tiền tự động hoặc cam kết thời hạn hoàn tiền.",
+      "answerHash": "4f7f0cfcb9d904187b80f312c4a1547f419b1c0956d3cf1b0d90bdef3724ac3e",
+      "sourceNote": "FAQ-07, phần Hướng dẫn thao tác và giới hạn."
+    },
+    {
+      "id": "FAQ-08",
+      "sourceFaqIds": [
+        "FAQ-08"
+      ],
+      "selectionHint": "Thêm người nhận mới vào Danh bạ người nhận.",
+      "answer": "Mở “Danh bạ người nhận” từ “Trang chủ” hoặc tab “Thêm”. Nhập “Tên gợi nhớ” và số tài khoản người nhận (6–34 chữ số), rồi chọn “Thêm người nhận”. Chờ thông báo xác nhận và kiểm tra người nhận trong danh sách.",
+      "answerHash": "12c4261a35cf4a41c592bd9de30da74803ae5aca61e1a61bc3e3296600a99e5a",
+      "sourceNote": "FAQ-08, phần Hướng dẫn thao tác."
+    },
+    {
+      "id": "FAQ-09",
+      "sourceFaqIds": [
+        "FAQ-09"
+      ],
+      "selectionHint": "Đổi tên gợi nhớ hoặc xóa người nhận đã lưu.",
+      "answer": "Mở “Danh bạ người nhận”. Để đổi tên, chọn “Đổi tên” tại người nhận, nhập “Tên mới” rồi chọn “Lưu tên”. Để xóa, chọn “Xoá” tại người nhận và xác nhận bằng “Xác nhận xoá”; có thể chọn “Huỷ” nếu không muốn tiếp tục.",
+      "answerHash": "4622a0c7b548e98afb917feebc1d83e8a6ed3c431336e7eab0ad40cca2ee3792",
+      "sourceNote": "FAQ-09, phần Hướng dẫn thao tác."
+    },
+    {
+      "id": "FAQ-10",
+      "sourceFaqIds": [
+        "FAQ-10"
+      ],
+      "selectionHint": "Chuyển tiền cho người nhận đã có trong danh bạ.",
+      "answer": "Trong “Danh bạ người nhận”, chọn người nhận rồi “Tiếp tục” để ứng dụng tra cứu. Kiểm tra người nhận và tài khoản nguồn, nhập số tiền, chọn “Kiểm tra phí giao dịch” và rà soát tổng ghi nợ. Sau đó chọn “Tiếp tục xác thực”, hoàn tất xác thực trong ứng dụng, gửi giao dịch và theo dõi trạng thái do ứng dụng trả về.",
+      "answerHash": "285051e6c29c1a453e18aa1d43b1c8769d4b7b7ec13dad2da1896f0b0961e499",
+      "sourceNote": "FAQ-10, phần Hướng dẫn thao tác; không khẳng định giao dịch thành công trước xác nhận."
+    },
+    {
+      "id": "FAQ-11",
+      "sourceFaqIds": [
+        "FAQ-11"
+      ],
+      "selectionHint": "Chuyển tiền bằng cách tự nhập số tài khoản người nhận.",
+      "answer": "Trên “Trang chủ”, chọn “Chuyển tiền”, nhập số tài khoản người nhận và kiểm tra tên do ứng dụng hiển thị. Chọn tài khoản nguồn, nhập số tiền bằng chữ số, rồi chọn “Kiểm tra phí giao dịch” để rà soát người nhận, phí và tổng ghi nợ. Hoàn tất bước xác thực trong ứng dụng, gửi giao dịch và theo dõi trạng thái cùng mã tham chiếu.",
+      "answerHash": "7a898e4d433aa6976c2c0477452e32872a2d8520ff99ed3f38af3cceb577642a",
+      "sourceNote": "FAQ-11, phần Hướng dẫn thao tác."
+    },
+    {
+      "id": "FAQ-12",
+      "sourceFaqIds": [
+        "FAQ-12"
+      ],
+      "selectionHint": "Xem báo giá phí và tổng ghi nợ trước khi xác thực giao dịch.",
+      "answer": "Trong màn hình “Chuyển tiền”, sau khi chọn người nhận và nhập số tiền, chọn “Kiểm tra phí giao dịch”. Ở bước “Kiểm tra giao dịch”, đọc “Số tiền”, “Phí” và “Tổng ghi nợ” (số tiền cộng phí). Chỉ tiếp tục xác thực nếu bạn đồng ý với báo giá đang hiển thị; tài liệu không nêu yếu tố quyết định mức phí.",
+      "answerHash": "33af14a88e2427e5172355728e91f74e57e620072858f2651d6b852146b1bf43",
+      "sourceNote": "FAQ-12, phần Hướng dẫn thao tác; không bổ sung yếu tố tính phí ngoài nguồn."
+    },
+    {
+      "id": "FAQ-13",
+      "sourceFaqIds": [
+        "FAQ-13"
+      ],
+      "selectionHint": "Kiểm tra giao dịch đang xử lý hoặc chưa rõ kết quả an toàn.",
+      "answer": "Nếu màn hình kết quả đang xử lý có nút “Cập nhật trạng thái”, hãy chọn nút đó để kiểm tra trạng thái mới nhất. Bạn cũng có thể vào “Trang chủ” → “Lịch sử giao dịch” và mở giao dịch tương ứng. Nếu ứng dụng hiển thị thao tác khôi phục, hãy dùng thao tác đó; không cố bỏ qua thông báo “Đang chờ đối soát” hoặc “Không thể gửi lại”.",
+      "answerHash": "25c708618daf42ed4be5f36c127fa8112f2b1b8b4bb62373b1a688da105360e2",
+      "sourceNote": "FAQ-13, giữ nguyên điều kiện ‘nếu có nút Cập nhật trạng thái’."
+    },
+    {
+      "id": "FAQ-14",
+      "sourceFaqIds": [
+        "FAQ-14"
+      ],
+      "selectionHint": "Hiển thị mã QR của chính mình ('QR của tôi') để người khác quét và chuyển tiền cho mình.",
+      "answer": "Chọn tab “QR” ở thanh điều hướng rồi chọn “QR của tôi”. Sau khi tài khoản tải xong, mã QR và thông tin nhận tiền sẽ hiển thị. Cách khác là mở tab “Thêm” và chọn “Mã QR nhận tiền”.",
+      "answerHash": "dfe1f66efda11b76674ffcc31713eff9b1f91d0ee62d9d809c98ed409e40287f",
+      "sourceNote": "FAQ-14, phần Hướng dẫn thao tác."
+    },
+    {
+      "id": "FAQ-15",
+      "sourceFaqIds": [
+        "FAQ-15"
+      ],
+      "selectionHint": "Dùng camera quét mã QR của người khác hoặc nhập mã QR để đọc thông tin người nhận (quét QR chỉ đọc thông tin, không tự chuyển tiền).",
+      "answer": "Vào tab “QR” và chọn “Quét QR”. Cấp quyền camera hoặc mở camera theo hướng dẫn rồi đưa mã vào khung hình; nếu nhập thủ công, dùng ô “Nội dung mã QR” và chọn “Đọc thông tin QR”. Ứng dụng hiển thị thông tin người nhận để bạn kiểm tra; quét QR không tự gửi giao dịch chuyển tiền.",
+      "answerHash": "12f6fcce30ca9fdc19006089def563fa19c4c3d49e4fb639237e10f2e3d2b356",
+      "sourceNote": "FAQ-15, phần Hướng dẫn thao tác và ý nghĩa QR."
+    },
+    {
+      "id": "FAQ-16",
+      "sourceFaqIds": [
+        "FAQ-16"
+      ],
+      "selectionHint": "Mở và đọc thông báo giao dịch trong ứng dụng.",
+      "answer": "Mở tab “Thêm” và chọn “Thông báo giao dịch”; bạn cũng có thể chọn biểu tượng chuông trên “Trang chủ”. Chọn một thông báo để xem nội dung và thời gian gửi. Chỉ chọn “Mở nội dung liên quan” nếu nút đó xuất hiện trong thông báo.",
+      "answerHash": "53c4c94b244aa1a39ffe2347458b7b429d51272eb4ee80f3a67433656af69736",
+      "sourceNote": "FAQ-16, phần Hướng dẫn thao tác."
+    },
+    {
+      "id": "FAQ-17",
+      "sourceFaqIds": [
+        "FAQ-17"
+      ],
+      "selectionHint": "Khóa khẩn cấp thẻ hoặc mở khóa THẺ bằng xác thực TOTP (chỉ áp dụng cho thẻ ngân hàng, bắt buộc có mã Authenticator).",
+      "answer": "Vào tab “Thẻ” và chọn thẻ. Nếu thẻ đang hoạt động, chọn “Khóa thẻ” và chờ ứng dụng xác nhận; thao tác khóa khẩn cấp không cần TOTP. Để mở khóa, chọn “Mở khóa thẻ”, lấy mã 6 chữ số trong Authenticator, nhập tại “Mã từ ứng dụng xác thực” và chọn “Xác nhận mở khóa bằng TOTP”. Không thể bỏ qua bước TOTP và không gửi mã vào chat.",
+      "answerHash": "edb9b6c9f31fdafe60c74235b7cc699b477cc40898ef0b078d596b80fa9e0b81",
+      "sourceNote": "FAQ-17, phần Hướng dẫn thao tác; TOTP bắt buộc khi mở khóa."
+    },
+    {
+      "id": "FAQ-18",
+      "sourceFaqIds": [
+        "FAQ-18"
+      ],
+      "selectionHint": "Xem danh sách sổ tiết kiệm, các khoản tiền gửi có kỳ hạn, tiền gốc, lãi suất và ngày đáo hạn/nhận lãi (không phải lịch sử tiền vào tài khoản thanh toán).",
+      "answer": "Trên “Trang chủ”, trong “Dịch vụ nhanh”, chọn “Tiền gửi” hoặc “Quản lý kỳ hạn”. Dùng bộ lọc “Đang hoạt động” hoặc “Đã hoàn tất”, rồi chọn một khoản để xem tiền gốc, lãi suất và ngày đáo hạn được ứng dụng hiển thị.",
+      "answerHash": "3c57c25840d7c0d639d4964f96b100b31bb7664ce48208354140ce48b8cf3647",
+      "sourceNote": "FAQ-18, phần Hướng dẫn thao tác."
+    },
+    {
+      "id": "FAQ-19",
+      "sourceFaqIds": [
+        "FAQ-19"
+      ],
+      "selectionHint": "Thiết lập ứng dụng Authenticator và kích hoạt TOTP.",
+      "answer": "Vào “Thêm” → “Bảo mật tài khoản” → “Ứng dụng xác thực”. Nhập mật khẩu hiện tại và làm bước xác thực bổ sung nếu ứng dụng yêu cầu. Quét QR hoặc nhập khóa trong ứng dụng Authenticator, nhập mã 6 chữ số để kích hoạt, rồi lưu mã khôi phục ngoại tuyến. Khi kích hoạt thành công, phiên hiện tại kết thúc và bạn cần đăng nhập lại.",
+      "answerHash": "3906b309b154ead7cbdbe48c0d5a30ed09c67b71e0f0263aece69fdf86df0eb8",
+      "sourceNote": "FAQ-19, phần Hướng dẫn thao tác; không yêu cầu gửi secret trong chat."
+    },
+    {
+      "id": "FAQ-20",
+      "sourceFaqIds": [
+        "FAQ-20"
+      ],
+      "selectionHint": "Đăng xuất khỏi thiết bị hiện tại hoặc mọi thiết bị.",
+      "answer": "Mở tab “Thêm” và cuộn xuống cuối màn hình. Chọn “Đăng xuất thiết bị này” để kết thúc phiên trên máy đang dùng; hoặc chọn “Đăng xuất mọi thiết bị” rồi xác nhận bằng “Đăng xuất tất cả”. Đọc thông báo kết quả mà ứng dụng hiển thị.",
+      "answerHash": "910fca865795fcf6f822550a976e048f87088ac9a17e62c25ea03e1bbe12d97b",
+      "sourceNote": "FAQ-20, phần Hướng dẫn thao tác."
+    },
+    {
+      "id": "CLARIFY",
+      "sourceFaqIds": [
+        "FAQ-03",
+        "FAQ-17"
+      ],
+      "selectionHint": "Ý định mơ hồ, thiếu đối tượng cụ thể (ví dụ: chỉ hỏi 'mở khóa như thế nào' mà không nói rõ thẻ hay tài khoản), hoặc có nhiều hướng dẫn khác nhau cần hỏi lại.",
+      "answer": "Bạn muốn hỏi về tài khoản, giao dịch, thẻ hay chức năng nào cụ thể? Hãy nêu tên màn hình hoặc thao tác bạn đang thực hiện.",
+      "answerHash": "9079ee3fd652f7d8286475a719042cf034484adc3f0d748dc8d0750bd9684913",
+      "sourceNote": "Quy tắc làm rõ ý định trong assistant-system-prompt.md; chủ đề được giới hạn theo FAQ nguồn."
+    },
+    {
+      "id": "OUT_OF_SCOPE",
+      "sourceFaqIds": [
+        "FAQ-07",
+        "FAQ-12",
+        "FAQ-17"
+      ],
+      "selectionHint": "Yêu cầu ngoài hướng dẫn đã được kiểm chứng hoặc đòi tiết lộ nội bộ.",
+      "answer": "Bộ hướng dẫn hiện tại chưa có thông tin đủ chi tiết cho yêu cầu này. Việc thiếu hướng dẫn không xác nhận rằng một tính năng có hoặc không tồn tại.",
+      "answerHash": "bff9afc3819df6635072762da358a821c40fc02def88fd392212b1cfb25b4418",
+      "sourceNote": "Giới hạn phạm vi của FAQ Part A và assistant-system-prompt.md."
+    },
+    {
+      "id": "ACTION_REQUEST",
+      "sourceFaqIds": [
+        "FAQ-10",
+        "FAQ-11",
+        "FAQ-17"
+      ],
+      "selectionHint": "Người dùng yêu cầu trợ lý thực hiện giao dịch hoặc thao tác thay họ.",
+      "answer": "Tôi chỉ có thể hướng dẫn; không thể thực hiện giao dịch hoặc thao tác thay bạn. Nếu bạn muốn tự làm, hãy cho biết bạn cần hướng dẫn về người nhận đã lưu hay nhập số tài khoản.",
+      "answerHash": "3d74aeb243aefcb19b161ec01f5d5bee34802af73332284cb5b7f78e5ce075a3",
+      "sourceNote": "Ranh giới vai trò trong assistant-system-prompt.md và luồng tự thao tác tại FAQ-10, FAQ-11, FAQ-17."
+    },
+    {
+      "id": "TOTP_BYPASS",
+      "sourceFaqIds": [
+        "FAQ-17"
+      ],
+      "selectionHint": "Người dùng yêu cầu bỏ qua, tắt, không cần hoặc vô hiệu hóa xác thực TOTP khi mở khóa thẻ (không áp dụng khi hỏi quy trình mở khóa thẻ do gặp trục trặc với mã).",
+      "answer": "Mở khóa thẻ bắt buộc phải nhập mã 6 chữ số từ ứng dụng Authenticator và xác nhận trong ứng dụng. Không có hướng dẫn thay thế để bỏ qua TOTP; không gửi mã vào cuộc trò chuyện.",
+      "answerHash": "530074e23f1369b8c719562857282528d0953fb48237e5fd0b0bb111c13ba53d",
+      "sourceNote": "FAQ-17, phần Hướng dẫn thao tác và quy tắc an toàn."
+    },
+    {
+      "id": "SECRET_PROTECTION",
+      "sourceFaqIds": [
+        "FAQ-02",
+        "FAQ-19"
+      ],
+      "selectionHint": "Người dùng hỏi có nên gửi mã xác thực hoặc thông tin bí mật vào chat.",
+      "answer": "Không gửi OTP, TOTP, mật khẩu hoặc mã khôi phục vào cuộc trò chuyện. Hãy tự nhập thông tin xác thực trong màn hình ứng dụng hoặc Authenticator; trợ lý không cần xem các mã đó.",
+      "answerHash": "ca37dbb2559d73b512bd046c89ae2e1a44bc7d986998ea65b69ab69a9775c5ae",
+      "sourceNote": "Quy tắc bảo vệ dữ liệu trong assistant-system-prompt.md; hướng dẫn liên quan tại FAQ-02 và FAQ-19."
+    }
+  ]
+}

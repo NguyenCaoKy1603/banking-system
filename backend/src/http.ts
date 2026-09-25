@@ -24,6 +24,15 @@ import { collectDatabaseMetrics, PrometheusRegistry, registerBusinessMetrics, re
 import type { RelationalHttpBoundary } from "./database/relationalHttpBoundary.js";
 import { DatabaseCommandError } from "./database/commandErrors.js";
 import { computeRegistrationNetworkFingerprint, fingerprint } from "./security.js";
+import {
+  AssistantHelpService,
+  resolveAssistantConfig,
+  type AssistantConfig,
+  AssistantRateLimiter,
+  readAssistantBody,
+  parseAndValidateAssistantPayload,
+  scanSensitiveData,
+} from "./assistant/index.js";
 
 const API_PREFIX = "/api/v1";
 const MAX_BODY_BYTES = 1_000_000;
@@ -58,6 +67,12 @@ export type HttpOptions = {
   customerAccessStatus?: (customerId: string) => Promise<"ACTIVE" | "LOCKED" | null>;
   /** Optional route-scoped direct relational boundary used during cutover. */
   relationalHttp?: RelationalHttpBoundary;
+  /** Optional assistant configuration for AI help endpoint */
+  assistantConfig?: Partial<AssistantConfig>;
+  /** Optional preconfigured assistant help service */
+  assistantService?: AssistantHelpService;
+  /** Optional rate limiter instance for assistant requests */
+  assistantRateLimiter?: AssistantRateLimiter;
   /** HMAC key for registration network fingerprint; required at all runtimes. */
   registrationFingerprintKey: Buffer;
 };
@@ -651,6 +666,140 @@ function isAuthenticatedRoute(
   return method === "GET" && segments.length === 3 && segments[0] === "savings" && segments[1] === "deposits";
 }
 
+const defaultAssistantRateLimiter = new AssistantRateLimiter(resolveAssistantConfig());
+
+async function handleAssistantRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  system: BankingSystem,
+  options: HttpOptions,
+  segments: readonly string[],
+  traceId: string,
+): Promise<void> {
+  if (request.method !== "POST" || segments.length !== 2 || segments[1] !== "help") {
+    throw notFound("API route not found.");
+  }
+
+  const config = resolveAssistantConfig(options.assistantConfig);
+  if (!config.enabled) {
+    throw new DomainError(503, "ASSISTANT_UNAVAILABLE", "Assistant help service is currently unavailable.");
+  }
+
+  const rawContentType = header(request, "content-type");
+  if (!rawContentType) {
+    throw new DomainError(415, "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json.");
+  }
+  const [mediaType] = rawContentType.split(";").map((s) => s.trim().toLowerCase());
+  if (mediaType !== "application/json") {
+    throw new DomainError(415, "UNSUPPORTED_MEDIA_TYPE", "Content-Type must be application/json.");
+  }
+
+  const requestAbortController = new AbortController();
+  let requestTimedOut = false;
+  const requestDeadlineTimer = setTimeout(() => {
+    requestTimedOut = true;
+    requestAbortController.abort();
+  }, config.requestTimeoutMs);
+  requestDeadlineTimer.unref();
+
+  const onClientPrematureClose = () => {
+    if (!response.writableEnded && !response.writableFinished) {
+      requestAbortController.abort();
+    }
+  };
+  response.once("close", onClientPrematureClose);
+  if (request.socket) {
+    request.socket.once("close", onClientPrematureClose);
+  }
+
+  // Start reading stream body immediately so Node doesn't drop chunks during async auth
+  const bodyPromise = readAssistantBody(request, config.maxBodyBytes, requestAbortController.signal);
+  // Ensure unhandled rejection is avoided if auth fails first
+  bodyPromise.catch(() => {});
+
+  try {
+    // Race auth against request deadline so a hanging auth call doesn't block past deadline
+    const authPromise = requireBearer(request, system, options, options.relationalHttp);
+    authPromise.catch(() => {});
+
+    let onAuthAbort: (() => void) | undefined;
+    const deadlineRejection = new Promise<never>((_, reject) => {
+      if (requestAbortController.signal.aborted) {
+        reject(new DomainError(504, "ASSISTANT_TIMEOUT", "Assistant service request timed out."));
+        return;
+      }
+      onAuthAbort = () => reject(new DomainError(504, "ASSISTANT_TIMEOUT", "Assistant service request timed out."));
+      requestAbortController.signal.addEventListener("abort", onAuthAbort, { once: true });
+    });
+
+    let userId: string;
+    try {
+      userId = await Promise.race([authPromise, deadlineRejection]);
+    } finally {
+      if (onAuthAbort) {
+        requestAbortController.signal.removeEventListener("abort", onAuthAbort);
+      }
+    }
+    const rawBody = await bodyPromise;
+    const validated = parseAndValidateAssistantPayload(rawBody, config.maxQuestionCodePoints);
+
+    if (scanSensitiveData(validated.question)) {
+      throw new DomainError(422, "ASSISTANT_SENSITIVE_INPUT", "Request contains sensitive information; please remove credentials or secrets before asking.");
+    }
+
+    const rateLimiter = options.assistantRateLimiter ?? (options.assistantConfig ? new AssistantRateLimiter(config) : defaultAssistantRateLimiter);
+    const releaseSlot = rateLimiter.acquire(userId);
+
+    try {
+      if (requestTimedOut || requestAbortController.signal.aborted) {
+        throw new DomainError(504, "ASSISTANT_TIMEOUT", "Assistant service request timed out.");
+      }
+
+      const service = options.assistantService ?? new AssistantHelpService(config);
+        const answer = await service.executeHelpRequest(
+          validated.question,
+          requestAbortController.signal,
+          () => rateLimiter.consumeProviderCall(),
+        );
+
+      if (requestTimedOut || requestAbortController.signal.aborted) {
+        throw new DomainError(504, "ASSISTANT_TIMEOUT", "Assistant service request timed out.");
+      }
+
+      if (response.writableEnded || response.destroyed) {
+        return;
+      }
+
+      response.setHeader("Cache-Control", "no-store");
+      writeResponse(response, 200, traceId, { answer });
+    } finally {
+      releaseSlot();
+    }
+  } catch (error: unknown) {
+    if (!request.readableEnded) {
+      request.resume();
+    }
+    if (response.writableEnded || response.destroyed) {
+      return;
+    }
+    if (requestTimedOut) {
+      writeError(response, 504, traceId, new DomainError(504, "ASSISTANT_TIMEOUT", "Assistant service request timed out."));
+      return;
+    }
+    if (error instanceof DomainError) {
+      writeError(response, error.status, traceId, error);
+      return;
+    }
+    writeError(response, 500, traceId, new DomainError(500, "INTERNAL_ERROR", "Internal server error."));
+  } finally {
+    clearTimeout(requestDeadlineTimer);
+    response.removeListener("close", onClientPrematureClose);
+    if (request.socket) {
+      request.socket.removeListener("close", onClientPrematureClose);
+    }
+  }
+}
+
 export async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
@@ -783,6 +932,17 @@ export async function handleRequest(
     }
     const routePath = requestUrl.pathname.slice(API_PREFIX.length) || "/";
     const segments = pathSegments(routePath);
+    if (segments[0] === "assistant") {
+      await handleAssistantRoute(
+        request,
+        response,
+        system,
+        options,
+        segments,
+        traceId,
+      );
+      return;
+    }
     const body = bodyAlreadyRead ? parsedBody : await readJson(request);
     const relationalV2 = process.env.BANKING_PERSISTENCE_MODE?.trim() === "relational-v2";
     const registrationRoute = (request.method === "POST" && segments[0] === "auth" && segments[1] === "register");
@@ -2260,8 +2420,11 @@ export function createBankingServer(
   const metrics = options.metrics ?? new PrometheusRegistry();
   registerHttpMetrics(metrics);
   registerBusinessMetrics(metrics);
+  const assistantConfig = resolveAssistantConfig(options.assistantConfig);
   const resolvedOptions: HttpOptions = {
     ...options,
+    assistantConfig,
+    assistantRateLimiter: options.assistantRateLimiter ?? new AssistantRateLimiter(assistantConfig),
     metrics,
     logger: options.logger ?? createStructuredLogger({ service: options.serviceName ?? "banking-reference-backend" }),
     serviceName: options.serviceName ?? "banking-reference-backend",
@@ -2291,8 +2454,11 @@ export function createPersistentBankingServer(
   system = new BankingSystem(),
   options: HttpOptions,
 ): Server {
+  const assistantConfig = resolveAssistantConfig(options.assistantConfig);
   const resolvedOptions: HttpOptions = {
     ...options,
+    assistantConfig,
+    assistantRateLimiter: options.assistantRateLimiter ?? new AssistantRateLimiter(assistantConfig),
     customerAccessStatus: options.customerAccessStatus ?? repository.customerAccessStatus?.bind(repository),
     readinessCheck: options.readinessCheck ?? repository.healthCheck?.bind(repository),
     businessHealthCheck: options.businessHealthCheck ?? repository.businessHealthCheck?.bind(repository),
@@ -2331,6 +2497,10 @@ export function createPersistentBankingServer(
             new DomainError(503, "PERSISTENCE_UNAVAILABLE", "Persistent sandbox is temporarily unavailable."),
           );
         });
+      return;
+    }
+    if (pathname.startsWith(`${API_PREFIX}/assistant`)) {
+      void handleRequest(request, response, system, resolvedOptions, undefined, false, undefined, requestContext);
       return;
     }
     const traceId = getRequestId(request);

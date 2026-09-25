@@ -8,6 +8,7 @@ import { RelationalHttpBoundary } from "./database/relationalHttpBoundary.js";
 import { readRuntimeConfig } from "./runtimeConfig.js";
 import { runtimeMetadata } from "./runtimeMetadata.js";
 import { createRuntimeSecretProvider, referenceFor } from "./secrets/runtimeSecrets.js";
+import { resolveRuntimeAssistantConfig } from "./assistant/runtimeAssistantConfig.js";
 
 type StepUpMethod = "TOTP";
 
@@ -57,11 +58,13 @@ async function start(): Promise<void> {
     creditPaymentStepUpMethods: configuredMethods,
     cardUnlockStepUpMethods: configuredMethods,
   });
+  const assistantConfig = resolveRuntimeAssistantConfig();
   const httpOptions = {
     allowedOrigins: allowedOrigins.length > 0 ? allowedOrigins : undefined,
     environment: bankingEnvironment,
     storage,
     commitSha: buildCommitSha,
+    assistantConfig,
     runtimeMetadata: runtimeMetadata({
       releaseId: runtimeConfig.releaseId,
       commitSha: runtimeConfig.commitSha,
