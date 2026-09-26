@@ -67,6 +67,7 @@ services:
       BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
       BANKING_STORAGE: postgres
       BANKING_SECRET_PROVIDER: ${BANKING_SECRET_PROVIDER:-local}
+      REGISTRATION_FINGERPRINT_KEY: ${REGISTRATION_FINGERPRINT_KEY:?REGISTRATION_FINGERPRINT_KEY is required}
       BANKING_PERSISTENCE_MODE: ${BANKING_PERSISTENCE_MODE:-legacy-state}
       BANKING_RELATIONAL_HTTP_ROUTES: ${BANKING_RELATIONAL_HTTP_ROUTES:-}
       BANKING_MANAGED_SECRETS_DIR: ${BANKING_MANAGED_SECRETS_DIR:-}
@@ -115,8 +116,6 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      email-capture:
-        condition: service_healthy
     ports:
       - "127.0.0.1:${BACKEND_PORT:-5000}:5000"
     healthcheck:
@@ -153,30 +152,6 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # Local-only OTP capture inbox. It stores synthetic verification messages in
-  # memory and is never a staging/production email provider.
-  email-capture:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      target: runtime
-      args:
-        COMMIT_SHA: ${COMMIT_SHA:-local}
-        RELEASE_ID: ${RELEASE_ID:-local}
-        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
-        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
-    environment:
-      EMAIL_CAPTURE_PORT: 5700
-    command: ["node", "scripts/email-capture.cjs"]
-    ports:
-      - "127.0.0.1:${EMAIL_CAPTURE_PORT:-5700}:5700"
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5700/readyz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 5s
-    restart: unless-stopped
 
   admin-api:
     build:
@@ -194,6 +169,7 @@ services:
       BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
       ADMIN_STORAGE: postgres
       BANKING_SECRET_PROVIDER: ${BANKING_SECRET_PROVIDER:-local}
+      REGISTRATION_FINGERPRINT_KEY: ${REGISTRATION_FINGERPRINT_KEY:?REGISTRATION_FINGERPRINT_KEY is required}
       ADMIN_PORT: 5001
       ADMIN_BIND: 0.0.0.0
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}

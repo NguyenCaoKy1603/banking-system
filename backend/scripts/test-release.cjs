@@ -24,7 +24,7 @@ const commands = [
   ["test:lifecycle:persistence", "Savings/Credit scheduled lifecycle + worker concurrency disposable"],
   ["test:lifecycle:scheduler", "two-process lifecycle scheduler disposable rehearsal"],
   ["test:runtime-email", "runtime HTTP email provider timeout/retry/fail-closed contract"],
-  ["test:integrated:disposable", "API + capture email + two workers + two lifecycle schedulers disposable rehearsal"],
+  ["test:integrated:disposable", "API + SMTP email + two workers + two lifecycle schedulers disposable rehearsal"],
   ["test:admin:database", "Admin PostgreSQL disposable"],
   ["test:persistence", "legacy/regression persistence disposable"],
   ["test:worker", "worker lease/retry/dead-letter/restart/load disposable"],

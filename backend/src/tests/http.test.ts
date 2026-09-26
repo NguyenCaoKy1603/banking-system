@@ -889,3 +889,60 @@ test("non-Registration MFA resend keeps its client-address derivation while Regi
     authenticatedResendCalls[0]!.networkFingerprint,
   );
 });
+
+test("degraded email provider does not mark backend readiness as degraded in preview runtime", async (t) => {
+  const system = new BankingSystem();
+  const server = createBankingServer(system, {
+    environment: "preview",
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
+    emailProviderHealth: () => ({
+      provider: "smtp",
+      status: "degraded",
+      configured: true,
+      credentialConfigured: true,
+      lastErrorCode: "smtp-provider-timeout",
+    }),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const readyResponse = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+  assert.equal(readyResponse.status, 200);
+  const readyBody = (await readyResponse.json()) as {
+    status: string;
+    emailProvider?: { provider: string; status: string; lastErrorCode?: string };
+  };
+  assert.equal(readyBody.status, "ok");
+  assert.deepEqual(readyBody.emailProvider, {
+    provider: "smtp",
+    status: "degraded",
+    configured: true,
+    credentialConfigured: true,
+    lastErrorCode: "smtp-provider-timeout",
+  });
+});
+
+test("throwing email provider health check does not crash readyz and does not degrade readiness in preview", async (t) => {
+  const system = new BankingSystem();
+  const server = createBankingServer(system, {
+    environment: "preview",
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
+    emailProviderHealth: () => {
+      throw new Error("SMTP connection failed");
+    },
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const readyResponse = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+  assert.equal(readyResponse.status, 200);
+  const readyBody = (await readyResponse.json()) as {
+    status: string;
+    emailProvider?: { provider: string; status: string; lastErrorCode?: string };
+  };
+  assert.equal(readyBody.status, "ok");
+  assert.equal(readyBody.emailProvider?.status, "degraded");
+  assert.equal(readyBody.emailProvider?.lastErrorCode, "email-provider-health-failed");
+});

@@ -9,7 +9,8 @@ import { createPersistentBankingServer } from "../http.js";
 import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
 import { KeyEncryptionKeyringAdapter, LocalDevelopmentKeyEncryptionAdapter, OtpDigestKeyring } from "../mfa/crypto.js";
 import { PersistentMfaService } from "../mfa/persistentMfaService.js";
-import { HttpEmailProvider } from "../mfa/httpEmailProvider.js";
+import { SmtpEmailProvider, type SmtpTransport } from "../mfa/smtpEmailProvider.js";
+import type { SendMailOptions } from "nodemailer";
 import { RelationalHttpBoundary } from "../database/relationalHttpBoundary.js";
 import { UnitOfWork } from "../database/unitOfWork.js";
 import { DatabasePool } from "../database/pool.js";
@@ -74,20 +75,28 @@ function workerConfig(databaseUrlValue: string, workerId: string): WorkerConfig 
   };
 }
 
-test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and two lifecycle schedulers", { skip: !databaseUrl }, async (t) => {
+test("integrated relational-v2 rehearsal uses SMTP OTP delivery, two workers and two lifecycle schedulers", { skip: !databaseUrl }, async (t) => {
   const previousPersistenceMode = process.env.BANKING_PERSISTENCE_MODE;
   process.env.BANKING_PERSISTENCE_MODE = "relational-v2";
-  const captured: CapturedMessage[] = [];
-  const captureServer = createServer((request, response) => {
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
-    request.on("end", () => {
-      try { captured.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as CapturedMessage); } catch { /* malformed provider requests are rejected below */ }
-      response.statusCode = 202;
-      response.end();
-    });
+  const sentMail: SendMailOptions[] = [];
+  const fakeTransport: SmtpTransport = {
+    async sendMail(mailOptions) {
+      sentMail.push(mailOptions);
+      return { messageId: `<smtp-${sentMail.length}>`, accepted: [String(mailOptions.to)] };
+    },
+  };
+  const emailProvider = new SmtpEmailProvider({
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    user: "banking.demo@gmail.com",
+    from: "banking.demo@gmail.com",
+    password: "test-app-password",
+    timeoutMs: 500,
+    maxAttempts: 2,
+    retryDelayMs: 0,
+    transport: fakeTransport,
   });
-  const captureAddress = await listen(captureServer);
   const repository = new PostgresRelationalRepository({ connectionString: databaseUrl! });
   await repository.initialize();
   const apiServer = createPersistentBankingServer(repository, new BankingSystem(), {
@@ -99,15 +108,10 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
       encryption: new LocalDevelopmentKeyEncryptionAdapter(Buffer.alloc(32, 7), "integrated-mfa-v1"),
       otpDigestKeyring: new OtpDigestKeyring({ current: { id: "integrated-otp-v1", value: Buffer.alloc(32, 9) } }),
       environmentScope: "test",
-      delivery: new HttpEmailProvider({
-        endpoint: `http://127.0.0.1:${captureAddress.port}/capture`,
-        timeoutMs: 500,
-        maxAttempts: 3,
-        retryDelayMs: 0,
-      }),
+      delivery: emailProvider,
     }),
     relationalHttp: new RelationalHttpBoundary(repository.unitOfWork, "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud"),
-    emailProviderHealth: () => ({ provider: "http", status: "ok", configured: true, credentialConfigured: false }),
+    emailProviderHealth: () => emailProvider.health(),
   });
   const apiAddress = await listen(apiServer);
   const baseUrl = `http://127.0.0.1:${apiAddress.port}/api/v1`;
@@ -136,7 +140,6 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
     await workerDatabaseB.close().catch(() => undefined);
     await close(apiServer).catch(() => undefined);
     await repository.close().catch(() => undefined);
-    await close(captureServer).catch(() => undefined);
     if (previousPersistenceMode === undefined) delete process.env.BANKING_PERSISTENCE_MODE;
     else process.env.BANKING_PERSISTENCE_MODE = previousPersistenceMode;
   });
@@ -149,8 +152,9 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
   });
   assert.equal(register.status, 202);
   const challenge = await register.json() as { challengeId: string };
-  assert.equal(captured.length, 1);
-  const code = String(captured[0]?.code ?? "");
+  assert.equal(sentMail.length, 1);
+  const codeMatch = String(sentMail[0]?.text ?? "").match(/Mã xác nhận của bạn là:\s*(\d{6})/);
+  const code = codeMatch ? codeMatch[1] : "";
   assert.match(code, /^\d{6}$/);
   const challengeRow = await repository.unitOfWork.transaction(async ({ client }) => client.query<{ proof_digest: string }>("SELECT proof_digest FROM auth_challenges WHERE id = $1", [hashOpaqueToken(challenge.challengeId)]));
   assert.notEqual(challengeRow.rows[0]?.proof_digest, code);
@@ -173,8 +177,9 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
   assert.equal(resentChallenge.method, "EMAIL_OTP");
   assert.deepEqual(resentChallenge.methods, ["EMAIL_OTP"]);
   assert.equal(resentChallenge.purpose, "REGISTRATION_EMAIL_VERIFY");
-  assert.equal(captured.length, 2);
-  const resentCode = String(captured[1]?.code ?? "");
+  assert.equal(sentMail.length, 2);
+  const resentCodeMatch = String(sentMail[1]?.text ?? "").match(/Mã xác nhận của bạn là:\s*(\d{6})/);
+  const resentCode = resentCodeMatch ? resentCodeMatch[1] : "";
   assert.match(resentCode, /^\d{6}$/);
   assert.notEqual(resentCode, code);
 
@@ -253,5 +258,5 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
   const apiReady = await fetch(`${baseUrl.replace("/api/v1", "")}/readyz`);
   assert.equal(apiReady.status, 200);
   const apiHealth = await apiReady.json() as { emailProvider?: { configured: boolean; credentialConfigured: boolean } };
-  assert.deepEqual(apiHealth.emailProvider, { provider: "http", status: "ok", configured: true, credentialConfigured: false });
+  assert.deepEqual(apiHealth.emailProvider, { provider: "smtp", status: "ok", configured: true, credentialConfigured: true });
 });

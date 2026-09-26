@@ -900,12 +900,17 @@ export async function handleRequest(
         try {
           const emailProvider = await options.emailProviderHealth();
           health.emailProvider = emailProvider;
-          // A deliberately disabled provider is allowed for local preview.
-          if (emailProvider.status === "degraded") health.status = "degraded";
+          const isProductionLike = options.environment === "staging" || options.environment === "production-like";
+          if (isProductionLike && emailProvider.status === "degraded") {
+            health.status = "degraded";
+          }
         } catch {
-          health.status = "degraded";
+          const isProductionLike = options.environment === "staging" || options.environment === "production-like";
+          if (isProductionLike) {
+            health.status = "degraded";
+          }
           health.emailProvider = {
-            provider: "http",
+            provider: "smtp",
             status: "degraded",
             configured: false,
             credentialConfigured: false,
