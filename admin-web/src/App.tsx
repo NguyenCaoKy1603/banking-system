@@ -1,133 +1,249 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { adminFetch, idempotencyKey, type ApiError } from "./api";
+import { useCallback, useEffect, useState } from "react";
+import { adminFetch, type ApiError } from "./api";
+import { Notice } from "./components/common/Notice";
+import { AppLayout } from "./components/layout/AppLayout";
+import { StaffProvider, useStaff } from "./context/StaffContext";
+import { Applications } from "./features/applications/Applications";
+import { Approvals } from "./features/approvals/Approvals";
+import { AuditView } from "./features/audit/AuditView";
+import { Activation } from "./features/auth/Activation";
+import { Login } from "./features/auth/Login";
+import { Customers } from "./features/customers/Customers";
+import { FraudCases } from "./features/fraud/FraudCases";
+import { Operations } from "./features/operations/Operations";
+import { Overview } from "./features/overview/Overview";
+import { StaffView } from "./features/staff/StaffView";
+import { Transfers } from "./features/transfers/Transfers";
+import { useRouter } from "./router";
+import type {
+  Action,
+  Application,
+  AuditEvent,
+  FraudCase,
+  Job,
+  NavTab,
+  OutboxEvent,
+  Staff,
+  Transfer,
+} from "./types";
 
-type Staff = { id: string; employeeCode: string; email: string; displayName: string; status: string; roles: Array<{ role: string; environmentScope: string; expiresAt: string | null }>; permissions?: string[] };
-type Action = { id: string; actionType: string; requesterStaffId: string; targetType: string; targetId: string; requestFingerprint: string; status: string; payload: Record<string, unknown>; expiresAt: string; resultResourceId: string | null; version: number };
-type Account = { id: string; displayName: string; maskedNumber: string; status: string; availableMinor: string; currentMinor: string; version: number };
-type Customer = { id: string; fullName: string; email: string; phoneNumber: string; accessStatus: string };
-type Application = { id: string; applicationType: string; customerId: string; status: string; version: number; applicantLabel?: string; requestedLimitMinor?: string; approvedLimitMinor?: string | null; assignedStaffId?: string | null; decisionReasonCode?: string | null; createdAt: string };
-type Transfer = { id: string; customerId: string; sourceAccountId: string; reference: string; amountMinor: string; feeMinor: string; currency: string; status: string; version: number; lastErrorCode: string | null; createdAt: string };
-type FraudCase = { id: string; customerId: string; accountId: string; transactionId: string; reasonPreview: string; status: string; severity: string; assignedStaffId: string | null; resolutionCode: string | null; version: number; createdAt: string };
-type Job = { id: string; jobType: string; status: string; attempts: number; lastErrorCode: string | null; createdAt: string };
-type OutboxEvent = { id: string; eventType: string; aggregateId: string; status: string; attempts: number; lastErrorCode: string | null; requeueable?: boolean; occurredAt: string };
-type AuditEvent = { id: string; action: string; targetType: string; targetId: string | null; outcome: string; reasonCode: string | null; actorStaffId: string | null; occurredAt: string; metadata?: Record<string, unknown> };
-type Tab = "overview" | "approvals" | "customers" | "applications" | "transfers" | "fraud" | "operations" | "staff" | "audit";
+function AppShell() {
+  const { staff, canReadApprovals, logout } = useStaff();
+  const { tab, navigate } = useRouter();
 
-const formatMinor = (value: string) => `${Number(value).toLocaleString("vi-VN")} VND`;
-const shortId = (value: string | null | undefined) => value ? `${value.slice(0, 8)}…` : "—";
-const formatDate = (value: string | undefined) => value ? new Date(value).toLocaleString("vi-VN") : "—";
+  // State for data fetched across views
+  const [actions, setActions] = useState<Action[]>([]);
+  const [summary, setSummary] = useState<Record<string, number>>({});
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [fraudCases, setFraudCases] = useState<FraudCase[]>([]);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [outboxEvents, setOutboxEvents] = useState<OutboxEvent[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [staffList, setStaffList] = useState<Staff[]>([]);
 
-function ErrorNotice({ error, retry, context }: { error: ApiError | null; retry?: () => void; context?: "activation" }) {
-  if (!error) return null;
-  const message = context === "activation" && error.status === 401 ? "Liên kết kích hoạt không hợp lệ hoặc đã hết hạn." : error.status === 401 ? "Phiên staff đã hết hạn, hãy đăng nhập lại." : error.status === 403 || error.code === "ADMIN_PERMISSION_DENIED" ? "Bạn không có quyền cho thao tác này." : error.code === "ACTION_STALE" ? "Dữ liệu đã thay đổi; hãy tải lại action trước khi duyệt." : error.code === "ACTION_ALREADY_DECIDED" ? "Action đã được xử lý bởi người khác." : error.message;
-  return <div className="notice error" role="alert"><span>{message}</span>{retry ? <button className="link-button" onClick={retry}>Thử lại</button> : null}{error.traceId ? <small>Trace: {error.traceId}</small> : null}</div>;
-}
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<ApiError | null>(null);
 
-function Activation() {
-  const [inviteToken] = useState(() => new URL(window.location.href).searchParams.get("token") ?? "");
-  const [password, setPassword] = useState(""); const [confirmPassword, setConfirmPassword] = useState(""); const [totpSecret, setTotpSecret] = useState("");
-  const [error, setError] = useState<ApiError | null>(null); const [busy, setBusy] = useState(false); const [result, setResult] = useState<{ staffId: string; mfaSetup?: { secret: string; otpauthUri: string } } | null>(null);
-  const activate = async (event: FormEvent) => {
-    event.preventDefault(); setError(null);
-    if (!inviteToken) { setError(Object.assign(new Error("Liên kết kích hoạt không hợp lệ hoặc đã hết hạn."), { status: 401 }) as ApiError); return; }
-    if (password !== confirmPassword) { setError(new Error("Hai lần nhập mật khẩu không khớp.") as ApiError); return; }
-    setBusy(true);
+  const load = useCallback(
+    async (target: NavTab = tab) => {
+      setLoading(true);
+      setError(null);
+      try {
+        if (target === "overview" || target === "approvals") {
+          const approvalPromise = canReadApprovals ? adminFetch<{ items: Action[] }>("/admin/approvals") : Promise.resolve({ items: [] as Action[] });
+          const [approvalResult, summaryResult] = await Promise.all([
+            approvalPromise,
+            adminFetch<{ summary: Record<string, number> }>("/admin/operations/outbox/summary"),
+          ]);
+          setActions(approvalResult.items);
+          setSummary(summaryResult.summary);
+        }
+
+        if (target === "operations") {
+          const [summaryResult, jobResult, outboxResult] = await Promise.all([
+            adminFetch<{ summary: Record<string, number> }>("/admin/operations/outbox/summary"),
+            adminFetch<{ items: Job[] }>("/admin/operations/jobs"),
+            adminFetch<{ items: OutboxEvent[] }>("/admin/operations/outbox/events"),
+          ]);
+          setSummary(summaryResult.summary);
+          setJobs(jobResult.items);
+          setOutboxEvents(outboxResult.items);
+        }
+
+        if (target === "kyc" || target === "credit") {
+          const result = await adminFetch<{ items: Application[] }>("/admin/applications");
+          setApplications(result.items);
+        }
+
+        if (target === "transfers") {
+          const result = await adminFetch<{ items: Transfer[] }>("/admin/transfers?status=PENDING");
+          setTransfers(result.items);
+        }
+
+        if (target === "fraud") {
+          const result = await adminFetch<{ items: FraudCase[] }>("/admin/fraud-cases");
+          setFraudCases(result.items);
+        }
+
+        if (target === "staff") {
+          const result = await adminFetch<{ items: Staff[] }>("/admin/staff");
+          setStaffList(result.items);
+        }
+
+        if (target === "audit") {
+          if (canReadApprovals) {
+            const result = await adminFetch<{ items: AuditEvent[] }>("/admin/audit-events?limit=100");
+            setAuditEvents(result.items);
+          } else {
+            setAuditEvents([]);
+          }
+        }
+      } catch (caught) {
+        setError(caught as ApiError);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [canReadApprovals, tab]
+  );
+
+  useEffect(() => {
+    void load(tab);
+  }, [tab, load]);
+
+  const loadTransfersWithStatus = async (status: string) => {
+    setLoading(true);
+    setError(null);
     try {
-      const activated = await adminFetch<{ staffId: string; mfaSetup?: { secret: string; otpauthUri: string } }>("/admin/auth/activate", { method: "POST", body: JSON.stringify({ inviteToken, password, totpSecret: totpSecret.trim() }) });
-      setResult(activated);
-      // Do not leave a one-time invitation token in browser history after use.
-      window.history.replaceState({}, document.title, "/admin/activate");
-      setPassword(""); setConfirmPassword(""); setTotpSecret("");
-    } catch (caught) { setError(caught as ApiError); } finally { setBusy(false); }
-  };
-  return <main className="auth-shell"><section className="auth-card"><p className="eyebrow">STAFF INVITATION · LOCAL PREVIEW</p><h1>Kích hoạt tài khoản staff</h1><p className="muted">Đặt mật khẩu và đăng ký TOTP trước khi đăng nhập. Liên kết này chỉ dùng một lần.</p><ErrorNotice error={error} context="activation" />{result ? <div className="stack"><div className="notice info">Kích hoạt thành công. Bạn có thể quay lại trang đăng nhập Admin Web.</div>{result.mfaSetup ? <div className="panel stack"><strong>Lưu khóa TOTP vào Authenticator</strong><p className="muted">Khóa chỉ hiển thị lần này. Không chia sẻ khóa với người khác.</p><code data-testid="mfa-setup-secret">{result.mfaSetup.secret}</code><a href={result.mfaSetup.otpauthUri}>Mở liên kết otpauth</a></div> : <p className="notice info">MFA TOTP đã được lưu theo khóa bạn cung cấp.</p>}<a className="primary" href="/">Đến trang đăng nhập</a></div> : inviteToken ? <form onSubmit={(event) => void activate(event)} className="stack"><label>Mật khẩu mới<input data-testid="activation-password" type="password" autoComplete="new-password" minLength={12} value={password} onChange={(event) => setPassword(event.target.value)} required /></label><label>Nhập lại mật khẩu<input type="password" autoComplete="new-password" minLength={12} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required /></label><label>Khóa TOTP (tùy chọn)<input data-testid="activation-totp" type="text" autoComplete="off" value={totpSecret} onChange={(event) => setTotpSecret(event.target.value)} placeholder="Để trống để server tạo khóa một lần" /></label><p className="muted">Nếu để trống, server sẽ hiển thị khóa TOTP sau khi kích hoạt để bạn nhập thủ công vào Google Authenticator hoặc Microsoft Authenticator.</p><button className="primary" type="submit" disabled={busy}>{busy ? "Đang kích hoạt…" : "Kích hoạt tài khoản"}</button></form> : <div className="notice error">Liên kết kích hoạt không hợp lệ hoặc đã hết hạn.</div>}</section></main>;
-}
-
-function Login({ onLoggedIn }: { onLoggedIn: (staff: Staff) => void }) {
-  const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [challengeId, setChallengeId] = useState(""); const [code, setCode] = useState(""); const [error, setError] = useState<ApiError | null>(null); const [busy, setBusy] = useState(false);
-  const login = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(null); try { const result = await adminFetch<{ challengeId: string }>("/admin/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }); setChallengeId(result.challengeId); } catch (caught) { setError(caught as ApiError); } finally { setBusy(false); } };
-  const verify = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(null); try { const result = await adminFetch<{ staff: Staff; csrfToken: string }>("/admin/auth/mfa/verify", { method: "POST", body: JSON.stringify({ challengeId, code }) }); onLoggedIn(result.staff); } catch (caught) { setError(caught as ApiError); } finally { setBusy(false); } };
-  return <main className="auth-shell"><section className="auth-card"><p className="eyebrow">CONTROL PLANE · VIRTUAL MONEY</p><h1>Đăng nhập quản trị</h1><p className="muted">Phiên nhân viên độc lập với ứng dụng khách hàng. MFA TOTP là bắt buộc.</p><ErrorNotice error={error} />{!challengeId ? <form onSubmit={login} className="stack"><label>Email staff<input data-testid="staff-email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required /></label><label>Password<input data-testid="staff-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label><button className="primary" disabled={busy}>{busy ? "Đang kiểm tra…" : "Tiếp tục với MFA"}</button></form> : <form onSubmit={verify} className="stack"><div className="notice info">Challenge đã tạo. Mã chỉ được kiểm tra ở server; không ghi vào log.</div><label>Mã Authenticator<input data-testid="staff-mfa" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(event) => setCode(event.target.value)} required /></label><button className="primary" disabled={busy}>{busy ? "Đang xác thực…" : "Xác thực và vào Admin"}</button></form>}<p className="legal">Sandbox tham chiếu — không kết nối tiền thật, payment rail thật hoặc KYC thật.</p></section></main>;
-}
-
-function DataTable({ children }: { children: ReactNode }) { return <div className="table-wrap"><table><tbody>{children}</tbody></table></div>; }
-function Row({ label, value }: { label: string; value: ReactNode }) { return <tr><th>{label}</th><td>{value}</td></tr>; }
-
-function AppShell({ staff, onLogout }: { staff: Staff; onLogout: () => void }) {
-  const [tab, setTab] = useState<Tab>("overview");
-  const [actions, setActions] = useState<Action[]>([]); const [customers, setCustomers] = useState<Customer[]>([]); const [accounts, setAccounts] = useState<Account[]>([]);
-  const [applications, setApplications] = useState<Application[]>([]); const [transfers, setTransfers] = useState<Transfer[]>([]); const [fraudCases, setFraudCases] = useState<FraudCase[]>([]); const [jobs, setJobs] = useState<Job[]>([]); const [outboxEvents, setOutboxEvents] = useState<OutboxEvent[]>([]); const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]); const [staffList, setStaffList] = useState<Staff[]>([]);
-  const [query, setQuery] = useState(""); const [summary, setSummary] = useState<Record<string, number>>({}); const [error, setError] = useState<ApiError | null>(null); const [loading, setLoading] = useState(false); const [selected, setSelected] = useState<Action | null>(null); const [reason, setReason] = useState(""); const [stepUpCode, setStepUpCode] = useState(""); const [stepUpOpen, setStepUpOpen] = useState(false); const [stepUpFreshUntil, setStepUpFreshUntil] = useState(0); const [online, setOnline] = useState(navigator.onLine);
-  const roleList = useMemo(() => staff.roles.map((role) => role.role).join(" · "), [staff.roles]);
-  // Approval Inbox is a checker queue. Operations can create requests but must not read or approve them.
-  const canReadApprovals = useMemo(() => staff.permissions ? staff.permissions.includes("audit.read") : staff.roles.some((assignment) => ["CONTROL", "ADMIN"].includes(assignment.role) && (!assignment.expiresAt || Date.parse(assignment.expiresAt) > Date.now())), [staff.permissions, staff.roles]);
-
-  useEffect(() => { const onlineHandler = () => setOnline(true); const offlineHandler = () => setOnline(false); window.addEventListener("online", onlineHandler); window.addEventListener("offline", offlineHandler); return () => { window.removeEventListener("online", onlineHandler); window.removeEventListener("offline", offlineHandler); }; }, []);
-  const load = useCallback(async (target: Tab = tab) => {
-    setLoading(true); setError(null);
-    try {
-      if (target === "overview" || target === "approvals") { const approvalPromise = canReadApprovals ? adminFetch<{ items: Action[] }>("/admin/approvals") : Promise.resolve({ items: [] as Action[] }); const [approvalResult, summaryResult] = await Promise.all([approvalPromise, adminFetch<{ summary: Record<string, number> }>("/admin/operations/outbox/summary")]); setActions(approvalResult.items); setSummary(summaryResult.summary); }
-      if (target === "operations") { const [summaryResult, jobResult, outboxResult] = await Promise.all([adminFetch<{ summary: Record<string, number> }>("/admin/operations/outbox/summary"), adminFetch<{ items: Job[] }>("/admin/operations/jobs"), adminFetch<{ items: OutboxEvent[] }>("/admin/operations/outbox/events")]); setSummary(summaryResult.summary); setJobs(jobResult.items); setOutboxEvents(outboxResult.items); }
-      if (target === "applications") setApplications((await adminFetch<{ items: Application[] }>("/admin/applications")).items);
-      if (target === "transfers") setTransfers((await adminFetch<{ items: Transfer[] }>("/admin/transfers?status=PENDING")).items);
-      if (target === "fraud") setFraudCases((await adminFetch<{ items: FraudCase[] }>("/admin/fraud-cases")).items);
-      if (target === "staff") setStaffList((await adminFetch<{ items: Staff[] }>("/admin/staff")).items);
-      if (target === "audit") { if (canReadApprovals) setAuditEvents((await adminFetch<{ items: AuditEvent[] }>("/admin/audit-events?limit=100")).items); else setAuditEvents([]); }
-    } catch (caught) { setError(caught as ApiError); } finally { setLoading(false); }
-  }, [canReadApprovals, tab]);
-  useEffect(() => { void load(tab); }, [tab, load]);
-
-  const requestAction = async (path: string, body: Record<string, unknown>, prefix: string, refresh: Tab = tab) => {
-    setLoading(true); setError(null);
-    try { await adminFetch(path, { method: "POST", headers: { "Idempotency-Key": idempotencyKey(prefix) }, body: JSON.stringify(body) }); await load(refresh); }
-    catch (caught) { setError(caught as ApiError); }
-    finally { setLoading(false); }
+      const query = status ? `?status=${encodeURIComponent(status)}` : "";
+      const result = await adminFetch<{ items: Transfer[] }>(`/admin/transfers${query}`);
+      setTransfers(result.items);
+    } catch (caught) {
+      setError(caught as ApiError);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const search = async () => { setLoading(true); setError(null); try { const result = await adminFetch<{ items: Customer[] }>(`/admin/customers?q=${encodeURIComponent(query)}`); setCustomers(result.items); setAccounts([]); } catch (caught) { setError(caught as ApiError); } finally { setLoading(false); } };
-  const openCustomer = async (customerId: string) => { setLoading(true); setError(null); try { const result = await adminFetch<{ items: Account[] }>(`/admin/customers/${customerId}/accounts`); setAccounts(result.items); } catch (caught) { setError(caught as ApiError); } finally { setLoading(false); } };
-  const approve = async () => { if (!selected || !reason.trim()) return; const fresh = Date.now() < stepUpFreshUntil; if (!fresh && !stepUpCode.trim()) { setStepUpOpen(true); return; } setLoading(true); setError(null); try { if (!fresh) { await adminFetch(`/admin/auth/step-up`, { method: "POST", body: JSON.stringify({ code: stepUpCode.trim() }) }); setStepUpFreshUntil(Date.now() + 5 * 60 * 1000); } await adminFetch(`/admin/approvals/${selected.id}/approve`, { method: "POST", headers: { "Idempotency-Key": idempotencyKey("admin-approve") }, body: JSON.stringify({ fingerprint: selected.requestFingerprint, version: selected.version, reasonCode: reason.trim(), decision: "APPROVED", comment: reason.trim() }) }); setSelected(null); setReason(""); setStepUpCode(""); setStepUpOpen(false); await load("approvals"); } catch (caught) { setError(caught as ApiError); } finally { setLoading(false); } };
-  const reject = async () => { if (!selected || !reason.trim()) return; const fresh = Date.now() < stepUpFreshUntil; if (!fresh && !stepUpCode.trim()) { setStepUpOpen(true); return; } setLoading(true); setError(null); try { if (!fresh) { await adminFetch(`/admin/auth/step-up`, { method: "POST", body: JSON.stringify({ code: stepUpCode.trim() }) }); setStepUpFreshUntil(Date.now() + 5 * 60 * 1000); } await adminFetch(`/admin/approvals/${selected.id}/reject`, { method: "POST", headers: { "Idempotency-Key": idempotencyKey("admin-reject") }, body: JSON.stringify({ fingerprint: selected.requestFingerprint, version: selected.version, reasonCode: reason.trim(), comment: reason.trim() }) }); setSelected(null); setReason(""); setStepUpCode(""); setStepUpOpen(false); await load("approvals"); } catch (caught) { setError(caught as ApiError); } finally { setLoading(false); } };
-  const logout = async () => { try { await adminFetch("/admin/auth/logout", { method: "POST", headers: { "Idempotency-Key": idempotencyKey("admin-logout") }, body: "{}" }); } finally { onLogout(); } };
+  return (
+    <AppLayout
+      currentTab={tab}
+      onSelectTab={navigate}
+      approvalCount={actions.length}
+    >
+      <Notice error={error} retry={() => void load(tab)} />
+      {loading ? <div className="notice info">Đang tải dữ liệu server…</div> : null}
 
-  const nav: Array<[Tab, string]> = [["overview", "Tổng quan"], ["approvals", "Approval Inbox"], ["customers", "Khách hàng"], ["applications", "KYC / Credit"], ["transfers", "Giao dịch chờ"], ["fraud", "Fraud cases"], ["operations", "Outbox / Jobs"], ["staff", "Staff / Roles"], ["audit", "Audit explorer"]];
-  const hasRole = (...roles: string[]) => staff.roles.some((assignment) => roles.includes(assignment.role) && (!assignment.expiresAt || Date.parse(assignment.expiresAt) > Date.now()));
-  const visibleNav = nav.filter(([key]) => (key !== "approvals" && key !== "audit") || canReadApprovals);
-  return <div className="app-shell"><header className="topbar"><div><p className="eyebrow">BANKING REFERENCE · ADMIN</p><strong>{staff.displayName}</strong><span className="role-pill">{roleList}</span></div><div className="top-actions"><span className={online ? "online" : "offline"}>{online ? "● Online" : "○ Offline"}</span><button className="ghost" onClick={() => void logout()}>Đăng xuất</button></div></header><div className="layout"><aside className="sidebar">{visibleNav.map(([key, label]) => <button key={key} className={tab === key ? "nav active" : "nav"} onClick={() => setTab(key)}>{label}{key === "approvals" && actions.length > 0 ? <span>{actions.length}</span> : null}</button>)}<div className="sidebar-note">Deny-by-default<br />Four-eyes bắt buộc<br />Audit append-only<br />PII được che mặc định</div></aside><main className="content"><ErrorNotice error={error} retry={() => void load(tab)} />{loading ? <div className="notice info">Đang tải dữ liệu server…</div> : null}{tab === "overview" ? <Overview actions={actions} summary={summary} roleList={roleList} /> : null}{tab === "approvals" && canReadApprovals ? <Approvals actions={actions} selected={selected} setSelected={setSelected} reason={reason} setReason={setReason} approve={approve} reject={reject} loading={loading} stepUpOpen={stepUpOpen} setStepUpOpen={setStepUpOpen} stepUpCode={stepUpCode} setStepUpCode={setStepUpCode} /> : null}{tab === "approvals" && !canReadApprovals ? <section><Heading eyebrow="FOUR-EYES" title="Approval Inbox" /><div className="notice info">Approval Inbox chỉ dành cho Control/Admin có quyền audit.read. Operations chỉ tạo yêu cầu để checker xử lý.</div></section> : null}{tab === "audit" && canReadApprovals ? <AuditView items={auditEvents} /> : null}{tab === "audit" && !canReadApprovals ? <section><Heading eyebrow="IMMUTABLE EVIDENCE" title="Audit explorer" /><div className="notice info">Audit explorer chỉ dành cho Control/Admin có quyền audit.read.</div></section> : null}{tab === "customers" ? <Customers customers={customers} accounts={accounts} query={query} setQuery={setQuery} search={search} openCustomer={openCustomer} loading={loading} canBlock={hasRole("SUPPORT", "OPERATIONS")} canFund={hasRole("OPERATIONS")} onRequest={requestAction} /> : null}{tab === "applications" ? <Applications items={applications} canReview={hasRole("OPERATIONS")} onClaim={requestAction} onDecision={requestAction} /> : null}{tab === "transfers" ? <Transfers items={transfers} canOperate={hasRole("OPERATIONS")} onRequest={requestAction} /> : null}{tab === "fraud" ? <FraudCases items={fraudCases} canInvestigate={hasRole("OPERATIONS")} onClaim={requestAction} onNote={requestAction} onDecision={requestAction} /> : null}{tab === "operations" ? <Operations summary={summary} jobs={jobs} events={outboxEvents} canOperate={hasRole("OPERATIONS")} onRequest={requestAction} /> : null}{tab === "staff" ? <StaffView items={staffList} canManage={hasRole("ADMIN")} onRequest={requestAction} /> : null}</main></div></div>;
+      {tab === "overview" ? (
+        <Overview
+          actions={actions}
+          summary={summary}
+          onNavigate={navigate}
+        />
+      ) : null}
+
+      {tab === "customers" ? (
+        <Customers onRefresh={() => void load("overview")} />
+      ) : null}
+
+      {tab === "approvals" ? (
+        <Approvals
+          actions={actions}
+          onReload={() => load("approvals")}
+          loading={loading}
+        />
+      ) : null}
+
+      {tab === "kyc" || tab === "credit" ? (
+        <Applications
+          items={applications}
+          onReload={() => load(tab)}
+          loading={loading}
+          tabType={tab === "credit" ? "CREDIT" : "KYC"}
+        />
+      ) : null}
+
+      {tab === "transfers" ? (
+        <Transfers
+          items={transfers}
+          onReload={() => load("transfers")}
+          onFilterChange={loadTransfersWithStatus}
+          loading={loading}
+        />
+      ) : null}
+
+      {tab === "fraud" ? (
+        <FraudCases
+          items={fraudCases}
+          onReload={() => load("fraud")}
+          loading={loading}
+        />
+      ) : null}
+
+      {tab === "operations" ? (
+        <Operations
+          summary={summary}
+          jobs={jobs}
+          events={outboxEvents}
+          onReload={() => load("operations")}
+          loading={loading}
+        />
+      ) : null}
+
+      {tab === "staff" ? (
+        <StaffView
+          items={staffList}
+          onReload={() => load("staff")}
+          loading={loading}
+        />
+      ) : null}
+
+      {tab === "audit" ? (
+        <AuditView
+          items={auditEvents}
+          onReload={() => load("audit")}
+          loading={loading}
+        />
+      ) : null}
+    </AppLayout>
+  );
 }
-
-function Heading({ eyebrow, title }: { eyebrow: string; title: string }) { return <div className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1></div></div>; }
-function Overview({ actions, summary, roleList }: { actions: Action[]; summary: Record<string, number>; roleList: string }) { return <><Heading eyebrow="DASHBOARD" title="Điểm kiểm soát" /><div className="metric-grid"><article><span>Approval chờ</span><strong>{actions.length}</strong><small>Maker–checker</small></article><article><span>Outbox pending</span><strong>{summary.PENDING ?? 0}</strong><small>Worker claim bình thường</small></article><article><span>Outbox dead</span><strong className={(summary.DEAD ?? 0) > 0 ? "danger-text" : ""}>{summary.DEAD ?? 0}</strong><small>Không sửa payload</small></article><article><span>Staff session</span><strong>ACTIVE</strong><small>{roleList}</small></article></div><section className="panel"><div className="panel-heading"><h2>Nguyên tắc vận hành</h2><span className="status-dot">● Sandbox</span></div><ul className="guard-list"><li>Server là nguồn sự thật cho quyền, trạng thái và số dư.</li><li>Không có thao tác đặt giao dịch thành công bằng tay.</li><li>PII, account number và payload nhạy cảm được che và audit.</li></ul></section></>; }
-function Approvals({ actions, selected, setSelected, reason, setReason, approve, reject, loading, stepUpOpen, setStepUpOpen, stepUpCode, setStepUpCode }: { actions: Action[]; selected: Action | null; setSelected: (action: Action | null) => void; reason: string; setReason: (value: string) => void; approve: () => void; reject: () => void; loading: boolean; stepUpOpen: boolean; setStepUpOpen: (open: boolean) => void; stepUpCode: string; setStepUpCode: (value: string) => void }) { return <section><Heading eyebrow="FOUR-EYES" title="Approval Inbox" />{actions.length === 0 ? <div className="empty">Không có yêu cầu chờ phê duyệt.</div> : <div className="action-list">{actions.map((action) => <button key={action.id} className="action-row" onClick={() => setSelected(action)}><span className="action-type">{action.actionType}</span><span>{action.targetType} · {shortId(action.targetId)}</span><span className="muted">maker {shortId(action.requesterStaffId)}</span><span className="action-status">{action.status}</span></button>)}</div>}{selected ? <div className="modal-backdrop"><div className="modal" role="dialog" aria-modal="true"><div className="panel-heading"><h2>Duyệt yêu cầu</h2><button className="ghost" onClick={() => { setSelected(null); setStepUpOpen(false); setStepUpCode(""); }}>Đóng</button></div><dl className="detail-grid"><dt>Loại</dt><dd>{selected.actionType}</dd><dt>Maker</dt><dd>{shortId(selected.requesterStaffId)}</dd><dt>Mục tiêu</dt><dd>{selected.targetType} · {shortId(selected.targetId)}</dd><dt>Action version</dt><dd>{selected.version}</dd><dt>Fingerprint</dt><dd className="mono">{selected.requestFingerprint}</dd><dt>Payload đã che</dt><dd>{Object.entries(selected.payload).filter(([key]) => !/token|secret|otp|password|cookie|cvv|pin/i.test(key)).map(([key, value]) => <div key={key}><b>{key}</b>: {String(value)}</div>)}</dd><dt>Hết hạn</dt><dd>{formatDate(selected.expiresAt)}</dd></dl><label>Lý do checker<input data-testid="checker-reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="CONTROL_REVIEW" required /></label>{stepUpOpen ? <label>Mã TOTP step-up<input data-testid="step-up-mfa" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={stepUpCode} onChange={(event) => setStepUpCode(event.target.value)} required /></label> : null}<div className="button-row"><button className="primary" data-testid="approve-action" onClick={approve} disabled={loading || !reason.trim() || (stepUpOpen && !stepUpCode.trim())}>{stepUpOpen ? "Xác thực MFA và approve" : "Tiếp tục với step-up MFA"}</button><button className="secondary" data-testid="reject-action" onClick={reject} disabled={loading || !reason.trim() || (stepUpOpen && !stepUpCode.trim())}>Từ chối</button></div><p className="warning">Không thể duyệt yêu cầu do chính mình tạo. Server kiểm tra fingerprint, version, quyền và MFA freshness.</p></div></div> : null}</section>; }
-function Customers({ customers, accounts, query, setQuery, search, openCustomer, loading, canBlock, canFund, onRequest }: { customers: Customer[]; accounts: Account[]; query: string; setQuery: (value: string) => void; search: () => void; openCustomer: (id: string) => void; loading: boolean; canBlock: boolean; canFund: boolean; onRequest: (path: string, body: Record<string, unknown>, prefix: string, refresh?: Tab) => Promise<void> }) {
-  const [accountTarget, setAccountTarget] = useState<{ id: string; kind: "BLOCK" | "UNBLOCK" | "FUND" | "REVERSAL" } | null>(null); const [reason, setReason] = useState(""); const [ticket, setTicket] = useState(""); const [description, setDescription] = useState(""); const [amount, setAmount] = useState(""); const [sourceTransactionId, setSourceTransactionId] = useState("");
-  const submitAccount = async (event: FormEvent) => { event.preventDefault(); if (!accountTarget || !reason.trim() || !ticket.trim()) return; const { id, kind } = accountTarget; const path = kind === "FUND" ? `/admin/accounts/${id}/funding-requests` : kind === "REVERSAL" ? `/admin/accounts/${id}/funding-reversal-requests` : `/admin/accounts/${id}/${kind === "BLOCK" ? "block" : "unblock"}-requests`; const body: Record<string, unknown> = { reasonCode: reason.trim(), ticketReference: ticket.trim(), description: description.trim() }; if (kind === "FUND" || kind === "REVERSAL") { body.amountMinor = amount.trim(); body.currency = "VND"; } if (kind === "REVERSAL") body.sourceTransactionId = sourceTransactionId.trim(); await onRequest(path, body, `account-${kind.toLowerCase()}`, "customers"); setAccountTarget(null); setReason(""); setTicket(""); setDescription(""); setAmount(""); setSourceTransactionId(""); };
-  return <section><Heading eyebrow="CUSTOMER READ" title="Khách hàng & tài khoản" /><div className="search-row"><input data-testid="customer-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Email, số điện thoại hoặc tên" /><button className="primary" onClick={() => void search()} disabled={loading}>Tìm kiếm</button></div>{customers.length === 0 ? <div className="empty">Nhập tiêu chí để tìm dữ liệu đã che.</div> : <div className="customer-grid">{customers.map((customer) => <article className="customer-card" key={customer.id}><h2>{customer.fullName}</h2><p>{customer.email}</p><p className="muted">{customer.phoneNumber} · access {customer.accessStatus}</p>{canBlock && customer.accessStatus === "ACTIVE" ? <button className="secondary" data-testid="customer-lock-request" onClick={() => void onRequest(`/admin/customers/${customer.id}/access-lock-requests`, { reasonCode: "CUSTOMER_ACCESS_REVIEW", ticketReference: "ADMIN-CUSTOMER", description: "Customer access lock request" }, "customer-lock", "customers")}>Yêu cầu khóa đăng nhập</button> : null}<button className="secondary" onClick={() => void openCustomer(customer.id)}>Xem tài khoản</button></article>)}</div>}{accounts.length > 0 ? <section className="panel"><h2>Tài khoản</h2><div className="account-grid">{accounts.map((account) => <article className="account-card" key={account.id}><div><strong>{account.displayName}</strong><span className="status-pill">{account.status}</span></div><p>{account.maskedNumber}</p><strong>{formatMinor(account.availableMinor)}</strong><small>Version {account.version}</small><div className="button-row">{canBlock && account.status === "ACTIVE" ? <button className="secondary" data-testid="account-block-request" onClick={() => setAccountTarget({ id: account.id, kind: "BLOCK" })}>Yêu cầu khóa tài khoản</button> : null}{canBlock && account.status === "BLOCKED" ? <button className="secondary" onClick={() => setAccountTarget({ id: account.id, kind: "UNBLOCK" })}>Yêu cầu mở khóa</button> : null}{canFund ? <><button className="primary" data-testid="funding-request" onClick={() => setAccountTarget({ id: account.id, kind: "FUND" })}>Yêu cầu cấp tiền</button><button className="secondary" onClick={() => setAccountTarget({ id: account.id, kind: "REVERSAL" })}>Hoàn tác funding</button></> : null}</div></article>)}</div></section> : null}{accountTarget ? <div className="modal-backdrop"><form className="modal stack" onSubmit={(event) => void submitAccount(event)}><div className="panel-heading"><h2>Yêu cầu {accountTarget.kind}</h2><button type="button" className="ghost" onClick={() => setAccountTarget(null)}>Đóng</button></div>{accountTarget.kind === "FUND" || accountTarget.kind === "REVERSAL" ? <label>Số tiền (minor VND)<input data-testid="funding-amount" inputMode="numeric" value={amount} onChange={(event) => setAmount(event.target.value)} required /></label> : null}{accountTarget.kind === "REVERSAL" ? <label>Transaction nguồn<input value={sourceTransactionId} onChange={(event) => setSourceTransactionId(event.target.value)} required /></label> : null}<label>Reason code<input data-testid="action-reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="OPERATIONS_REVIEW" required /></label><label>Ticket reference<input value={ticket} onChange={(event) => setTicket(event.target.value)} required /></label><label>Mô tả<textarea value={description} onChange={(event) => setDescription(event.target.value)} /></label><button className="primary" type="submit" disabled={!reason.trim() || !ticket.trim()}>Tạo yêu cầu four-eyes</button><p className="warning">Server sẽ kiểm tra quyền, hạn mức, version và idempotency; Admin Web không sửa số dư trực tiếp.</p></form></div> : null}</section>;
-}
-
-function Applications({ items, canReview, onClaim, onDecision }: { items: Application[]; canReview: boolean; onClaim: (path: string, body: Record<string, unknown>, prefix: string, refresh?: Tab) => Promise<void>; onDecision: (path: string, body: Record<string, unknown>, prefix: string, refresh?: Tab) => Promise<void> }) {
-  const [selected, setSelected] = useState<Application | null>(null); const [decision, setDecision] = useState("APPROVED"); const [reason, setReason] = useState(""); const [ticket, setTicket] = useState(""); const [limit, setLimit] = useState("");
-  const submit = async (event: FormEvent) => { event.preventDefault(); if (!selected || !reason.trim() || !ticket.trim()) return; const path = selected.applicationType === "KYC" ? `/admin/kyc-applications/${selected.id}/review-recommendations` : `/admin/credit-applications/${selected.id}/review-recommendations`; const body: Record<string, unknown> = { decision, reasonCode: reason.trim(), ticketReference: ticket.trim(), description: "Admin Web case review" }; if (selected.applicationType === "CREDIT" && limit.trim()) body.approvedLimitMinor = limit.trim(); await onDecision(path, body, "application-decision", "applications"); setSelected(null); setReason(""); setTicket(""); setLimit(""); };
-  return <section><Heading eyebrow="CASE OPERATIONS" title="KYC và hồ sơ tín dụng" />{items.length === 0 ? <div className="empty">Chưa có hồ sơ trong reference dataset.</div> : <DataTable>{items.map((item) => <Row key={item.id} label={`${item.applicationType} · ${shortId(item.id)}`} value={<><span className="status-pill">{item.status}</span><span className="muted"> · khách hàng {shortId(item.customerId)} · version {item.version} · {formatDate(item.createdAt)}</span>{canReview && ["SUBMITTED", "UNDER_REVIEW"].includes(item.status) ? <span className="button-row"><button className="secondary" onClick={() => void onClaim(`/admin/${item.applicationType === "KYC" ? "kyc-applications" : "credit-applications"}/${item.id}/claim`, {}, "case-claim", "applications")}>Claim</button><button className="primary" data-testid="application-decision" onClick={() => { setSelected(item); setDecision(item.applicationType === "KYC" ? "APPROVED" : "PENDING_ACTIVATION"); }}>Tạo recommendation</button></span> : null}</>} />)}</DataTable>}<div className="notice info">Operations review/claim; quyết định cuối cùng phải tạo action và được Control phê duyệt. Không lưu ảnh giấy tờ hoặc base64 trong Admin Web.</div>{selected ? <div className="modal-backdrop"><form className="modal stack" onSubmit={(event) => void submit(event)}><div className="panel-heading"><h2>Recommendation {selected.applicationType}</h2><button type="button" className="ghost" onClick={() => setSelected(null)}>Đóng</button></div><label>Quyết định<select value={decision} onChange={(event) => setDecision(event.target.value)}>{selected.applicationType === "KYC" ? <><option>APPROVED</option><option>REJECTED</option><option>NEEDS_MORE_INFO</option></> : <><option>PENDING_ACTIVATION</option><option>REJECTED</option></>}</select></label>{selected.applicationType === "CREDIT" ? <label>Hạn mức đề xuất (minor VND)<input value={limit} onChange={(event) => setLimit(event.target.value)} /></label> : null}<label>Reason code<input value={reason} onChange={(event) => setReason(event.target.value)} required /></label><label>Ticket reference<input value={ticket} onChange={(event) => setTicket(event.target.value)} required /></label><button className="primary" type="submit">Gửi vào Approval Inbox</button></form></div> : null}</section>;
-}
-
-function Transfers({ items, canOperate, onRequest }: { items: Transfer[]; canOperate: boolean; onRequest: (path: string, body: Record<string, unknown>, prefix: string, refresh?: Tab) => Promise<void> }) { const [reason, setReason] = useState(""); const request = (item: Transfer, operation: "retry" | "cancel" | "reversal") => { if (!reason.trim()) return; void onRequest(`/admin/transfers/${item.id}/${operation}-requests`, { reasonCode: reason.trim(), ticketReference: "ADMIN-TRANSFER", description: "Admin Web transfer operation" }, `transfer-${operation}`, "transfers"); setReason(""); }; return <section><Heading eyebrow="PENDING TRANSFERS" title="Giao dịch chờ xử lý" /><label>Reason code cho thao tác<input data-testid="transfer-reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="TRANSFER_REVIEW" /></label>{items.length === 0 ? <div className="empty">Không có giao dịch PENDING.</div> : <DataTable>{items.map((item) => <Row key={item.id} label={item.reference} value={<><span>{formatMinor(item.amountMinor)} · {item.status} · account {shortId(item.sourceAccountId)} · lỗi {item.lastErrorCode ?? "—"} · version {item.version}</span>{canOperate ? <span className="button-row">{item.status === "PENDING" ? <button className="secondary" onClick={() => request(item, "cancel")} disabled={!reason.trim()}>Cancel request</button> : null}{item.status === "FAILED" ? <button className="secondary" onClick={() => request(item, "retry")} disabled={!reason.trim()}>Retry request</button> : null}{item.status === "SUCCEEDED" ? <button className="secondary" onClick={() => request(item, "reversal")} disabled={!reason.trim()}>Reversal request</button> : null}</span> : null}</>} />)}</DataTable>}<div className="notice info">Retry/cancel/reversal chỉ tạo action four-eyes; không có nút đặt trực tiếp giao dịch thành SUCCEEDED.</div></section>; }
-
-function FraudCases({ items, canInvestigate, onClaim, onNote, onDecision }: { items: FraudCase[]; canInvestigate: boolean; onClaim: (path: string, body: Record<string, unknown>, prefix: string, refresh?: Tab) => Promise<void>; onNote: (path: string, body: Record<string, unknown>, prefix: string, refresh?: Tab) => Promise<void>; onDecision: (path: string, body: Record<string, unknown>, prefix: string, refresh?: Tab) => Promise<void> }) { const [selected, setSelected] = useState<FraudCase | null>(null); const [reason, setReason] = useState(""); const [note, setNote] = useState(""); const submitResolution = async (event: FormEvent) => { event.preventDefault(); if (!selected || !reason.trim()) return; await onDecision(`/admin/fraud-cases/${selected.id}/resolution-requests`, { operation: "RESOLVE", resolutionCode: "NOT_FRAUD", reasonCode: reason.trim(), ticketReference: "ADMIN-FRAUD", description: "Admin Web fraud resolution" }, "fraud-resolution", "fraud"); setSelected(null); setReason(""); }; return <section><Heading eyebrow="FRAUD OPERATIONS" title="Fraud cases" />{items.length === 0 ? <div className="empty">Chưa có fraud case.</div> : <DataTable>{items.map((item) => <Row key={item.id} label={`${item.severity} · ${shortId(item.id)}`} value={<><span>{item.status} · {item.reasonPreview} · account {shortId(item.accountId)} · assignment {shortId(item.assignedStaffId)} · resolution {item.resolutionCode ?? "—"}</span>{canInvestigate ? <span className="button-row">{item.status === "RECEIVED" ? <button className="secondary" onClick={() => void onClaim(`/admin/fraud-cases/${item.id}/claim`, {}, "fraud-claim", "fraud")}>Claim</button> : null}<button className="secondary" onClick={() => setSelected(item)}>Resolution request</button></span> : null}</>} />)}</DataTable>}<div className="panel stack"><label>Internal note<textarea data-testid="fraud-note" value={note} onChange={(event) => setNote(event.target.value)} /></label><button className="secondary" disabled={!note.trim() || !items[0]} onClick={() => { void onNote(`/admin/fraud-cases/${items[0].id}/notes`, { note }, "fraud-note", "fraud"); setNote(""); }}>Ghi chú case đầu tiên</button></div><div className="notice info">Fraud resolution không tự hoàn tiền; reversal/refund phải là financial action riêng và có adapter miền.</div>{selected ? <div className="modal-backdrop"><form className="modal stack" onSubmit={(event) => void submitResolution(event)}><div className="panel-heading"><h2>Fraud resolution request</h2><button type="button" className="ghost" onClick={() => setSelected(null)}>Đóng</button></div><p>Case {shortId(selected.id)} · maker sẽ chuyển yêu cầu cho Control.</p><label>Reason code<input value={reason} onChange={(event) => setReason(event.target.value)} required /></label><button className="primary" type="submit">Gửi yêu cầu RESOLVE</button></form></div> : null}</section>; }
-
-function Operations({ summary, jobs, events, canOperate, onRequest }: { summary: Record<string, number>; jobs: Job[]; events: OutboxEvent[]; canOperate: boolean; onRequest: (path: string, body: Record<string, unknown>, prefix: string, refresh?: Tab) => Promise<void> }) { const [reason, setReason] = useState(""); return <section><Heading eyebrow="WORKER OPERATIONS" title="Outbox và background jobs" /><div className="metric-grid"><article><span>Pending</span><strong>{summary.PENDING ?? 0}</strong></article><article><span>Processing</span><strong>{summary.PROCESSING ?? 0}</strong></article><article><span>Dead</span><strong className={(summary.DEAD ?? 0) > 0 ? "danger-text" : ""}>{summary.DEAD ?? 0}</strong></article><article><span>Skipped</span><strong>{summary.SKIPPED ?? 0}</strong></article></div><label>Reason code cho retry<input data-testid="outbox-reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="INCIDENT_RETRY" /></label>{events.length > 0 ? <DataTable>{events.map((event) => <Row key={event.id} label={`${event.eventType} · ${shortId(event.id)}`} value={<><span>{event.status} · attempts {event.attempts} · lỗi {event.lastErrorCode ?? "—"}</span>{canOperate && ["DEAD", "SKIPPED"].includes(event.status) ? <button className="secondary" onClick={() => void onRequest(`/admin/operations/outbox/events/${event.id}/requeue-requests`, { reasonCode: reason.trim() || "INCIDENT_RETRY", ticketReference: "ADMIN-OUTBOX", description: "Canonical outbox requeue" }, "outbox-requeue", "operations")} disabled={!reason.trim()}>Requeue request</button> : null}</>} />)}</DataTable> : <div className="empty">Không có outbox event trong reference dataset.</div>}{jobs.length === 0 ? <div className="empty">Không có background job trong reference dataset.</div> : <DataTable>{jobs.map((job) => <Row key={job.id} label={`${job.jobType} · ${shortId(job.id)}`} value={<><span>{job.status} · attempts {job.attempts} · lỗi {job.lastErrorCode ?? "—"}</span>{canOperate && ["FAILED", "DEAD"].includes(job.status) ? <button className="secondary" onClick={() => void onRequest(`/admin/operations/jobs/${job.id}/retry-requests`, { reasonCode: reason.trim() || "INCIDENT_RETRY", ticketReference: "ADMIN-JOB", description: "Canonical background job retry" }, "job-retry", "operations")} disabled={!reason.trim()}>Retry job request</button> : null}</>} />)}</DataTable>}{<div className="notice info">Requeue/retry chỉ dùng payload canonical và action four-eyes; Admin Web không sửa payload hoặc chạy shell.</div>}</section>; }
-
-function StaffView({ items, canManage, onRequest }: { items: Staff[]; canManage: boolean; onRequest: (path: string, body: Record<string, unknown>, prefix: string, refresh?: Tab) => Promise<void> }) { const [email, setEmail] = useState(""); const [employeeCode, setEmployeeCode] = useState(""); const [displayName, setDisplayName] = useState(""); const [role, setRole] = useState("SUPPORT"); const [reason, setReason] = useState(""); const [roleTarget, setRoleTarget] = useState<Staff | null>(null); const [roleCode, setRoleCode] = useState("SUPPORT"); const [roleOperation, setRoleOperation] = useState("GRANT"); const [roleReason, setRoleReason] = useState(""); const invite = async (event: FormEvent) => { event.preventDefault(); if (!email || !employeeCode || !displayName || !reason) return; await onRequest("/admin/staff/invite-requests", { email, employeeCode, displayName, role, reasonCode: reason, ticketReference: "ADMIN-STAFF", description: "Admin Web staff invite" }, "staff-invite", "staff"); setEmail(""); setEmployeeCode(""); setDisplayName(""); }; const submitRole = async (event: FormEvent) => { event.preventDefault(); if (!roleTarget || !roleReason.trim()) return; await onRequest(`/admin/staff/${roleTarget.id}/role-change-requests`, { roleCode, operation: roleOperation, environmentScope: "preview", reasonCode: roleReason.trim(), ticketReference: "ADMIN-STAFF", description: "Admin Web role change" }, "staff-role-change", "staff"); setRoleTarget(null); setRoleReason(""); }; return <section><Heading eyebrow="IDENTITY & RBAC" title="Staff và roles" />{canManage ? <form className="panel stack" onSubmit={(event) => void invite(event)}><h2>Invite request</h2><label>Email<input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required /></label><label>Employee code<input value={employeeCode} onChange={(event) => setEmployeeCode(event.target.value)} required /></label><label>Display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} required /></label><label>Role<select value={role} onChange={(event) => setRole(event.target.value)}><option>SUPPORT</option><option>OPERATIONS</option><option>CONTROL</option><option>ADMIN</option></select></label><label>Reason code<input value={reason} onChange={(event) => setReason(event.target.value)} required /></label><button className="primary" type="submit">Tạo invite request</button><p className="warning">Invite token không hiển thị trong UI; delivery phải qua provider an toàn.</p></form> : null}{items.length === 0 ? <div className="empty">Chưa có staff fixture.</div> : <DataTable>{items.map((item) => <Row key={item.id} label={`${item.displayName} · ${item.employeeCode}`} value={<><span>{item.status} · {item.email} · {item.roles.map((role) => role.role).join(", ")} · MFA required</span>{canManage && item.status === "ACTIVE" ? <span className="button-row"><button className="secondary" onClick={() => setRoleTarget(item)}>Đổi role</button><button className="secondary" onClick={() => void onRequest(`/admin/staff/${item.id}/disable-requests`, { reasonCode: "STAFF_DISABLE_REVIEW", ticketReference: "ADMIN-STAFF", description: "Admin Web disable request" }, "staff-disable", "staff")}>Disable request</button></span> : null}</>} />)}</DataTable>}{roleTarget ? <div className="modal-backdrop"><form className="modal stack" onSubmit={(event) => void submitRole(event)}><div className="panel-heading"><h2>Role change request</h2><button type="button" className="ghost" onClick={() => setRoleTarget(null)}>Đóng</button></div><p>{roleTarget.displayName} · {roleTarget.email}</p><label>Role<select value={roleCode} onChange={(event) => setRoleCode(event.target.value)}><option>SUPPORT</option><option>OPERATIONS</option><option>CONTROL</option><option>ADMIN</option></select></label><label>Operation<select value={roleOperation} onChange={(event) => setRoleOperation(event.target.value)}><option>GRANT</option><option>REVOKE</option></select></label><label>Reason code<input data-testid="staff-role-reason" value={roleReason} onChange={(event) => setRoleReason(event.target.value)} required /></label><button className="primary" type="submit">Gửi yêu cầu đổi role</button></form></div> : null}<div className="notice info">Thay đổi role/disable chỉ là request; ADMIN không tự bypass Control và phiên cũ bị vô hiệu khi authorization_version đổi.</div></section>; }
-function AuditView({ items }: { items: AuditEvent[] }) { return <section><Heading eyebrow="IMMUTABLE EVIDENCE" title="Audit explorer" />{items.length === 0 ? <div className="empty">Chưa có audit event.</div> : <DataTable>{items.map((item) => <Row key={item.id} label={`${item.action} · ${shortId(item.id)}`} value={<>{item.outcome} · {item.targetType} {shortId(item.targetId)} · actor {shortId(item.actorStaffId)} · reason {item.reasonCode ?? "—"} · {formatDate(item.occurredAt)}</>} />)}</DataTable>}<div className="notice info">Audit runtime append-only; xem/xuất dữ liệu nhạy cảm cũng tạo audit. Secret, token, OTP, cookie và full account number không hiển thị.</div></section>; }
 
 function AuthenticatedApp() {
-  const [staff, setStaff] = useState<Staff | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState<ApiError | null>(null);
-  useEffect(() => { (async () => { try { await adminFetch<{ csrfToken: string }>("/admin/auth/refresh", { method: "POST", body: "{}" }); const result = await adminFetch<{ staff: Staff; permissions?: string[] }>("/admin/me"); setStaff({ ...result.staff, permissions: result.permissions ?? result.staff.permissions }); } catch (caught) { const apiError = caught as ApiError; if (apiError.status !== 401) setError(apiError); } finally { setLoading(false); } })(); }, []);
-  if (loading) return <main className="auth-shell"><div className="loading">Đang kiểm tra phiên staff…</div></main>;
-  if (!staff) return <><Login onLoggedIn={setStaff} />{error ? <div className="floating-error"><ErrorNotice error={error} /></div> : null}</>;
-  return <AppShell staff={staff} onLogout={() => setStaff(null)} />;
+  const { staff, loading, error, setStaffSession } = useStaff();
+
+  if (loading) {
+    return (
+      <main className="auth-shell">
+        <div className="loading">Đang kiểm tra phiên staff…</div>
+      </main>
+    );
+  }
+
+  if (!staff) {
+    return (
+      <>
+        <Login onLoggedIn={setStaffSession} />
+        {error ? (
+          <div className="floating-error">
+            <Notice error={error} />
+          </div>
+        ) : null}
+      </>
+    );
+  }
+
+  return <AppShell />;
 }
 
 export function App() {
-  return window.location.pathname === "/admin/activate" ? <Activation /> : <AuthenticatedApp />;
+  return window.location.pathname === "/admin/activate" ? (
+    <Activation />
+  ) : (
+    <StaffProvider>
+      <AuthenticatedApp />
+    </StaffProvider>
+  );
 }
+export default App;

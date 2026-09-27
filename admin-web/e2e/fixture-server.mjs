@@ -14,6 +14,8 @@ const webPort = 5174;
 const createdAt = new Date().toISOString();
 const customerId = randomUUID();
 const accountId = randomUUID();
+const customer2Id = randomUUID();
+const account2Id = randomUUID();
 const kycId = randomUUID();
 const creditId = randomUUID();
 const transferId = randomUUID();
@@ -22,28 +24,54 @@ const jobId = randomUUID();
 const deadEventId = randomUUID();
 
 const repository = new InMemoryAdminRepository({
-  customers: [{
-    id: customerId,
-    fullName: "Browser E2E Customer",
-    email: "browser-e2e@example.test",
-    phoneNumber: "0900000001",
-    accessStatus: "ACTIVE",
-    accessVersion: 1,
-    createdAt,
-  }],
-  accounts: [{
-    id: accountId,
-    customerId,
-    displayName: "Browser E2E Current Account",
-    maskedNumber: "****9001",
-    bankName: "Reference",
-    availableMinor: "100000",
-    currentMinor: "100000",
-    heldMinor: "0",
-    status: "ACTIVE",
-    version: 1,
-    updatedAt: createdAt,
-  }],
+  customers: [
+    {
+      id: customerId,
+      fullName: "Browser E2E Customer",
+      email: "browser-e2e@example.test",
+      phoneNumber: "0900000001",
+      accessStatus: "ACTIVE",
+      accessVersion: 1,
+      createdAt,
+    },
+    {
+      id: customer2Id,
+      fullName: "Second Synthetic Customer",
+      email: "second-e2e@example.test",
+      phoneNumber: "0900000002",
+      accessStatus: "ACTIVE",
+      accessVersion: 1,
+      createdAt,
+    },
+  ],
+  accounts: [
+    {
+      id: accountId,
+      customerId,
+      displayName: "Browser E2E Current Account",
+      maskedNumber: "****9001",
+      bankName: "Reference",
+      availableMinor: "100000",
+      currentMinor: "100000",
+      heldMinor: "0",
+      status: "ACTIVE",
+      version: 1,
+      updatedAt: createdAt,
+    },
+    {
+      id: account2Id,
+      customerId: customer2Id,
+      displayName: "Second Current Account",
+      maskedNumber: "****9002",
+      bankName: "Reference",
+      availableMinor: "200000",
+      currentMinor: "200000",
+      heldMinor: "0",
+      status: "ACTIVE",
+      version: 1,
+      updatedAt: createdAt,
+    },
+  ],
   applications: [
     { id: kycId, applicationType: "KYC", customerId, status: "SUBMITTED", version: 1, requestFingerprint: "browser-kyc", assignedStaffId: null, decisionReasonCode: null, applicantLabel: "Synthetic KYC applicant", createdAt, updatedAt: createdAt },
     { id: creditId, applicationType: "CREDIT", customerId, status: "SUBMITTED", version: 1, requestFingerprint: "browser-credit", assignedStaffId: null, decisionReasonCode: null, requestedLimitMinor: "500000", approvedLimitMinor: null, applicantLabel: "Synthetic credit applicant", createdAt, updatedAt: createdAt },
