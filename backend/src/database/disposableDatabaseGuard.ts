@@ -2226,11 +2226,11 @@ export function validateMigrationHistoryRecords(
   canonicalKeys: readonly string[],
   canonicalChecksums?: ReadonlyMap<string, string>,
 ): void {
-  if (records.length !== 40) {
-    throw new Error(`Expected exactly 40 migration records, got ${records.length}`);
+  if (records.length !== 41) {
+    throw new Error(`Expected exactly 41 migration records, got ${records.length}`);
   }
-  if (canonicalKeys.length !== 40) {
-    throw new Error(`Expected exactly 40 canonical keys, got ${canonicalKeys.length}`);
+  if (canonicalKeys.length !== 41) {
+    throw new Error(`Expected exactly 41 canonical keys, got ${canonicalKeys.length}`);
   }
   const seenKeys = new Set<string>();
   const expectedKeySet = new Set(canonicalKeys);

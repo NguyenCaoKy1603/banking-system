@@ -2014,8 +2014,8 @@ test("M07-A2R-15: Invalid checksum rejected by one-nibble mutator", () => {
   assert.throws(() => mutateChecksumOneNibble("g".repeat(64)), /Invalid checksum/);
 });
 
-test("M07-A2R-16: Initial 40-row inventory helper validates exact 40 APPLIED records", () => {
-  const canonicalKeys = Array.from({ length: 40 }, (_, i) => `${String(i + 1).padStart(3, "0")}_test_migration`);
+test("M07-A2R-16: Migration inventory helper validates exact 41 APPLIED records", () => {
+  const canonicalKeys = Array.from({ length: 41 }, (_, i) => `${String(i + 1).padStart(3, "0")}_test_migration`);
   const canonicalChecksums = new Map<string, string>();
   const records = canonicalKeys.map((key) => {
     const checksum = "e".repeat(64);
@@ -2028,23 +2028,23 @@ test("M07-A2R-16: Initial 40-row inventory helper validates exact 40 APPLIED rec
 });
 
 test("M07-A2R-17: Missing, duplicate, or extra migration key rejected", () => {
-  const canonicalKeys = Array.from({ length: 40 }, (_, i) => `${String(i + 1).padStart(3, "0")}_migration`);
+  const canonicalKeys = Array.from({ length: 41 }, (_, i) => `${String(i + 1).padStart(3, "0")}_migration`);
   const validChecksum = "a".repeat(64);
 
   // Missing one key (39 records)
-  const missingRecords = canonicalKeys.slice(0, 39).map((key) => ({
+  const missingRecords = canonicalKeys.slice(0, 40).map((key) => ({
     migration_key: key,
     checksum: validChecksum,
     status: "APPLIED",
   }));
   assert.throws(
     () => validateMigrationHistoryRecords(missingRecords, canonicalKeys),
-    /Expected exactly 40 migration records, got 39/,
+    /Expected exactly 41 migration records, got 40/,
   );
 
   // Duplicate key
   const duplicateRecords = [
-    ...canonicalKeys.slice(0, 39).map((key) => ({ migration_key: key, checksum: validChecksum, status: "APPLIED" })),
+    ...canonicalKeys.slice(0, 40).map((key) => ({ migration_key: key, checksum: validChecksum, status: "APPLIED" })),
     { migration_key: canonicalKeys[0], checksum: validChecksum, status: "APPLIED" },
   ];
   assert.throws(
@@ -2065,7 +2065,7 @@ test("M07-A2R-17: Missing, duplicate, or extra migration key rejected", () => {
 });
 
 test("M07-A2R-18: Rerun checksum mutation rejected by history validator", () => {
-  const canonicalKeys = Array.from({ length: 40 }, (_, i) => `${String(i + 1).padStart(3, "0")}_migration`);
+  const canonicalKeys = Array.from({ length: 41 }, (_, i) => `${String(i + 1).padStart(3, "0")}_migration`);
   const canonicalChecksums = new Map<string, string>();
   for (const key of canonicalKeys) canonicalChecksums.set(key, "a".repeat(64));
 
