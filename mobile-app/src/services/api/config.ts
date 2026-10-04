@@ -1,3 +1,5 @@
+import { Platform } from "react-native";
+
 const DEFAULT_DEVELOPMENT_API_URL = "http://10.0.2.2:5000/api/v1";
 
 export const isProductionBuild = process.env.NODE_ENV === "production";
@@ -22,6 +24,7 @@ export function resolveApiUrl(
   configuredValue: string | undefined,
   production = isProductionBuild,
   allowInsecureHttp = allowInsecureSandboxHttp,
+  runtimePlatform: string = Platform.OS as string,
 ): string {
   const configuredUrl = configuredValue?.trim();
 
@@ -32,10 +35,10 @@ export function resolveApiUrl(
       );
     }
 
-    return DEFAULT_DEVELOPMENT_API_URL;
   }
 
-  const parsedUrl = parseHttpUrl(configuredUrl);
+  const apiUrl = configuredUrl ?? DEFAULT_DEVELOPMENT_API_URL;
+  const parsedUrl = parseHttpUrl(apiUrl);
 
   if (!parsedUrl) {
     throw new Error("EXPO_PUBLIC_API_URL phải là một URL HTTP hợp lệ.");
@@ -45,7 +48,14 @@ export function resolveApiUrl(
     throw new Error("Bản production chỉ được gọi API qua HTTPS.");
   }
 
-  return normalizeApiUrl(configuredUrl);
+  // 10.0.2.2 is the Android emulator's host alias. A browser running the Expo
+  // Web app on this machine must reach the same local preview through localhost.
+  if (runtimePlatform === "web" && parsedUrl.hostname === "10.0.2.2") {
+    parsedUrl.hostname = "localhost";
+    return normalizeApiUrl(parsedUrl.toString());
+  }
+
+  return normalizeApiUrl(apiUrl);
 }
 
 export const API_URL = resolveApiUrl(process.env.EXPO_PUBLIC_API_URL);

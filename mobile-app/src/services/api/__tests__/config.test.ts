@@ -2,7 +2,26 @@ import { resolveApiUrl } from "@/services/api/config";
 
 describe("api config", () => {
   it("dùng emulator URL mặc định ngoài production", () => {
-    expect(resolveApiUrl(undefined, false)).toBe("http://10.0.2.2:5000/api/v1");
+    expect(resolveApiUrl(undefined, false, false, "android")).toBe("http://10.0.2.2:5000/api/v1");
+  });
+
+  it("dùng localhost cho Web khi cấu hình đang dùng host alias của Android emulator", () => {
+    expect(resolveApiUrl(undefined, false, false, "web")).toBe("http://localhost:5000/api/v1");
+    expect(
+      resolveApiUrl("http://10.0.2.2:5000/api/v1", false, false, "web"),
+    ).toBe("http://localhost:5000/api/v1");
+    expect(
+      resolveApiUrl("http://10.0.2.2:5000/api/v1", true, true, "web"),
+    ).toBe("http://localhost:5000/api/v1");
+  });
+
+  it("giữ nguyên host do người dùng cấu hình cho API ngoài localhost và native", () => {
+    expect(
+      resolveApiUrl("http://10.0.2.2:5000/api/v1", false, false, "android"),
+    ).toBe("http://10.0.2.2:5000/api/v1");
+    expect(
+      resolveApiUrl("https://api.example.com/api/v1", false, false, "web"),
+    ).toBe("https://api.example.com/api/v1");
   });
 
   it("fail closed khi production thiếu API URL", () => {

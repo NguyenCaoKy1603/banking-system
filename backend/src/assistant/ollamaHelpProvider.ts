@@ -8,7 +8,10 @@ export const SUPPORTED_OLLAMA_MODEL = "qwen3.5:4b";
 export const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 export const DEFAULT_MAX_OLLAMA_RESPONSE_BYTES = 65_536; // 64 KiB limit
 
-export function validateOllamaBaseUrl(rawUrl: string): string {
+export function validateOllamaBaseUrl(
+  rawUrl: string,
+  options: { allowDockerHostInternal?: boolean } = {},
+): string {
   if (!rawUrl || typeof rawUrl !== "string") {
     throw new Error("Ollama base URL must be a non-empty string.");
   }
@@ -24,8 +27,13 @@ export function validateOllamaBaseUrl(rawUrl: string): string {
     throw new Error(`Ollama base URL protocol must be http:, received: ${parsed.protocol}`);
   }
 
-  // Hostname must strictly be 127.0.0.1
-  if (parsed.hostname !== "127.0.0.1") {
+  // Keep native/local runs loopback-only. Docker preview may explicitly opt in
+  // to the single Docker Desktop host gateway name; arbitrary LAN/remote hosts
+  // remain rejected.
+  const isLoopback = parsed.hostname === "127.0.0.1";
+  const isExplicitDockerHost =
+    options.allowDockerHostInternal === true && parsed.hostname === "host.docker.internal";
+  if (!isLoopback && !isExplicitDockerHost) {
     throw new Error(`Ollama base URL hostname must strictly be 127.0.0.1, received: ${parsed.hostname}`);
   }
 
@@ -78,6 +86,7 @@ export const DEFAULT_OLLAMA_NUM_PREDICT = 530;
 
 export type OllamaProviderOptions = {
   baseUrl?: string;
+  allowDockerHostInternal?: boolean;
   model?: string;
   maxResponseBytes?: number;
   numPredict?: number;
@@ -143,7 +152,9 @@ export class OllamaAssistantHelpProvider implements AssistantHelpProvider {
   private readonly chatEndpoint: string;
 
   constructor(options: OllamaProviderOptions = {}) {
-    this.baseUrl = validateOllamaBaseUrl(options.baseUrl ?? DEFAULT_OLLAMA_BASE_URL);
+    this.baseUrl = validateOllamaBaseUrl(options.baseUrl ?? DEFAULT_OLLAMA_BASE_URL, {
+      allowDockerHostInternal: options.allowDockerHostInternal,
+    });
     this.model = validateOllamaModel(options.model ?? SUPPORTED_OLLAMA_MODEL);
     this.maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_OLLAMA_RESPONSE_BYTES;
     const rawNumPredict = options.numPredict ?? DEFAULT_OLLAMA_NUM_PREDICT;

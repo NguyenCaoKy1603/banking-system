@@ -480,6 +480,15 @@ test("Ollama Provider Technical Test Suite (O-01 -> O-15)", async (suite) => {
     assert.throws(() => validateOllamaBaseUrl("http://192.168.1.100:11434"), /hostname must strictly be 127.0.0.1/);
     assert.throws(() => validateOllamaBaseUrl("http://0.0.0.0:11434"), /hostname must strictly be 127.0.0.1/);
     assert.throws(() => validateOllamaBaseUrl("http://localhost:11434"), /hostname must strictly be 127.0.0.1/);
+    assert.throws(() => validateOllamaBaseUrl("http://host.docker.internal:11434"), /hostname must strictly be 127.0.0.1/);
+    assert.equal(
+      validateOllamaBaseUrl("http://host.docker.internal:11434", { allowDockerHostInternal: true }),
+      "http://host.docker.internal:11434",
+    );
+    assert.throws(
+      () => validateOllamaBaseUrl("http://192.168.1.100:11434", { allowDockerHostInternal: true }),
+      /hostname must strictly be 127.0.0.1/,
+    );
     assert.throws(() => validateOllamaBaseUrl("http://admin:pass@127.0.0.1:11434"), /must not contain credentials/);
     assert.throws(() => validateOllamaBaseUrl("http://127.0.0.1:11434?token=secret"), /must not contain query parameters/);
     assert.throws(() => validateOllamaBaseUrl("http://127.0.0.1:11434#section"), /must not contain hash fragments/);
@@ -564,6 +573,26 @@ test("Ollama Provider Technical Test Suite (O-01 -> O-15)", async (suite) => {
       }),
       /Ollama base URL protocol must be http:/,
     );
+    assert.throws(
+      () => resolveRuntimeAssistantConfig({
+        ASSISTANT_ENABLED: "1",
+        ASSISTANT_PROVIDER: "ollama",
+        ASSISTANT_MODEL: "qwen3.5:4b",
+        ASSISTANT_OLLAMA_BASE_URL: "http://host.docker.internal:11434",
+        ASSISTANT_ALLOW_DOCKER_HOST: "1",
+        BANKING_ENV: "production-like",
+      }),
+      /ASSISTANT_ALLOW_DOCKER_HOST=1 is allowed only when BANKING_ENV is development or preview/,
+    );
+    assert.throws(
+      () => resolveRuntimeAssistantConfig({
+        ASSISTANT_ENABLED: "1",
+        ASSISTANT_PROVIDER: "ollama",
+        ASSISTANT_MODEL: "qwen3.5:4b",
+        ASSISTANT_OLLAMA_BASE_URL: "http://host.docker.internal:11434",
+      }),
+      /hostname must strictly be 127.0.0.1/,
+    );
 
     // 4. Invalid timeout configurations
     assert.throws(
@@ -625,6 +654,20 @@ test("Ollama Provider Technical Test Suite (O-01 -> O-15)", async (suite) => {
     assert.equal(validConfig.providerTimeoutMs, 25000);
     assert.equal(validConfig.requestTimeoutMs, 30000);
     assert.ok(validConfig.provider instanceof OllamaAssistantHelpProvider);
+
+    const dockerPreviewConfig = resolveRuntimeAssistantConfig({
+      ASSISTANT_ENABLED: "1",
+      ASSISTANT_PROVIDER: "ollama",
+      ASSISTANT_MODEL: "qwen3.5:4b",
+      ASSISTANT_OLLAMA_BASE_URL: "http://host.docker.internal:11434",
+      ASSISTANT_ALLOW_DOCKER_HOST: "1",
+      BANKING_ENV: "preview",
+    });
+    assert.equal(dockerPreviewConfig.enabled, true);
+    assert.equal(
+      (dockerPreviewConfig.provider as OllamaAssistantHelpProvider).baseUrl,
+      "http://host.docker.internal:11434",
+    );
 
     // 6. Hợp lệ với custom timeout
     const customTimeoutConfig = resolveRuntimeAssistantConfig({

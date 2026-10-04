@@ -56,8 +56,20 @@ export function resolveRuntimeAssistantConfig(
   }
   const model = validateOllamaModel(rawModel);
 
+  const allowDockerHostInternal = env.ASSISTANT_ALLOW_DOCKER_HOST === "1";
+  const bankingEnvironment = env.BANKING_ENV?.trim().toLowerCase();
+  if (
+    allowDockerHostInternal &&
+    bankingEnvironment !== "development" &&
+    bankingEnvironment !== "preview"
+  ) {
+    throw new Error(
+      "ASSISTANT_ALLOW_DOCKER_HOST=1 is allowed only when BANKING_ENV is development or preview.",
+    );
+  }
+
   const rawBaseUrl = env.ASSISTANT_OLLAMA_BASE_URL?.trim() || DEFAULT_OLLAMA_BASE_URL;
-  const baseUrl = validateOllamaBaseUrl(rawBaseUrl);
+  const baseUrl = validateOllamaBaseUrl(rawBaseUrl, { allowDockerHostInternal });
 
   const rawProviderTimeout = parsePositiveInteger(
     env.ASSISTANT_PROVIDER_TIMEOUT_MS,
@@ -84,6 +96,7 @@ export function resolveRuntimeAssistantConfig(
 
   const provider = new OllamaAssistantHelpProvider({
     baseUrl,
+    allowDockerHostInternal,
     model,
     ...(rawNumPredict ? { numPredict: rawNumPredict } : {}),
   });
