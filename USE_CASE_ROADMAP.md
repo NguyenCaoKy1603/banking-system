@@ -137,7 +137,8 @@ Danh mục dựa trên kiểm tra source/contract và tài liệu, không phải
   checker độc lập vẫn approve/execute đúng một lần.
 - Ba tiêu chí bổ sung thuộc Đợt 2 đã có evidence theo đúng tầng kiểm chứng; disposable
   resource đã cleanup, demo DB và local services được giữ nguyên.
-- Các trạng thái UC khác không bị tự động đóng; Đợt 3 chưa bắt đầu. Hồ sơ chi tiết:
+- Các trạng thái UC khác không bị tự động đóng; tại thời điểm cập nhật lịch sử này
+  Đợt 3 chưa bắt đầu. Hồ sơ chi tiết:
   `tasks/DEMO/TASK_DOT_2_CORE_BANKING_DEMO.md`.
 
 ### Owner approval Đợt 2 — 2026-09-08
@@ -149,5 +150,24 @@ Danh mục dựa trên kiểm tra source/contract và tài liệu, không phải
 - Idempotency và cross-account được chấp thuận theo evidence service/PostgreSQL và
   HTTP tương ứng; maker self-approval chỉ được tuyên bố ở policy/service scope,
   không phải negative UI E2E.
-- Không tự đóng UC-M04+ hoặc use case khác. Đợt 3 chưa triển khai; điểm tiếp tục là
-  UI cần thiết, setup/deployment, CI/Git evidence, báo cáo/UML/ERD, slides và rehearsal.
+- Không tự đóng UC-M04+ hoặc use case khác. Điểm tiếp tục là Đợt 3: UI cần thiết,
+  setup/deployment, CI/Git evidence, báo cáo/UML/ERD, slides và rehearsal.
+
+## Đợt 3 — chuẩn bị hồ sơ bàn giao (2026-09-08)
+
+Trạng thái: `IN PROGRESS — DRAFT DELIVERABLES`. Đợt 3 chỉ chuẩn bị tài liệu bàn giao
+và bảo vệ dựa trên source/evidence hiện có; chưa triển khai cloud, chưa thay đổi source
+và chưa đóng thêm use case.
+
+- Entry point: [`README.md`](README.md).
+- Kiến trúc/ERD/sequence/phạm vi: `documents/02-design/`.
+- Báo cáo, slide, run sheet, checklist, Q&A và evidence index: `documents/08-presentation/`.
+- Hồ sơ tổng hợp: [`tasks/DEMO/TASK_DOT_3_PROJECT_HANDOFF.md`](tasks/DEMO/TASK_DOT_3_PROJECT_HANDOFF.md).
+- Đợt 2 giữ trạng thái Owner approved theo phạm vi trong
+  [`tasks/DEMO/TASK_DOT_2_CORE_BANKING_DEMO.md`](tasks/DEMO/TASK_DOT_2_CORE_BANKING_DEMO.md).
+
+Rubric MHTML local đã đọc được ở mức nhóm sản phẩm, quy trình/công nghệ và báo cáo/
+thuyết trình. Checklist XLSX tại đường dẫn Owner cung cấp chưa có; không suy ra điểm.
+Các khoảng trống cần Owner chốt gồm mẫu báo cáo, hạn nộp, thời lượng bảo vệ, thông tin
+nhóm và deployment requirement. Không coi workflow CI, README hay Compose file là bằng
+chứng remote/deployment đã chạy.

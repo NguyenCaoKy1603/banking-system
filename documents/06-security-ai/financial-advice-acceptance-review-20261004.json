@@ -1,0 +1,218 @@
+{
+  "schemaVersion": 1,
+  "reviewDate": "2026-10-04",
+  "status": "WEB_DEMO_PENDING_USER_AUTHENTICATION",
+  "repository": {
+    "branch": "codex/staging-academic-completion",
+    "head": "dc741f6213d0f0391f9b334e3145698e39abec84"
+  },
+  "sourceReports": [
+    {
+      "role": "live_savings_json",
+      "path": "financial-advice-run-live-savings-20261003-164113722-c0961ce5-79ce-432d-80f0-2240d7f04471.json",
+      "bytes": 11883,
+      "sha256": "4C6C0080089D8BC75CC04A3DCEC23A68A3F821869109B813A30ADA0D8E32AABB"
+    },
+    {
+      "role": "live_savings_markdown",
+      "path": "financial-advice-run-live-savings-20261003-164113722-c0961ce5-79ce-432d-80f0-2240d7f04471.md",
+      "bytes": 6907,
+      "sha256": "B8BA872CF7B070A51639D6DB856F06C6AA811A54B05B2A583FB07291954F1C73"
+    },
+    {
+      "role": "live_budget_json",
+      "path": "financial-advice-run-live-budget-20261003-164205140-888e36b4-7ed5-4cdc-aef7-26816406efc7.json",
+      "bytes": 11796,
+      "sha256": "4A9CD56133405C8698389192E6ECDC80E1CF3596AB4CC36881C78812513E9279"
+    },
+    {
+      "role": "live_budget_markdown",
+      "path": "financial-advice-run-live-budget-20261003-164205140-888e36b4-7ed5-4cdc-aef7-26816406efc7.md",
+      "bytes": 6855,
+      "sha256": "F1FF58C35F6E5B4E1CE8BD467AC1617C4A983C98383594BA2A9987E2264C27E4"
+    },
+    {
+      "role": "live_aggregate_json",
+      "path": "financial-advice-aggregate-20261003-164246440-3192cfdc-7167-4de8-9cf8-5e9011860ce3.json",
+      "bytes": 18542,
+      "sha256": "EF3FFC469A5544417E9ECCFFD11F1D474A9A5D338EE2C84C4832A65AD336B0C8"
+    },
+    {
+      "role": "live_aggregate_markdown",
+      "path": "financial-advice-aggregate-20261003-164246440-3192cfdc-7167-4de8-9cf8-5e9011860ce3.md",
+      "bytes": 2279,
+      "sha256": "EEF8F21E2827368D049C13D65F5F74B51B031B94D482D88550D55A19B40F5FCF"
+    }
+  ],
+  "sourceManifest": {
+    "entryCount": 19,
+    "matchedCount": 19,
+    "driftCount": 0
+  },
+  "evaluation": {
+    "caseCount": 16,
+    "schemaSemanticsStatusMetricsCandidateFeasibilityPrimaryReasonWarningsPublicResponse": {
+      "passed": 16,
+      "total": 16
+    },
+    "strictPreferredMatches": 15,
+    "strictPreferredMatchRate": 0.9375,
+    "qwenAiAssistedSelections": 16,
+    "providerChargesInExistingReports": 16,
+    "onlyStrictPreferredMismatch": "B-01"
+  },
+  "b01": {
+    "runtimeContractValid": true,
+    "calculationMismatch": false,
+    "feasibleCandidateIds": [
+      "REDUCE_FLEXIBLE_SPENDING",
+      "ADJUST_SAVINGS_TARGET"
+    ],
+    "primaryReasonForBoth": "MONTHLY_GAP",
+    "oracleAcceptablePreferredIds": [
+      "ADJUST_SAVINGS_TARGET"
+    ],
+    "recordedQwenPreferredOptionId": "REDUCE_FLEXIBLE_SPENDING",
+    "strictPreferenceMatch": false,
+    "classification": "VALID_OPTION_STRICT_PREFERENCE_ORACLE_MISMATCH"
+  },
+  "decisions": {
+    "originalProductGate": "PASS",
+    "currentLiveGate": "BLOCKED",
+    "b01OraclePolicy": "UNRESOLVED",
+    "liveGateThreshold": "UNRESOLVED",
+    "thresholdOutcomes": {
+      "atLeast15Of16": "PASS",
+      "atLeast95Percent": "FAIL"
+    }
+  },
+  "offlineServiceChecks": {
+    "b01": {
+      "mode": "RULE_BASED",
+      "fallbackReason": "AI_DISABLED",
+      "capacityVnd": 1000000,
+      "targetGapVnd": 1000000,
+      "scope": "SERVICE_ONLY_NOT_HTTP_OR_WEB"
+    },
+    "b05": {
+      "status": "DEFICIT",
+      "preferredOptionId": "REVIEW_BASE_BUDGET",
+      "primaryReason": "BASE_BUDGET_DEFICIT",
+      "scope": "SERVICE_ONLY_NOT_HTTP_OR_WEB"
+    }
+  },
+  "capInstrumentation": {
+    "sourceFiles": [
+      {
+        "path": "backend/src/financialAdvice/isolatedDemoConfig.ts",
+        "bytes": 10821,
+        "sha256": "939E41481AB7FE71F4BFD9D22DD7C984F620EC873469E44374687E262A1F2159"
+      },
+      {
+        "path": "backend/scripts/demo-financial-advice-isolated.ts",
+        "bytes": 2735,
+        "sha256": "C2A46EFC42555CB5A1E5949CC83F174CD7688BCA4E263E9EAE19D5BA0D489FA7"
+      },
+      {
+        "path": "backend/src/tests/financialAdviceIsolatedDemo.test.ts",
+        "bytes": 7621,
+        "sha256": "8304AE297FE87B661CA29849BDCBAE504BB69F693F5867F9E558FED77CF322E9"
+      }
+    ],
+    "sharedLimiterAcrossHelpAndAdvice": true,
+    "webProviderCallCap": 2,
+    "startupObservedChargesUsed": 0,
+    "startupObservedChargesRemaining": 2,
+    "targetedUnitTest": {
+      "passed": 7,
+      "total": 7,
+      "typecheck": "PASS",
+      "build": "PASS"
+    },
+    "liveWebRouteCapExercised": false
+  },
+  "offlineRegressionEvidence": {
+    "providerCalls": 0,
+    "postgresql": "NOT_USED",
+    "backend": {
+      "command": "node --import=tsx --test src/tests/financialAdviceHttp.test.ts src/tests/financialAdviceService.test.ts src/tests/financialAdviceIsolatedDemo.test.ts",
+      "passed": 41,
+      "total": 41,
+      "covers": [
+        "W08 fake-provider invalid selector fallback",
+        "W08 shared help/advice quota",
+        "W08 isolated demo cap blocks third call before provider"
+      ]
+    },
+    "mobile": {
+      "command": "npm test -- --runInBand --runTestsByPath src/features/financial-advice/__tests__/FinancialAdviceScreen.test.tsx src/features/financial-advice/__tests__/financialAdviceApi.test.ts src/features/financial-advice/__tests__/FinancialAdviceReauthentication.integration.test.tsx",
+      "suitesPassed": 3,
+      "testsPassed": 22,
+      "testsTotal": 22
+    },
+    "cases": {
+      "W05": {
+        "offlineEvidence": "PASS_COMPONENT_AND_AUTH_INTEGRATION_REGRESSIONS",
+        "assertions": [
+          "double-submit suppressed",
+          "stale pending response ignored after session epoch change",
+          "late 401 from old epoch does not affect new session"
+        ],
+        "formEditWhilePending": "NOT_INDEPENDENTLY_CONFIRMED",
+        "manualWeb": "NOT_RUN"
+      },
+      "W06": {
+        "offlineEvidence": "PASS_COMPONENT_API_ERROR_MAPPING_AND_RETRY",
+        "assertions": [
+          "429 retry affordance",
+          "NETWORK_ERROR maps to network failure UI contract"
+        ],
+        "stoppedBackendBrowserFlow": "NOT_RUN",
+        "manualWeb": "NOT_RUN"
+      },
+      "W07": {
+        "offlineEvidence": "PASS_AUTH_PROVIDER_PROTECTED_ROUTE_INTEGRATION",
+        "fetchTransport": "FAKE",
+        "assertions": [
+          "final 401 logs out to protected login route",
+          "stale 401 does not invalidate a new session"
+        ],
+        "manualWeb": "NOT_RUN"
+      },
+      "W08": {
+        "offlineEvidence": "PASS_BACKEND_FAKE_PROVIDER_AND_HTTP_CONTRACTS",
+        "assertions": [
+          "invalid selector safe fallback",
+          "shared help/advice quota",
+          "task-specific third-call block before fake provider"
+        ],
+        "realProviderError": "NOT_INDUCED",
+        "manualWeb": "NOT_RUN"
+      }
+    }
+  },
+  "webDemonstration": {
+    "targetCases": ["S-01", "B-01"],
+    "maxProviderCharges": 2,
+    "invocations": {
+      "S-01": 0,
+      "B-01": 0
+    },
+    "providerCharges": 0,
+    "caseStatuses": {
+      "S-01": "NOT_RUN_AWAITING_MANUAL_LOGIN",
+      "B-01": "NOT_RUN_AWAITING_MANUAL_LOGIN"
+    },
+    "browserRoute": "/login",
+    "manualAuthenticationRequired": true,
+    "noCredentialHandledByAgent": true
+  },
+  "environment": {
+    "backend": "isolated-in-memory-loopback-5010-running",
+    "expoWeb": "localhost-8082-preserved",
+    "ollama": "preserved-local-service",
+    "postgresql": "NOT_USED",
+    "docker": "NOT_USED",
+    "dataMutation": "NONE"
+  }
+}
