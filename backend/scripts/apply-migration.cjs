@@ -144,6 +144,9 @@ const requiredTablesByMigration = {
   "034_policy_entitlements_login_rate_limit": ["customer_feature_entitlements"],
   "039_lifecycle_suspense_and_keyset_indexes": ["savings_maturity_suspense"],
   "040_card_security_and_suspense_retry": ["card_security_cases"],
+  "041_admin_two_roles": [],
+  "042_admin_direct_operations_accounts": ["admin_staff_account_creation_requests"],
+  "043_retire_staff_invite_approval": [],
 };
 
 async function main() {

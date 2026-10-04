@@ -13,7 +13,6 @@ export const APPROVAL_PERMISSION_MAP: Record<string, string> = {
   JOB_RETRY: "job.retry.approve",
   STAFF_ROLE_CHANGE: "staff.role-change.approve",
   STAFF_DISABLE: "staff.disable.approve",
-  STAFF_INVITE: "staff.invite.approve",
 };
 
 /**
@@ -38,18 +37,7 @@ export function canStaffApproveAction(
 }
 
 /**
- * Four-Eyes Principle: Evaluates whether the current staff is the creator (maker) of the action.
- */
-export function isSelfApproval(
-  currentStaffId: string | null | undefined,
-  requesterStaffId: string | null | undefined
-): boolean {
-  if (!currentStaffId || !requesterStaffId) return false;
-  return currentStaffId === requesterStaffId;
-}
-
-/**
- * Resolves the API endpoint path and body for a four-eyes decision.
+ * Resolves the API endpoint path and body for an approval decision.
  */
 export function resolveDecisionEndpointAndBody(
   action: { id: string; requestFingerprint: string; version: number },

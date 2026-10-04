@@ -2,7 +2,6 @@ import { KeyEncryptionKeyringAdapter } from "./mfa/crypto.js";
 import { InMemoryAdminRepository, PostgresAdminRepository } from "./admin/repositories/adminRepository.js";
 import { StaffAuthService } from "./admin/auth/staffAuthService.js";
 import { AdminActionEngine } from "./admin/actions/actionEngine.js";
-import { createRuntimeAdminInvitationProvider, validateAdminInvitationActivationUrl } from "./admin/auth/adminInvitationProvider.js";
 import { createAdminServer } from "./admin/http/adminHttp.js";
 import { readRuntimeConfig } from "./runtimeConfig.js";
 import { runtimeMetadata } from "./runtimeMetadata.js";
@@ -50,27 +49,13 @@ async function start(): Promise<void> {
       },
     );
   const auth = new StaffAuthService({ repository, encryption, environmentScope: environment });
-  const invitationProviderUrl = process.env.ADMIN_INVITATION_PROVIDER_URL?.trim();
-  if (runtimeConfig.isProductionLike && !invitationProviderUrl) {
-    throw new Error("ADMIN_INVITATION_PROVIDER_URL is required for staging and production-like Admin runtimes.");
-  }
-  const invitationProvider = invitationProviderUrl
-    ? await createRuntimeAdminInvitationProvider({ environment, isProductionLike: runtimeConfig.isProductionLike, secretProvider })
-    : undefined;
-  const activationUrl = invitationProvider
-    ? validateAdminInvitationActivationUrl(
-      process.env.ADMIN_INVITATION_ACTIVATION_URL?.trim() || "http://127.0.0.1:5173/admin/activate",
-      runtimeConfig.isProductionLike,
-    )
-    : undefined;
-  const actions = new AdminActionEngine(repository, auth, { invitationProvider, activationUrl });
+  const actions = new AdminActionEngine(repository);
   const server = createAdminServer({
     repository,
     auth,
     actions,
     allowedOrigins,
     environment,
-    invitationProvider,
     commitSha: runtimeConfig.commitSha,
     runtimeMetadata: runtimeMetadata({
       service: "banking-admin-api",

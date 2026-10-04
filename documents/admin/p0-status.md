@@ -1,5 +1,7 @@
 # P0 Admin control plane — phiên triển khai
 
+> **Ảnh chụp lịch sử:** Các kết quả dưới đây ghi lại baseline trước khi gộp còn hai role và cho phép ADMIN tự duyệt yêu cầu đủ quyền. Những câu nhắc `SELF_APPROVAL_FORBIDDEN`, Control/Four-Eyes hoặc bốn role mô tả hành vi cũ; luồng hiện tại được mô tả trong `four-eyes-workflow.md`, `runbook.md` và `rbac-matrix.md`.
+
 ## Kết quả đã xác minh
 
 - Admin API tách process/port `:5001`, Admin Web `:5173`; preview chỉ publish trên localhost.
@@ -42,7 +44,7 @@
 Đây vẫn là reference hardening, chưa phải production-ready:
 
 - Các endpoint public `/sandbox/fundings`, `/sandbox/process-scheduled`, `/sandbox/otp/{challengeId}` và operator-key config/runtime đã bị loại bỏ; fixture seed dùng DB transaction nội bộ hoặc dữ liệu pre-seeded.
-- Staff invite đã có maker-checker và chỉ tạo staff sau khi checker duyệt; local preview dùng HTTP `invitation-capture` trong memory để hand-off token tới `/admin/activate`, còn PostgreSQL chỉ giữ `token_hash`. Staging/production vẫn cần provider HTTPS và credential từ Secret Manager.
+- ADMIN tạo tài khoản OPERATIONS trực tiếp với mật khẩu ban đầu và TOTP; thao tác không gửi email mời và không đi qua Approval Inbox. Invite/activation còn lại chỉ phục vụ bootstrap Admin đầu tiên; local `invitation-capture` đã chuyển sang Compose profile `bootstrap`, còn PostgreSQL chỉ giữ `token_hash`.
 - Password staff hiện dùng PBKDF2 reference implementation; production cần Argon2id hoặc adapter đã phê duyệt.
 - DB principals/RLS/policy đã có migration, nhưng preview local vẫn chạy bằng owner role; production phải cấp credential riêng và đặt `app.staff_id`/`app.staff_scope` cho mọi transaction. ABAC case queue hiện giới hạn theo assigned/unassigned scope, chưa có unit/tenant directory thật.
 - Fraud `BLOCK/REVOKE/REVERSAL` vẫn yêu cầu domain adapter riêng; chỉ `RESOLVE` được thực thi trong P0.

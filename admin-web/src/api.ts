@@ -232,9 +232,6 @@ export function getErrorMessage(error: ApiError | null, context?: "activation" |
   if (error.status === 403 || error.code === "ADMIN_PERMISSION_DENIED") {
     return "Bạn không có quyền thực hiện thao tác này theo chính sách phân quyền.";
   }
-  if (error.code === "SELF_APPROVAL_FORBIDDEN") {
-    return "Nguyên tắc Four-Eyes: Bạn không thể tự phê duyệt yêu cầu do chính mình tạo.";
-  }
   if (error.code === "ACTION_STALE") {
     return "Dữ liệu đối tượng đã thay đổi kể từ lúc tạo yêu cầu; vui lòng tải lại trước khi quyết định.";
   }

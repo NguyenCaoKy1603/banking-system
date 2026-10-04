@@ -1,26 +1,46 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { generateTotp } from "../../backend/dist/mfa/crypto.js";
 
-type Credential = { email: string; password: string; secret: string };
+const lastTotpStepBySecret = new Map<string, number>();
+
+function totpCode(secret: string, timestamp = Date.now()): string {
+  lastTotpStepBySecret.set(secret, Math.floor(timestamp / 30_000));
+  return generateTotp(secret, timestamp);
+}
+
+async function freshTotpCode(secret: string): Promise<string> {
+  const lastStep = lastTotpStepBySecret.get(secret);
+  if (lastStep !== undefined && Math.floor(Date.now() / 30_000) <= lastStep) {
+    const nextStepAt = (lastStep + 1) * 30_000;
+    await new Promise((resolve) => setTimeout(resolve, Math.max(1, nextStepAt - Date.now() + 50)));
+  }
+  return totpCode(secret, Date.now());
+}
+
+type Credential =
+  | { email: string; password: string; role: "OPERATIONS" }
+  | { email: string; password: string; secret: string; role: "ADMIN" };
 const operations: Credential = {
   email: "browser-operations@example.test",
   password: "Browser-Operations-password!",
-  secret: "JBSWY3DPEHPK3PXP",
+  role: "OPERATIONS",
 };
 const control: Credential = {
-  email: "browser-control@example.test",
-  password: "Browser-Control-password!",
+  email: "browser-admin-approver@example.test",
+  password: "Browser-Admin-Approver-password!",
   secret: "KRUGS4ZANFZSAYJA",
+  role: "ADMIN",
 };
-const support: Credential = {
-  email: "browser-support@example.test",
-  password: "Browser-Support-password!",
-  secret: "MFRGGZDFMZTWQ2LK",
+const operationsPeer: Credential = {
+  email: "browser-operations-secondary@example.test",
+  password: "Browser-Operations-Secondary-password!",
+  role: "OPERATIONS",
 };
 const admin: Credential = {
   email: "browser-admin@example.test",
   password: "Browser-Admin-password!",
   secret: "ONSWG4TFOQ======",
+  role: "ADMIN",
 };
 
 async function login(page: Page, credential: Credential): Promise<void> {
@@ -28,22 +48,13 @@ async function login(page: Page, credential: Credential): Promise<void> {
   await expect(page.getByRole("heading", { name: "Đăng nhập quản trị" })).toBeVisible();
   await page.getByTestId("staff-email").fill(credential.email);
   await page.getByTestId("staff-password").fill(credential.password);
-  await page.getByRole("button", { name: "Tiếp tục với MFA" }).click();
-  await expect(page.getByTestId("staff-mfa")).toBeVisible();
-  await page.getByTestId("staff-mfa").fill(generateTotp(credential.secret, Date.now() - 30_000));
-  await page.getByRole("button", { name: "Xác thực và vào Admin" }).click();
+  await page.getByRole("button", { name: "Đăng nhập" }).click();
+  if (credential.role === "ADMIN") {
+    await expect(page.getByTestId("staff-mfa")).toBeVisible();
+    await page.getByTestId("staff-mfa").fill(totpCode(credential.secret));
+    await page.getByRole("button", { name: "Xác thực và vào Admin" }).click();
+  }
   await expect(page.getByRole("heading", { name: "Điểm kiểm soát" })).toBeVisible();
-}
-
-async function inlineRelogin(page: Page, credential: Credential, timeOffset = 0): Promise<void> {
-  await expect(page.getByRole("heading", { name: "Đăng nhập quản trị" })).toBeVisible();
-  await page.getByTestId("staff-email").fill(credential.email);
-  await page.getByTestId("staff-password").fill(credential.password);
-  await page.getByRole("button", { name: "Tiếp tục với MFA" }).click();
-  await expect(page.getByTestId("staff-mfa")).toBeVisible();
-  await page.getByTestId("staff-mfa").fill(generateTotp(credential.secret, Date.now() + timeOffset));
-  await page.getByRole("button", { name: "Xác thực và vào Admin" }).click();
-  await expect(page.getByRole("button", { name: "Đăng xuất" })).toBeVisible();
 }
 
 async function approveAction(
@@ -55,12 +66,12 @@ async function approveAction(
   const row = page.getByRole("button", { name: new RegExp(actionType) }).first();
   await expect(row).toBeVisible();
   await row.click();
-  await page.getByTestId("checker-reason").fill(reason);
+  await page.getByTestId("approval-reason").fill(reason);
   const approve = page.getByTestId("approve-action");
   await approve.click();
   const stepUp = page.getByTestId("step-up-mfa");
   if (await stepUp.isVisible().catch(() => false)) {
-    await stepUp.fill(generateTotp(secret, Date.now()));
+    await stepUp.fill(await freshTotpCode(secret));
     await approve.click();
   }
   await expect(approve).toHaveCount(0);
@@ -87,35 +98,35 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
   let makerContext: BrowserContext;
   let controlContext: BrowserContext;
   let adminContext: BrowserContext;
-  let supportContext: BrowserContext;
+  let operationsPeerContext: BrowserContext;
   let maker: Page;
   let controlPage: Page;
   let adminPage: Page;
-  let supportPage: Page;
+  let operationsPeerPage: Page;
 
   test.beforeAll(async ({ browser }) => {
     makerContext = await browser.newContext();
     controlContext = await browser.newContext();
     adminContext = await browser.newContext();
-    supportContext = await browser.newContext();
+    operationsPeerContext = await browser.newContext();
 
     maker = await makerContext.newPage();
     controlPage = await controlContext.newPage();
     adminPage = await adminContext.newPage();
-    supportPage = await supportContext.newPage();
+    operationsPeerPage = await operationsPeerContext.newPage();
 
-    // Authenticate each role once to avoid TOTP replay window rejection
+    // OPERATIONS uses password-only login; ADMIN also verifies a fresh Authenticator code.
     await login(maker, operations);
     await login(controlPage, control);
     await login(adminPage, admin);
-    await login(supportPage, support);
+    await login(operationsPeerPage, operationsPeer);
   });
 
   test.afterAll(async () => {
     await makerContext?.close();
     await controlContext?.close();
     await adminContext?.close();
-    await supportContext?.close();
+    await operationsPeerContext?.close();
   });
 
   // -----------------------------------------------------------------------------
@@ -156,7 +167,7 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
       await expect(maker.getByTestId("review-box")).toContainText("R01_OPERATIONS_FUNDING");
       await expect(maker.getByTestId("review-box")).toContainText("TICKET-R01");
 
-      // Submit Four-Eyes command
+      // Submit approval request
       await maker.getByTestId("submit-account-action").click();
       await expect(maker.getByText(/Đã tạo yêu cầu FUND thành công/)).toBeVisible();
       expect(postCount).toBe(1);
@@ -225,7 +236,7 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
       expect(interceptedKeys[1]).toBe(interceptedKeys[0]);
       expect(interceptedBodies[1]).toBe(interceptedBodies[0]);
 
-      // Verify via CONTROL session: Exactly ONE action was created in fixture server matching committedActionId
+      // Verify via a separate ADMIN session: Exactly ONE action was created matching committedActionId
       const approvalsRes = await controlPage.request.get("/api/v1/admin/approvals");
       const approvalsJson = await approvalsRes.json();
       const r02Actions = (approvalsJson.items || []).filter(
@@ -833,7 +844,7 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
     await expect(row).toBeVisible();
     await row.click();
 
-    await controlPage.getByTestId("checker-reason").fill("REJECT_VIA_ENTER");
+    await controlPage.getByTestId("approval-reason").fill("REJECT_VIA_ENTER");
 
     let rejectCalled = false;
     let approveCalled = false;
@@ -860,7 +871,7 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
       await expect(controlPage.getByTestId("step-up-decision-banner")).toContainText("TỪ CHỐI");
 
       // Enter TOTP and press Enter key
-      await stepUp.fill(generateTotp(control.secret, Date.now()));
+      await stepUp.fill(await freshTotpCode(control.secret));
       await stepUp.press("Enter");
 
       await expect(controlPage.getByText(/Đã từ chối yêu cầu/)).toBeVisible();
@@ -873,9 +884,9 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
   });
 
   // -----------------------------------------------------------------------------
-  // R-09: ADMIN with audit.read cannot approve actions without explicit action permission; CONTROL can
+  // R-09: A different ADMIN account can approve an eligible action.
   // -----------------------------------------------------------------------------
-  test("R-09: ADMIN with audit.read cannot approve actions without action permission; CONTROL can", async () => {
+  test("R-09: ADMIN can approve an eligible action from a different account", async () => {
     // 0. Maker creates a dedicated SIMULATION_FUNDING action
     await maker.getByRole("button", { name: "Khách hàng" }).click();
     await maker.getByTestId("customer-search").fill("browser-e2e@example.test");
@@ -891,7 +902,7 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
     await maker.getByTestId("submit-account-action").click();
     await expect(maker.getByText(/Đã tạo yêu cầu FUND thành công/)).toBeVisible();
 
-    // 1. ADMIN (holds audit.read, but lacks simulation-funding.approve)
+    // 1. ADMIN can see this action and has the required action permission.
     await adminPage.getByRole("button", { name: "Tổng quan" }).click();
     await adminPage.getByRole("button", { name: "Approval Inbox" }).click();
     await adminPage.getByRole("button", { name: "Làm mới danh sách" }).click();
@@ -899,13 +910,13 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
     await expect(adminFundingRow).toBeVisible();
     await adminFundingRow.click();
 
-    // Verify permission denied notice and disabled buttons
-    await expect(adminPage.getByTestId("permission-denied-notice")).toBeVisible();
-    await expect(adminPage.getByTestId("approve-action")).toBeDisabled();
-    await expect(adminPage.getByTestId("reject-action")).toBeDisabled();
+    // ADMIN has the action-specific approval permission.
+    await expect(adminPage.getByTestId("permission-denied-notice")).toHaveCount(0);
+    await adminPage.getByTestId("approval-reason").fill("ADMIN_PERMISSION_CHECK_R09");
+    await expect(adminPage.getByTestId("approve-action")).toBeEnabled();
     await adminPage.getByRole("button", { name: "Đóng" }).click();
 
-    // 2. CONTROL (holds simulation-funding.approve)
+    // 2. ADMIN reviews the Operations request.
     await controlPage.getByRole("button", { name: "Tổng quan" }).click();
     await controlPage.getByRole("button", { name: "Approval Inbox" }).click();
     await controlPage.getByRole("button", { name: "Làm mới danh sách" }).click();
@@ -915,14 +926,14 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
 
     // Verify NO permission denied notice
     await expect(controlPage.getByTestId("permission-denied-notice")).toHaveCount(0);
-    await controlPage.getByTestId("checker-reason").fill("CONTROL_PERMITTED_R09");
+    await controlPage.getByTestId("approval-reason").fill("ADMIN_PERMITTED_R09");
     await expect(controlPage.getByTestId("approve-action")).toBeEnabled();
 
     // Execute approval with Step-up MFA
     await controlPage.getByTestId("approve-action").click();
     const stepUpInput = controlPage.getByTestId("step-up-mfa");
     if (await stepUpInput.isVisible().catch(() => false)) {
-      await stepUpInput.fill(generateTotp(control.secret, Date.now()));
+      await stepUpInput.fill(await freshTotpCode(control.secret));
       await controlPage.getByTestId("approve-action").click();
     }
     await expect(controlPage.getByText(/Đã phê duyệt yêu cầu.*thành công/)).toBeVisible();
@@ -984,7 +995,7 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
   // and logout race condition protection (delayed logout response cannot destroy new session)
   // -----------------------------------------------------------------------------
   test("R-11: Session isolation prevents late callbacks from leaking across logout/login", async () => {
-    // --- Sub-case A: Account Action - Late success response arriving after logout and login as Staff B (support) ---
+    // --- Sub-case A: Account action response arriving after logout and login as a second OPERATIONS account ---
     // Also tests that delayed logout API response does not wipe newly established session (logout epoch guard)
     await maker.getByRole("button", { name: "Khách hàng" }).click();
     await maker.getByTestId("customer-search").fill("browser-e2e@example.test");
@@ -1064,9 +1075,9 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
       // 3. Confirm logout API request was sent and is held at network boundary
       await logoutHeldPromise;
 
-      // 4. Fill login credentials for Staff B (support) while logout response is still held
-      await maker.getByTestId("staff-email").fill(support.email);
-      await maker.getByTestId("staff-password").fill(support.password);
+      // 4. Fill credentials for the second OPERATIONS account while logout response is still held
+      await maker.getByTestId("staff-email").fill(operationsPeer.email);
+      await maker.getByTestId("staff-password").fill(operationsPeer.password);
 
       // Track whether POST /admin/auth/login has been dispatched
       let loginPostDispatched = false;
@@ -1078,8 +1089,8 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
         return route.continue();
       });
 
-      // Support clicks "Tiếp tục với MFA" -> triggers ensureLoggedOut coordination
-      const clickMfaPromise = maker.getByRole("button", { name: "Tiếp tục với MFA" }).click();
+      // The second OPERATIONS account continues through the logout coordination
+      const clickLoginPromise = maker.getByRole("button", { name: "Đăng nhập" }).click();
 
       // PROOF 1: Assert that login operation has started (button enters busy state "Đang kiểm tra…")
       // but POST /admin/auth/login has NOT been dispatched because ensureLoggedOut is holding it back!
@@ -1102,24 +1113,22 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
       await maker.waitForResponse((r) => r.url().includes("/auth/login") && r.request().method() === "POST");
       expect(loginPostDispatched).toBe(true);
 
-      await clickMfaPromise;
+      await clickLoginPromise;
       await maker.unroute(loginUrlPattern);
 
-      // Complete MFA verification for Support
-      await expect(maker.getByTestId("staff-mfa")).toBeVisible();
-      await maker.getByTestId("staff-mfa").fill(generateTotp(support.secret, Date.now()));
-      await maker.getByRole("button", { name: "Xác thực và vào Admin" }).click();
+      // Operations signs in with the password after one-time enrollment verification.
+      await expect(maker.getByTestId("staff-mfa")).toHaveCount(0);
       await expect(maker.getByRole("button", { name: "Đăng xuất" })).toBeVisible();
 
-      // 5. CRITICAL VERIFICATION: Prove that Support session cookies survived and are 100% active
+      // 5. Verify the second OPERATIONS session is active
       // by calling /admin/me with credentials: "include" and asserting the correct staff member!
       const meData = await maker.evaluate(async () => {
         const res = await fetch("/api/v1/admin/me", { credentials: "include" });
         return { status: res.status, data: await res.json() };
       });
       expect(meData.status).toBe(200);
-      expect(meData.data.staff.email).toBe("browser-support@example.test");
-      expect(meData.data.staff.displayName).toBe("Browser Support");
+      expect(meData.data.staff.email).toBe("browser-operations-secondary@example.test");
+      expect(meData.data.staff.displayName).toBe("Browser Operations Secondary");
 
       // 6. Release the late funding request belonging to previous operations session
       // Event-based synchronization: strict waitForResponse without catch() swallowing
@@ -1142,11 +1151,16 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
       await maker.getByRole("button", { name: "Tìm kiếm" }).click();
       await maker.getByRole("button", { name: "Xem tài khoản" }).click();
 
-      // Ensure funding button is absent for Support (RBAC verified) and no restored intent
-      await expect(maker.getByTestId("funding-request")).toHaveCount(0);
+      // OPERATIONS retains funding permission, and the prior session's draft must not return
+      await expect(maker.getByTestId("funding-request")).toHaveCount(1);
       await expect(maker.getByTestId("indeterminate-notice")).toHaveCount(0);
 
-      // Support can open account-block-request, showing clean blank form
+      await maker.getByTestId("funding-request").click();
+      await expect(maker.getByTestId("funding-amount")).toHaveValue("");
+      await expect(maker.getByTestId("action-reason")).toHaveValue("");
+      await maker.locator(".modal").getByRole("button", { name: "Đóng" }).click();
+
+      // OPERATIONS can also open an account block request; its form starts blank
       await maker.getByTestId("account-block-request").click();
       await expect(maker.getByTestId("action-reason")).toHaveValue("");
       await maker.locator(".modal").getByRole("button", { name: "Đóng" }).click();
@@ -1195,7 +1209,7 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
       return route.continue();
     });
 
-    // Install interceptor to HANG Support's logout request and test the 3-second abort timeout branch
+    // Install interceptor to hang the second OPERATIONS logout request and test the 3-second abort branch
     let signalHungLogoutHeld: () => void = () => {};
     const hungLogoutHeldPromise = new Promise<void>((resolve) => {
       signalHungLogoutHeld = resolve;
@@ -1226,7 +1240,7 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
       await customerPostHeldPromise;
       expect(customerPostIntercepted).toBe(true);
 
-      // Support logs out (UI immediately shows login form; logout request is HUNG)
+      // The second OPERATIONS account logs out (the request is held)
       await maker.getByRole("button", { name: "Đăng xuất" }).click();
       await expect(maker.getByRole("heading", { name: "Đăng nhập quản trị" })).toBeVisible();
 
@@ -1246,13 +1260,14 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
       };
       maker.on("requestfailed", onHungLogoutFailed);
 
-      // Operations clicks "Tiếp tục với MFA":
+      // Operations submits the password-only login:
       // ensureLoggedOut() waits for the hung logout and releases after bounded drain timeout
       const coordStart = Date.now();
-      await maker.getByRole("button", { name: "Tiếp tục với MFA" }).click();
+      await maker.getByRole("button", { name: "Đăng nhập" }).click();
 
-      // MFA input appears: hung logout does not block login indefinitely
-      await expect(maker.getByTestId("staff-mfa")).toBeVisible({ timeout: 10000 });
+      // Password-only login completes after the bounded logout drain.
+      await expect(maker.getByRole("button", { name: "Đăng xuất" })).toBeVisible({ timeout: 10000 });
+      await expect(maker.getByTestId("staff-mfa")).toHaveCount(0);
       const coordElapsed = Date.now() - coordStart;
       // Assert login waited for logout drain (bounded wait, not proceeding prematurely)
       expect(coordElapsed).toBeGreaterThanOrEqual(2800);
@@ -1261,8 +1276,6 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
       expect(hungLogoutAborted).toBe(true);
       maker.off("requestfailed", onHungLogoutFailed);
 
-      await maker.getByTestId("staff-mfa").fill(generateTotp(operations.secret, Date.now()));
-      await maker.getByRole("button", { name: "Xác thực và vào Admin" }).click();
       await expect(maker.getByRole("button", { name: "Đăng xuất" })).toBeVisible();
 
       // NOW release the hung logout response (delivering 204 Set-Cookie: maxAge=0 from fixture)
@@ -1302,14 +1315,14 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
   // -----------------------------------------------------------------------------
   // Comprehensive P0 Regression Suite
   // -----------------------------------------------------------------------------
-  test("Admin Web covers P0 maker-checker operations and recovery surfaces", async () => {
+  test("Admin Web covers P0 request, approval, and recovery surfaces", async () => {
     await maker.setViewportSize({ width: 768, height: 768 });
     await expect(maker.locator(".sidebar")).toBeVisible();
     await maker.setViewportSize({ width: 1366, height: 768 });
 
     // Verify Maker (Operations) cannot access Approval Inbox
     await maker.goto("/#/approvals");
-    await expect(maker.getByText(/Approval Inbox chỉ dành cho/)).toBeVisible();
+    await expect(maker.getByText(/Approval Inbox dành cho/)).toBeVisible();
 
     await maker.getByRole("button", { name: "Giao dịch chờ" }).click();
     await expect(maker.getByText("BROWSER-TRANSFER-001")).toBeVisible();
@@ -1340,21 +1353,59 @@ test.describe.serial("Admin Web Real Implementation Verification (R-01 to R-10)"
     await maker.getByRole("button", { name: "Retry job request" }).click();
 
     await adminPage.getByRole("button", { name: "Staff / Roles" }).click();
-    const supportRow = adminPage.locator("tr").filter({ hasText: "browser-support@example.test" });
-    await expect(supportRow).toBeVisible();
-    await supportRow.getByRole("button", { name: "Disable request" }).click();
+    const operationsPeerRow = adminPage.locator("tr").filter({ hasText: "browser-operations-secondary@example.test" });
+    await expect(operationsPeerRow).toBeVisible();
+    await operationsPeerRow.getByRole("button", { name: "Disable request" }).click();
 
     await controlPage.getByRole("button", { name: "Tổng quan" }).click();
     await controlPage.getByRole("button", { name: "Approval Inbox" }).click();
-    await approveAction(controlPage, "KYC_DECISION", control.secret, "BROWSER_E2E_CONTROL_KYC");
-    await approveAction(controlPage, "CREDIT_DECISION", control.secret, "BROWSER_E2E_CONTROL_CREDIT");
-    await approveAction(controlPage, "TRANSFER_OPERATION", control.secret, "BROWSER_E2E_CONTROL_TRANSFER");
-    await approveAction(controlPage, "FRAUD_ACTION", control.secret, "BROWSER_E2E_CONTROL_FRAUD");
-    await approveAction(controlPage, "OUTBOX_REQUEUE", control.secret, "BROWSER_E2E_CONTROL_OUTBOX");
-    await approveAction(controlPage, "JOB_RETRY", control.secret, "BROWSER_E2E_CONTROL_JOB");
-    await approveAction(controlPage, "STAFF_DISABLE", control.secret, "BROWSER_E2E_CONTROL_DISABLE");
+    await approveAction(controlPage, "KYC_DECISION", control.secret, "BROWSER_E2E_ADMIN_CHECKER_KYC");
+    await approveAction(controlPage, "CREDIT_DECISION", control.secret, "BROWSER_E2E_ADMIN_CHECKER_CREDIT");
+    await approveAction(controlPage, "TRANSFER_OPERATION", control.secret, "BROWSER_E2E_ADMIN_CHECKER_TRANSFER");
+    await approveAction(controlPage, "FRAUD_ACTION", control.secret, "BROWSER_E2E_ADMIN_CHECKER_FRAUD");
+    await approveAction(controlPage, "OUTBOX_REQUEUE", control.secret, "BROWSER_E2E_ADMIN_CHECKER_OUTBOX");
+    await approveAction(controlPage, "JOB_RETRY", control.secret, "BROWSER_E2E_ADMIN_CHECKER_JOB");
+    await approveAction(controlPage, "STAFF_DISABLE", control.secret, "BROWSER_E2E_ADMIN_CHECKER_DISABLE");
 
-    await supportPage.reload();
-    await expect(supportPage.getByRole("heading", { name: "Đăng nhập quản trị" })).toBeVisible();
+    await operationsPeerPage.reload();
+    await expect(operationsPeerPage.getByRole("heading", { name: "Đăng nhập quản trị" })).toBeVisible();
+  });
+
+  test("ADMIN creates an active Operations account after confirming its Authenticator key", async () => {
+    await adminPage.getByRole("button", { name: "Staff / Roles" }).click();
+    await adminPage.getByLabel("Email đăng nhập").fill("browser-created-operations@example.test");
+    await adminPage.getByLabel("Mã nhân viên").fill("BROWSER-CREATED-OPS");
+    await adminPage.getByLabel("Tên hiển thị").fill("Browser Created Operations");
+    await adminPage.getByLabel("Mật khẩu ban đầu (tối thiểu 12 ký tự)").fill("Browser-Created-Operations-password-2026!");
+    await adminPage.getByLabel("Nhập lại mật khẩu").fill("Browser-Created-Operations-password-2026!");
+
+    const setupResponsePromise = adminPage.waitForResponse((response) =>
+      response.url().includes("/api/v1/admin/staff/operations-accounts/mfa-setup") && response.request().method() === "POST"
+    );
+    await adminPage.getByTestId("generate-operations-mfa").click();
+    const setupResponse = await setupResponsePromise;
+    expect(setupResponse.status()).toBe(200);
+    const setupBody = await setupResponse.json();
+    const secret = setupBody.mfaSetup.manualSetupKey as string;
+    await expect(adminPage.getByTestId("operations-mfa-setup")).toContainText(secret);
+    await adminPage.getByTestId("operations-mfa-code").fill(generateTotp(secret, Date.now()));
+    await adminPage.getByRole("button", { name: "Tạo tài khoản Operations" }).click();
+
+    await expect(adminPage.getByText(/Đã tạo tài khoản OPERATIONS cho Browser Created Operations/)).toBeVisible();
+    const createdRow = adminPage.locator("tr").filter({ hasText: "browser-created-operations@example.test" });
+    await expect(createdRow).toBeVisible();
+    await expect(createdRow).toContainText("Hoạt động");
+    await expect(createdRow).toContainText("OPERATIONS");
+    await expect(createdRow).toContainText("Authenticator đã cấu hình");
+
+    await adminPage.getByRole("button", { name: "Đăng xuất" }).click();
+    await login(adminPage, {
+      email: "browser-created-operations@example.test",
+      password: "Browser-Created-Operations-password-2026!",
+      secret,
+      role: "OPERATIONS",
+    });
+    await expect(adminPage.getByTestId("staff-mfa")).toHaveCount(0);
+    await expect(adminPage.getByText("Browser Created Operations")).toBeVisible();
   });
 });

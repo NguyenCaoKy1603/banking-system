@@ -17,9 +17,9 @@ Browser → Admin Web :5173 (same-origin `/api/v1`)
 Nginx trong Admin Web → `ADMIN_API_UPSTREAM`
     ▼
 Admin API :5001 (localhost/private network)
-    ├─ StaffAuthService (password + TOTP, session rotation)
+    ├─ StaffAuthService (Operations password-only after enrollment; Admin password + TOTP; session rotation)
     ├─ Permission registry (deny-by-default, route registry)
-    ├─ AdminActionEngine (maker → checker, fingerprint, idempotency)
+    ├─ AdminActionEngine (request → permissioned approval, fingerprint, idempotency)
     └─ PostgresAdminRepository
           ├─ staff/session/action/audit tables
           ├─ relational account/ledger/outbox transaction
@@ -35,16 +35,34 @@ fail-closed trước khi Nginx chạy. Image/bundle không chứa URL môi trư�
 
 Public API không mount route `/admin`. Admin API không chấp nhận customer bearer token; staff session có bảng và hash riêng. UI chỉ hiển thị policy/result; mọi authorization, freshness, version và fingerprint được kiểm tra lại ở server.
 
+Admin Web có hai role cố định: OPERATIONS (nghiệp vụ và quyền hỗ trợ đã gộp)
+và ADMIN (quản trị, kiểm toán và quyền phê duyệt đã gộp). Một tài khoản ADMIN
+được phép tự duyệt yêu cầu đủ quyền sau xác thực TOTP Step-up; không cần tạo
+thêm tài khoản Admin chỉ để duyệt chéo.
+
+ADMIN có thể tạo trực tiếp tài khoản OPERATIONS trong màn hình Staff: nhập email,
+mã nhân viên và mật khẩu ban đầu, tạo khóa TOTP, rồi xác minh mã 6 số từ ứng dụng
+Authenticator. Tài khoản chỉ được ghi sau khi TOTP hợp lệ; khóa bí mật được mã
+hóa khi lưu. Luồng này không gửi email mời và không tạo yêu cầu trong Approval
+Inbox. Lệnh tạo có Idempotency-Key để retry an toàn khi mất phản hồi; audit ghi
+actor, tài khoản đích và role, không lưu password, khóa MFA hoặc OTP.
+
+Mã TOTP của tài khoản Operations chỉ dùng để xác minh việc cài Authenticator một
+lần khi tạo tài khoản. Các lần đăng nhập Operations sau đó chỉ cần email và mật
+khẩu; Admin vẫn cần password + TOTP khi đăng nhập, và Admin tiếp tục dùng TOTP
+Step-up cho các thao tác phê duyệt nhạy cảm.
+Tài khoản chỉ có role OPERATIONS không thể gọi TOTP Step-up.
+
 Customer search/detail trong P0 trả email/số điện thoại đã che; các lần đọc customer/account/transaction/audit đều tạo audit event. PII đầy đủ và account number đầy đủ chưa được mở trong reference UI nếu chưa có permission/ABAC và quy trình reveal riêng.
 
 ## Data flow command
 
-`request → authenticate staff → resolve roles/scope → require permission → validate typed body + Idempotency-Key → read/lock target → snapshot version/status + fingerprint → PENDING_APPROVAL + audit → checker step-up MFA → lock action FOR UPDATE → reject self-approval/stale/fingerprint mismatch → domain mutation + ledger/history + outbox + audit → SUCCEEDED/FAILED → commit`.
+`request → authenticate staff → resolve roles/scope → require permission → validate typed body + Idempotency-Key → read/lock target → snapshot version/status + fingerprint → PENDING_APPROVAL + audit → approval by an ADMIN with the action-specific permission and fresh step-up MFA (the requester may be that same ADMIN) → lock action FOR UPDATE → verify permissions/stale/fingerprint → domain mutation + ledger/history + outbox + audit → SUCCEEDED/FAILED → commit`.
 
 Funding dùng minor-unit `bigint`, chỉ VND, tối đa 100.000.000 minor-unit mỗi action trong reference P0. Không có đường nhập số âm để hoàn tác và không cập nhật balance thiếu account transaction/ledger/audit/outbox.
 
 ## Trạng thái adapter nghiệp vụ
 
-Migration 019–025 và action engine đã có đường persistent cho account/customer lock, simulation funding + reversal, KYC/credit case review, transfer retry/cancel/reversal, fraud claim/note/resolve, outbox requeue và background-job retry. Migration 022 căn chỉnh permission mở khóa customer; 023 tách DB principals/RLS/domain tables; 024 đưa staff invite vào four-eyes; 025 mở unassigned case queue cho triage nhưng vẫn giới hạn case đã phân công. Các mutation đều đi qua typed request detail, row lock và audit; fraud block/revoke/reversal vẫn chờ adapter domain riêng. KYC document chỉ lưu metadata/object key giả, không lưu bytes/PII thật.
+Migration 019–025 và action engine đã có đường persistent cho account/customer lock, simulation funding + reversal, KYC/credit case review, transfer retry/cancel/reversal, fraud claim/note/resolve, outbox requeue và background-job retry. Migration 022 căn chỉnh permission mở khóa customer; 023 tách DB principals/RLS/domain tables; 024 thêm luồng yêu cầu duyệt staff invite; 025 mở unassigned case queue cho triage nhưng vẫn giới hạn case đã phân công. Các mutation đều đi qua typed request detail, row lock và audit; fraud block/revoke/reversal vẫn chờ adapter domain riêng. KYC document chỉ lưu metadata/object key giả, không lưu bytes/PII thật.
 
-Public reference không còn endpoint/operator key bypass; fixture seed chạy bằng DB transaction nội bộ hoặc dữ liệu pre-seeded. Local preview đã có provider HTTP `invitation-capture` trong memory để hoàn tất luồng maker-checker → activation; token chỉ đi qua delivery seam tạm thời, còn PostgreSQL giữ hash. Device E2E native, provider invite HTTPS/credential thật cho staging, credential provisioning cho DB role, Argon2id và eKYC object store thật vẫn là residual risk. Vì vậy milestone này là reference hardening, không phải production readiness hay kết nối tiền thật.
+Public reference không còn endpoint/operator key bypass; fixture seed chạy bằng DB transaction nội bộ hoặc dữ liệu pre-seeded. Tài khoản Operations do Admin tạo trực tiếp bằng mật khẩu ban đầu và TOTP; không gửi email mời và không tạo approval cho thao tác này. `invitation-capture` chỉ dùng khi bootstrap Admin đầu tiên và phải bật profile riêng; token chỉ đi qua provider tạm thời, còn PostgreSQL giữ hash. Device E2E native, provider bootstrap HTTPS/credential thật cho staging, credential provisioning cho DB role, Argon2id và eKYC object store thật vẫn là residual risk. Vì vậy milestone này là reference hardening, không phải production readiness hay kết nối tiền thật.

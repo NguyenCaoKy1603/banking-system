@@ -25,11 +25,23 @@ export function Login({ onLoggedIn }: LoginProps) {
       if (ensureLoggedOut) {
         await ensureLoggedOut();
       }
-      const result = await adminFetch<{ challengeId: string }>("/admin/auth/login", {
+      const result = await adminFetch<
+        | { mfaRequired: true; challengeId: string }
+        | { mfaRequired: false; staff: Staff; csrfToken: string; permissions?: string[] }
+      >("/admin/auth/login", {
         method: "POST",
         body: JSON.stringify({ email: email.trim(), password }),
       });
-      setChallengeId(result.challengeId);
+      if (result.mfaRequired) {
+        setChallengeId(result.challengeId);
+      } else {
+        try {
+          const me = await adminFetch<{ staff: Staff; permissions?: string[] }>("/admin/me");
+          onLoggedIn(me.staff, me.permissions ?? result.permissions);
+        } catch {
+          onLoggedIn(result.staff, result.permissions);
+        }
+      }
     } catch (caught) {
       setError(caught as ApiError);
     } finally {
@@ -42,9 +54,6 @@ export function Login({ onLoggedIn }: LoginProps) {
     setBusy(true);
     setError(null);
     try {
-      if (ensureLoggedOut) {
-        await ensureLoggedOut();
-      }
       const result = await adminFetch<{ staff: Staff; csrfToken: string; permissions?: string[] }>(
         "/admin/auth/mfa/verify",
         {
@@ -72,7 +81,7 @@ export function Login({ onLoggedIn }: LoginProps) {
         <p className="eyebrow">CONTROL PLANE · VIRTUAL MONEY</p>
         <h1>Đăng nhập quản trị</h1>
         <p className="muted">
-          Phiên nhân viên độc lập với ứng dụng khách hàng. Xác thực đa yếu tố (MFA TOTP) là bắt buộc.
+          Operations đăng nhập bằng email và mật khẩu sau khi Authenticator được xác minh lúc tạo tài khoản. Admin cần thêm mã TOTP khi đăng nhập.
         </p>
 
         <Notice error={error} context="auth" />
@@ -105,13 +114,13 @@ export function Login({ onLoggedIn }: LoginProps) {
               />
             </label>
             <button className="primary" type="submit" disabled={busy || !email || !password}>
-              {busy ? "Đang kiểm tra…" : "Tiếp tục với MFA"}
+              {busy ? "Đang kiểm tra…" : "Đăng nhập"}
             </button>
           </form>
         ) : (
           <form onSubmit={(e) => void handleVerify(e)} className="stack">
             <div className="notice info">
-              Thử thách đăng nhập đã được khởi tạo. Nhập mã OTP 6 chữ số từ ứng dụng Authenticator của bạn.
+              Tài khoản Admin cần xác minh thêm mã 6 chữ số từ ứng dụng Authenticator.
             </div>
             <label>
               Mã Authenticator (MFA Code)

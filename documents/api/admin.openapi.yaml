@@ -4,20 +4,21 @@ info:
   version: 0.1.0-draft
   description: |
     DRAFT: localhost/private-network control plane for virtual-money reference
-    data. This contract never authorizes real-money operations.
+    data. Admin Web has two fixed staff roles, OPERATIONS and ADMIN. This
+    contract never authorizes real-money operations.
 servers:
   - url: http://127.0.0.1:5001/api/v1
     description: Local preview only
 security: []
 paths:
   /admin/auth/login:
-    post: { operationId: adminLogin, requestBody: { required: true }, responses: { '202': { description: MFA challenge }, '401': { $ref: '#/components/responses/Error' } } }
+    post: { operationId: adminLogin, requestBody: { required: true }, responses: { '200': { description: OPERATIONS password-only session with staff, permissions and HttpOnly cookies }, '202': { description: ADMIN TOTP challenge }, '401': { $ref: '#/components/responses/Error' } } }
   /admin/auth/mfa/verify:
-    post: { operationId: adminVerifyMfa, requestBody: { required: true }, responses: { '200': { description: Staff HttpOnly session }, '401': { $ref: '#/components/responses/Error' } } }
+    post: { operationId: adminVerifyMfa, requestBody: { required: true }, responses: { '200': { description: ADMIN HttpOnly session after TOTP; Operations cannot use this route for login }, '401': { $ref: '#/components/responses/Error' } } }
   /admin/auth/activate:
     post: { operationId: adminActivateInvite, requestBody: { required: true }, responses: { '200': { description: One-time MFA setup }, '401': { $ref: '#/components/responses/Error' } } }
   /admin/auth/step-up:
-    post: { operationId: adminStepUp, security: [{ staffCookie: [] }], responses: { '204': { description: Verified }, '401': { $ref: '#/components/responses/Error' } } }
+    post: { operationId: adminStepUp, security: [{ staffCookie: [] }], responses: { '204': { description: Fresh Admin TOTP verified }, '401': { $ref: '#/components/responses/Error' } } }
   /admin/auth/refresh:
     post: { operationId: adminRefresh, responses: { '200': { description: Rotated session }, '401': { $ref: '#/components/responses/Error' } } }
   /admin/auth/logout:
@@ -25,16 +26,54 @@ paths:
   /admin/me: { get: { operationId: adminMe, security: [{ staffCookie: [] }], responses: { '200': { description: Staff identity and resolved permissions } } } }
   /admin/me/sessions: { get: { operationId: adminSessions, security: [{ staffCookie: [] }], responses: { '200': { description: Sessions } } } }
   /admin/staff: { get: { operationId: adminListStaff, security: [{ staffCookie: [] }], responses: { '200': { description: Staff list } } } }
+  /admin/staff/operations-accounts/mfa-setup:
+    post:
+      operationId: adminBeginOperationsMfaSetup
+      security: [{ staffCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200': { description: One-time manual TOTP setup key; response is no-store and the key is not persisted }
+        '403': { $ref: '#/components/responses/Error' }
+  /admin/staff/operations-accounts:
+    post:
+      operationId: adminCreateOperationsAccount
+      security: [{ staffCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, employeeCode, displayName, password, mfaSecret, mfaCode]
+              properties:
+                email: { type: string, format: email }
+                employeeCode: { type: string, minLength: 2, maxLength: 64 }
+                displayName: { type: string, minLength: 2, maxLength: 120 }
+                password: { type: string, minLength: 12, maxLength: 256, writeOnly: true }
+                mfaSecret: { type: string, minLength: 32, maxLength: 32, writeOnly: true }
+                mfaCode: { type: string, pattern: '^\\d{6}$', writeOnly: true }
+      responses:
+        '201': { description: Active OPERATIONS account created with confirmed MFA }
+        '200': { description: Idempotent replay of an earlier creation }
+        '409': { $ref: '#/components/responses/Error' }
   /admin/roles: { get: { operationId: adminListRoles, security: [{ staffCookie: [] }], responses: { '200': { description: Fixed role list } } } }
   /admin/permissions: { get: { operationId: adminListPermissions, security: [{ staffCookie: [] }], responses: { '200': { description: Permission registry } } } }
-  /admin/staff/invite-requests: { post: { operationId: adminInviteStaff, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Invitation queued } } } }
   /admin/customers: { get: { operationId: adminSearchCustomers, security: [{ staffCookie: [] }], responses: { '200': { description: Masked customer results } } } }
   /admin/customers/{customerId}/accounts: { get: { operationId: adminCustomerAccounts, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/CustomerId' }], responses: { '200': { description: Masked accounts } } } }
   /admin/accounts/{accountId}: { get: { operationId: adminAccount, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/AccountId' }], responses: { '200': { description: Account state } } } }
   /admin/accounts/{accountId}/transactions: { get: { operationId: adminAccountTransactions, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/AccountId' }], responses: { '200': { description: Transactions } } } }
-  /admin/accounts/{accountId}/block-requests: { post: { operationId: adminBlockAccountRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/AccountId' }, { $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Four-eyes action created } } } }
-  /admin/accounts/{accountId}/unblock-requests: { post: { operationId: adminUnblockAccountRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/AccountId' }, { $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Four-eyes action created } } } }
-  /admin/accounts/{accountId}/funding-requests: { post: { operationId: adminFundingRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/AccountId' }, { $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Four-eyes funding action created } } } }
+  /admin/accounts/{accountId}/block-requests: { post: { operationId: adminBlockAccountRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/AccountId' }, { $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Action created for approval } } } }
+  /admin/accounts/{accountId}/unblock-requests: { post: { operationId: adminUnblockAccountRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/AccountId' }, { $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Action created for approval } } } }
+  /admin/accounts/{accountId}/funding-requests: { post: { operationId: adminFundingRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/AccountId' }, { $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Funding action created for approval } } } }
   /admin/approvals: { get: { operationId: adminApprovalInbox, security: [{ staffCookie: [] }], responses: { '200': { description: Pending actions } } } }
   /admin/approvals/{requestId}: { get: { operationId: adminApprovalDetail, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/RequestId' }], responses: { '200': { description: Immutable action snapshot } } } }
   /admin/approvals/{requestId}/approve: { post: { operationId: adminApprove, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/IdempotencyKey' }], responses: { '200': { description: Receipt }, '409': { $ref: '#/components/responses/Error' } } } }
@@ -48,12 +87,12 @@ paths:
   /admin/audit-events: { get: { operationId: adminAuditEvents, security: [{ staffCookie: [] }], responses: { '200': { description: Append-only audit events } } } }
   /admin/me/sessions/{sessionId}: { delete: { operationId: adminRevokeOwnSession, security: [{ staffCookie: [] }], responses: { '204': { description: Session revoked } } } }
   /admin/staff/{staffId}: { get: { operationId: adminStaffDetail, security: [{ staffCookie: [] }], responses: { '200': { description: Staff detail } } } }
-  /admin/staff/{staffId}/role-change-requests: { post: { operationId: adminStaffRoleChangeRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Four-eyes role change request } } } }
-  /admin/staff/{staffId}/disable-requests: { post: { operationId: adminStaffDisableRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Four-eyes staff disable request } } } }
+  /admin/staff/{staffId}/role-change-requests: { post: { operationId: adminStaffRoleChangeRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Role change request created for approval } } } }
+  /admin/staff/{staffId}/disable-requests: { post: { operationId: adminStaffDisableRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Staff disable request created for approval } } } }
   /admin/customers/{customerId}: { get: { operationId: adminCustomerDetail, security: [{ staffCookie: [] }], responses: { '200': { description: Masked customer detail } } } }
-  /admin/customers/{customerId}/access-lock-requests: { post: { operationId: adminCustomerAccessLockRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Four-eyes access lock request } } } }
-  /admin/customers/{customerId}/access-unlock-requests: { post: { operationId: adminCustomerAccessUnlockRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Four-eyes access unlock request } } } }
-  /admin/accounts/{accountId}/funding-reversal-requests: { post: { operationId: adminFundingReversalRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Four-eyes funding reversal request } } } }
+  /admin/customers/{customerId}/access-lock-requests: { post: { operationId: adminCustomerAccessLockRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Access lock request created for approval } } } }
+  /admin/customers/{customerId}/access-unlock-requests: { post: { operationId: adminCustomerAccessUnlockRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Access unlock request created for approval } } } }
+  /admin/accounts/{accountId}/funding-reversal-requests: { post: { operationId: adminFundingReversalRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Funding reversal request created for approval } } } }
   /admin/kyc-applications/{applicationId}: { get: { operationId: adminKycDetail, security: [{ staffCookie: [] }], responses: { '200': { description: KYC application snapshot } } } }
   /admin/kyc-applications/{applicationId}/claim: { post: { operationId: adminKycClaim, security: [{ staffCookie: [] }], responses: { '200': { description: KYC case claimed } } } }
   /admin/kyc-applications/{applicationId}/review-recommendations: { post: { operationId: adminKycRecommendation, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: KYC decision request } } } }
@@ -72,10 +111,10 @@ paths:
   /admin/fraud-cases/{reportId}/resolution-requests: { post: { operationId: adminFraudResolutionRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Fraud resolution request } } } }
   /admin/operations/outbox/events/{eventId}: { get: { operationId: adminOutboxEventDetail, security: [{ staffCookie: [] }], responses: { '200': { description: Sanitized outbox event } } } }
   /admin/operations/outbox/dead-letters: { get: { operationId: adminOutboxDeadLetters, security: [{ staffCookie: [] }], responses: { '200': { description: Dead-letter queue } } } }
-  /admin/operations/outbox/events/{eventId}/requeue-requests: { post: { operationId: adminOutboxRequeueRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Four-eyes outbox requeue request } } } }
+  /admin/operations/outbox/events/{eventId}/requeue-requests: { post: { operationId: adminOutboxRequeueRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Outbox requeue request created for approval } } } }
   /admin/operations/jobs: { get: { operationId: adminJobs, security: [{ staffCookie: [] }], responses: { '200': { description: Background job queue } } } }
   /admin/operations/jobs/{jobId}: { get: { operationId: adminJobDetail, security: [{ staffCookie: [] }], responses: { '200': { description: Background job detail } } } }
-  /admin/operations/jobs/{jobId}/retry-requests: { post: { operationId: adminJobRetryRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Four-eyes job retry request } } } }
+  /admin/operations/jobs/{jobId}/retry-requests: { post: { operationId: adminJobRetryRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Background job retry request created for approval } } } }
   /admin/audit-events/{eventId}: { get: { operationId: adminAuditEventDetail, security: [{ staffCookie: [] }], responses: { '200': { description: Audit event detail } } } }
   /admin/audit-export-requests: { post: { operationId: adminAuditExportRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Audit export request } } } }
   /admin/audit-exports/{exportId}: { get: { operationId: adminAuditExportStatus, security: [{ staffCookie: [] }], responses: { '200': { description: Audit export status } } } }

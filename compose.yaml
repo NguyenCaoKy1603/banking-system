@@ -126,10 +126,10 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # Local-only capture inbox for staff invitation links. It accepts the
-  # provider-neutral HTTP payload and keeps messages in memory; it never sends
-  # mail to the Internet and is not a staging/production provider.
+  # Optional local capture inbox for the first Admin's bootstrap activation.
+  # It is memory-only and never sends mail to the Internet.
   invitation-capture:
+    profiles: ["bootstrap"]
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -187,13 +187,6 @@ services:
       BANKING_MFA_ENCRYPTION_KEY_PREVIOUS_ID: ${BANKING_MFA_ENCRYPTION_KEY_PREVIOUS_ID:-}
       ADMIN_ALLOWED_ORIGINS: ${ADMIN_ALLOWED_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173}
       ADMIN_SECURE_COOKIES: ${ADMIN_SECURE_COOKIES:-0}
-      ADMIN_INVITATION_PROVIDER_URL: ${ADMIN_INVITATION_PROVIDER_URL:-http://invitation-capture:8025/invitations}
-      ADMIN_INVITATION_PROVIDER_TOKEN: ${ADMIN_INVITATION_PROVIDER_TOKEN:-}
-      ADMIN_INVITATION_PROVIDER_TIMEOUT_MS: ${ADMIN_INVITATION_PROVIDER_TIMEOUT_MS:-5000}
-      ADMIN_INVITATION_PROVIDER_MAX_ATTEMPTS: ${ADMIN_INVITATION_PROVIDER_MAX_ATTEMPTS:-3}
-      ADMIN_INVITATION_PROVIDER_RETRY_DELAY_MS: ${ADMIN_INVITATION_PROVIDER_RETRY_DELAY_MS:-100}
-      ADMIN_INVITATION_ALLOWED_DOMAINS: ${ADMIN_INVITATION_ALLOWED_DOMAINS:-example.test}
-      ADMIN_INVITATION_ACTIVATION_URL: ${ADMIN_INVITATION_ACTIVATION_URL:-http://127.0.0.1:5173/admin/activate}
       DB_POOL_MAX: ${DB_POOL_MAX:-4}
       DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-5000}
       DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
@@ -203,8 +196,6 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-      invitation-capture:
-        condition: service_healthy
     ports:
       - "127.0.0.1:${ADMIN_API_PORT:-5001}:5001"
     command: ["node", "dist/adminServer.js"]

@@ -9,7 +9,6 @@ import {
   APPROVAL_PERMISSION_MAP,
   canStaffApproveAction,
   getRequiredApprovalPermission,
-  isSelfApproval,
   resolveDecisionEndpointAndBody,
 } from "./approvalsLogic";
 
@@ -33,10 +32,9 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
   if (!canReadApprovals) {
     return (
       <section className="approvals-page">
-        <Heading eyebrow="FOUR-EYES" title="Approval Inbox" />
+        <Heading eyebrow="APPROVALS" title="Approval Inbox" />
         <div className="notice info">
-          Approval Inbox chỉ dành cho vai trò Control hoặc Admin có quyền audit.read. Nhân viên
-          Operations chỉ tạo yêu cầu để Checker độc lập xử lý.
+          Approval Inbox dành cho Admin. Nhân viên Operations có thể gửi yêu cầu để Admin xử lý.
         </div>
       </section>
     );
@@ -133,13 +131,12 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
     }
   };
 
-  const isSelfMaker = isSelfApproval(staff?.id, selected?.requesterStaffId);
   const canDecideAction = selected ? canStaffApproveAction(selected.actionType, hasPermission) : false;
 
   return (
     <section className="approvals-page">
       <Heading
-        eyebrow="FOUR-EYES"
+        eyebrow="APPROVALS"
         title="Approval Inbox"
         actions={
           <button
@@ -180,7 +177,7 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
                 </div>
                 <div className="action-maker-info">
                   <span className="muted">
-                    maker: {shortId(action.requesterStaffId, 8)}
+                    Người gửi: {shortId(action.requesterStaffId, 8)}
                     {isSelf ? " (Bạn)" : ""}
                   </span>
                   <small className="muted">Hết hạn: {formatDate(action.expiresAt)}</small>
@@ -202,13 +199,6 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
               </button>
             </div>
 
-            {isSelfMaker ? (
-              <div className="notice warning">
-                <b>Cảnh báo Four-Eyes:</b> Bạn là người tạo yêu cầu này. Hệ thống không cho phép tự phê
-                duyệt yêu cầu của chính mình.
-              </div>
-            ) : null}
-
             <Notice
               error={modalError}
               retry={modalError?.code === "ACTION_STALE" ? () => void reloadSelectedAction() : undefined}
@@ -227,7 +217,7 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
 
               <dt>Người yêu cầu</dt>
               <dd>
-                <code>{selected.requesterStaffId}</code> {isSelfMaker ? " (Chính bạn)" : ""}
+                <code>{selected.requesterStaffId}</code>
               </dd>
 
               <dt>Action version</dt>
@@ -255,7 +245,7 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
 
             {!canDecideAction ? (
               <div className="notice warning" data-testid="permission-denied-notice">
-                <b>Không đủ thẩm quyền phê duyệt:</b> Bạn có quyền xem yêu cầu này (audit.read) nhưng không có quyền phê duyệt/từ chối loại hành động này (<code>{getRequiredApprovalPermission(selected.actionType) ?? "không xác định"}</code>). Chỉ tài khoản có thẩm quyền (ví dụ vai trò Kiểm soát - Control) mới có thể quyết định.
+                <b>Không đủ thẩm quyền phê duyệt:</b> Bạn có quyền xem yêu cầu này (audit.read) nhưng không có quyền phê duyệt/từ chối loại hành động này (<code>{getRequiredApprovalPermission(selected.actionType) ?? "không xác định"}</code>). Chỉ tài khoản ADMIN có quyền tương ứng mới có thể quyết định.
               </div>
             ) : null}
 
@@ -273,14 +263,14 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
               }}
             >
               <label>
-                Lý do checker (Reason code &amp; Nhận xét)
+                Lý do phê duyệt / từ chối
                 <input
-                  data-testid="checker-reason"
+                  data-testid="approval-reason"
                   value={reason}
                   onChange={(event) => setReason(event.target.value)}
-                  placeholder="CONTROL_REVIEW"
+                  placeholder="ADMIN_REVIEW"
                   required
-                  disabled={busy || isSelfMaker || !canDecideAction}
+                  disabled={busy || !canDecideAction}
                 />
               </label>
 
@@ -297,7 +287,7 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
                     onChange={(event) => setStepUpCode(event.target.value)}
                     placeholder="123456"
                     required
-                    disabled={busy || isSelfMaker || !canDecideAction}
+                    disabled={busy || !canDecideAction}
                     autoFocus
                   />
                 </label>
@@ -310,7 +300,6 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
                   type="submit"
                   disabled={
                     busy ||
-                    isSelfMaker ||
                     !canDecideAction ||
                     !reason.trim() ||
                     (stepUpOpen && stepUpCode.trim().length !== 6)
@@ -338,7 +327,6 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
                   }}
                   disabled={
                     busy ||
-                    isSelfMaker ||
                     !canDecideAction ||
                     !reason.trim()
                   }
@@ -348,8 +336,7 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
               </div>
 
               <p className="warning">
-                Không thể duyệt yêu cầu do chính mình tạo. Server kiểm tra fingerprint, version, quyền
-                và MFA freshness.
+                Máy chủ vẫn kiểm tra quyền, nội dung yêu cầu, phiên bản dữ liệu và xác thực MFA mới.
               </p>
             </form>
           </div>

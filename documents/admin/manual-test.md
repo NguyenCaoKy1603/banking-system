@@ -6,16 +6,16 @@ Checklist kiểm thử thủ công và hướng dẫn nghiệm thu thực tế c
 
 ## 1. Xác thực, Phân quyền và Dọn dẹp Phiên (Authentication & Session Lifecycle)
 - [x] **Xác thực Mật khẩu**: Nhập sai mật khẩu hiển thị thông báo lỗi chung, không tiết lộ sự tồn tại của nhân viên trong hệ thống.
-- [x] **MFA TOTP Challenge**: Nhập đúng mật khẩu hiển thị challenge MFA; mã TOTP sai hoặc hết hạn bị từ chối; nhập đúng tạo cookie `HttpOnly` an toàn và chuyển vào màn hình Tổng quan.
+- [x] **Đăng nhập OPERATIONS**: Nhập đúng email/mật khẩu tạo session cookie `HttpOnly` ngay và vào Tổng quan, không hiện ô TOTP; sai mật khẩu bị từ chối.
+- [x] **Đăng nhập ADMIN**: Nhập đúng mật khẩu hiển thị challenge TOTP; mã sai hoặc hết hạn bị từ chối; mã đúng tạo cookie `HttpOnly` an toàn và chuyển vào màn hình Tổng quan.
 - [x] **Bảo vệ Phân quyền Admin**: Customer bearer token gửi tới Admin API bị từ chối `401 Unauthorized`.
 - [x] **Dọn sạch Yêu cầu Chưa xác định và Cô lập Phiên làm việc (`SessionScope`)**:
   - Khi nhân viên đăng xuất (`logout()`) hoặc phiên hết hạn (`refreshSession()` 401), hệ thống vô hiệu hóa `SessionScope` ngay lập tức và gọi `clearSessionPendingIntents()` dọn sạch toàn bộ ý định lưu trữ trong bộ nhớ phiên.
   - Store gắn chặt với `SessionScope` (`staffId`, `generation`) của nhân viên hiện tại; đăng xuất rồi đăng nhập lại bằng cùng tài khoản (tạo `generation` mới) hoặc tài khoản khác trên cùng trình duyệt tuyệt đối không khôi phục ý định của phiên trước. Mọi callback bất đồng bộ từ phiên cũ bị chặn đứng, không được phép ghi/xóa store hay cập nhật UI của phiên mới.
-- [x] **Phân tách 4 Vai trò & Menu Điều hướng**:
-  - **SUPPORT**: Chỉ truy cập menu *Khách hàng* (khóa/mở khóa tài khoản, khóa truy cập khách hàng), *Giao dịch* (xem danh sách/timeline), *Fraud cases* (claim, ghi chú, xem chi tiết), *Vận hành* (xem outbox/jobs). Tuyệt đối không thấy menu *Phê duyệt (Approval Inbox)* hay *Nhật ký kiểm toán (Audit)*.
-  - **OPERATIONS** (Maker tác nghiệp): Có quyền tạo yêu cầu funding, hoàn tác, mở/khóa tài khoản; tiếp nhận hồ sơ KYC/Credit và gửi đề xuất; điều tra fraud; gửi yêu cầu requeue outbox và retry background jobs. **Không có quyền `audit.read`**, do đó không thấy và không thể truy cập menu *Approval Inbox*.
-  - **CONTROL** (Checker kiểm soát): Có quyền `audit.read` để mở *Approval Inbox*, thẩm định và phê duyệt/từ chối mọi action kèm step-up MFA, truy cập *Nhật ký kiểm toán*. Không thể tự tạo yêu cầu cấp tiền hoặc tự duyệt yêu cầu do mình tạo.
-  - **ADMIN**: Quản trị nhân viên (*Nhân viên & Vai trò*), tạo yêu cầu mời nhân viên mới (`STAFF_INVITE`), thay đổi vai trò (`STAFF_ROLE_CHANGE`), vô hiệu hóa (`STAFF_DISABLE`); xem *Nhật ký kiểm toán*. Có quyền `audit.read` để xem danh sách Inbox nhưng **không có quyền phê duyệt tác nghiệp** (ví dụ thiếu `simulation-funding.approve`).
+- [x] **Phân tách 2 Vai trò, Menu Điều hướng & Tạo Operations**:
+  - **OPERATIONS**: Có thể tra cứu khách hàng, xem giao dịch/fraud/outbox/jobs, tạo yêu cầu nghiệp vụ và tiếp nhận hồ sơ KYC/Credit. Không có quyền `audit.read` hoặc quyền duyệt nên không thấy *Approval Inbox* và *Audit*.
+  - **ADMIN**: Tạo trực tiếp tài khoản OPERATIONS ở *Staff / Roles* bằng mật khẩu ban đầu và khóa Authenticator đã xác minh một lần; tài khoản được tạo ở trạng thái `ACTIVE`, không cần email mời hoặc bước *Approval Inbox*. Operations đăng nhập sau đó chỉ cần mật khẩu. Thay đổi role và vô hiệu hóa staff vẫn theo luồng yêu cầu/phê duyệt; ADMIN mở *Approval Inbox*, xem/xuất audit và duyệt yêu cầu đủ permission sau step-up MFA.
+  - ADMIN có thể tự duyệt yêu cầu do mình tạo nếu có đủ quyền và đã xác thực Step-up MFA; không cần tài khoản ADMIN thứ hai.
 - [x] **Kích hoạt Nhân viên (`/admin/activate`)**: Nhập token mời từ URL, đặt mật khẩu mới, nạp khóa TOTP bí mật; token mời được dọn sạch khỏi thanh địa chỉ trình duyệt bằng `history.replaceState` ngay sau khi nạp.
 
 ---
@@ -27,7 +27,7 @@ Checklist kiểm thử thủ công và hướng dẫn nghiệm thu thực tế c
 - [x] **Chỉnh sửa sau khi Xem lại**:
   - Bấm **Quay lại chỉnh sửa** hoặc thay đổi nội dung trường: Hệ thống thoát trạng thái Review, tự động sinh Idempotency Key mới cho ý định mới, yêu cầu người dùng phải bấm Xem lại lần nữa trước khi gửi.
 - [x] **Khóa Thao tác khi Đang gửi (Submitting Guard)**:
-  - Bấm **Tạo yêu cầu four-eyes**: Nút submit chuyển sang trạng thái "Đang gửi…", vô hiệu hóa tất cả các nút bấm và chặn phím Enter, ngăn ngừa hoàn toàn double-click.
+  - Bấm **Tạo yêu cầu**: Nút submit chuyển sang trạng thái "Đang gửi…", vô hiệu hóa tất cả các nút bấm và chặn phím Enter, ngăn ngừa hoàn toàn double-click.
 - [x] **Kiểm tra Cấu trúc Response Chặt chẽ (`isValidActionResponse`)**:
   - Khi server trả về response HTTP 200/202 nhưng body rỗng hoặc thiếu action ID hợp lệ (ví dụ `{}`), hệ thống bắt lỗi qua `isValidActionResponse` và ném `INVALID_RESPONSE`.
   - Intent chuyển sang trạng thái `INDETERMINATE`, không đóng form và tuyệt đối không hiển thị thông báo thành công giả ("Mã: Mới").
@@ -57,16 +57,20 @@ Checklist kiểm thử thủ công và hướng dẫn nghiệm thu thực tế c
 
 ---
 
-## 4. Hàng đợi Phê duyệt Four-Eyes và Xác thực Step-up (FIX-04)
+## 4. Hàng đợi Phê duyệt và Xác thực Step-up (FIX-04)
 - [x] **Đối soát Chi tiết Yêu cầu**:
-  - Checker xem đầy đủ: Loại hành động, đối tượng tác động, nhân viên đề xuất (Maker), thời hạn, fingerprint và payload đã lọc bỏ secret.
-- [x] **Chống Tự duyệt (`SELF_APPROVAL_FORBIDDEN`)**:
-  - Nếu nhân viên đang đăng nhập chính là người tạo yêu cầu (`maker_id === checker_id`), các nút Phê duyệt và Từ chối bị vô hiệu hóa kèm cảnh báo: *"Không thể tự duyệt yêu cầu do chính mình tạo (Maker)"*.
+  - ADMIN xem đầy đủ: Loại hành động, đối tượng tác động, người gửi yêu cầu, thời hạn, fingerprint và payload đã lọc bỏ secret.
+- [x] **ADMIN tự phê duyệt yêu cầu đủ quyền**:
+  - Approval Inbox được dùng cho các action nghiệp vụ có maker-checker; việc tạo tài khoản OPERATIONS không xuất hiện ở đây.
+  - OPERATIONS vẫn không thể phê duyệt vì thiếu quyền ADMIN.
+- [x] **ADMIN tạo trực tiếp tài khoản OPERATIONS**:
+  - Nhập email, mã nhân viên, tên, mật khẩu và TOTP hợp lệ; xác nhận tài khoản ACTIVE xuất hiện trong danh sách staff.
+  - Kiểm tra thao tác không gửi email mời, không tạo STAFF_INVITE và không sinh yêu cầu trong Approval Inbox.
 - [x] **Phân quyền Phê duyệt theo Loại Hành động**:
   - Đối chiếu `actionType` với quyền cụ thể (`simulation-funding.approve`, `account.block.approve`, `kyc.decision.approve`, v.v.).
-  - Nếu Checker có quyền xem Inbox (`audit.read`) nhưng không có quyền duyệt loại hành động cụ thể đó (ví dụ vai trò ADMIN), các nút quyết định bị vô hiệu hóa an toàn kèm thông báo rõ ràng.
+  - OPERATIONS không có permission phê duyệt; các request quyết định bị từ chối ở server. ADMIN có thể tự duyệt yêu cầu đủ quyền sau khi xác thực Step-up MFA.
 - [x] **Thực thi Phê duyệt Hoàn chỉnh kèm Step-up MFA**:
-  - Nhập lý do checker, bấm **Phê duyệt**, nhập mã TOTP 6 số từ Authenticator và xác nhận: Yêu cầu chuyển trạng thái `SUCCEEDED`, hiển thị thông báo thành công và biên nhận phê duyệt.
+  - Nhập lý do phê duyệt, bấm **Phê duyệt**, nhập mã TOTP 6 số từ Authenticator và xác nhận: Yêu cầu chuyển trạng thái `SUCCEEDED`, hiển thị thông báo thành công và biên nhận phê duyệt.
 - [x] **Bảo toàn Quyết định Từ chối qua Step-up MFA**:
   - Bấm **Từ chối (Reject)** khi phiên Step-up hết hạn: Hộp thoại mở ô nhập mã TOTP kèm thông báo rõ ràng: *"Đang xác thực TOTP Step-up để TỪ CHỐI yêu cầu"*.
   - Nhập mã TOTP 6 số và nhấn **Enter** (hoặc bấm nút gửi): Hệ thống bảo toàn `pendingDecision = "REJECTED"` và gửi request tới đúng endpoint `POST /admin/approvals/:id/reject`. Tuyệt đối không bị chuyển nhầm sang endpoint `/approve`.
@@ -77,15 +81,15 @@ Checklist kiểm thử thủ công và hướng dẫn nghiệm thu thực tế c
 - [x] **Tách biệt Màn hình**: Menu độc lập cho *Hồ sơ KYC (`#/kyc`)* và *Hồ sơ tín dụng (`#/credit`)*.
 - [x] **Tiếp nhận Hồ sơ (Claim)**: Bấm "Tiếp nhận hồ sơ" cập nhật nhân viên phụ trách; không tự động claim khi vừa mở trang.
 - [x] **Đề xuất Quyết định (Recommendation)**:
-  - KYC: Chọn `APPROVED`, `REJECTED`, hoặc `NEEDS_MORE_INFO`, nhập ticket và gửi Four-Eyes action.
-  - Tín dụng: Chọn `PENDING_ACTIVATION` hoặc `REJECTED`, có ô nhập hạn mức đề xuất, gửi Four-Eyes action.
+  - KYC: Chọn `APPROVED`, `REJECTED`, hoặc `NEEDS_MORE_INFO`, nhập ticket và gửi yêu cầu phê duyệt.
+  - Tín dụng: Chọn `PENDING_ACTIVATION` hoặc `REJECTED`, có ô nhập hạn mức đề xuất, gửi yêu cầu phê duyệt.
 
 ---
 
 ## 6. Giao dịch, Fraud, Vận hành và Kiểm toán
 - [x] **Giao dịch**: Bộ lọc trạng thái hoạt động chính xác (Tất cả, PENDING, FAILED, SUCCEEDED). Nút Cancel request cho PENDING, Retry request cho FAILED, Reversal request cho SUCCEEDED.
-- [x] **Fraud cases**: Chọn từng case cụ thể để xem chi tiết; ô ghi chú nội bộ luôn gắn chặt với ID của case đang chọn. Gửi yêu cầu giải quyết (`RESOLVE`) tạo Four-Eyes action.
-- [x] **Outbox & Jobs**: Hiển thị tổng quan Pending, Processing, Dead, Skipped. Tạo yêu cầu Requeue outbox event (`DEAD`, `SKIPPED`) và Retry background job (`FAILED`, `DEAD`) yêu cầu reason code và tạo action Four-Eyes.
+- [x] **Fraud cases**: Chọn từng case cụ thể để xem chi tiết; ô ghi chú nội bộ luôn gắn chặt với ID của case đang chọn. Gửi yêu cầu giải quyết (`RESOLVE`) tạo yêu cầu phê duyệt.
+- [x] **Outbox & Jobs**: Hiển thị tổng quan Pending, Processing, Dead, Skipped. Tạo yêu cầu Requeue outbox event (`DEAD`, `SKIPPED`) và Retry background job (`FAILED`, `DEAD`) yêu cầu reason code và tạo action Approval Inbox.
 - [x] **Nhật ký Kiểm toán (Audit)**: Xem danh sách sự kiện append-only; metadata hiển thị đã lọc sạch token, OTP, mật khẩu và cookie.
 
 ---
@@ -98,10 +102,17 @@ Khởi chạy môi trường kiểm thử độc lập:
 cd C:\Projects\banking-system\backend
 npm run build
 
-# Bước 2: Chạy bộ kiểm thử tự động Playwright (đã bao gồm toàn bộ 11 kịch bản R-01 -> R-11 cùng P0 suite)
+# Bước 2: Chạy bộ kiểm thử tự động Playwright (bao gồm các kịch bản R-01 -> R-11, tạo Operations trực tiếp và P0 suite)
 cd C:\Projects\banking-system\admin-web
 npm run test:e2e
 ```
+
+### Kịch bản: Tạo tài khoản Operations trực tiếp
+1. Đăng nhập bằng tài khoản ADMIN và mở **Staff / Roles**.
+2. Nhập email, mã nhân viên, tên hiển thị và mật khẩu ban đầu; bấm **Tạo khóa MFA**.
+3. Thêm khóa hiển thị vào ứng dụng Authenticator, nhập mã 6 số hiện tại và bấm **Tạo tài khoản Operations**.
+4. Xác nhận tài khoản mới hiển thị `Hoạt động`, role `OPERATIONS` và `Authenticator đã cấu hình`; thao tác không tạo email mời hay mục mới trong *Approval Inbox*.
+5. Đăng xuất rồi đăng nhập bằng email/mật khẩu vừa tạo; xác nhận vào được web mà không xuất hiện ô nhập TOTP.
 
 ### Kịch bản 1: Kiểm chứng Timeout / Mất kết nối, Giữ nguyên Khóa và Xử lý Response Hỏng (R-02, R-03, R-06)
 1. Đăng nhập bằng tài khoản Operations: `browser-operations@example.test`.
@@ -125,7 +136,7 @@ npm run test:e2e
    - Bấm **Yêu cầu cấp tiền**: Hộp thoại mở ra xác nhận đúng tài khoản của B (`****9002`).
 
 ### Kịch bản 3: Kiểm chứng Từ chối bằng Phím Enter sau Step-up MFA (R-08)
-1. Đăng nhập bằng tài khoản Control: `browser-control@example.test`.
+1. Đăng nhập bằng tài khoản Admin: `browser-admin@example.test`.
 2. Mở **Approval Inbox** → Chọn một yêu cầu đang chờ phê duyệt.
 3. Điền lý do kiểm soát: `REJECT_FOR_VERIFICATION`.
 4. Bấm **Từ chối (Reject)**: Hộp thoại yêu cầu xác thực step-up MFA mở ra với banner cảnh báo: *"Đang xác thực TOTP Step-up để TỪ CHỐI yêu cầu"*.
@@ -141,10 +152,10 @@ npm run test:e2e
 3. Khi request đang chờ phản hồi từ mạng (in-flight), bấm **Đăng xuất** trên thanh Topbar:
    - Hệ thống ngay lập tức chuyển về màn hình "Đăng nhập quản trị".
    - `SessionScope` hiện tại bị hủy bỏ, dọn sạch bộ nhớ ý định trong trang.
-4. Đăng nhập bằng tài khoản khác (ví dụ `browser-support@example.test`) trên cùng trình duyệt:
+4. Đăng nhập bằng tài khoản OPERATIONS thứ hai (`browser-operations-secondary@example.test`) trên cùng trình duyệt:
    - Không xuất hiện banner thông báo ý định hay kết quả thành công/thất bại của phiên trước.
    - Mở tài khoản khách hàng trên: Form hoàn toàn sạch sẽ, không khôi phục dữ liệu hay khóa của phiên cũ.
-   - Phân quyền RBAC hoạt động chính xác: Support không có nút Cấp tiền, mở form Khóa tài khoản hiển thị form trắng mới.
+   - Quyền OPERATIONS vẫn có nút Cấp tiền; form Cấp tiền và Khóa tài khoản đều trắng, không khôi phục dữ liệu của phiên trước.
 5. Khi phản hồi của request cũ từ phiên trước được máy chủ trả về:
    - Hệ thống chặn đứng callback tại boundary kiểm tra `isSessionScopeActive(capturedScope)`.
    - Tuyệt đối không rò rỉ thông báo, toast hay lỗi vào phiên làm việc mới.

@@ -12,4 +12,4 @@
 
 ## Việc còn lại trước production-like
 
-Chốt Argon2id implementation, thêm migration/rehash, kiểm thử brute-force/rate-limit, dùng secret manager/KMS và có phê duyệt độc lập. Milestone P0 hiện chỉ chứng minh flow staff identity/MFA/four-eyes trong reference sandbox.
+Chốt Argon2id implementation, thêm migration/rehash, kiểm thử brute-force/rate-limit và dùng Secret Manager/KMS. Reference sandbox hiện chứng minh staff identity/MFA cùng luồng ADMIN phê duyệt theo permission; một ADMIN được phép tự duyệt yêu cầu đủ quyền của chính mình sau Step-up MFA.

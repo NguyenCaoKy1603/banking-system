@@ -70,8 +70,8 @@ test("Admin P0 HTTP E2E covers case operations, transfer, fraud, outbox and staf
   const auth = new StaffAuthService({ repository, encryption, clock: () => clock, environmentScope: "preview" });
   const fixture = [
     { email: "p0-operations@example.test", code: "P0-OPS", name: "P0 Operations", role: "OPERATIONS" as const, password: "P0-Operations-password!" , secret: "JBSWY3DPEHPK3PXP" },
-    { email: "p0-control@example.test", code: "P0-CTRL", name: "P0 Control", role: "CONTROL" as const, password: "P0-Control-password!", secret: "KRUGS4ZANFZSAYJA" },
-    { email: "p0-support@example.test", code: "P0-SUP", name: "P0 Support", role: "SUPPORT" as const, password: "P0-Support-password!", secret: "MFRGGZDFMZTWQ2LK" },
+    { email: "p0-admin-checker@example.test", code: "P0-ADMIN-CHECKER", name: "P0 Admin Checker", role: "ADMIN" as const, password: "P0-Admin-checker-password!", secret: "KRUGS4ZANFZSAYJA" },
+    { email: "p0-operations-peer@example.test", code: "P0-OPS-PEER", name: "P0 Operations Peer", role: "OPERATIONS" as const, password: "P0-Operations-peer-password!", secret: "MFRGGZDFMZTWQ2LK" },
     { email: "p0-admin@example.test", code: "P0-ADMIN", name: "P0 Admin", role: "ADMIN" as const, password: "P0-Admin-password!", secret: "ONSWG4TFOQ======" },
   ];
   const staffIds = new Map<string, string>();
@@ -80,7 +80,7 @@ test("Admin P0 HTTP E2E covers case operations, transfer, fraud, outbox and staf
     const activated = await auth.activate({ inviteToken: invite.token, password: item.password, totpSecret: item.secret });
     staffIds.set(item.email, activated.staffId);
   }
-  const actions = new AdminActionEngine(repository, auth);
+  const actions = new AdminActionEngine(repository);
   const server = createAdminServer({ repository, auth, actions, allowedOrigins: ["http://allowed.test"], environment: "development", secureCookies: false });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   server.unref();
@@ -94,8 +94,14 @@ test("Admin P0 HTTP E2E covers case operations, transfer, fraud, outbox and staf
   };
   const json = (value: Record<string, unknown>) => JSON.stringify(value);
   const login = async (item: typeof fixture[number]): Promise<Session> => {
-    const started = await request("/api/v1/admin/auth/login", { method: "POST", body: json({ email: item.email, password: item.password }) });
+    const started = await request("/api/v1/admin/auth/login", { method: "POST", headers: { "x-device-id": `device-${item.code}` }, body: json({ email: item.email, password: item.password }) });
+    if (item.role === "OPERATIONS") {
+      assert.equal(started.status, 200);
+      assert.equal(started.body?.mfaRequired, false);
+      return { cookies: mergeCookies("", started.response), csrf: String(started.body?.csrfToken) };
+    }
     assert.equal(started.status, 202);
+    assert.equal(started.body?.mfaRequired, true);
     tick();
     const verified = await request("/api/v1/admin/auth/mfa/verify", { method: "POST", headers: { "x-device-id": `device-${item.code}` }, body: json({ challengeId: String(started.body?.challengeId), code: generateTotp(item.secret, clock) }) });
     assert.equal(verified.status, 200);
@@ -107,12 +113,12 @@ test("Admin P0 HTTP E2E covers case operations, transfer, fraud, outbox and staf
     return response.body?.action as Record<string, unknown>;
   };
   const approve = async (session: Session, action: Record<string, unknown>, key: string): Promise<Record<string, unknown>> => {
-    const response = await request(`/api/v1/admin/approvals/${String(action.id)}/approve`, { method: "POST", headers: { "idempotency-key": key }, body: json({ fingerprint: action.requestFingerprint, version: action.version, reasonCode: "P0_E2E_REVIEW", decision: "APPROVED", comment: "Independent P0 checker review" }) }, session);
+    const response = await request(`/api/v1/admin/approvals/${String(action.id)}/approve`, { method: "POST", headers: { "idempotency-key": key }, body: json({ fingerprint: action.requestFingerprint, version: action.version, reasonCode: "P0_E2E_REVIEW", decision: "APPROVED", comment: "P0 Admin approval review" }) }, session);
     assert.equal(response.status, 200, JSON.stringify(response.body));
     return response.body?.action as Record<string, unknown>;
   };
   const reject = async (session: Session, action: Record<string, unknown>, key: string): Promise<Record<string, unknown>> => {
-    const response = await request(`/api/v1/admin/approvals/${String(action.id)}/reject`, { method: "POST", headers: { "idempotency-key": key }, body: json({ fingerprint: action.requestFingerprint, version: action.version, reasonCode: "P0_E2E_REJECT", comment: "Independent P0 checker rejection" }) }, session);
+    const response = await request(`/api/v1/admin/approvals/${String(action.id)}/reject`, { method: "POST", headers: { "idempotency-key": key }, body: json({ fingerprint: action.requestFingerprint, version: action.version, reasonCode: "P0_E2E_REJECT", comment: "P0 Admin rejection" }) }, session);
     assert.equal(response.status, 200, JSON.stringify(response.body));
     return response.body?.action as Record<string, unknown>;
   };
@@ -120,48 +126,39 @@ test("Admin P0 HTTP E2E covers case operations, transfer, fraud, outbox and staf
   try {
     const operations = await login(fixture[0]);
     const control = await login(fixture[1]);
-    const support = await login(fixture[2]);
+    const operationsPeer = await login(fixture[2]);
     const admin = await login(fixture[3]);
-    const validStaffInvite = await request("/api/v1/admin/staff/invite-requests", { method: "POST", headers: { "idempotency-key": "p0-staff-invite-001" }, body: json({ email: "p0-new-operations@example.test", employeeCode: "P0-NEW-OPS", displayName: "P0 New Operations", role: "OPERATIONS", reasonCode: "P0_STAFF_INVITE", ticketReference: "P0-STAFF-001", description: "Create a synthetic operations invitation" }) }, admin);
-    assert.equal(validStaffInvite.status, 202, JSON.stringify(validStaffInvite.body));
-    assert.equal((validStaffInvite.body?.action as Record<string, unknown>)?.status, "PENDING_APPROVAL");
-    const invalidStaffInvite = await request("/api/v1/admin/staff/invite-requests", { method: "POST", headers: { "idempotency-key": "p0-staff-invite-unknown-field" }, body: json({ email: "p0-invalid@example.test", employeeCode: "P0-INVALID", displayName: "P0 Invalid", role: "OPERATIONS", reasonCode: "P0_STAFF_INVITE", ticketReference: "P0-STAFF-002", description: "Reject unsupported field", unsupported: true }) }, admin);
-    assert.equal(invalidStaffInvite.status, 422);
-    assert.equal(invalidStaffInvite.body?.code, "VALIDATION_ERROR");
-    const actionCountBeforeInvalidReason = (await repository.listActions()).length;
-    const invalidStaffInviteReason = await request("/api/v1/admin/staff/invite-requests", { method: "POST", headers: { "idempotency-key": "p0-staff-invite-invalid-reason" }, body: json({ email: "p0-invalid-reason@example.test", employeeCode: "P0-INVALID-REASON", displayName: "P0 Invalid Reason", role: "OPERATIONS", reasonCode: "P0 invalid reason", ticketReference: "P0-STAFF-003", description: "Reject non-normalized reason" }) }, admin);
-    assert.equal(invalidStaffInviteReason.status, 422);
-    assert.equal((invalidStaffInviteReason.body?.fieldErrors as Record<string, unknown>)?.reasonCode, "Use a normalized reason code.");
-    assert.equal((await repository.listActions()).length, actionCountBeforeInvalidReason);
+    const legacyStaffInvite = await request("/api/v1/admin/staff/invite-requests", { method: "POST", headers: { "idempotency-key": "p0-retired-staff-invite" }, body: json({}) }, admin);
+    assert.equal(legacyStaffInvite.status, 404);
     const corsDenied = await request("/api/v1/admin/me", { headers: { Origin: "http://evil.test" } }, control);
     assert.equal(corsDenied.status, 403);
     assert.equal(corsDenied.body?.code, "CORS_ORIGIN_DENIED");
-    const injectionSearch = await request("/api/v1/admin/customers?q=%27%20OR%201%3D1", {}, support);
+    const injectionSearch = await request("/api/v1/admin/customers?q=%27%20OR%201%3D1", {}, operationsPeer);
     assert.equal(injectionSearch.status, 200);
     assert.equal((injectionSearch.body?.items as unknown[]).length, 0);
-    const supportFundingDenied = await request(`/api/v1/admin/accounts/${accountId}/funding-requests`, { method: "POST", headers: { "idempotency-key": "p0-support-funding-denied" }, body: json({ amountMinor: "1", currency: "VND", reasonCode: "P0_DENIED", ticketReference: "P0-DENY", description: "must be denied" }) }, support);
-    assert.equal(supportFundingDenied.status, 409);
-    assert.equal(supportFundingDenied.body?.code, "ADMIN_PERMISSION_DENIED");
+    const operationsFundingRequest = await request(`/api/v1/admin/accounts/${accountId}/funding-requests`, { method: "POST", headers: { "idempotency-key": "p0-operations-funding" }, body: json({ amountMinor: "1", currency: "VND", reasonCode: "P0_OPERATIONS", ticketReference: "P0-OPS", description: "operations can request funding" }) }, operationsPeer);
+    assert.equal(operationsFundingRequest.status, 202);
     const unknownField = await request(`/api/v1/admin/accounts/${accountId}/funding-requests`, { method: "POST", headers: { "idempotency-key": "p0-unknown-field-1" }, body: json({ amountMinor: "1", currency: "VND", reasonCode: "P0_UNKNOWN", ticketReference: "P0-UNKNOWN", description: "unsupported field", dangerous: "reject" }) }, operations);
     assert.equal(unknownField.status, 422);
     assert.equal(unknownField.body?.code, "VALIDATION_ERROR");
     tick();
     const stepUp = await request("/api/v1/admin/auth/step-up", { method: "POST", body: json({ code: generateTotp(fixture[1].secret, clock) }) }, control);
     assert.equal(stepUp.status, 204);
-
+    const adminStepUp = await request("/api/v1/admin/auth/step-up", { method: "POST", body: json({ code: generateTotp(fixture[3].secret, clock) }) }, admin);
+    assert.equal(adminStepUp.status, 204);
     const rejectedFunding = await createAction(operations, `/api/v1/admin/accounts/${accountId}/funding-requests`, { amountMinor: "500", currency: "VND", reasonCode: "P0_REJECTED_FUNDING", ticketReference: "P0-REJECT", description: "Must remain a rejected request" }, "p0-funding-reject-001");
     assert.equal((await reject(control, rejectedFunding, "p0-funding-reject-approve-1")).status, "REJECTED");
     const rejectedFundingAccount = (await request(`/api/v1/admin/accounts/${accountId}`, {}, control)).body?.account as Record<string, unknown>;
     assert.equal(rejectedFundingAccount.availableMinor, "100000");
 
     const funding = await createAction(operations, `/api/v1/admin/accounts/${accountId}/funding-requests`, { amountMinor: "2500", currency: "VND", reasonCode: "P0_FUNDING", ticketReference: "P0-001", description: "P0 funding" }, "p0-funding-001");
-    const selfApproval = await request(`/api/v1/admin/approvals/${String(funding.id)}/approve`, { method: "POST", headers: { "idempotency-key": "p0-self-approval-1" }, body: json({ fingerprint: funding.requestFingerprint, version: funding.version, reasonCode: "P0_SELF", decision: "APPROVED", comment: "must be denied" }) }, operations);
-    assert.equal(selfApproval.status, 409);
-    assert.equal(selfApproval.body?.code, "SELF_APPROVAL_FORBIDDEN");
+    const operationsApproval = await request(`/api/v1/admin/approvals/${String(funding.id)}/approve`, { method: "POST", headers: { "idempotency-key": "p0-operations-approval-denied" }, body: json({ fingerprint: funding.requestFingerprint, version: funding.version, reasonCode: "P0_SELF", decision: "APPROVED", comment: "operations has no approval permission" }) }, operations);
+    assert.equal(operationsApproval.status, 409);
+    assert.equal(operationsApproval.body?.code, "ADMIN_PERMISSION_DENIED");
     const funded = await approve(control, funding, "p0-funding-approve-1");
     assert.equal(funded.status, "SUCCEEDED");
 
-    const block = await createAction(support, `/api/v1/admin/accounts/${accountId}/block-requests`, { reasonCode: "P0_ACCOUNT_BLOCK", ticketReference: "P0-002", description: "Support block request" }, "p0-block-001");
+    const block = await createAction(operationsPeer, `/api/v1/admin/accounts/${accountId}/block-requests`, { reasonCode: "P0_ACCOUNT_BLOCK", ticketReference: "P0-002", description: "Operations block request" }, "p0-block-001");
     await approve(control, block, "p0-block-approve-1");
     assert.equal((await request(`/api/v1/admin/accounts/${accountId}`, {}, control)).body?.account && ((await request(`/api/v1/admin/accounts/${accountId}`, {}, control)).body?.account as Record<string, unknown>).status, "BLOCKED");
 
@@ -204,7 +201,7 @@ test("Admin P0 HTTP E2E covers case operations, transfer, fraud, outbox and staf
     const staffTargetId = staffIds.get(fixture[2].email)!;
     const disableAction = await createAction(admin, `/api/v1/admin/staff/${staffTargetId}/disable-requests`, { reasonCode: "P0_STAFF_DISABLE", ticketReference: "P0-010", description: "Disable synthetic staff" }, "p0-disable-001");
     await approve(control, disableAction, "p0-disable-approve-1");
-    const disabledSession = await request("/api/v1/admin/me", {}, support);
+    const disabledSession = await request("/api/v1/admin/me", {}, operationsPeer);
     assert.equal(disabledSession.status, 401);
     assert.equal(disabledSession.body?.code, "STAFF_SESSION_EXPIRED");
 

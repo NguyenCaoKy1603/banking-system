@@ -19,7 +19,7 @@ export function Overview({ actions, summary, onNavigate }: OverviewProps) {
         <article className="metric-card">
           <span>Approval chờ</span>
           <strong>{canReadApprovals ? actions.length : "—"}</strong>
-          <small>{canReadApprovals ? "Maker–checker hàng đợi" : "Chỉ Control/Admin"}</small>
+          <small>{canReadApprovals ? "Hàng đợi phê duyệt" : "Chỉ ADMIN"}</small>
         </article>
 
         <article className="metric-card">
@@ -114,7 +114,7 @@ export function Overview({ actions, summary, onNavigate }: OverviewProps) {
           <li>Server là nguồn sự thật duy nhất cho quyền, trạng thái và số dư tài khoản.</li>
           <li>Tuyệt đối không có thao tác đặt trạng thái giao dịch thành công bằng tay từ UI.</li>
           <li>Thông tin định danh khách hàng (PII) và số tài khoản được che mặc định; mọi lượt xem đều ghi nhận kiểm toán (audit log).</li>
-          <li>Quy trình Four-Eyes bắt buộc: Người tạo yêu cầu (Maker) không thể tự phê duyệt yêu cầu của mình.</li>
+          <li>ADMIN có thể tự phê duyệt yêu cầu đủ quyền sau khi xác thực Step-up MFA.</li>
         </ul>
       </section>
     </div>

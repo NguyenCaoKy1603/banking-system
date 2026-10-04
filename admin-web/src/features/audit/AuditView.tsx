@@ -19,7 +19,7 @@ export function AuditView({ items, onReload, loading }: AuditViewProps) {
       <section className="audit-page">
         <Heading eyebrow="IMMUTABLE EVIDENCE" title="Audit explorer" />
         <div className="notice info">
-          Audit explorer chỉ dành cho nhân viên Control hoặc Admin có quyền audit.read.
+          Audit explorer chỉ dành cho ADMIN có quyền audit.read.
         </div>
       </section>
     );

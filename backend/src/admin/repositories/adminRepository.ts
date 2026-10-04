@@ -3,10 +3,10 @@ import type { PoolClient } from "pg";
 
 import { DatabasePool } from "../../database/pool.js";
 import { UnitOfWork } from "../../database/unitOfWork.js";
-import { createId, createOpaqueToken, hashOpaqueToken } from "../../security.js";
+import { createId } from "../../security.js";
 import { conflictWithCode, invalidRequest, notFound } from "../../errors.js";
 import { maskAccountNumber, maskEmail, maskPhone, redactAdminMetadata } from "../audit/redaction.js";
-import type { AdminPermission, AdminRole } from "../authorization/permissionRegistry.js";
+import { normalizeExistingAdminRole, type AdminPermission, type AdminRole } from "../authorization/permissionRegistry.js";
 import { assertSafePayload, buildEnvelope, canonicalEventName, resolveEventPolicy, validateEnvelope } from "../../outbox/eventRegistry.js";
 
 export type StaffStatus = "INVITED" | "ACTIVE" | "LOCKED" | "DISABLED";
@@ -257,25 +257,27 @@ export type CreateActionInput = {
   payload: Record<string, unknown>;
 };
 
+export type CreateOperationsStaffAccountInput = {
+  staffId: string;
+  employeeCode: string;
+  emailNormalized: string;
+  displayName: string;
+  passwordSalt: string;
+  passwordDigest: string;
+  creatorStaffId: string;
+  environmentScope: "preview" | "production";
+  mfaCredential: StaffMfaRecord;
+  idempotencyKey: string;
+  requestFingerprint: string;
+  traceId: string;
+};
+
 export type ExecuteActionResult = {
   status: "SUCCEEDED" | "STALE" | "FAILED";
   resultResourceId?: string;
   failureCode?: string;
   beforeVersion?: number | null;
   afterVersion?: number | null;
-  /**
-   * A newly-created invitation is returned only to the in-process delivery
-   * seam.  The token is never persisted in an action, audit event, outbox
-   * payload or HTTP response.
-   */
-  invitation?: {
-    inviteId: string;
-    destination: string;
-    displayName: string;
-    role: AdminRole;
-    token: string;
-    expiresAt: string;
-  };
 };
 
 export type AdminCaseScope = {
@@ -292,6 +294,7 @@ export interface AdminRepository {
   findStaffByEmail(email: string): Promise<StaffRecord | null>;
   findStaffById(id: string): Promise<StaffRecord | null>;
   listStaff(): Promise<StaffRecord[]>;
+  createOperationsStaffAccount(input: CreateOperationsStaffAccountInput): Promise<{ staff: StaffRecord; replayed: boolean }>;
   createStaffInvite(input: Omit<StaffInviteRecord, "usedAt"> & { createdByStaffId?: string | null }): Promise<void>;
   findInviteByHash(tokenHash: string): Promise<StaffInviteRecord | null>;
   activateInvite(input: { inviteId: string; passwordSalt: string; passwordDigest: string; staffId: string }): Promise<StaffRecord>;
@@ -410,9 +413,7 @@ async function insertTypedActionDetail(client: PoolClient, input: CreateActionIn
   } else if (input.actionType === "JOB_RETRY") {
     await client.query("INSERT INTO job_retry_requests (request_id, job_id, reason_code, ticket_reference) VALUES ($1,$2,$3,$4)", [requestId, input.targetId, reason, String(payload.ticketReference ?? "ADMIN")]);
   } else if (input.actionType === "STAFF_ROLE_CHANGE") {
-    await client.query("INSERT INTO staff_role_change_requests (request_id, staff_id, role_code, operation, environment_scope, reason_code) VALUES ($1,$2,$3,$4,$5,$6)", [requestId, input.targetId, String(payload.roleCode ?? "SUPPORT"), String(payload.operation ?? "GRANT"), String(payload.environmentScope ?? "preview"), reason]);
-  } else if (input.actionType === "STAFF_INVITE") {
-    await client.query("INSERT INTO staff_invite_requests (request_id, email_normalized, employee_code, display_name, role_code, reason_code) VALUES ($1, lower($2), $3, $4, $5, $6)", [requestId, String(payload.email ?? ""), String(payload.employeeCode ?? ""), String(payload.displayName ?? ""), String(payload.role ?? "SUPPORT"), reason]);
+    await client.query("INSERT INTO staff_role_change_requests (request_id, staff_id, role_code, operation, environment_scope, reason_code) VALUES ($1,$2,$3,$4,$5,$6)", [requestId, input.targetId, String(payload.roleCode ?? "OPERATIONS"), String(payload.operation ?? "GRANT"), String(payload.environmentScope ?? "preview"), reason]);
   }
 }
 
@@ -454,6 +455,7 @@ export class InMemoryAdminRepository implements AdminRepository {
   private readonly roles = new Map<AdminRole, { code: AdminRole; displayName: string; description: string }>();
   private readonly permissions = new Map<string, { code: AdminPermission; description: string }>();
   private readonly staff = new Map<string, StaffRecord>();
+  private readonly staffAccountCreations = new Map<string, { requestFingerprint: string; staffId: string }>();
   private readonly invites = new Map<string, StaffInviteRecord>();
   private readonly mfa = new Map<string, StaffMfaRecord>();
   private readonly challenges = new Map<string, StaffChallengeRecord>();
@@ -476,7 +478,7 @@ export class InMemoryAdminRepository implements AdminRepository {
 
   async initialize(): Promise<void> {
     const roleDefinitions: Array<[AdminRole, string, string]> = [
-      ["SUPPORT", "Hỗ trợ", "Tra cứu dữ liệu đã che"], ["OPERATIONS", "Vận hành", "Xử lý nghiệp vụ"], ["CONTROL", "Kiểm soát", "Phê duyệt độc lập"], ["ADMIN", "Quản trị", "Quản lý danh tính và policy"],
+      ["OPERATIONS", "Vận hành", "Xử lý nghiệp vụ và hỗ trợ khách hàng"], ["ADMIN", "Quản trị", "Quản lý nhân viên, phê duyệt độc lập và kiểm toán"],
     ];
     for (const [code, displayName, description] of roleDefinitions) this.roles.set(code, { code, displayName, description });
     const { ADMIN_PERMISSIONS } = await import("../authorization/permissionRegistry.js");
@@ -500,6 +502,55 @@ export class InMemoryAdminRepository implements AdminRepository {
   findStaffByEmail(email: string) { const row = [...this.staff.values()].find((item) => item.emailNormalized === normalizedEmail(email)); return Promise.resolve(row ? structuredClone(row) : null); }
   findStaffById(id: string) { const row = this.staff.get(id); return Promise.resolve(row ? structuredClone(row) : null); }
   listStaff() { return Promise.resolve([...this.staff.values()].map((row) => structuredClone(row))); }
+  async createOperationsStaffAccount(input: CreateOperationsStaffAccountInput): Promise<{ staff: StaffRecord; replayed: boolean }> {
+    const requestKey = `${input.creatorStaffId}:${input.idempotencyKey}`;
+    const existingRequest = this.staffAccountCreations.get(requestKey);
+    if (existingRequest) {
+      if (existingRequest.requestFingerprint !== input.requestFingerprint) throw new Error("STAFF_ACCOUNT_IDEMPOTENCY_CONFLICT");
+      const existingStaff = this.staff.get(existingRequest.staffId);
+      if (!existingStaff) throw new Error("STAFF_ACCOUNT_CREATION_RESULT_MISSING");
+      return { staff: structuredClone(existingStaff), replayed: true };
+    }
+    if ([...this.staff.values()].some((staff) => staff.emailNormalized === input.emailNormalized || staff.employeeCode === input.employeeCode)) {
+      throw new Error("STAFF_ACCOUNT_ALREADY_EXISTS");
+    }
+    const createdAt = nowIso();
+    const staff: StaffRecord = {
+      id: input.staffId,
+      employeeCode: input.employeeCode,
+      emailNormalized: input.emailNormalized,
+      displayName: input.displayName,
+      passwordSalt: input.passwordSalt,
+      passwordDigest: input.passwordDigest,
+      status: "ACTIVE",
+      authorizationVersion: 1,
+      passwordChangedAt: createdAt,
+      mfaEnrolledAt: createdAt,
+      lastLoginAt: null,
+      createdAt,
+      roles: [{ role: "OPERATIONS", environmentScope: input.environmentScope, expiresAt: null }],
+    };
+    this.staff.set(staff.id, staff);
+    this.mfa.set(staff.id, structuredClone(input.mfaCredential));
+    this.staffAccountCreations.set(requestKey, { requestFingerprint: input.requestFingerprint, staffId: staff.id });
+    await this.appendAudit({
+      id: randomUUID(),
+      actorStaffId: input.creatorStaffId,
+      action: "STAFF_OPERATIONS_ACCOUNT_CREATED",
+      targetType: "STAFF",
+      targetId: staff.id,
+      outcome: "SUCCEEDED",
+      reasonCode: "OPERATIONS_ACCOUNT_CREATED",
+      requestId: null,
+      traceId: input.traceId,
+      correlationId: null,
+      beforeVersion: null,
+      afterVersion: staff.authorizationVersion,
+      metadata: { role: "OPERATIONS", environmentScope: input.environmentScope },
+      occurredAt: createdAt,
+    });
+    return { staff: structuredClone(staff), replayed: false };
+  }
   async createStaffInvite(input: Omit<StaffInviteRecord, "usedAt"> & { createdByStaffId?: string | null }): Promise<void> {
     const row: StaffInviteRecord = { ...input, usedAt: null };
     this.invites.set(row.tokenHash, structuredClone(row));
@@ -570,7 +621,7 @@ export class InMemoryAdminRepository implements AdminRepository {
       else if (action.targetType === "FRAUD_CASE") target = this.fraudCases.get(action.targetId) as unknown as Record<string, unknown> | undefined;
       else if (action.targetType === "JOB") target = this.jobs.get(action.targetId) as unknown as Record<string, unknown> | undefined;
       else if (action.targetType === "OUTBOX_EVENT") target = this.outboxEvents.get(action.targetId);
-      if (action.targetType !== "STAFF_INVITE" && !target) return finish("FAILED", undefined, `${action.targetType}_NOT_FOUND`);
+      if (!target) return finish("FAILED", undefined, `${action.targetType}_NOT_FOUND`);
       if (target && action.expectedTargetVersion !== null && targetVersion(target) !== action.expectedTargetVersion) return finish("STALE", undefined, "ACTION_STALE");
       if (target && action.expectedTargetStatus !== null && targetStatus(target) !== action.expectedTargetStatus) return finish("STALE", undefined, "ACTION_STALE");
 
@@ -582,20 +633,11 @@ export class InMemoryAdminRepository implements AdminRepository {
         if (customer.accessStatus === "LOCKED") await this.revokeStaffSessions(`customer:${customer.id}`, "CUSTOMER_ACCESS_LOCK");
         return finish("SUCCEEDED", customer.id, undefined) as ExecuteActionResult & { beforeVersion?: number; afterVersion?: number };
       }
-      if (action.actionType === "STAFF_INVITE") {
-        const token = createOpaqueToken();
-        const inviteId = randomUUID();
-        const destination = String(action.payload.email ?? "").trim().toLowerCase();
-        const displayName = String(action.payload.displayName ?? "").trim();
-        const role = String(action.payload.role ?? "SUPPORT") as AdminRole;
-        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-        await this.createStaffInvite({ id: inviteId, emailNormalized: destination, employeeCode: String(action.payload.employeeCode ?? "").trim(), displayName, roleCode: role, tokenHash: hashOpaqueToken(token), expiresAt, createdByStaffId: action.requesterStaffId });
-        return { ...finish("SUCCEEDED", inviteId), invitation: { inviteId, destination, displayName, role, token, expiresAt } };
-      }
       if (action.actionType === "STAFF_ROLE_CHANGE") {
         const staff = this.staff.get(action.targetId)!;
         const operation = String(action.payload.operation ?? "GRANT").toUpperCase();
-        const role = String(action.payload.roleCode ?? "SUPPORT") as AdminRole;
+        const role = normalizeExistingAdminRole(String(action.payload.roleCode ?? "OPERATIONS"));
+        if (!role) return finish("FAILED", undefined, "STAFF_ROLE_INVALID");
         if (operation === "GRANT" && !staff.roles.some((item) => item.role === role && item.environmentScope === String(action.payload.environmentScope ?? "preview"))) staff.roles.push({ role, environmentScope: String(action.payload.environmentScope ?? "preview"), expiresAt: null });
         if (operation === "REVOKE") staff.roles = staff.roles.filter((item) => !(item.role === role && item.environmentScope === String(action.payload.environmentScope ?? "preview")));
         staff.authorizationVersion += 1;
@@ -744,6 +786,55 @@ export class PostgresAdminRepository implements AdminRepository {
   async findStaffByEmail(email: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT * FROM staff_users WHERE email_normalized = lower($1)", [email]); return result.rows[0] ? this.staffWithRoles(client, result.rows[0] as Record<string, unknown>) : null; }); }
   async findStaffById(id: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT * FROM staff_users WHERE id = $1", [id]); return result.rows[0] ? this.staffWithRoles(client, result.rows[0] as Record<string, unknown>) : null; }); }
   async listStaff() { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT * FROM staff_users ORDER BY created_at DESC"); return Promise.all(result.rows.map((row) => this.staffWithRoles(client, row as Record<string, unknown>))); }); }
+  async createOperationsStaffAccount(input: CreateOperationsStaffAccountInput): Promise<{ staff: StaffRecord; replayed: boolean }> {
+    try {
+      return await this.unitOfWork.transaction(async ({ client }) => {
+        const lockKey = `${input.creatorStaffId}:${input.idempotencyKey}`;
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lockKey]);
+        const existingRequest = await client.query(
+          "SELECT request_fingerprint, staff_id FROM admin_staff_account_creation_requests WHERE requester_staff_id = $1 AND idempotency_key = $2 FOR UPDATE",
+          [input.creatorStaffId, input.idempotencyKey],
+        );
+        if (existingRequest.rows[0]) {
+          if (String(existingRequest.rows[0].request_fingerprint) !== input.requestFingerprint) throw new Error("STAFF_ACCOUNT_IDEMPOTENCY_CONFLICT");
+          const existingStaff = await client.query("SELECT * FROM staff_users WHERE id = $1", [existingRequest.rows[0].staff_id]);
+          if (!existingStaff.rows[0]) throw new Error("STAFF_ACCOUNT_CREATION_RESULT_MISSING");
+          return { staff: await this.staffWithRoles(client, existingStaff.rows[0] as Record<string, unknown>), replayed: true };
+        }
+        const duplicate = await client.query(
+          "SELECT id FROM staff_users WHERE email_normalized = lower($1) OR employee_code = $2 LIMIT 1 FOR UPDATE",
+          [input.emailNormalized, input.employeeCode],
+        );
+        if (duplicate.rows[0]) throw new Error("STAFF_ACCOUNT_ALREADY_EXISTS");
+
+        const insertedStaff = await client.query(
+          "INSERT INTO staff_users (id, employee_code, email_normalized, display_name, password_salt, password_digest, status, authorization_version, password_changed_at, mfa_enrolled_at, created_by_staff_id) VALUES ($1,$2,lower($3),$4,$5,$6,'ACTIVE',1,NOW(),NOW(),$7) RETURNING *",
+          [input.staffId, input.employeeCode, input.emailNormalized, input.displayName, input.passwordSalt, input.passwordDigest, input.creatorStaffId],
+        );
+        await client.query(
+          "INSERT INTO staff_user_roles (staff_id, role_code, environment_scope, granted_by_staff_id) VALUES ($1,'OPERATIONS',$2,$3)",
+          [input.staffId, input.environmentScope, input.creatorStaffId],
+        );
+        const credential = input.mfaCredential;
+        await client.query(
+          "INSERT INTO staff_mfa_credentials (id, staff_id, secret_ciphertext, encryption_key_id, secret_cipher_version, secret_aad_version, secret_encryption_algorithm, secret_encrypted_data_key, last_accepted_time_step) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+          [credential.id, credential.staffId, credential.secretCiphertext, credential.encryptionKeyId, credential.secretCipherVersion ?? "v2", credential.secretAadVersion ?? "aad-v1", credential.secretEncryptionAlgorithm ?? "AES-256-GCM-ENVELOPE", credential.secretEncryptedDataKey ?? null, credential.lastAcceptedTimeStep],
+        );
+        await client.query(
+          "INSERT INTO admin_staff_account_creation_requests (requester_staff_id, idempotency_key, request_fingerprint, staff_id) VALUES ($1,$2,$3,$4)",
+          [input.creatorStaffId, input.idempotencyKey, input.requestFingerprint, input.staffId],
+        );
+        await client.query(
+          "INSERT INTO audit_events (id,event_type,actor_type,actor_staff_id,action,target_type,target_id,outcome,reason_code,request_id,trace_id,correlation_id,before_version,after_version,payload,occurred_at) VALUES ($1,'ADMIN_AUDIT_EVENT','STAFF',$2,'STAFF_OPERATIONS_ACCOUNT_CREATED','STAFF',$3,'SUCCEEDED','OPERATIONS_ACCOUNT_CREATED',NULL,$4,NULL,NULL,1,$5,NOW())",
+          [randomUUID(), input.creatorStaffId, input.staffId, input.traceId, JSON.stringify({ role: "OPERATIONS", environmentScope: input.environmentScope })],
+        );
+        return { staff: await this.staffWithRoles(client, insertedStaff.rows[0] as Record<string, unknown>), replayed: false };
+      });
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "23505") throw new Error("STAFF_ACCOUNT_ALREADY_EXISTS");
+      throw error;
+    }
+  }
   async createStaffInvite(input: Omit<StaffInviteRecord, "usedAt"> & { createdByStaffId?: string | null }): Promise<void> { await this.unitOfWork.transaction(async ({ client }) => { await client.query("INSERT INTO staff_users (id, employee_code, email_normalized, display_name, status, created_by_staff_id) VALUES ($1, $2, lower($3), $4, 'INVITED', $5)", [input.id, input.employeeCode, input.emailNormalized, input.displayName, input.createdByStaffId ?? null]); await client.query("INSERT INTO staff_invites (id, email_normalized, employee_code, display_name, role_code, token_hash, expires_at, created_by_staff_id) VALUES ($1, lower($2), $3, $4, $5, $6, $7, $8)", [input.id, input.emailNormalized, input.employeeCode, input.displayName, input.roleCode, input.tokenHash, input.expiresAt, input.createdByStaffId ?? null]); await client.query("INSERT INTO staff_user_roles (staff_id, role_code, granted_by_staff_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [input.id, input.roleCode, input.createdByStaffId ?? null]); }); }
   async findInviteByHash(tokenHash: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT id, email_normalized, employee_code, display_name, role_code, token_hash, expires_at, used_at FROM staff_invites WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()", [tokenHash]); if (!result.rows[0]) return null; const row = result.rows[0]; return { id: String(row.id), emailNormalized: String(row.email_normalized), employeeCode: String(row.employee_code), displayName: String(row.display_name), roleCode: String(row.role_code) as AdminRole, tokenHash: String(row.token_hash), expiresAt: new Date(String(row.expires_at)).toISOString(), usedAt: null }; }); }
   async activateInvite(input: { inviteId: string; passwordSalt: string; passwordDigest: string; staffId: string }) { return this.unitOfWork.transaction(async ({ client }) => { const invite = await client.query("SELECT * FROM staff_invites WHERE id = $1 AND used_at IS NULL AND expires_at > NOW() FOR UPDATE", [input.inviteId]); if (!invite.rows[0]) throw new Error("INVITE_INVALID"); await client.query("UPDATE staff_invites SET used_at = NOW() WHERE id = $1", [input.inviteId]); await client.query("UPDATE staff_users SET password_salt = $2, password_digest = $3, status = 'ACTIVE', password_changed_at = NOW(), updated_at = NOW(), authorization_version = authorization_version + 1 WHERE id = $1", [input.staffId, input.passwordSalt, input.passwordDigest]); const row = await client.query("SELECT * FROM staff_users WHERE id = $1", [input.staffId]); return this.staffWithRoles(client, row.rows[0] as Record<string, unknown>); }); }
@@ -774,7 +865,7 @@ export class PostgresAdminRepository implements AdminRepository {
   async findAction(id: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT * FROM admin_action_requests WHERE id = $1", [id]); return result.rows[0] ? mapAction(result.rows[0] as Record<string, unknown>) : null; }); }
   async listActions(status?: ActionStatus, scope?: AdminCaseScope) { return this.unitOfWork.transaction(async ({ client }) => { if (scope) await client.query("SELECT set_config('app.staff_id',$1,true), set_config('app.staff_scope',$2,true)", [scope.staffId, scope.scope]); const predicates: string[] = []; const values: unknown[] = []; if (status) { values.push(status); predicates.push(`status = $${values.length}`); } if (scope && !scope.canSeeAll) { values.push(scope.staffId); predicates.push(`requester_staff_id = $${values.length}`); } const where = predicates.length ? `WHERE ${predicates.join(" AND ")}` : ""; const result = await client.query(`SELECT * FROM admin_action_requests ${where} ORDER BY created_at DESC LIMIT 500`, values); return result.rows.map((row) => mapAction(row as Record<string, unknown>)); }); }
   async decideAction(input: { requestId: string; reviewerStaffId: string; decision: "APPROVED" | "REJECTED"; approvedFingerprint: string; reasonCode: string; comment?: string | null; mfaVerifiedAt: string }) { return this.unitOfWork.transaction(async ({ client }) => {
-    // Serialize all checker decisions on the action row before checking the
+    // Serialize all approval decisions on the action row before checking the
     // unique decision record. Without this lock two simultaneous approvals
     // could both pass the preflight SELECT and race on the INSERT.
     const action = await client.query("SELECT id FROM admin_action_requests WHERE id = $1 FOR UPDATE", [input.requestId]);
@@ -1072,38 +1163,6 @@ export class PostgresAdminRepository implements AdminRepository {
         await client.query("UPDATE admin_action_requests SET status='SUCCEEDED', result_resource_id=$2, updated_at=NOW() WHERE id=$1", [action.id, action.targetId]);
         return { status: "SUCCEEDED", resultResourceId: action.targetId, beforeVersion: before, afterVersion: before };
       }
-      if (action.actionType === "STAFF_INVITE") {
-        const email = String(action.payload.email ?? "").trim().toLowerCase();
-        const employeeCode = String(action.payload.employeeCode ?? "").trim();
-        const displayName = String(action.payload.displayName ?? "").trim();
-        const roleCode = String(action.payload.role ?? "");
-        if (!['SUPPORT', 'OPERATIONS', 'CONTROL', 'ADMIN'].includes(roleCode)) {
-          await client.query("UPDATE admin_action_execution_attempts SET outcome='FAILED', error_code='STAFF_ROLE_INVALID', finished_at=NOW() WHERE id=$1", [attempt]);
-          await client.query("UPDATE admin_action_requests SET status='FAILED', failure_code='STAFF_ROLE_INVALID', updated_at=NOW() WHERE id=$1", [action.id]);
-          return { status: "FAILED", failureCode: "STAFF_ROLE_INVALID" };
-        }
-        const duplicate = await client.query("SELECT id FROM staff_users WHERE email_normalized=$1 OR employee_code=$2 FOR UPDATE", [email, employeeCode]);
-        if (duplicate.rows[0]) {
-          await client.query("UPDATE admin_action_execution_attempts SET outcome='FAILED', error_code='STAFF_ALREADY_EXISTS', finished_at=NOW() WHERE id=$1", [attempt]);
-          await client.query("UPDATE admin_action_requests SET status='FAILED', failure_code='STAFF_ALREADY_EXISTS', updated_at=NOW() WHERE id=$1", [action.id]);
-          return { status: "FAILED", failureCode: "STAFF_ALREADY_EXISTS" };
-        }
-        const inviteId = createId("staff-invite");
-        // Only a hash is persisted. The plaintext token is returned through a
-        // transient in-process delivery seam and is never put in the action,
-        // audit, database, outbox or HTTP response.
-        const inviteToken = createOpaqueToken();
-        const inviteTokenHash = hashOpaqueToken(inviteToken);
-        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-        await client.query("INSERT INTO staff_users (id, employee_code, email_normalized, display_name, status, created_by_staff_id) VALUES ($1,$2,$3,$4,'INVITED',$5)", [inviteId, employeeCode, email, displayName, action.requesterStaffId]);
-        await client.query("INSERT INTO staff_invites (id, email_normalized, employee_code, display_name, role_code, token_hash, expires_at, created_by_staff_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [inviteId, email, employeeCode, displayName, roleCode, inviteTokenHash, expiresAt, action.requesterStaffId]);
-        await client.query("INSERT INTO staff_user_roles (staff_id, role_code, environment_scope, granted_by_staff_id, approved_by_staff_id) VALUES ($1,$2,'preview',$3,$4)", [inviteId, roleCode, action.requesterStaffId, input.approverStaffId]);
-        await insertAdminOutboxEvent(client, { eventType: "STAFF_INVITE_CREATED", aggregateType: "staff", aggregateId: inviteId, aggregateVersion: 1, deduplicationKey: `staff-invite:${action.id}`, traceId: input.traceId, payload: { actionId: action.id, inviteId, email, employeeCode, role: roleCode } });
-        await client.query("INSERT INTO audit_events (id,event_type,actor_type,actor_staff_id,action,target_type,target_id,outcome,reason_code,request_id,trace_id,before_version,after_version,payload,occurred_at) VALUES ($1,'ADMIN_STAFF_INVITE_CREATED','STAFF',$2,'STAFF_INVITE','STAFF_INVITE',$3,'SUCCEEDED',$4,$5,$6,NULL,NULL,$7,NOW())", [createId("audit"), input.approverStaffId, inviteId, String(action.payload.reasonCode ?? "STAFF_INVITE"), action.id, input.traceId, JSON.stringify(redactAdminMetadata({ email, employeeCode, role: roleCode }))]);
-        await client.query("UPDATE admin_action_execution_attempts SET outcome='SUCCEEDED', finished_at=NOW() WHERE id=$1", [attempt]);
-        await client.query("UPDATE admin_action_requests SET status='SUCCEEDED', result_resource_id=$2, updated_at=NOW() WHERE id=$1", [action.id, inviteId]);
-        return { status: "SUCCEEDED", resultResourceId: inviteId, invitation: { inviteId, destination: email, displayName, role: roleCode as AdminRole, token: inviteToken, expiresAt } };
-      }
       if (action.actionType === "STAFF_ROLE_CHANGE") {
         const target = await client.query("SELECT id, status, authorization_version, version FROM staff_users WHERE id=$1 FOR UPDATE", [action.targetId]);
         if (!target.rows[0]) { await client.query("UPDATE admin_action_requests SET status='FAILED', failure_code='STAFF_NOT_FOUND', updated_at=NOW() WHERE id=$1", [action.id]); return { status: "FAILED", failureCode: "STAFF_NOT_FOUND" }; }
@@ -1114,8 +1173,13 @@ export class PostgresAdminRepository implements AdminRepository {
           return { status: "STALE", failureCode: "ACTION_STALE", beforeVersion: before };
         }
         const operation = String(action.payload.operation ?? "GRANT");
-        const roleCode = String(action.payload.roleCode ?? "SUPPORT");
+        const roleCode = normalizeExistingAdminRole(String(action.payload.roleCode ?? "OPERATIONS"));
         const scope = String(action.payload.environmentScope ?? "preview");
+        if (!roleCode) {
+          await client.query("UPDATE admin_action_execution_attempts SET outcome='FAILED', error_code='STAFF_ROLE_INVALID', finished_at=NOW() WHERE id=$1", [attempt]);
+          await client.query("UPDATE admin_action_requests SET status='FAILED', failure_code='STAFF_ROLE_INVALID', updated_at=NOW() WHERE id=$1", [action.id]);
+          return { status: "FAILED", failureCode: "STAFF_ROLE_INVALID" };
+        }
         if (operation === "GRANT") await client.query("INSERT INTO staff_user_roles (staff_id, role_code, environment_scope, granted_by_staff_id, approved_by_staff_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (staff_id, role_code, environment_scope) DO UPDATE SET revoked_at=NULL, granted_by_staff_id=EXCLUDED.granted_by_staff_id, approved_by_staff_id=EXCLUDED.approved_by_staff_id", [action.targetId, roleCode, scope, action.requesterStaffId, input.approverStaffId]);
         else await client.query("UPDATE staff_user_roles SET revoked_at=NOW(), approved_by_staff_id=$4 WHERE staff_id=$1 AND role_code=$2 AND environment_scope=$3 AND revoked_at IS NULL", [action.targetId, roleCode, scope, input.approverStaffId]);
         await client.query("UPDATE staff_users SET authorization_version=authorization_version+1, version=version+1, updated_at=NOW() WHERE id=$1", [action.targetId]);

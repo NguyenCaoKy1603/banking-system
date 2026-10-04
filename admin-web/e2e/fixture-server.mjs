@@ -10,7 +10,7 @@ import { LocalDevelopmentKeyEncryptionAdapter } from "../../backend/dist/mfa/cry
 
 const apiHost = "127.0.0.1";
 const webHost = "127.0.0.1";
-const webPort = 5174;
+const webPort = Number(process.env.ADMIN_WEB_E2E_PORT ?? 5174);
 const createdAt = new Date().toISOString();
 const customerId = randomUUID();
 const accountId = randomUUID();
@@ -87,8 +87,8 @@ const encryption = new LocalDevelopmentKeyEncryptionAdapter(Buffer.alloc(32, 23)
 const auth = new StaffAuthService({ repository, encryption, environmentScope: "preview" });
 const credentials = {
   operations: { email: "browser-operations@example.test", employeeCode: "BROWSER-OPS", displayName: "Browser Operations", role: "OPERATIONS", password: "Browser-Operations-password!", secret: "JBSWY3DPEHPK3PXP" },
-  control: { email: "browser-control@example.test", employeeCode: "BROWSER-CTRL", displayName: "Browser Control", role: "CONTROL", password: "Browser-Control-password!", secret: "KRUGS4ZANFZSAYJA" },
-  support: { email: "browser-support@example.test", employeeCode: "BROWSER-SUP", displayName: "Browser Support", role: "SUPPORT", password: "Browser-Support-password!", secret: "MFRGGZDFMZTWQ2LK" },
+  control: { email: "browser-admin-approver@example.test", employeeCode: "BROWSER-ADMIN-APPROVER", displayName: "Browser Admin Approver", role: "ADMIN", password: "Browser-Admin-Approver-password!", secret: "KRUGS4ZANFZSAYJA" },
+  operationsPeer: { email: "browser-operations-secondary@example.test", employeeCode: "BROWSER-OPS-SECONDARY", displayName: "Browser Operations Secondary", role: "OPERATIONS", password: "Browser-Operations-Secondary-password!", secret: "MFRGGZDFMZTWQ2LK" },
   admin: { email: "browser-admin@example.test", employeeCode: "BROWSER-ADMIN", displayName: "Browser Admin", role: "ADMIN", password: "Browser-Admin-password!", secret: "ONSWG4TFOQ======" },
 };
 for (const item of Object.values(credentials)) {
@@ -96,7 +96,7 @@ for (const item of Object.values(credentials)) {
   await auth.activate({ inviteToken: invite.token, password: item.password, totpSecret: item.secret });
 }
 
-const actions = new AdminActionEngine(repository, auth);
+const actions = new AdminActionEngine(repository);
 const apiServer = createAdminServer({
   repository,
   auth,

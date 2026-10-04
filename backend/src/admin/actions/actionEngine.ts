@@ -4,9 +4,7 @@ import { conflictWithCode, invalidRequest, notFound } from "../../errors.js";
 import { fingerprint } from "../../security.js";
 import { redactAdminMetadata } from "../audit/redaction.js";
 import { requireFreshStepUp, requirePermission } from "../authorization/authorization.js";
-import type { AdminPermission, AdminSubject } from "../authorization/permissionRegistry.js";
-import type { AdminInvitationDeliveryPort, AdminInvitationDeliveryResult } from "../auth/adminInvitationProvider.js";
-import type { StaffAuthService } from "../auth/staffAuthService.js";
+import { ADMIN_ROLES, type AdminPermission, type AdminSubject } from "../authorization/permissionRegistry.js";
 import type { AdminActionRecord, AdminRepository } from "../repositories/adminRepository.js";
 
 const APPROVAL_PERMISSION: Record<string, AdminPermission> = {
@@ -17,7 +15,6 @@ const APPROVAL_PERMISSION: Record<string, AdminPermission> = {
   TRANSFER_OPERATION: "transfer.action.approve", FRAUD_ACTION: "fraud.resolve.approve",
   OUTBOX_REQUEUE: "outbox.requeue.approve", JOB_RETRY: "job.retry.approve",
   STAFF_ROLE_CHANGE: "staff.role-change.approve", STAFF_DISABLE: "staff.disable.approve",
-  STAFF_INVITE: "staff.invite.approve",
 };
 
 const REQUEST_PERMISSION: Record<string, AdminPermission> = {
@@ -28,7 +25,6 @@ const REQUEST_PERMISSION: Record<string, AdminPermission> = {
   TRANSFER_OPERATION: "transfer.action.request", FRAUD_ACTION: "fraud.action.request",
   OUTBOX_REQUEUE: "outbox.requeue.request", JOB_RETRY: "job.retry.request",
   STAFF_ROLE_CHANGE: "staff.role-change.request", STAFF_DISABLE: "staff.disable.request",
-  STAFF_INVITE: "staff.invite.request",
 };
 
 function requireIdempotency(value: unknown): string {
@@ -57,7 +53,6 @@ const ACTION_FIELDS: Readonly<Record<string, readonly string[]>> = {
   JOB_RETRY: ["reasonCode", "ticketReference", "description"],
   STAFF_ROLE_CHANGE: ["reasonCode", "ticketReference", "description", "roleCode", "operation", "environmentScope"],
   STAFF_DISABLE: ["reasonCode", "ticketReference", "description"],
-  STAFF_INVITE: ["reasonCode", "ticketReference", "description", "email", "employeeCode", "displayName", "role"],
 };
 
 function rejectUnknownFields(actionType: string, body: Record<string, unknown>): void {
@@ -67,21 +62,12 @@ function rejectUnknownFields(actionType: string, body: Record<string, unknown>):
   if (unknown.length > 0) throw invalidRequest("Request contains unsupported fields.", { [unknown[0]]: "This field is not accepted for the selected Admin command." });
 }
 
-export type AdminActionEngineOptions = {
-  invitationProvider?: AdminInvitationDeliveryPort;
-  activationUrl?: string;
-};
-
 export class AdminActionEngine {
-  constructor(
-    private readonly repository: AdminRepository,
-    private readonly auth: StaffAuthService,
-    private readonly options: AdminActionEngineOptions = {},
-  ) {}
+  constructor(private readonly repository: AdminRepository) {}
 
   async create(input: { subject: AdminSubject; actionType: string; targetType: string; targetId: string; body: Record<string, unknown>; idempotencyKey: string; traceId: string }): Promise<AdminActionRecord> {
     const permission = REQUEST_PERMISSION[input.actionType];
-    if (!permission) throw conflictWithCode("FOUR_EYES_REQUIRED", "This operation is not enabled in the Admin policy registry.");
+    if (!permission) throw conflictWithCode("APPROVAL_POLICY_UNCONFIGURED", "This operation is not enabled in the Admin policy registry.");
     requirePermission(input.subject, permission);
     const idempotencyKey = requireIdempotency(input.idempotencyKey);
     rejectUnknownFields(input.actionType, input.body);
@@ -89,19 +75,6 @@ export class AdminActionEngine {
     const payload: Record<string, unknown> = { ...input.body, reasonCode };
     delete payload.token; delete payload.password; delete payload.otp; delete payload.totpSecret;
     const safePayload = redactAdminMetadata(payload) as Record<string, unknown>;
-    if (input.actionType === "STAFF_INVITE") {
-      const email = typeof safePayload.email === "string" ? safePayload.email.trim().toLowerCase() : "";
-      const employeeCode = typeof safePayload.employeeCode === "string" ? safePayload.employeeCode.trim() : "";
-      const displayName = typeof safePayload.displayName === "string" ? safePayload.displayName.trim() : "";
-      const role = typeof safePayload.role === "string" ? safePayload.role.trim() : "";
-      if (!/^\S+@\S+\.\S+$/.test(email) || !/^[A-Za-z0-9._-]{2,64}$/.test(employeeCode) || displayName.length < 2 || !["SUPPORT", "OPERATIONS", "CONTROL", "ADMIN"].includes(role)) {
-        throw invalidRequest("Staff invite fields are invalid.");
-      }
-      safePayload.email = email;
-      safePayload.employeeCode = employeeCode;
-      safePayload.displayName = displayName;
-      safePayload.role = role;
-    }
     if (input.actionType === "SIMULATION_FUNDING" || input.actionType === "SIMULATION_FUNDING_REVERSAL") {
       const amount = typeof safePayload.amountMinor === "string" || typeof safePayload.amountMinor === "number" ? String(safePayload.amountMinor) : "";
       if (!/^\d+$/.test(amount) || BigInt(amount) <= 0n || BigInt(amount) > 100_000_000n) throw conflictWithCode("FUNDING_LIMIT_EXCEEDED", "Simulation funding amount is outside the per-request limit.");
@@ -136,7 +109,7 @@ export class AdminActionEngine {
         const roleCode = typeof safePayload.roleCode === "string" ? safePayload.roleCode.trim() : "";
         const operation = typeof safePayload.operation === "string" ? safePayload.operation.trim().toUpperCase() : "";
         const scope = typeof safePayload.environmentScope === "string" ? safePayload.environmentScope.trim().toLowerCase() : "preview";
-        if (!["SUPPORT", "OPERATIONS", "CONTROL", "ADMIN"].includes(roleCode) || !["GRANT", "REVOKE"].includes(operation) || !["preview", "production"].includes(scope)) throw invalidRequest("Staff role change fields are invalid.");
+        if (!ADMIN_ROLES.includes(roleCode as (typeof ADMIN_ROLES)[number]) || !["GRANT", "REVOKE"].includes(operation) || !["preview", "production"].includes(scope)) throw invalidRequest("Staff role change fields are invalid.");
         safePayload.roleCode = roleCode;
         safePayload.operation = operation;
         safePayload.environmentScope = scope;
@@ -199,15 +172,11 @@ export class AdminActionEngine {
     return action;
   }
 
-  async approve(input: { subject: AdminSubject; accessToken: string; requestId: string; body: Record<string, unknown>; traceId: string }): Promise<AdminActionRecord> {
+  async approve(input: { subject: AdminSubject; requestId: string; body: Record<string, unknown>; traceId: string }): Promise<AdminActionRecord> {
     const action = await this.repository.findAction(input.requestId);
     if (!action) throw notFound("Admin action not found.");
     const permission = APPROVAL_PERMISSION[action.actionType];
-    if (!permission) throw conflictWithCode("FOUR_EYES_REQUIRED", "Action approval policy is not configured.");
-    if (action.requesterStaffId === input.subject.staffId) {
-      await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "ADMIN_SELF_APPROVAL_ATTEMPT", targetType: action.targetType, targetId: action.targetId, outcome: "DENIED", reasonCode: "SELF_APPROVAL_FORBIDDEN", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: action.version, afterVersion: null, metadata: {} });
-      throw conflictWithCode("SELF_APPROVAL_FORBIDDEN", "Bạn không thể duyệt yêu cầu do chính mình tạo.");
-    }
+    if (!permission) throw conflictWithCode("APPROVAL_POLICY_UNCONFIGURED", "Action approval policy is not configured.");
     requirePermission(input.subject, permission);
     requireFreshStepUp(input.subject);
     const approvedFingerprint = typeof input.body.fingerprint === "string" ? input.body.fingerprint : "";
@@ -215,7 +184,7 @@ export class AdminActionEngine {
     if (input.body.version !== undefined) {
       const submittedVersion = Number(input.body.version);
       const isDecisionRecovery = action.status === "APPROVED" && submittedVersion === action.version - 1;
-      // A completed action is an idempotent receipt. A checker may retry the
+      // A completed action is an idempotent receipt. An approver may retry the
       // exact approval request after losing the response, so the original
       // approval-view version remains acceptable after the server has advanced
       // the action state.
@@ -238,47 +207,13 @@ export class AdminActionEngine {
     const executed = await this.repository.executeApprovedAction({ requestId: action.id, approverStaffId: input.subject.staffId, traceId: input.traceId });
     if (executed.status === "STALE") throw conflictWithCode("ACTION_STALE", "Target changed before approval; create a new action.");
     if (executed.status === "FAILED") throw conflictWithCode(executed.failureCode ?? "ACTION_EXECUTION_FAILED", "Approved action could not be executed.");
-    if (executed.invitation) {
-      const delivery = this.options.invitationProvider;
-      const activationUrl = this.options.activationUrl;
-      if (!delivery || !activationUrl) {
-        await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "STAFF_INVITATION_DELIVERY_FAILED", targetType: "STAFF_INVITE", targetId: executed.invitation.inviteId, outcome: "FAILED", reasonCode: "INVITATION_DELIVERY_NOT_CONFIGURED", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { actionType: action.actionType } });
-        throw conflictWithCode("STAFF_INVITATION_DELIVERY_NOT_CONFIGURED", "Invitation delivery is not configured for this runtime.");
-      }
-      let result: AdminInvitationDeliveryResult;
-      try {
-        result = await delivery.send({
-          deliveryId: `staff-invite:${executed.invitation.inviteId}`,
-          purpose: "STAFF_INVITATION",
-          destination: executed.invitation.destination,
-          displayName: executed.invitation.displayName,
-          role: executed.invitation.role,
-          invitationToken: executed.invitation.token,
-          activationUrl,
-          expiresAt: executed.invitation.expiresAt,
-        });
-      } catch {
-        const health = delivery.health();
-        await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "STAFF_INVITATION_DELIVERY_FAILED", targetType: "STAFF_INVITE", targetId: executed.invitation.inviteId, outcome: "FAILED", reasonCode: "INVITATION_DELIVERY_EXCEPTION", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { actionType: action.actionType, provider: health.provider, providerStatus: health.status, providerConfigured: health.configured } });
-        throw conflictWithCode("STAFF_INVITATION_DELIVERY_FAILED", "Invitation was created but could not be delivered; retry with a new invite request.");
-      }
-      if (result.status !== "SENT") {
-        await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "STAFF_INVITATION_DELIVERY_FAILED", targetType: "STAFF_INVITE", targetId: executed.invitation.inviteId, outcome: "FAILED", reasonCode: "INVITATION_DELIVERY_FAILED", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { actionType: action.actionType, provider: delivery.health().provider } });
-        throw conflictWithCode("STAFF_INVITATION_DELIVERY_FAILED", "Invitation was created but could not be delivered; retry with a new invite request.");
-      }
-      await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "STAFF_INVITATION_DELIVERED", targetType: "STAFF_INVITE", targetId: executed.invitation.inviteId, outcome: "SUCCEEDED", reasonCode: "INVITATION_DELIVERED", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { actionType: action.actionType, provider: delivery.health().provider, providerMessageId: result.providerMessageId ?? null } });
-    }
     await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "ADMIN_ACTION_APPROVED", targetType: action.targetType, targetId: action.targetId, outcome: "SUCCEEDED", reasonCode, requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: executed.beforeVersion ?? action.expectedTargetVersion, afterVersion: executed.afterVersion ?? null, metadata: { actionType: action.actionType, resultResourceId: executed.resultResourceId ?? null } });
     return (await this.repository.findAction(action.id))!;
   }
 
   async reject(input: { subject: AdminSubject; requestId: string; body: Record<string, unknown>; traceId: string }): Promise<AdminActionRecord> {
     const action = await this.repository.findAction(input.requestId); if (!action) throw notFound("Admin action not found.");
-    const permission = APPROVAL_PERMISSION[action.actionType]; if (!permission) throw conflictWithCode("FOUR_EYES_REQUIRED", "Action approval policy is not configured.");
-    if (action.requesterStaffId === input.subject.staffId) {
-      await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "ADMIN_SELF_APPROVAL_ATTEMPT", targetType: action.targetType, targetId: action.targetId, outcome: "DENIED", reasonCode: "SELF_APPROVAL_FORBIDDEN", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: action.version, afterVersion: null, metadata: { decision: "REJECTED" } });
-      throw conflictWithCode("SELF_APPROVAL_FORBIDDEN", "Maker cannot reject own action.");
-    }
+    const permission = APPROVAL_PERMISSION[action.actionType]; if (!permission) throw conflictWithCode("APPROVAL_POLICY_UNCONFIGURED", "Action approval policy is not configured.");
     requirePermission(input.subject, permission); requireFreshStepUp(input.subject);
     const reasonCode = requireReason(input.body); const fingerprintValue = typeof input.body.fingerprint === "string" ? input.body.fingerprint : ""; if (fingerprintValue !== action.requestFingerprint) throw conflictWithCode("ACTION_FINGERPRINT_MISMATCH", "The reviewed action fingerprint does not match.");
     if (input.body.version !== undefined) {

@@ -112,7 +112,7 @@ export function FraudCases({ items, onReload, loading }: FraudCasesProps) {
       setSuccessNotice(
         `Đã tạo yêu cầu giải quyết cho case ${shortId(targetId)} (Mã action: ${
           result.action?.id ?? "Mới"
-        }). Chờ Control phê duyệt.`
+        }). Chờ ADMIN phê duyệt.`
       );
       await onReload();
     } catch (caught) {
@@ -262,7 +262,7 @@ export function FraudCases({ items, onReload, loading }: FraudCasesProps) {
             <div className="target-summary-box">
               <p>
                 Case <b>{resolutionTarget.id}</b> · Thao tác Maker sẽ chuyển yêu cầu RESOLVE vào
-                Approval Inbox cho Control phê duyệt.
+                Approval Inbox để ADMIN phê duyệt.
               </p>
               <div>
                 <b>Lý do báo cáo:</b> {resolutionTarget.reasonPreview}

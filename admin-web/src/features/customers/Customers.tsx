@@ -863,7 +863,7 @@ export function Customers({ onRefresh }: CustomersProps) {
             {/* Review confirmation box */}
             {isAccountReviewing ? (
               <div className="review-box" data-testid="review-box">
-                <h4>Xác nhận nội dung trước khi gửi Four-Eyes</h4>
+                <h4>Xác nhận nội dung trước khi gửi yêu cầu</h4>
                 <ul>
                   <li><b>Hành động:</b> {accountTarget.kind}</li>
                   <li><b>Tài khoản:</b> {accountTarget.account.maskedNumber} (Ver: {accountTarget.account.version})</li>
@@ -906,7 +906,7 @@ export function Customers({ onRefresh }: CustomersProps) {
                       ? "Đang gửi…"
                       : isAccountIndeterminate
                       ? "Gửi lại (Giữ nguyên khóa xử lý)"
-                      : "Tạo yêu cầu four-eyes"}
+                      : "Tạo yêu cầu xử lý"}
                   </button>
                 </>
               ) : (
@@ -993,7 +993,7 @@ export function Customers({ onRefresh }: CustomersProps) {
 
             {isCustomerReviewing ? (
               <div className="review-box" data-testid="customer-review-box">
-                <h4>Xác nhận nội dung trước khi gửi Four-Eyes</h4>
+                <h4>Xác nhận nội dung trước khi gửi yêu cầu</h4>
                 <ul>
                   <li><b>Khách hàng:</b> {customerTarget.customer.fullName}</li>
                   <li><b>Hành động:</b> {customerTarget.kind === "LOCK" ? "Khóa tài khoản đăng nhập" : "Mở khóa tài khoản"}</li>
@@ -1030,7 +1030,7 @@ export function Customers({ onRefresh }: CustomersProps) {
                       ? "Đang gửi…"
                       : isCustomerIndeterminate
                       ? "Gửi lại (Giữ nguyên khóa xử lý)"
-                      : "Tạo yêu cầu four-eyes"}
+                      : "Tạo yêu cầu xử lý"}
                   </button>
                 </>
               ) : (

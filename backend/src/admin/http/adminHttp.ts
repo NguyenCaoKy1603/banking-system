@@ -5,7 +5,6 @@ import { DomainError, invalidRequest, notFound, unauthorized } from "../../error
 import { requirePermission, requireStaffSession } from "../authorization/authorization.js";
 import { ADMIN_ROUTES, type AdminRouteDefinition } from "../authorization/permissionRegistry.js";
 import { StaffAuthService } from "../auth/staffAuthService.js";
-import type { AdminInvitationDeliveryPort } from "../auth/adminInvitationProvider.js";
 import { AdminActionEngine } from "../actions/actionEngine.js";
 import type { AdminCaseScope, AdminRepository } from "../repositories/adminRepository.js";
 import type { RuntimeMetadata } from "../../runtimeMetadata.js";
@@ -25,7 +24,6 @@ export type AdminHttpOptions = {
   repository: AdminRepository;
   auth: StaffAuthService;
   actions: AdminActionEngine;
-  invitationProvider?: Pick<AdminInvitationDeliveryPort, "health">;
   allowedOrigins?: string[];
   environment?: string;
   commitSha?: string;
@@ -92,8 +90,8 @@ async function auditRead(options: AdminHttpOptions, actorStaffId: string, action
 }
 function caseScope(subject: { staffId: string; roles: readonly { role: string; environmentScope?: string; expiresAt?: string | null }[] }, environmentScope = "preview"): AdminCaseScope {
   const activeRoles = subject.roles.filter((assignment) => (assignment.environmentScope ?? environmentScope) === environmentScope && (!assignment.expiresAt || Date.parse(assignment.expiresAt) > Date.now()));
-  const scope = activeRoles.some((assignment) => assignment.role === "CONTROL") ? "CONTROL" : activeRoles.some((assignment) => assignment.role === "ADMIN") ? "ADMIN" : activeRoles[0]?.role ?? "SUPPORT";
-  return { staffId: subject.staffId, scope, canSeeAll: scope === "CONTROL" || scope === "ADMIN" };
+  const scope = activeRoles.some((assignment) => assignment.role === "ADMIN") ? "ADMIN" : activeRoles[0]?.role ?? "OPERATIONS";
+  return { staffId: subject.staffId, scope, canSeeAll: scope === "ADMIN" };
 }
 
 function setAuthCookies(response: ServerResponse, tokens: { accessToken: string; refreshToken: string; csrfToken: string; expiresInSeconds: number }, secure: boolean): void {
@@ -134,11 +132,9 @@ export async function handleAdminRequest(request: IncomingMessage, response: Ser
   if (url.pathname === "/readyz") {
     try {
       await options.repository.initialize();
-      const invitationHealth = options.invitationProvider?.health();
       write(response, 200, traceId, {
         service: "banking-admin-api",
         status: "ready",
-        invitationDelivery: invitationHealth ?? { provider: "http", status: "degraded", configured: false, credentialConfigured: false },
       });
     } catch {
       writeError(response, traceId, new DomainError(503, "PERSISTENCE_UNAVAILABLE", "Admin persistence is unavailable."));
@@ -161,21 +157,23 @@ export async function handleAdminRequest(request: IncomingMessage, response: Ser
       authContext = await options.auth.authenticate(accessToken);
     }
     if (route.permission && authContext) {
-      // Let the action engine report SELF_APPROVAL_FORBIDDEN for the maker's
-      // own command even when that maker does not hold the generic approval
-      // queue permission. All other approval attempts remain behind the
-      // route-level deny-by-default gate.
-      const isApprovalMutation = pathname.startsWith("/admin/approvals/") && /(approve|reject|cancel)$/.test(pathname) && route.stateChanging;
-      const requestId = isApprovalMutation ? pathParam(route.path, pathname, "requestId") : null;
-      const candidate = requestId ? await options.repository.findAction(requestId) : null;
-      if (!candidate || candidate.requesterStaffId !== authContext.subject.staffId) requirePermission(authContext.subject, route.permission, authorizationScope);
+      requirePermission(authContext.subject, route.permission, authorizationScope);
     }
     if (route.stateChanging && !pathname.startsWith("/admin/auth/login") && !pathname.startsWith("/admin/auth/mfa/verify") && !pathname.startsWith("/admin/auth/activate") && !pathname.startsWith("/admin/auth/refresh")) {
       if (!accessToken) throw unauthorized("Staff session is required.");
       await options.auth.verifyCsrf(accessToken, header(request, "x-csrf-token") ?? "");
     }
 
-    if (request.method === "POST" && pathname === "/admin/auth/login") { requireBodyFields(body, ["email", "password"]); const result = await options.auth.beginLogin(String(body.email ?? ""), String(body.password ?? "")); write(response, 202, traceId, result); return; }
+    if (request.method === "POST" && pathname === "/admin/auth/login") {
+      requireBodyFields(body, ["email", "password"]);
+      const result = await options.auth.beginLogin(String(body.email ?? ""), String(body.password ?? ""), header(request, "x-device-id"), header(request, "x-forwarded-for"));
+      if (result.mfaRequired) { write(response, 202, traceId, result); return; }
+      setAuthCookies(response, result.tokens, options.secureCookies ?? false);
+      const permissionSubject = { staffId: result.staff.id, status: result.staff.status, authorizationVersion: result.staff.authorizationVersion, roles: result.staff.roles, mfaVerifiedAt: null, stepUpVerifiedAt: null };
+      const permissions = [...(await import("../authorization/permissionRegistry.js")).resolvePermissions(permissionSubject, authorizationScope)];
+      write(response, 200, traceId, { mfaRequired: false, staff: { id: result.staff.id, employeeCode: result.staff.employeeCode, displayName: result.staff.displayName, email: result.staff.emailNormalized, status: result.staff.status, roles: result.staff.roles }, permissions, csrfToken: result.tokens.csrfToken, expiresInSeconds: result.tokens.expiresInSeconds });
+      return;
+    }
     if (request.method === "POST" && pathname === "/admin/auth/mfa/verify") { requireBodyFields(body, ["challengeId", "code"]); const result = await options.auth.verifyLoginMfa(String(body.challengeId ?? ""), String(body.code ?? ""), header(request, "x-device-id"), header(request, "x-forwarded-for")); setAuthCookies(response, result.tokens, options.secureCookies ?? false); write(response, 200, traceId, { staff: { id: result.staff.id, employeeCode: result.staff.employeeCode, displayName: result.staff.displayName, email: result.staff.emailNormalized, roles: result.staff.roles }, csrfToken: result.tokens.csrfToken, expiresInSeconds: result.tokens.expiresInSeconds }); return; }
     if (request.method === "POST" && pathname === "/admin/auth/activate") { requireBodyFields(body, ["inviteToken", "password", "totpSecret"]); const result = await options.auth.activate({ inviteToken: String(body.inviteToken ?? ""), password: String(body.password ?? ""), totpSecret: typeof body.totpSecret === "string" ? body.totpSecret : undefined }); write(response, 200, traceId, result); return; }
     if (request.method === "POST" && pathname === "/admin/auth/step-up") { requireBodyFields(body, ["code"]); await options.auth.stepUp(accessToken!, String(body.code ?? "")); write(response, 204, traceId); return; }
@@ -188,7 +186,29 @@ export async function handleAdminRequest(request: IncomingMessage, response: Ser
     if (request.method === "GET" && pathname === "/admin/permissions") { write(response, 200, traceId, { items: await options.repository.listPermissions() }); return; }
     if (request.method === "GET" && pathname === "/admin/staff") { const items = (await options.repository.listStaff()).map((staff) => ({ id: staff.id, employeeCode: staff.employeeCode, email: staff.emailNormalized, displayName: staff.displayName, status: staff.status, roles: staff.roles, mfaEnrolled: Boolean(staff.mfaEnrolledAt), createdAt: staff.createdAt })); await auditRead(options, authContext!.staff.id, "STAFF_LIST_READ", "STAFF", null, traceId, { resultCount: items.length }); write(response, 200, traceId, { items }); return; }
     if (request.method === "GET" && pathname.startsWith("/admin/staff/") && !pathname.includes("/role-change") && !pathname.includes("/disable")) { const staffId = requireId(pathParam(route.path, pathname, "staffId"), "staffId"); const staff = await options.repository.findStaffById(staffId); if (!staff) throw notFound("Staff not found."); await auditRead(options, authContext!.staff.id, "STAFF_DETAIL_READ", "STAFF", staffId, traceId); write(response, 200, traceId, { staff: { id: staff.id, employeeCode: staff.employeeCode, email: staff.emailNormalized, displayName: staff.displayName, status: staff.status, roles: staff.roles, mfaEnrolled: Boolean(staff.mfaEnrolledAt), createdAt: staff.createdAt } }); return; }
-    if (request.method === "POST" && pathname === "/admin/staff/invite-requests") { requireCommandIdempotency(request); requireBodyFields(body, ["email", "employeeCode", "displayName", "role", "reasonCode", "ticketReference", "description"]); const action = await options.actions.create({ subject: authContext!.subject, actionType: "STAFF_INVITE", targetType: "STAFF_INVITE", targetId: "new", body, idempotencyKey: header(request, "idempotency-key") ?? "", traceId }); write(response, 202, traceId, { action }); return; }
+    if (request.method === "POST" && pathname === "/admin/staff/operations-accounts/mfa-setup") { requireBodyFields(body, ["email"]); const result = options.auth.beginOperationsMfaSetup(String(body.email ?? "")); write(response, 200, traceId, result); return; }
+    if (request.method === "POST" && pathname === "/admin/staff/operations-accounts") {
+      const commandKey = requireCommandIdempotency(request);
+      requireBodyFields(body, ["email", "employeeCode", "displayName", "password", "mfaSecret", "mfaCode"]);
+      const result = await options.auth.createOperationsAccount({
+        email: String(body.email ?? ""),
+        employeeCode: String(body.employeeCode ?? ""),
+        displayName: String(body.displayName ?? ""),
+        password: String(body.password ?? ""),
+        mfaSecret: String(body.mfaSecret ?? ""),
+        mfaCode: String(body.mfaCode ?? ""),
+        creatorStaffId: authContext!.staff.id,
+        environmentScope: authorizationScope,
+        idempotencyKey: commandKey,
+        traceId,
+      });
+      const staff = result.staff;
+      write(response, result.replayed ? 200 : 201, traceId, {
+        replayed: result.replayed,
+        staff: { id: staff.id, employeeCode: staff.employeeCode, email: staff.emailNormalized, displayName: staff.displayName, status: staff.status, roles: staff.roles, mfaEnrolled: Boolean(staff.mfaEnrolledAt), createdAt: staff.createdAt },
+      });
+      return;
+    }
     if (request.method === "GET" && pathname === "/admin/customers") { const items = await options.repository.findCustomers(url.searchParams.get("q") ?? ""); await options.repository.appendAudit({ id: crypto.randomUUID(), actorStaffId: authContext!.staff.id, action: "CUSTOMER_SEARCH_READ", targetType: "CUSTOMER", targetId: null, outcome: "SUCCEEDED", reasonCode: "MASKED_READ", requestId: null, traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { resultCount: items.length } }); write(response, 200, traceId, { items }); return; }
     if (request.method === "GET" && pathname.startsWith("/admin/customers/") && pathname.endsWith("/accounts")) { const customerId = requireId(pathParam(route.path, pathname, "customerId"), "customerId"); const items = await options.repository.listCustomerAccounts(customerId); await options.repository.appendAudit({ id: crypto.randomUUID(), actorStaffId: authContext!.staff.id, action: "CUSTOMER_ACCOUNTS_READ", targetType: "CUSTOMER", targetId: customerId, outcome: "SUCCEEDED", reasonCode: "ACCOUNT_READ", requestId: null, traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { resultCount: items.length } }); write(response, 200, traceId, { items }); return; }
     if (request.method === "GET" && pathname.startsWith("/admin/customers/")) { const customerId = requireId(pathParam(route.path, pathname, "customerId"), "customerId"); const customer = await options.repository.findCustomer(customerId); if (!customer) throw notFound("Customer not found."); await options.repository.appendAudit({ id: crypto.randomUUID(), actorStaffId: authContext!.staff.id, action: "CUSTOMER_READ_MASKED", targetType: "CUSTOMER", targetId: customerId, outcome: "SUCCEEDED", reasonCode: "MASKED_READ", requestId: null, traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: {} }); write(response, 200, traceId, { customer }); return; }
@@ -202,7 +222,7 @@ export async function handleAdminRequest(request: IncomingMessage, response: Ser
     if (request.method === "POST" && pathname.endsWith("/funding-reversal-requests")) { const accountId = requireId(pathParam(route.path, pathname, "accountId"), "accountId"); const action = await options.actions.create({ subject: authContext!.subject, actionType: "SIMULATION_FUNDING_REVERSAL", targetType: "ACCOUNT", targetId: accountId, body, idempotencyKey: header(request, "idempotency-key") ?? "", traceId }); write(response, 202, traceId, { action }); return; }
     if (request.method === "GET" && pathname === "/admin/approvals") { const items = await options.repository.listActions("PENDING_APPROVAL", caseScope(authContext!.subject, authorizationScope)); await auditRead(options, authContext!.staff.id, "ADMIN_APPROVAL_QUEUE_READ", "ADMIN_ACTION", null, traceId, { resultCount: items.length }); write(response, 200, traceId, { items }); return; }
     if (request.method === "GET" && pathname.startsWith("/admin/approvals/")) { const requestId = requireId(pathParam(route.path, pathname, "requestId"), "requestId"); const action = await options.repository.findAction(requestId); if (!action) throw notFound("Admin action not found."); await auditRead(options, authContext!.staff.id, "ADMIN_APPROVAL_READ", "ADMIN_ACTION", requestId, traceId); write(response, 200, traceId, { action }); return; }
-    if (request.method === "POST" && pathname.endsWith("/approve")) { requireCommandIdempotency(request); requireBodyFields(body, ["fingerprint", "version", "reasonCode", "decision", "comment"]); const action = await options.actions.approve({ subject: authContext!.subject, accessToken: accessToken!, requestId: requireId(pathParam(route.path, pathname, "requestId"), "requestId"), body, traceId }); write(response, 200, traceId, { action, receipt: { actionId: action.id, resourceId: action.resultResourceId, status: action.status } }); return; }
+    if (request.method === "POST" && pathname.endsWith("/approve")) { requireCommandIdempotency(request); requireBodyFields(body, ["fingerprint", "version", "reasonCode", "decision", "comment"]); const action = await options.actions.approve({ subject: authContext!.subject, requestId: requireId(pathParam(route.path, pathname, "requestId"), "requestId"), body, traceId }); write(response, 200, traceId, { action, receipt: { actionId: action.id, resourceId: action.resultResourceId, status: action.status } }); return; }
     if (request.method === "POST" && pathname.endsWith("/reject")) { requireCommandIdempotency(request); requireBodyFields(body, ["fingerprint", "version", "reasonCode", "comment"]); const action = await options.actions.reject({ subject: authContext!.subject, requestId: requireId(pathParam(route.path, pathname, "requestId"), "requestId"), body, traceId }); write(response, 200, traceId, { action }); return; }
     if (request.method === "POST" && pathname.endsWith("/cancel")) { requireCommandIdempotency(request); requireBodyFields(body, []); const action = await options.actions.cancel(authContext!.subject, requireId(pathParam(route.path, pathname, "requestId"), "requestId"), traceId); write(response, 200, traceId, { action }); return; }
     if (request.method === "GET" && pathname === "/admin/audit-events") { const items = await options.repository.listAudit(Number(url.searchParams.get("limit") ?? 100)); await options.repository.appendAudit({ id: crypto.randomUUID(), actorStaffId: authContext!.staff.id, action: "AUDIT_READ", targetType: "AUDIT", targetId: null, outcome: "SUCCEEDED", reasonCode: "AUDIT_READ", requestId: null, traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { resultCount: items.length } }); write(response, 200, traceId, { items }); return; }

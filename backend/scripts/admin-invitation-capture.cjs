@@ -1,5 +1,5 @@
 /*
- * Local-only invitation inbox for the Admin Web rehearsal.
+ * Local-only invitation inbox for first-Admin bootstrap activation.
  *
  * This process intentionally keeps messages in memory. It is a deterministic
  * HTTP capture endpoint for local preview, not an email service and not a
@@ -55,9 +55,9 @@ function activationHref(activationUrl, token) {
 function inboxHtml() {
   const rows = messages.map((message) => {
     const href = activationHref(message.activationUrl, message.token);
-    return `<article class="message"><h2>${escapeHtml(message.displayName)} · ${escapeHtml(message.role)}</h2><p>To: ${escapeHtml(message.destination)}</p><p>Expires: ${escapeHtml(message.expiresAt)}</p><p><a href="${escapeHtml(href)}">Mở liên kết kích hoạt staff</a></p></article>`;
+    return `<article class="message"><h2>${escapeHtml(message.displayName)} · ${escapeHtml(message.role)}</h2><p>To: ${escapeHtml(message.destination)}</p><p>Expires: ${escapeHtml(message.expiresAt)}</p><p><a href="${escapeHtml(href)}">Mở liên kết bootstrap Admin</a></p></article>`;
   }).join("\n");
-  return `<!doctype html><meta charset="utf-8"><title>Local invitation inbox</title><style>body{font:16px system-ui,sans-serif;max-width:860px;margin:40px auto;padding:0 20px;background:#f6f7f9;color:#17202a}.message{background:white;border:1px solid #d8dee4;border-radius:10px;padding:18px;margin:16px 0}a{color:#0969da}.notice{padding:12px;background:#fff8c5;border:1px solid #d4a72c;border-radius:8px}</style><h1>Local invitation inbox</h1><p class="notice">Chỉ dùng cho local preview. Liên kết chứa token một lần và không được chia sẻ.</p>${rows || "<p>Chưa có invitation nào.</p>"}`;
+  return `<!doctype html><meta charset="utf-8"><title>Local Admin bootstrap</title><style>body{font:16px system-ui,sans-serif;max-width:860px;margin:40px auto;padding:0 20px;background:#f6f7f9;color:#17202a}.message{background:white;border:1px solid #d8dee4;border-radius:10px;padding:18px;margin:16px 0}a{color:#0969da}.notice{padding:12px;background:#fff8c5;border:1px solid #d4a72c;border-radius:8px}</style><h1>Khởi tạo Admin đầu tiên</h1><p class="notice">Chỉ dùng cho bootstrap Admin trên local preview. Liên kết chứa token một lần và không được chia sẻ.</p>${rows || "<p>Chưa có invitation nào.</p>"}`;
 }
 
 const server = http.createServer(async (request, response) => {

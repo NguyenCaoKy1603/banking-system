@@ -172,7 +172,7 @@ export function AppLayout({
           <div className="sidebar-note">
             <strong>Nguyên tắc bảo mật</strong>
             <div>Deny-by-default</div>
-            <div>Four-eyes bắt buộc</div>
+            <div>Phê duyệt theo quyền và MFA</div>
             <div>Audit append-only</div>
             <div>PII được che mặc định</div>
           </div>

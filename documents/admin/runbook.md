@@ -13,15 +13,14 @@ Migration `022_admin_policy_alignment.sql` tách riêng quyền tạo yêu cầu
 
 ## Bootstrap
 
-Bootstrap không in hoặc lưu token mời. Token được tạo trong memory, chỉ gửi
-qua gateway email đã cấu hình, còn PostgreSQL chỉ giữ `token_hash`. Hai địa
-chỉ phải khác nhau; invitation có thời hạn tối đa 24 giờ và chỉ dùng một lần.
+Bootstrap chỉ cần email của một tài khoản ADMIN khởi tạo. Token mời chỉ tồn tại
+trong memory để gửi qua gateway email đã cấu hình, còn PostgreSQL chỉ giữ
+`token_hash`. Invitation có thời hạn tối đa 24 giờ và chỉ dùng một lần.
 Gateway lỗi giữa chừng sẽ đốt các invitation đã tạo và giải phóng reservation
 để chạy lại an toàn với cùng địa chỉ.
 
 ```powershell
 $env:ADMIN_BOOTSTRAP_ADMIN_EMAIL = "admin@example.test"
-$env:ADMIN_BOOTSTRAP_CONTROL_EMAIL = "control@example.test"
 $env:ADMIN_INVITATION_ACTIVATION_URL = "http://127.0.0.1:5173/admin/activate"
 $env:ADMIN_INVITATION_PROVIDER_URL = "http://127.0.0.1:8025/invitations"
 $env:ADMIN_INVITATION_ALLOWED_DOMAINS = "example.test"
@@ -31,36 +30,34 @@ npm run admin:bootstrap
 `ADMIN_INVITATION_PROVIDER_URL` ở local phải trỏ tới loopback/Mailpit/MailHog
 hoặc HTTP capture service tương đương. Compose local của repo đã có service
 `invitation-capture` tại `http://127.0.0.1:8025/inbox`; service chỉ giữ thư
-trong memory và xóa hộp thư khi restart, không gửi ra Internet. Staging và
+trong memory và xóa hộp thư khi restart, không gửi ra Internet. Service không
+chạy cùng stack mặc định; bật riêng khi bootstrap bằng lệnh
+`docker compose --profile bootstrap up -d invitation-capture`. Staging và
 production-like bắt buộc dùng HTTPS, allowlist domain kiểm soát và credential
 từ Secret Manager qua `email-provider-token` (không dùng
 `ADMIN_INVITATION_PROVIDER_TOKEN` trong deployment). CLI chỉ in invitation IDs,
 role và thời hạn; không in token/password/TOTP. Provider không được ghi request
 body, token vào log, metric, audit, outbox hay artifact.
 
-Luồng invite từ Admin Web local:
-
-1. Tạo `Invite request` bằng địa chỉ thuộc allowlist mặc định `@example.test`.
-2. Control duyệt request bằng step-up MFA.
-3. Mở `http://127.0.0.1:8025/inbox` và chọn liên kết kích hoạt tương ứng.
-4. Tại `/admin/activate`, đặt password tối thiểu 12 ký tự; để trống TOTP để
-   server tạo khóa một lần hoặc nhập khóa đã chuẩn bị trong Authenticator.
-5. Lưu khóa TOTP nếu server hiển thị, sau đó đăng nhập Admin Web bằng email,
-   password và mã TOTP.
-
-Token plaintext chỉ đi qua delivery request trong memory; PostgreSQL chỉ giữ
+Activation link ở trên chỉ dùng để khởi tạo tài khoản ADMIN đầu tiên. Token
+plaintext chỉ đi qua delivery request trong memory; PostgreSQL chỉ giữ
 `token_hash`. Liên kết kích hoạt dùng một lần và trang web xóa token khỏi URL
-sau khi kích hoạt thành công. Nếu capture service restart hoặc provider lỗi
-cuối cùng, hãy tạo invite request mới; không lấy token từ database/log.
-
-Sau khi người nhận mở activation URL, họ đặt password và enroll TOTP. Activation
-ghi audit event `STAFF_INVITE_ACTIVATED`; login tiếp theo luôn yêu cầu TOTP.
+sau khi kích hoạt thành công. Login tiếp theo luôn yêu cầu TOTP.
 Nếu provider trả timeout/429/5xx, adapter retry hữu hạn với backoff. Với
 `admin:bootstrap`, lỗi cuối cùng gọi `abortBootstrap` để burn invitation và
-giải phóng reservation. Với invite tạo từ Admin Web, mutation DB đã commit
-trước delivery (vì provider là hệ thống ngoài transaction); lỗi được audit,
-không có plaintext token để dùng lại, và cần operator reconcile bản ghi
-`INVITED` đó trước khi gửi yêu cầu mới cùng địa chỉ.
+giải phóng reservation. Tạo tài khoản OPERATIONS không dùng email invite; thao
+tác đó được thực hiện trực tiếp trong Admin Web.
+
+### Tạo trực tiếp tài khoản Operations
+
+Trong Admin Web, mở **Staff / Roles** và nhập email, mã nhân viên, tên hiển thị,
+mật khẩu ban đầu. Bấm **Tạo khóa MFA**, thêm khóa hiển thị vào ứng dụng
+Authenticator bằng cách nhập khóa thủ công, rồi nhập mã 6 số mới nhất và bấm
+**Tạo tài khoản Operations**. Backend kiểm tra TOTP và ghi tài khoản ACTIVE,
+password hash, khóa MFA đã mã hóa, role `OPERATIONS` và audit trong cùng một
+transaction. Không có email mời hay bước Approval Inbox. Lưu mật khẩu để bàn
+giao an toàn; giao diện không gửi password/MFA qua email và chỉ giữ khóa MFA
+trong bộ nhớ trang trước khi lưu.
 
 ## Start
 
@@ -70,8 +67,8 @@ npm run admin:dev
 ```
 
 Admin API bind `127.0.0.1`. Health: `GET http://127.0.0.1:5001/livez` và
-`/readyz`; readiness có `invitationDelivery.configured`,
-`credentialConfigured` và `status` dạng boolean/enum, không trả credential.
+`/readyz`; readiness kiểm tra Admin API và persistence, không phụ thuộc vào
+provider invitation bootstrap.
 Admin Web dùng `http://127.0.0.1:5173` và `credentials: include`.
 
 Khi chạy Admin Web trực tiếp bằng Vite, cấu hình proxy ở development:

@@ -50,7 +50,7 @@ export function Operations({
       setSuccessNotice(
         `Đã tạo yêu cầu Requeue cho Outbox event ${shortId(event.id)} (Mã action: ${
           result.action?.id ?? "Mới"
-        }). Chờ Control phê duyệt.`
+        }). Chờ ADMIN phê duyệt.`
       );
       await onReload();
     } catch (caught) {
@@ -79,7 +79,7 @@ export function Operations({
       setSuccessNotice(
         `Đã tạo yêu cầu Retry cho background job ${shortId(job.id)} (Mã action: ${
           result.action?.id ?? "Mới"
-        }). Chờ Control phê duyệt.`
+        }). Chờ ADMIN phê duyệt.`
       );
       await onReload();
     } catch (caught) {
@@ -237,7 +237,7 @@ export function Operations({
       </section>
 
       <div className="notice info">
-        Requeue/retry chỉ sử dụng payload canonical ban đầu và tạo action four-eyes gửi tới Control; Admin Web không thể sửa payload hoặc chạy script trực tiếp trên máy chủ.
+        Requeue/retry dùng payload canonical ban đầu và tạo yêu cầu chờ ADMIN phê duyệt; Admin Web không thể sửa payload hoặc chạy script trực tiếp trên máy chủ.
       </div>
     </section>
   );

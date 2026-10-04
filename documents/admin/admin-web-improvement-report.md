@@ -7,6 +7,12 @@
 
 ---
 
+> **Ghi chú phiên bản:** Báo cáo này ghi lại bằng chứng của baseline bốn role
+ở commit và thời điểm nêu trên, trước khi cho phép ADMIN tự duyệt yêu cầu đủ
+quyền. Ma trận hiện hành chỉ còn OPERATIONS và ADMIN; xem `rbac-matrix.md` và
+`four-eyes-workflow.md` để biết hành vi hiện tại. Các kết quả bên dưới vẫn là
+bằng chứng lịch sử, không phải mô tả role hoặc luồng duyệt hiện tại.
+
 ## 1. Tóm tắt Đợt Triển khai và Trạng thái Nghiệm thu (S-01 → S-03 & AC-01 → AC-05)
 
 Sau các lượt rà soát độc lập và hoàn thiện triệt để theo các yêu cầu bổ sung, toàn bộ 3 bước kỹ thuật (S-01, S-02, S-03) và 5 tiêu chí chấp thuận (AC-01 đến AC-05) đã được triển khai đầy đủ trên mã nguồn sản phẩm thực tế, kiểm chứng bằng bộ kiểm thử tự động toàn diện.

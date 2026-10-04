@@ -55,7 +55,7 @@ export function Transfers({ items, onReload, onFilterChange, loading }: Transfer
       setSuccessNotice(
         `Đã tạo yêu cầu ${operation.toUpperCase()} cho giao dịch ${item.reference} thành công (Mã yêu cầu: ${
           result.action?.id ?? "Mới"
-        }). Chờ Control phê duyệt.`
+        }). Chờ ADMIN phê duyệt.`
       );
       setReason("");
       await onReload();
@@ -187,7 +187,7 @@ export function Transfers({ items, onReload, onFilterChange, loading }: Transfer
       )}
 
       <div className="notice info">
-        Retry/cancel/reversal chỉ tạo action four-eyes đưa vào hàng đợi phê duyệt; Admin Web không thể trực tiếp đổi trạng thái giao dịch thành SUCCEEDED.
+        Retry/cancel/reversal tạo yêu cầu chờ ADMIN phê duyệt; Admin Web không thể trực tiếp đổi trạng thái giao dịch thành SUCCEEDED.
       </div>
     </section>
   );

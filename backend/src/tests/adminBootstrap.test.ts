@@ -10,9 +10,8 @@ import { LocalDevelopmentKeyEncryptionAdapter } from "../mfa/crypto.js";
 import { hashOpaqueToken } from "../security.js";
 import type { SecretProvider } from "../secrets/SecretProvider.js";
 
-const staff: readonly [AdminBootstrapStaffInput, AdminBootstrapStaffInput] = [
+const staff: readonly [AdminBootstrapStaffInput] = [
   { email: "admin@example.test", employeeCode: "ADMIN-BOOT", displayName: "Initial Admin", role: "ADMIN" },
-  { email: "control@example.test", employeeCode: "CONTROL-BOOT", displayName: "Initial Control", role: "CONTROL" },
 ];
 
 class RecordingInvitationProvider implements AdminInvitationDeliveryPort {
@@ -37,50 +36,47 @@ function authFor(repository: InMemoryAdminRepository): StaffAuthService {
 
 function serviceFor(repository: InMemoryAdminRepository, delivery: AdminInvitationDeliveryPort, overrides: Partial<Pick<AdminBootstrapStaffInput, "email">> = {}) {
   const auth = authFor(repository);
-  const configuredStaff: readonly [AdminBootstrapStaffInput, AdminBootstrapStaffInput] = [
+  const configuredStaff: readonly [AdminBootstrapStaffInput] = [
     { ...staff[0], ...(overrides.email ? { email: overrides.email } : {}) },
-    staff[1],
   ];
   return new AdminBootstrapService({ repository, auth, delivery, activationUrl: "http://localhost:5173/admin/activate", isProductionLike: false, reservedBy: `test:${randomUUID()}`, staff: configuredStaff });
 }
 
-test("admin bootstrap delivers two one-use invitations without returning tokens", async () => {
+test("admin bootstrap needs and delivers only one one-use Admin invitation", async () => {
   const repository = new InMemoryAdminRepository();
   await repository.initialize();
   const delivery = new RecordingInvitationProvider();
   const result = await serviceFor(repository, delivery).run();
 
   assert.equal(result.event, "admin_bootstrap_completed");
-  assert.equal(result.invitations.length, 2);
-  assert.equal(delivery.messages.length, 2);
-  assert.notEqual(delivery.messages[0]?.invitationToken, delivery.messages[1]?.invitationToken);
+  assert.equal(result.invitations.length, 1);
+  assert.deepEqual(result.invitations.map((invitation) => invitation.role), ["ADMIN"]);
+  assert.equal(delivery.messages.length, 1);
   assert.ok(!JSON.stringify(result).includes(delivery.messages[0]!.invitationToken));
   assert.ok(await repository.findInviteByHash(hashOpaqueToken(delivery.messages[0]!.invitationToken)));
   await assert.rejects(() => serviceFor(repository, new RecordingInvitationProvider()).run(), /active staff/i);
 });
 
-test("admin activation is audited, requires separate TOTP secrets, and consumes an invitation once", async () => {
+test("single Admin activation is audited and consumes its invitation once", async () => {
   const repository = new InMemoryAdminRepository();
   await repository.initialize();
   const delivery = new RecordingInvitationProvider();
   const auth = authFor(repository);
   await new AdminBootstrapService({ repository, auth, delivery, activationUrl: "http://localhost:5173/admin/activate", isProductionLike: false, staff }).run();
   const first = delivery.messages[0]!;
-  const second = delivery.messages[1]!;
   const firstActivation = await auth.activate({ inviteToken: first.invitationToken, password: "Admin-bootstrap-password-2026!", totpSecret: "JBSWY3DPEHPK3PXP" });
-  const secondActivation = await auth.activate({ inviteToken: second.invitationToken, password: "Control-bootstrap-password-2026!", totpSecret: "KRUGS4ZANFZSAYJA" });
-  assert.notEqual(firstActivation.staffId, secondActivation.staffId);
+  assert.equal((await repository.findStaffById(firstActivation.staffId))?.roles[0]?.role, "ADMIN");
   await assert.rejects(() => auth.activate({ inviteToken: first.invitationToken, password: "Admin-bootstrap-password-2026!", totpSecret: "JBSWY3DPEHPK3PXP" }), /invalid or expired/i);
   const activationAudits = (await repository.listAudit(50)).filter((event) => event.action === "STAFF_INVITE_ACTIVATED");
-  assert.equal(activationAudits.length, 2);
-  assert.deepEqual(new Set(activationAudits.map((event) => event.targetId)).size, 2);
+  assert.equal(activationAudits.length, 1);
+  assert.equal(activationAudits[0]?.targetId, firstActivation.staffId);
 });
 
 test("concurrent activation of one invitation has exactly one winner", async () => {
   const repository = new InMemoryAdminRepository();
   await repository.initialize();
   const auth = authFor(repository);
-  const invite = await auth.invite({ email: "concurrent@example.test", employeeCode: "CONCURRENT-BOOT", displayName: "Concurrent", role: "CONTROL" });
+  const invite = await auth.invite({ email: "concurrent@example.test", employeeCode: "CONCURRENT-BOOT", displayName: "Concurrent", role: "ADMIN" });
   const outcomes = await Promise.allSettled([
     auth.activate({ inviteToken: invite.token, password: "Concurrent-password-2026!", totpSecret: "JBSWY3DPEHPK3PXP" }),
     auth.activate({ inviteToken: invite.token, password: "Concurrent-password-2026!", totpSecret: "JBSWY3DPEHPK3PXP" }),
@@ -92,15 +88,15 @@ test("concurrent activation of one invitation has exactly one winner", async () 
 test("failed invitation delivery burns created invites and permits a safe retry", async () => {
   const repository = new InMemoryAdminRepository();
   await repository.initialize();
-  const failedDelivery = new RecordingInvitationProvider(2);
+  const failedDelivery = new RecordingInvitationProvider(1);
   await assert.rejects(() => serviceFor(repository, failedDelivery).run(), /delivery failed/i);
   assert.equal((await repository.listStaff()).length, 0);
   assert.equal(await repository.findInviteByHash(hashOpaqueToken(failedDelivery.messages[0]!.invitationToken)), null);
 
   const retryDelivery = new RecordingInvitationProvider();
   const retry = await serviceFor(repository, retryDelivery).run();
-  assert.equal(retry.invitations.length, 2);
-  assert.equal(retryDelivery.messages.length, 2);
+  assert.equal(retry.invitations.length, 1);
+  assert.equal(retryDelivery.messages.length, 1);
 });
 
 test("HTTP invitation provider uses bearer auth, retries transient errors, and returns redacted health", async () => {

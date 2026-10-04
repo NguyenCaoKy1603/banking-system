@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { Pool } from "pg";
 
@@ -91,6 +91,81 @@ test("PostgreSQL Admin funding action is typed, atomic and single-execution", { 
     assert.equal(outbox.rows[0].count, 1);
     assert.deepEqual(transactions.rows, [{ direction: "CREDIT", amount_minor: "1000", kind: "SANDBOX_FUNDING", status: "SUCCEEDED" }]);
     assert.deepEqual(audit.rows, [{ event_type: "ADMIN_SIMULATION_FUNDING_SUCCEEDED", outcome: "SUCCEEDED", request_id: action.id }]);
+  } finally {
+    await repository.close();
+    await pool.end();
+  }
+});
+
+test("PostgreSQL direct Operations-account creation is atomic and replays idempotently", { skip: !databaseUrl }, async () => {
+  const pool = new Pool({ connectionString: databaseUrl, max: 4 });
+  const repository = new PostgresAdminRepository({ connectionString: databaseUrl, maxConnections: 4 });
+  const adminId = randomUUID();
+  const email = `${adminId}@example.test`;
+  const employeeCode = `O-${adminId.slice(0, 8)}`;
+  const idempotencyKey = `direct-operations-${randomUUID()}`;
+  const fingerprint = createHash("sha256").update(`fingerprint:${adminId}`).digest("hex");
+  const mfaId = randomUUID();
+  const staffId = randomUUID();
+  try {
+    await repository.initialize();
+    await pool.query(
+      "INSERT INTO staff_users (id, employee_code, email_normalized, display_name, password_salt, password_digest, status) VALUES ($1,$2,$3,'Direct-create Admin','fixture-salt','fixture-digest','ACTIVE')",
+      [adminId, `A-${adminId.slice(0, 8)}`, email],
+    );
+    const input = {
+      staffId,
+      employeeCode,
+      emailNormalized: `ops-${adminId}@example.test`,
+      displayName: "Direct Operations Fixture",
+      passwordSalt: "fixture-salt",
+      passwordDigest: "one-way-password-digest",
+      creatorStaffId: adminId,
+      environmentScope: "preview" as const,
+      mfaCredential: {
+        id: mfaId,
+        staffId,
+        secretCiphertext: "encrypted-fixture-mfa-secret",
+        encryptionKeyId: "fixture-key",
+        secretCipherVersion: "v2",
+        secretAadVersion: "aad-v1",
+        secretEncryptionAlgorithm: "AES-256-GCM-ENVELOPE",
+        secretEncryptedDataKey: "fixture-encrypted-data-key",
+        lastAcceptedTimeStep: 123456,
+      },
+      idempotencyKey,
+      requestFingerprint: fingerprint,
+      traceId: "admin-direct-create-db-test",
+    };
+    const concurrentStaffId = randomUUID();
+    const [created, replay] = await Promise.all([
+      repository.createOperationsStaffAccount(input),
+      repository.createOperationsStaffAccount({ ...input, staffId: concurrentStaffId, mfaCredential: { ...input.mfaCredential, id: randomUUID(), staffId: concurrentStaffId } }),
+    ]);
+    assert.equal(created.staff.id, replay.staff.id);
+    assert.equal(created.replayed || replay.replayed, true);
+    assert.equal(created.staff.status, "ACTIVE");
+    assert.deepEqual(created.staff.roles.map((role) => role.role), ["OPERATIONS"]);
+    assert.ok(created.staff.mfaEnrolledAt);
+
+    await assert.rejects(
+      () => repository.createOperationsStaffAccount({ ...input, requestFingerprint: createHash("sha256").update("different-request").digest("hex") }),
+      /STAFF_ACCOUNT_IDEMPOTENCY_CONFLICT/,
+    );
+    const stored = await pool.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM staff_users WHERE id=$1) AS staff_count,
+         (SELECT COUNT(*)::int FROM staff_mfa_credentials WHERE staff_id=$1 AND disabled_at IS NULL) AS mfa_count,
+         (SELECT COUNT(*)::int FROM admin_staff_account_creation_requests WHERE requester_staff_id=$2 AND idempotency_key=$3) AS request_count,
+         (SELECT action FROM audit_events WHERE target_id=$1::text AND action='STAFF_OPERATIONS_ACCOUNT_CREATED') AS audit_action`,
+      [created.staff.id, adminId, idempotencyKey],
+    );
+    assert.deepEqual(stored.rows[0], {
+      staff_count: 1,
+      mfa_count: 1,
+      request_count: 1,
+      audit_action: "STAFF_OPERATIONS_ACCOUNT_CREATED",
+    });
   } finally {
     await repository.close();
     await pool.end();

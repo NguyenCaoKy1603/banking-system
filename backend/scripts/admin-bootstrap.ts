@@ -18,7 +18,6 @@ const runtimeConfig = readRuntimeConfig();
 if (runtimeConfig.storage !== "postgres") throw new Error("Admin bootstrap requires PostgreSQL storage.");
 
 const adminEmail = required(process.env.ADMIN_BOOTSTRAP_ADMIN_EMAIL, "ADMIN_BOOTSTRAP_ADMIN_EMAIL");
-const controlEmail = required(process.env.ADMIN_BOOTSTRAP_CONTROL_EMAIL, "ADMIN_BOOTSTRAP_CONTROL_EMAIL");
 const activationUrl = required(process.env.ADMIN_INVITATION_ACTIVATION_URL, "ADMIN_INVITATION_ACTIVATION_URL");
 const secretProvider = createRuntimeSecretProvider(runtimeConfig);
 const databaseSecret = await secretProvider.getSecret(referenceFor("databaseUrl", runtimeConfig.bankingEnvironment));
@@ -55,12 +54,6 @@ try {
         employeeCode: `ADMIN-${randomUUID().slice(0, 8)}`,
         displayName: process.env.ADMIN_BOOTSTRAP_ADMIN_NAME?.trim() || "Initial Admin",
         role: "ADMIN",
-      },
-      {
-        email: controlEmail,
-        employeeCode: `CONTROL-${randomUUID().slice(0, 8)}`,
-        displayName: process.env.ADMIN_BOOTSTRAP_CONTROL_NAME?.trim() || "Initial Control",
-        role: "CONTROL",
       },
     ],
   });

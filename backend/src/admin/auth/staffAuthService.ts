@@ -1,9 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { conflictWithCode, invalidRequest, rateLimited, unauthorized } from "../../errors.js";
 import { createOpaqueToken, hashOpaqueToken, hashPasswordAsync, verifyPasswordAsync } from "../../security.js";
 import { buildTotpUri, generateTotpSecret, type KeyEncryptionPort, validateTotp } from "../../mfa/crypto.js";
-import type { AdminSubject } from "../authorization/permissionRegistry.js";
+import type { AdminRole, AdminSubject } from "../authorization/permissionRegistry.js";
 import type { AdminRepository, StaffRecord, StaffSessionRecord } from "../repositories/adminRepository.js";
 
 const LOGIN_CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -19,6 +19,10 @@ export type AdminTokenSet = {
   expiresInSeconds: number;
 };
 
+export type BeginStaffLoginResult =
+  | { mfaRequired: true; challengeId: string; expiresAt: string }
+  | { mfaRequired: false; staff: StaffRecord; tokens: AdminTokenSet };
+
 export type StaffAuthServiceOptions = {
   repository: AdminRepository;
   encryption: KeyEncryptionPort;
@@ -28,6 +32,9 @@ export type StaffAuthServiceOptions = {
 
 function nowIso(clock: () => number): string { return new Date(clock()).toISOString(); }
 function normalizeEmail(email: string): string { return email.trim().toLowerCase(); }
+function hasActiveRole(staff: StaffRecord, role: AdminRole, environmentScope: string, now: number): boolean {
+  return staff.roles.some((assignment) => assignment.role === role && assignment.environmentScope === environmentScope && (!assignment.expiresAt || Date.parse(assignment.expiresAt) > now));
+}
 function assertPassword(password: unknown): string { if (typeof password !== "string" || password.length < 12 || password.length > 256) throw invalidRequest("Staff password must contain 12-256 characters.", { password: "Use at least 12 characters." }); return password; }
 function assertCode(code: unknown): string { if (typeof code !== "string" || !/^\d{6}$/.test(code)) throw invalidRequest("MFA code must contain six digits.", { code: "Enter a six-digit authenticator code." }); return code; }
 function envelopeMetadata(ciphertext: string): { version: string; aadVersion: string | null; algorithm: string; encryptedDataKey: string | null } { const parts = ciphertext.split("."); return { version: parts[0] === "v2" ? "v2" : "v1", aadVersion: parts[0] === "v2" ? parts[2] ?? null : null, algorithm: parts[0] === "v2" ? "AES-256-GCM-ENVELOPE" : "AES-256-GCM", encryptedDataKey: parts[0] === "v2" ? parts[6] ?? null : null }; }
@@ -42,7 +49,7 @@ export class StaffAuthService {
     this.environmentScope = options.environmentScope ?? "preview";
   }
 
-  async invite(input: { email: string; employeeCode: string; displayName: string; role: "SUPPORT" | "OPERATIONS" | "CONTROL" | "ADMIN"; createdByStaffId?: string | null }): Promise<{ inviteId: string; token: string; expiresAt: string }> {
+  async invite(input: { email: string; employeeCode: string; displayName: string; role: AdminRole; createdByStaffId?: string | null }): Promise<{ inviteId: string; token: string; expiresAt: string }> {
     const email = normalizeEmail(input.email);
     if (!/^\S+@\S+\.\S+$/.test(email)) throw invalidRequest("Staff email is invalid.", { email: "Enter a valid email." });
     if (!/^[A-Za-z0-9._-]{2,64}$/.test(input.employeeCode.trim())) throw invalidRequest("Employee code is invalid.", { employeeCode: "Use letters, digits, dot, underscore or hyphen." });
@@ -69,7 +76,82 @@ export class StaffAuthService {
     return input.totpSecret ? { staffId: staff.id } : { staffId: staff.id, mfaSetup: { secret, otpauthUri: buildTotpUri(secret, staff.emailNormalized) } };
   }
 
-  async beginLogin(emailInput: string, passwordInput: string): Promise<{ challengeId: string; expiresAt: string }> {
+  beginOperationsMfaSetup(emailInput: string): { mfaSetup: { manualSetupKey: string; otpauthUri: string } } {
+    const email = normalizeEmail(emailInput);
+    if (!/^\S+@\S+\.\S+$/.test(email)) throw invalidRequest("Staff email is invalid.", { email: "Enter a valid email." });
+    const secret = generateTotpSecret();
+    return { mfaSetup: { manualSetupKey: secret, otpauthUri: buildTotpUri(secret, email) } };
+  }
+
+  async createOperationsAccount(input: {
+    email: string;
+    employeeCode: string;
+    displayName: string;
+    password: string;
+    mfaSecret: string;
+    mfaCode: string;
+    creatorStaffId: string;
+    environmentScope: "preview" | "production";
+    idempotencyKey: string;
+    traceId: string;
+  }): Promise<{ staff: StaffRecord; replayed: boolean }> {
+    const email = normalizeEmail(input.email);
+    const employeeCode = input.employeeCode.trim();
+    const displayName = input.displayName.trim();
+    const password = assertPassword(input.password);
+    const secret = input.mfaSecret.trim().toUpperCase();
+    const code = assertCode(input.mfaCode);
+    if (!/^\S+@\S+\.\S+$/.test(email)) throw invalidRequest("Staff email is invalid.", { email: "Enter a valid email." });
+    if (!/^[A-Za-z0-9._-]{2,64}$/.test(employeeCode)) throw invalidRequest("Employee code is invalid.", { employeeCode: "Use 2-64 letters, digits, dot, underscore or hyphen." });
+    if (displayName.length < 2 || displayName.length > 120) throw invalidRequest("Staff display name is invalid.", { displayName: "Use 2-120 characters." });
+    if (!/^[A-Z2-7]{32}$/.test(secret)) throw invalidRequest("Authenticator setup key is invalid.", { mfaSecret: "Generate a new MFA setup key." });
+
+    const validation = validateTotp(secret, code, this.clock(), 1);
+    if (!validation.valid || validation.timeStep === null) throw invalidRequest("Authenticator code is invalid.", { mfaCode: "Enter the current six-digit Authenticator code." });
+
+    const hashed = await hashPasswordAsync(password);
+    const staffId = randomUUID();
+    const credentialId = randomUUID();
+    const secretCiphertext = this.options.encryption.encrypt(secret, this.encryptionContext(credentialId, staffId));
+    const metadata = envelopeMetadata(secretCiphertext);
+    const fingerprint = createHash("sha256").update(JSON.stringify({ email, employeeCode, displayName, role: "OPERATIONS", environmentScope: input.environmentScope })).digest("hex");
+    try {
+      return await this.options.repository.createOperationsStaffAccount({
+        staffId,
+        employeeCode,
+        emailNormalized: email,
+        displayName,
+        passwordSalt: hashed.salt,
+        passwordDigest: hashed.digest,
+        creatorStaffId: input.creatorStaffId,
+        environmentScope: input.environmentScope,
+        mfaCredential: {
+          id: credentialId,
+          staffId,
+          secretCiphertext,
+          encryptionKeyId: this.options.encryption.keyId,
+          secretCipherVersion: metadata.version,
+          secretAadVersion: metadata.aadVersion,
+          secretEncryptionAlgorithm: metadata.algorithm,
+          secretEncryptedDataKey: metadata.encryptedDataKey,
+          lastAcceptedTimeStep: validation.timeStep,
+        },
+        idempotencyKey: input.idempotencyKey,
+        requestFingerprint: fingerprint,
+        traceId: input.traceId,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "STAFF_ACCOUNT_IDEMPOTENCY_CONFLICT") {
+        throw conflictWithCode("IDEMPOTENCY_CONFLICT", "This Admin request key was already used with different account details.");
+      }
+      if (error instanceof Error && error.message === "STAFF_ACCOUNT_ALREADY_EXISTS") {
+        throw conflictWithCode("STAFF_ACCOUNT_ALREADY_EXISTS", "An account already uses this email or employee code.");
+      }
+      throw error;
+    }
+  }
+
+  async beginLogin(emailInput: string, passwordInput: string, deviceFingerprint?: string, ipHash?: string): Promise<BeginStaffLoginResult> {
     const email = normalizeEmail(emailInput);
     const bucket = this.loginFailures.get(email);
     const now = this.clock();
@@ -80,13 +162,21 @@ export class StaffAuthService {
       this.recordLoginFailure(email);
       throw unauthorized("Staff credentials are invalid.");
     }
-    const credential = await this.options.repository.findMfaCredential(staff.id);
-    if (!credential) throw conflictWithCode("STAFF_MFA_REQUIRED", "Staff MFA enrollment is required.");
+    const isAdmin = hasActiveRole(staff, "ADMIN", this.environmentScope, now);
+    const isOperations = hasActiveRole(staff, "OPERATIONS", this.environmentScope, now);
+    if (!isAdmin && !isOperations) throw unauthorized("Staff credentials are invalid.");
     this.loginFailures.delete(email);
+    if (!isAdmin) {
+      const sessionResult = await this.createSession(staff, deviceFingerprint, ipHash);
+      await this.options.repository.appendAudit({ id: randomUUID(), actorStaffId: staff.id, action: "STAFF_LOGIN", targetType: "STAFF", targetId: staff.id, outcome: "SUCCEEDED", reasonCode: null, requestId: null, traceId: null, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { method: "PASSWORD_ONLY_OPERATIONS" } });
+      return { mfaRequired: false, ...sessionResult };
+    }
+    const credential = await this.options.repository.findMfaCredential(staff.id);
+    if (!credential) throw conflictWithCode("STAFF_MFA_REQUIRED", "Admin MFA enrollment is required.");
     const challengeId = randomUUID();
     const expiresAt = new Date(now + LOGIN_CHALLENGE_TTL_MS).toISOString();
     await this.options.repository.createChallenge({ id: challengeId, staffId: staff.id, purpose: "LOGIN", expiresAt, attempts: 0, consumedAt: null });
-    return { challengeId, expiresAt };
+    return { mfaRequired: true, challengeId, expiresAt };
   }
 
   async verifyLoginMfa(challengeId: string, codeInput: string, deviceFingerprint?: string, ipHash?: string): Promise<{ staff: StaffRecord; tokens: AdminTokenSet }> {
@@ -95,7 +185,7 @@ export class StaffAuthService {
     if (!challenge || challenge.purpose !== "LOGIN" || challenge.consumedAt || Date.parse(challenge.expiresAt) <= this.clock()) throw unauthorized("Staff MFA challenge is invalid or expired.");
     const staff = await this.options.repository.findStaffById(challenge.staffId);
     const credential = staff ? await this.options.repository.findMfaCredential(staff.id) : null;
-    if (!staff || staff.status !== "ACTIVE" || !credential) throw unauthorized("Staff MFA challenge is invalid or expired.");
+    if (!staff || staff.status !== "ACTIVE" || !hasActiveRole(staff, "ADMIN", this.environmentScope, this.clock()) || !credential) throw unauthorized("Staff MFA challenge is invalid or expired.");
     const secret = this.options.encryption.decrypt(credential.secretCiphertext, credential.encryptionKeyId, this.encryptionContext(credential.id, staff.id));
     const validation = validateTotp(secret, code, this.clock(), 1);
     if (!validation.valid || validation.timeStep === null || !(await this.options.repository.acceptMfaTimeStep(credential.id, validation.timeStep))) {
@@ -127,6 +217,7 @@ export class StaffAuthService {
 
   async stepUp(accessToken: string, codeInput: string): Promise<void> {
     const { staff, session } = await this.authenticate(accessToken);
+    if (!hasActiveRole(staff, "ADMIN", this.environmentScope, this.clock())) throw unauthorized("TOTP step-up is available to Admin accounts only.");
     const code = assertCode(codeInput);
     const credential = await this.options.repository.findMfaCredential(staff.id);
     if (!credential) throw conflictWithCode("STAFF_MFA_REQUIRED", "Fresh step-up MFA is required.");

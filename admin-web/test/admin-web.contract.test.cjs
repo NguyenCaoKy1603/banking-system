@@ -57,7 +57,7 @@ test("Admin Web exposes one-time staff activation without persisting the invite 
   assert.doesNotMatch(app, /localStorage|sessionStorage/);
 });
 
-test("Approval submit includes the mandatory checker comment", () => {
+test("Approval submit includes the mandatory approval comment", () => {
   assert.match(app, /decision:\s*["']APPROVED["'][\s\S]*comment:\s*reason\.trim\(\)/);
   assert.match(app, /\/reject/);
   assert.match(app, /data-testid=\"step-up-mfa\"/);

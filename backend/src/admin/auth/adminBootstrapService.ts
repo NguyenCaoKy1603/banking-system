@@ -10,7 +10,7 @@ export type AdminBootstrapStaffInput = {
   email: string;
   employeeCode: string;
   displayName: string;
-  role: Extract<AdminRole, "ADMIN" | "CONTROL">;
+  role: "ADMIN";
 };
 
 export type AdminBootstrapServiceOptions = {
@@ -20,7 +20,7 @@ export type AdminBootstrapServiceOptions = {
   activationUrl: string;
   isProductionLike: boolean;
   reservedBy?: string;
-  staff: readonly [AdminBootstrapStaffInput, AdminBootstrapStaffInput];
+  staff: readonly [AdminBootstrapStaffInput, ...AdminBootstrapStaffInput[]];
 };
 
 export type AdminBootstrapResult = {
@@ -32,9 +32,13 @@ function normalizedEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-function assertDistinctStaff(staff: readonly [AdminBootstrapStaffInput, AdminBootstrapStaffInput]): void {
-  if (normalizedEmail(staff[0].email) === normalizedEmail(staff[1].email)) {
-    throw new Error("Admin bootstrap requires two different staff email addresses.");
+function assertUniqueStaff(staff: readonly AdminBootstrapStaffInput[]): void {
+  if (staff.length === 0) throw new Error("Admin bootstrap requires at least one Admin account.");
+  const emails = new Set<string>();
+  for (const account of staff) {
+    const email = normalizedEmail(account.email);
+    if (emails.has(email)) throw new Error("Admin bootstrap staff email addresses must be unique.");
+    emails.add(email);
   }
 }
 
@@ -48,7 +52,7 @@ export class AdminBootstrapService {
   private readonly reservedBy: string;
 
   constructor(private readonly options: AdminBootstrapServiceOptions) {
-    assertDistinctStaff(options.staff);
+    assertUniqueStaff(options.staff);
     this.activationUrl = validateAdminInvitationActivationUrl(options.activationUrl, options.isProductionLike);
     this.reservedBy = options.reservedBy ?? `bootstrap:${process.pid}`;
   }

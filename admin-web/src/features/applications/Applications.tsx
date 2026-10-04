@@ -227,7 +227,7 @@ export function Applications({ items, onReload, loading, tabType }: Applications
       )}
 
       <div className="notice info">
-        Nhân viên Operations tiếp nhận hồ sơ và tạo đề xuất xử lý; quyết định cuối cùng được gửi vào Approval Inbox và phải được Control phê duyệt. Hệ thống không lưu trữ ảnh giấy tờ hoặc dữ liệu sinh trắc học PII ngoài hợp đồng.
+        Nhân viên Operations tiếp nhận hồ sơ và tạo đề xuất xử lý; quyết định cuối cùng được gửi vào Approval Inbox để ADMIN phê duyệt. Hệ thống không lưu trữ ảnh giấy tờ hoặc dữ liệu sinh trắc học PII ngoài hợp đồng.
       </div>
 
       {/* Recommendation Modal */}

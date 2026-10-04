@@ -51,7 +51,6 @@ test("UI logic 2: isIndeterminateError classifies network, timeout, corrupted JS
   assert.equal(api.isIndeterminateError({ status: 400, code: "VALIDATION_FAILED" }), false);
   assert.equal(api.isIndeterminateError({ status: 403, code: "ADMIN_PERMISSION_DENIED" }), false);
   assert.equal(api.isIndeterminateError({ status: 409, code: "ACTION_STALE" }), false);
-  assert.equal(api.isIndeterminateError({ status: 409, code: "SELF_APPROVAL_FORBIDDEN" }), false);
   assert.equal(api.isIndeterminateError(null), false);
   assert.equal(api.isIndeterminateError(undefined), false);
 });
@@ -205,11 +204,11 @@ test("UI logic 5: real AccountLoadManager discards stale responses and protects 
 });
 
 test("UI logic 6: real approvalsLogic permissions separate audit.read from action-specific approval rights", () => {
-  // Role 1: ADMIN holds audit.read but NOT simulation-funding.approve
+  // An Admin without simulation-funding.approve
   const adminPermissions = new Set([
     "audit.read",
     "customer.read.masked",
-    "staff.invite.request",
+    "staff.operations-account.create",
   ]);
   const hasAdminPerm = (perm) => adminPermissions.has(perm);
 
@@ -222,42 +221,28 @@ test("UI logic 6: real approvalsLogic permissions separate audit.read from actio
     false
   );
 
-  // Role 2: CONTROL holds simulation-funding.approve and account.block.approve
-  const controlPermissions = new Set([
+  // An Admin with simulation-funding.approve and account.block.approve
+  const adminApprovalPermissions = new Set([
     "audit.read",
     "simulation-funding.approve",
     "account.block.approve",
   ]);
-  const hasControlPerm = (perm) => controlPermissions.has(perm);
+  const hasAdminApprovalPerm = (perm) => adminApprovalPermissions.has(perm);
 
   assert.equal(
-    approvalsLogic.canStaffApproveAction("SIMULATION_FUNDING", hasControlPerm),
+    approvalsLogic.canStaffApproveAction("SIMULATION_FUNDING", hasAdminApprovalPerm),
     true
   );
   assert.equal(
-    approvalsLogic.canStaffApproveAction("ACCOUNT_BLOCK", hasControlPerm),
+    approvalsLogic.canStaffApproveAction("ACCOUNT_BLOCK", hasAdminApprovalPerm),
     true
   );
 
   // Strict deny: unknown action types always evaluate to false
   assert.equal(
-    approvalsLogic.canStaffApproveAction("UNKNOWN_MUTATION_TYPE", hasControlPerm),
+    approvalsLogic.canStaffApproveAction("UNKNOWN_MUTATION_TYPE", hasAdminApprovalPerm),
     false
   );
-});
-
-test("UI logic 7: real isSelfApproval prevents Four-Eyes maker from approving own request", () => {
-  const currentStaffId = "staff-101";
-
-  // Attempting to approve own action
-  assert.equal(approvalsLogic.isSelfApproval(currentStaffId, "staff-101"), true);
-
-  // Independent action from another maker
-  assert.equal(approvalsLogic.isSelfApproval(currentStaffId, "staff-202"), false);
-
-  // Edge cases
-  assert.equal(approvalsLogic.isSelfApproval(null, "staff-101"), false);
-  assert.equal(approvalsLogic.isSelfApproval(currentStaffId, null), false);
 });
 
 test("UI logic 8: session pending intents enforce SessionScope generation lifecycle and callback isolation", () => {

@@ -1,4 +1,4 @@
-export type AdminRole = "SUPPORT" | "OPERATIONS" | "CONTROL" | "ADMIN";
+export type AdminRole = "OPERATIONS" | "ADMIN";
 
 export type StaffRole = {
   role: AdminRole;
