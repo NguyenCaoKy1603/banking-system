@@ -1,5 +1,6 @@
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 import {
   loadDeviceBindingId,
@@ -16,6 +17,20 @@ jest.mock("expo-secure-store", () => ({
 const getItemAsyncMock = jest.mocked(SecureStore.getItemAsync);
 const setItemAsyncMock = jest.mocked(SecureStore.setItemAsync);
 const randomUUIDMock = jest.mocked(Crypto.randomUUID);
+const originalPlatformOSDescriptor = Object.getOwnPropertyDescriptor(
+  Platform,
+  "OS",
+);
+
+function setPlatformOSForTest(os: "web" | "ios"): void {
+  Object.defineProperty(Platform, "OS", { configurable: true, value: os });
+}
+
+function restorePlatformOSForTest(): void {
+  if (originalPlatformOSDescriptor) {
+    Object.defineProperty(Platform, "OS", originalPlatformOSDescriptor);
+  }
+}
 
 beforeEach(() => {
   resetDeviceBindingCacheForTests();
@@ -23,6 +38,10 @@ beforeEach(() => {
   getItemAsyncMock.mockResolvedValue(null);
   setItemAsyncMock.mockResolvedValue(undefined);
   randomUUIDMock.mockReturnValue("00000000-0000-4000-8000-000000000001");
+});
+
+afterEach(() => {
+  restorePlatformOSForTest();
 });
 
 describe("deviceBindingStorage", () => {
@@ -43,6 +62,19 @@ describe("deviceBindingStorage", () => {
     await expect(loadDeviceBindingId()).resolves.toBe(
       "00000000-0000-4000-8000-000000000002",
     );
+    expect(setItemAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Web installation id in memory without using SecureStore", async () => {
+    setPlatformOSForTest("web");
+
+    const firstId = await loadDeviceBindingId();
+    const secondId = await loadDeviceBindingId();
+
+    expect(firstId).toBe("00000000-0000-4000-8000-000000000001");
+    expect(secondId).toBe(firstId);
+    expect(randomUUIDMock).toHaveBeenCalledTimes(1);
+    expect(getItemAsyncMock).not.toHaveBeenCalled();
     expect(setItemAsyncMock).not.toHaveBeenCalled();
   });
 });

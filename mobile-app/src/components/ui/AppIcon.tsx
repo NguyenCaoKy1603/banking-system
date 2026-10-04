@@ -93,7 +93,7 @@ export function AppIcon({
 }: AppIconProps) {
   return (
     <Svg
-      accessible={false}
+      aria-hidden={true}
       width={size}
       height={size}
       viewBox="0 0 24 24"

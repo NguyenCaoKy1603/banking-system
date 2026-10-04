@@ -1384,6 +1384,47 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+  /assistant/financial-advice:
+    post:
+      tags: [Assistant]
+      operationId: getFinancialAdvice
+      security:
+        - bearerAuth: []
+          deviceBinding: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FinancialAdviceRequest'
+      responses:
+        '200':
+          description: Financial advice evaluation response with metrics, options and explanation.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FinancialAdviceResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
 
 components:
   securitySchemes:
@@ -1578,6 +1619,12 @@ components:
             $ref: '#/components/schemas/ApiErrorPayload'
     GatewayTimeout:
       description: Assistant service request or provider timed out.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorPayload'
+    PayloadTooLarge:
+      description: Request payload exceeds maximum allowable size.
       content:
         application/json:
           schema:
@@ -2633,3 +2680,460 @@ components:
       properties:
         answer:
           type: string
+    FinancialAdviceRequest:
+      type: object
+      description: Discriminated request payload for financial advice by kind.
+      discriminator:
+        propertyName: kind
+        mapping:
+          SAVINGS_PLAN: '#/components/schemas/FinancialAdviceSavingsRequest'
+          BUDGET_BALANCE: '#/components/schemas/FinancialAdviceBudgetRequest'
+      oneOf:
+        - $ref: '#/components/schemas/FinancialAdviceSavingsRequest'
+        - $ref: '#/components/schemas/FinancialAdviceBudgetRequest'
+      example:
+        schemaVersion: "1"
+        kind: SAVINGS_PLAN
+        currency: VND
+        monthlyIncomeMinor: "10000000"
+        essentialExpensesMinor: "6000000"
+        flexibleExpensesMinor: "2000000"
+        monthlyDebtPaymentsMinor: "500000"
+        monthlyBufferMinor: "0"
+        preference: KEEP_CURRENT_SPENDING
+        inputConfirmed: true
+        goal:
+          targetAmountMinor: "12000000"
+          alreadySavedMinor: "2000000"
+          months: 5
+    FinancialAdviceSavingsRequest:
+      type: object
+      required:
+        - schemaVersion
+        - kind
+        - currency
+        - monthlyIncomeMinor
+        - essentialExpensesMinor
+        - flexibleExpensesMinor
+        - monthlyDebtPaymentsMinor
+        - monthlyBufferMinor
+        - preference
+        - inputConfirmed
+        - goal
+      additionalProperties: false
+      properties:
+        schemaVersion:
+          type: string
+          enum: ["1"]
+        kind:
+          type: string
+          enum: [SAVINGS_PLAN]
+        currency:
+          type: string
+          enum: [VND]
+        monthlyIncomeMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+        essentialExpensesMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+        flexibleExpensesMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+        monthlyDebtPaymentsMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+        monthlyBufferMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+        preference:
+          type: string
+          enum: [KEEP_TARGET, KEEP_CURRENT_SPENDING, BALANCED]
+        inputConfirmed:
+          type: boolean
+          enum: [true]
+        goal:
+          type: object
+          required: [targetAmountMinor, alreadySavedMinor, months]
+          additionalProperties: false
+          properties:
+            targetAmountMinor:
+              type: string
+              pattern: '^[1-9]\d*$'
+            alreadySavedMinor:
+              type: string
+              pattern: '^(?:0|[1-9]\d*)$'
+            months:
+              type: integer
+              minimum: 1
+              maximum: 120
+    FinancialAdviceBudgetRequest:
+      type: object
+      required:
+        - schemaVersion
+        - kind
+        - currency
+        - monthlyIncomeMinor
+        - essentialExpensesMinor
+        - flexibleExpensesMinor
+        - monthlyDebtPaymentsMinor
+        - monthlyBufferMinor
+        - preference
+        - inputConfirmed
+        - monthlySavingsTargetMinor
+      additionalProperties: false
+      properties:
+        schemaVersion:
+          type: string
+          enum: ["1"]
+        kind:
+          type: string
+          enum: [BUDGET_BALANCE]
+        currency:
+          type: string
+          enum: [VND]
+        monthlyIncomeMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+        essentialExpensesMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+        flexibleExpensesMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+        monthlyDebtPaymentsMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+        monthlyBufferMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+        preference:
+          type: string
+          enum: [KEEP_TARGET, KEEP_CURRENT_SPENDING, BALANCED]
+        inputConfirmed:
+          type: boolean
+          enum: [true]
+        monthlySavingsTargetMinor:
+          type: string
+          pattern: '^(?:0|[1-9]\d*)$'
+    FinancialAdviceResponse:
+      type: object
+      description: Discriminated financial advice response by kind.
+      discriminator:
+        propertyName: kind
+        mapping:
+          SAVINGS_PLAN: '#/components/schemas/FinancialAdviceSavingsResponse'
+          BUDGET_BALANCE: '#/components/schemas/FinancialAdviceBudgetResponse'
+      oneOf:
+        - $ref: '#/components/schemas/FinancialAdviceSavingsResponse'
+        - $ref: '#/components/schemas/FinancialAdviceBudgetResponse'
+      example:
+        schemaVersion: "1"
+        kind: SAVINGS_PLAN
+        currency: VND
+        source: USER_ENTERED
+        calculationVersion: fa-calc-v1
+        catalogVersion: fa-catalog-v2
+        budgetStatus: SURPLUS
+        goalStatus: GAP
+        metrics:
+          declaredOutgoingsMinor: "8500000"
+          unallocatedBeforeBufferMinor: "1500000"
+          capacityAfterBufferMinor: "1500000"
+          bufferShortfallMinor: "0"
+          remainingGoalMinor: "10000000"
+          requiredMonthlySavingsMinor: "2000000"
+          monthlyGapMinor: "500000"
+          achievableGoalAtDeadlineMinor: "9500000"
+          suggestedMonths: 7
+          horizonExceeded: false
+        options:
+          - id: EXTEND_DEADLINE
+            title: Giữ mức chi, kéo dài thời hạn
+            description: Theo số liệu đã nhập, cần khoảng 7 tháng để dành phần còn thiếu.
+            changes:
+              months: 7
+        preferredOptionId: EXTEND_DEADLINE
+        explanation:
+          mode: AI_ASSISTED
+          reasonIds: [MONTHLY_GAP, PRESERVE_CURRENT_SPENDING]
+          paragraphs:
+            - Mục tiêu cần thêm 10.000.000 ₫. Trong 5 tháng, mỗi tháng cần dành 2.000.000 ₫.
+          fallbackReason: null
+        assumptions:
+          - Thu nhập và các khoản chi khai báo giữ nguyên trong thời gian mô phỏng.
+        warnings: []
+    FinancialAdviceSavingsResponse:
+      type: object
+      required:
+        - schemaVersion
+        - kind
+        - currency
+        - source
+        - calculationVersion
+        - catalogVersion
+        - budgetStatus
+        - goalStatus
+        - metrics
+        - options
+        - preferredOptionId
+        - explanation
+        - assumptions
+        - warnings
+      additionalProperties: false
+      properties:
+        schemaVersion: { type: string, enum: ["1"] }
+        kind: { type: string, enum: [SAVINGS_PLAN] }
+        currency: { type: string, enum: [VND] }
+        source: { type: string, enum: [USER_ENTERED] }
+        calculationVersion: { type: string }
+        catalogVersion: { type: string }
+        budgetStatus: { type: string, enum: [DEFICIT, BALANCED, SURPLUS] }
+        goalStatus: { type: string, enum: [ALREADY_FUNDED, FEASIBLE, GAP, NO_CAPACITY] }
+        metrics:
+          type: object
+          required:
+            - declaredOutgoingsMinor
+            - unallocatedBeforeBufferMinor
+            - capacityAfterBufferMinor
+            - bufferShortfallMinor
+            - remainingGoalMinor
+            - requiredMonthlySavingsMinor
+            - monthlyGapMinor
+            - achievableGoalAtDeadlineMinor
+            - suggestedMonths
+            - horizonExceeded
+          additionalProperties: false
+          properties:
+            declaredOutgoingsMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            unallocatedBeforeBufferMinor: { type: string, pattern: '^(?:0|-?[1-9]\d*)$' }
+            capacityAfterBufferMinor: { type: string, pattern: '^(?:0|-?[1-9]\d*)$' }
+            bufferShortfallMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            remainingGoalMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            requiredMonthlySavingsMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            monthlyGapMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            achievableGoalAtDeadlineMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            suggestedMonths: { type: [integer, "null"], minimum: 0, maximum: 120 }
+            horizonExceeded: { type: boolean }
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/FinancialAdviceOption'
+        preferredOptionId: { type: string }
+        explanation:
+          $ref: '#/components/schemas/FinancialAdviceExplanation'
+        assumptions:
+          type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/FinancialAdviceWarning'
+    FinancialAdviceBudgetResponse:
+      type: object
+      required:
+        - schemaVersion
+        - kind
+        - currency
+        - source
+        - calculationVersion
+        - catalogVersion
+        - budgetStatus
+        - savingsTargetStatus
+        - metrics
+        - options
+        - preferredOptionId
+        - explanation
+        - assumptions
+        - warnings
+      additionalProperties: false
+      properties:
+        schemaVersion: { type: string, enum: ["1"] }
+        kind: { type: string, enum: [BUDGET_BALANCE] }
+        currency: { type: string, enum: [VND] }
+        source: { type: string, enum: [USER_ENTERED] }
+        calculationVersion: { type: string }
+        catalogVersion: { type: string }
+        budgetStatus: { type: string, enum: [DEFICIT, BALANCED, SURPLUS] }
+        savingsTargetStatus: { type: string, enum: [MET, GAP] }
+        metrics:
+          type: object
+          required:
+            - declaredOutgoingsMinor
+            - unallocatedBeforeBufferMinor
+            - capacityAfterBufferMinor
+            - maximumSavingsAtCurrentBudgetMinor
+            - targetGapMinor
+            - remainingAfterTargetMinor
+            - baseDeficitMinor
+            - bufferShortfallMinor
+          additionalProperties: false
+          properties:
+            declaredOutgoingsMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            unallocatedBeforeBufferMinor: { type: string, pattern: '^(?:0|-?[1-9]\d*)$' }
+            capacityAfterBufferMinor: { type: string, pattern: '^(?:0|-?[1-9]\d*)$' }
+            maximumSavingsAtCurrentBudgetMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            targetGapMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            remainingAfterTargetMinor: { type: string, pattern: '^(?:0|-?[1-9]\d*)$' }
+            baseDeficitMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            bufferShortfallMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+        options:
+          type: array
+          items:
+            $ref: '#/components/schemas/FinancialAdviceOption'
+        preferredOptionId: { type: string }
+        explanation:
+          $ref: '#/components/schemas/FinancialAdviceExplanation'
+        assumptions:
+          type: array
+          items: { type: string }
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/FinancialAdviceWarning'
+    FinancialAdviceOption:
+      oneOf:
+        - $ref: '#/components/schemas/FinancialAdviceMaintainPlanOption'
+        - $ref: '#/components/schemas/FinancialAdviceExtendDeadlineOption'
+        - $ref: '#/components/schemas/FinancialAdviceReduceFlexibleOption'
+        - $ref: '#/components/schemas/FinancialAdviceLowerGoalOption'
+        - $ref: '#/components/schemas/FinancialAdviceReviewOption'
+        - $ref: '#/components/schemas/FinancialAdviceMaintainBudgetOption'
+        - $ref: '#/components/schemas/FinancialAdviceAdjustSavingsOption'
+        - $ref: '#/components/schemas/FinancialAdviceFundedOption'
+    FinancialAdviceMaintainPlanOption:
+      type: object
+      required: [id, title, description, changes]
+      additionalProperties: false
+      properties:
+        id: { type: string, enum: [MAINTAIN_PLAN] }
+        title: { type: string }
+        description: { type: string }
+        changes:
+          type: object
+          required: [monthlySavingsMinor, remainingBufferMinor]
+          additionalProperties: false
+          properties:
+            monthlySavingsMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            remainingBufferMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+    FinancialAdviceExtendDeadlineOption:
+      type: object
+      required: [id, title, description, changes]
+      additionalProperties: false
+      properties:
+        id: { type: string, enum: [EXTEND_DEADLINE] }
+        title: { type: string }
+        description: { type: string }
+        changes:
+          type: object
+          required: [months]
+          additionalProperties: false
+          properties:
+            months: { type: integer, minimum: 1, maximum: 120 }
+    FinancialAdviceReduceFlexibleOption:
+      type: object
+      required: [id, title, description, changes]
+      additionalProperties: false
+      properties:
+        id: { type: string, enum: [REDUCE_FLEXIBLE_SPENDING] }
+        title: { type: string }
+        description: { type: string }
+        changes:
+          type: object
+          required: [reductionMinor, newFlexibleExpensesMinor]
+          additionalProperties: false
+          properties:
+            reductionMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            newFlexibleExpensesMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+    FinancialAdviceLowerGoalOption:
+      type: object
+      required: [id, title, description, changes]
+      additionalProperties: false
+      properties:
+        id: { type: string, enum: [LOWER_GOAL_AMOUNT] }
+        title: { type: string }
+        description: { type: string }
+        changes:
+          type: object
+          required: [targetAmountMinor]
+          additionalProperties: false
+          properties:
+            targetAmountMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+    FinancialAdviceReviewOption:
+      type: object
+      required: [id, title, description, changes]
+      additionalProperties: false
+      properties:
+        id: { type: string, enum: [REVIEW_BASE_BUDGET] }
+        title: { type: string }
+        description: { type: string }
+        changes:
+          type: object
+          additionalProperties: false
+          maxProperties: 0
+    FinancialAdviceMaintainBudgetOption:
+      type: object
+      required: [id, title, description, changes]
+      additionalProperties: false
+      properties:
+        id: { type: string, enum: [MAINTAIN_BUDGET] }
+        title: { type: string }
+        description: { type: string }
+        changes:
+          type: object
+          required: [monthlySavingsTargetMinor, remainingAfterTargetMinor]
+          additionalProperties: false
+          properties:
+            monthlySavingsTargetMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+            remainingAfterTargetMinor: { type: string, pattern: '^(?:0|-?[1-9]\d*)$' }
+    FinancialAdviceAdjustSavingsOption:
+      type: object
+      required: [id, title, description, changes]
+      additionalProperties: false
+      properties:
+        id: { type: string, enum: [ADJUST_SAVINGS_TARGET] }
+        title: { type: string }
+        description: { type: string }
+        changes:
+          type: object
+          required: [monthlySavingsTargetMinor]
+          additionalProperties: false
+          properties:
+            monthlySavingsTargetMinor: { type: string, pattern: '^(?:0|[1-9]\d*)$' }
+    FinancialAdviceFundedOption:
+      type: object
+      required: [id, title, description, changes]
+      additionalProperties: false
+      properties:
+        id: { type: string, enum: [GOAL_ALREADY_FUNDED] }
+        title: { type: string }
+        description: { type: string }
+        changes:
+          type: object
+          additionalProperties: false
+          maxProperties: 0
+    FinancialAdviceExplanation:
+      type: object
+      required: [mode, reasonIds, paragraphs, fallbackReason]
+      additionalProperties: false
+      properties:
+        mode: { type: string, enum: [AI_ASSISTED, RULE_BASED] }
+        reasonIds:
+          type: array
+          minItems: 1
+          maxItems: 3
+          uniqueItems: true
+          items:
+            type: string
+            enum: [TARGET_ALREADY_FUNDED, MONTHLY_GAP, GOAL_FEASIBLE, BUDGET_TARGET_MET, BASE_BUDGET_DEFICIT, BUFFER_NOT_COVERED, NO_SAVING_CAPACITY, PRESERVE_CURRENT_SPENDING, KEEP_TARGET_WITH_FLEXIBLE_CUT, ADJUST_GOAL_TO_CAPACITY, EXTEND_TIME_TO_CAPACITY, REVIEW_DECLARED_INPUTS]
+        paragraphs: { type: array, minItems: 1, items: { type: string } }
+        fallbackReason:
+          type: [string, "null"]
+          enum: [AI_DISABLED, PROVIDER_UNAVAILABLE, PROVIDER_TIMEOUT, PROVIDER_INVALID_OUTPUT, PROVIDER_BUDGET_EXHAUSTED, null]
+    FinancialAdviceWarning:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: { type: string, enum: [BASE_BUDGET_DEFICIT, BUFFER_NOT_COVERED] }
+        message: { type: string }

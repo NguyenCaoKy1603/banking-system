@@ -9,6 +9,8 @@ import { readRuntimeConfig } from "./runtimeConfig.js";
 import { runtimeMetadata } from "./runtimeMetadata.js";
 import { createRuntimeSecretProvider, referenceFor } from "./secrets/runtimeSecrets.js";
 import { resolveRuntimeAssistantConfig } from "./assistant/runtimeAssistantConfig.js";
+import { AssistantRateLimiter } from "./assistant/index.js";
+import { resolveFinancialAdviceConfig } from "./financialAdvice/index.js";
 
 type StepUpMethod = "TOTP";
 
@@ -59,12 +61,16 @@ async function start(): Promise<void> {
     cardUnlockStepUpMethods: configuredMethods,
   });
   const assistantConfig = resolveRuntimeAssistantConfig();
+  const assistantRateLimiter = new AssistantRateLimiter(assistantConfig);
+  const financialAdviceConfig = resolveFinancialAdviceConfig();
   const httpOptions = {
     allowedOrigins: allowedOrigins.length > 0 ? allowedOrigins : undefined,
     environment: bankingEnvironment,
     storage,
     commitSha: buildCommitSha,
     assistantConfig,
+    assistantRateLimiter,
+    financialAdviceConfig,
     runtimeMetadata: runtimeMetadata({
       releaseId: runtimeConfig.releaseId,
       commitSha: runtimeConfig.commitSha,

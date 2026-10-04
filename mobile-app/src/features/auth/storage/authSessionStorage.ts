@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import * as Crypto from "expo-crypto";
+import { Platform } from "react-native";
 
 import type { AuthUser } from "@/features/auth/types/auth";
 import type { AuthSession } from "@/features/auth/types/session";
@@ -24,6 +25,7 @@ type AuthSessionMetadata = {
 };
 
 let mutationQueue: Promise<void> = Promise.resolve();
+let inMemoryAuthSession: AuthSession | null = null;
 
 function enqueueMutation<Result>(operation: () => Promise<Result>): Promise<Result> {
   const result = mutationQueue.then(operation, operation);
@@ -175,6 +177,11 @@ export function saveAuthSession(session: AuthSession): Promise<void> {
   }
 
   return enqueueMutation(async () => {
+    if (Platform.OS === "web") {
+      inMemoryAuthSession = session;
+      return;
+    }
+
     // One SecureStore record keeps tokens and metadata consistent across writes.
     await SecureStore.setItemAsync(
       AUTH_SESSION_KEY,
@@ -187,6 +194,10 @@ export function saveAuthSession(session: AuthSession): Promise<void> {
 
 export function loadAuthSession(): Promise<AuthSession | null> {
   return enqueueMutation(async () => {
+    if (Platform.OS === "web") {
+      return inMemoryAuthSession;
+    }
+
     const storedValue = await SecureStore.getItemAsync(
       AUTH_SESSION_KEY,
       SECURE_STORE_OPTIONS,
@@ -236,5 +247,12 @@ async function clearAuthSessionInternal(): Promise<void> {
 }
 
 export function clearAuthSession(): Promise<void> {
-  return enqueueMutation(clearAuthSessionInternal);
+  return enqueueMutation(async () => {
+    if (Platform.OS === "web") {
+      inMemoryAuthSession = null;
+      return;
+    }
+
+    await clearAuthSessionInternal();
+  });
 }

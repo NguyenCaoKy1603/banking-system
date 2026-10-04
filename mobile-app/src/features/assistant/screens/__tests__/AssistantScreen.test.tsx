@@ -9,12 +9,13 @@ import { ApiError } from "@/services/api/ApiError";
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
 const mockBack = jest.fn();
+const mockPush = jest.fn();
 const mockReplace = jest.fn();
 const mockLogout = jest.fn();
 
 jest.mock("expo-router", () => ({
   Link: ({ children }: { children: ReactNode }) => children,
-  useRouter: () => ({ back: mockBack, replace: mockReplace }),
+  useRouter: () => ({ back: mockBack, push: mockPush, replace: mockReplace }),
 }));
 
 jest.mock("@/features/auth/context/AuthContext", () => ({
@@ -440,5 +441,17 @@ describe("AssistantScreen Component Tests", () => {
 
     // AbortController đã kích hoạt abort
     expect(capturedSignal?.aborted).toBe(true);
+  });
+
+  it("14. Nhấn nút Lập kế hoạch tài chính: điều hướng sang /financial-advice", async () => {
+    const renderer = await renderScreen();
+    const navigateBtn = getButton(renderer, "assistant-navigate-financial-advice");
+    expect(navigateBtn).not.toBeNull();
+
+    await act(async () => {
+      navigateBtn.props.onPress();
+    });
+
+    expect(mockPush).toHaveBeenCalledWith("/financial-advice");
   });
 });

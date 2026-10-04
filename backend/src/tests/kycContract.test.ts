@@ -442,6 +442,7 @@ test("KYC schema consumers are exhaustive and non-KYC OpenAPI paths are unchange
     "#/components/schemas/VerifyRegistrationChallengeRequest";
   baselineNonKyc["/auth/register/cancel"] = baselineNonKyc["/auth/register/cancel"] ?? currentNonKyc["/auth/register/cancel"];
   baselineNonKyc["/assistant/help"] = baselineNonKyc["/assistant/help"] ?? currentNonKyc["/assistant/help"];
+  baselineNonKyc["/assistant/financial-advice"] = baselineNonKyc["/assistant/financial-advice"] ?? currentNonKyc["/assistant/financial-advice"];
 
   // allow approved Phase 1 MFA changes explicitly on baseline
   baselineNonKyc["/auth/mfa/totp/confirm"].post.responses["200"].description =

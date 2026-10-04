@@ -1,0 +1,63 @@
+appId: ${APP_ID}
+
+---
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: fa-kind-budget
+    timeout: 10000
+- tapOn:
+    id: fa-kind-budget
+- tapOn:
+    id: fa-income
+- eraseText: 20
+- inputText: "10000000"
+- tapOn:
+    id: fa-essential
+- eraseText: 20
+- inputText: "6000000"
+- tapOn:
+    id: fa-flexible
+- eraseText: 20
+- inputText: "2000000"
+- tapOn:
+    id: fa-debt-payment
+- eraseText: 20
+- inputText: "500000"
+- tapOn:
+    id: fa-buffer
+- eraseText: 20
+- inputText: "0"
+- scrollUntilVisible:
+    element:
+      id: fa-monthly-savings-target
+    direction: DOWN
+    timeout: 5000
+- tapOn:
+    id: fa-monthly-savings-target
+- eraseText: 20
+- inputText: "2000000"
+- hideKeyboard
+- scrollUntilVisible:
+    element:
+      id: fa-confirm-input
+    direction: DOWN
+    timeout: 5000
+- tapOn:
+    id: fa-confirm-input
+- scrollUntilVisible:
+    element:
+      id: fa-submit
+    direction: DOWN
+    timeout: 5000
+- tapOn:
+    id: fa-submit
+- extendedWaitUntil:
+    visible:
+      id: fa-result
+    timeout: 20000
+- assertVisible:
+    id: fa-capacity
+- assertVisible:
+    id: fa-gap

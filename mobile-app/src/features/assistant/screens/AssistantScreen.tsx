@@ -242,6 +242,28 @@ export function AssistantScreen() {
           title="Trợ lý hướng dẫn"
         />
 
+        {/* Điểm vào tính năng Tư vấn tài chính cá nhân */}
+        <Card style={styles.financialAdviceCard} testID="assistant-financial-advice-card">
+          <View style={styles.financialAdviceHeader}>
+            <View style={styles.financialAdviceIconBox}>
+              <AppIcon color={colors.primary} name="savings" size={20} />
+            </View>
+            <View style={styles.financialAdviceTextCol}>
+              <Text style={styles.financialAdviceTitle}>Tư vấn tài chính</Text>
+              <Text style={styles.financialAdviceSubtitle}>
+                Lập kế hoạch từ thu nhập, chi phí và mục tiêu bạn cung cấp.
+              </Text>
+            </View>
+          </View>
+          <Button
+            icon="chevronRight"
+            label="Lập kế hoạch tài chính"
+            onPress={() => router.push("/financial-advice")}
+            testID="assistant-navigate-financial-advice"
+            variant="outline"
+          />
+        </Card>
+
         {/* Cảnh báo an toàn thông tin bắt buộc */}
         <Card style={styles.disclaimerCard} testID="assistant-disclaimer">
           <View style={styles.disclaimerHeader}>
@@ -555,5 +577,38 @@ const styles = StyleSheet.create({
   errorMessage: {
     ...typography.body,
     color: colors.text,
+  },
+  financialAdviceCard: {
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+  },
+  financialAdviceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+  },
+  financialAdviceIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  financialAdviceTextCol: {
+    flex: 1,
+    gap: spacing.xs / 2,
+  },
+  financialAdviceTitle: {
+    ...typography.label,
+    fontSize: 15,
+    color: colors.text,
+  },
+  financialAdviceSubtitle: {
+    ...typography.caption,
+    color: colors.muted,
+    lineHeight: 18,
   },
 });

@@ -94,6 +94,7 @@ function RootNavigator() {
           <Stack.Screen name="savings/open" />
           <Stack.Screen name="savings/[depositId]" />
           <Stack.Screen name="assistant" />
+          <Stack.Screen name="financial-advice" />
         </Stack.Protected>
       </Stack>
       {status === "loggingOut" ? (

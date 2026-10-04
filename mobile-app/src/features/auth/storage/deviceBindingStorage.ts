@@ -1,5 +1,6 @@
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 const DEVICE_ID_KEY = "banking.device.binding.v1";
 const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
@@ -19,6 +20,10 @@ export function loadDeviceBindingId(): Promise<string> {
   }
 
   deviceIdPromise = (async () => {
+    if (Platform.OS === "web") {
+      return Crypto.randomUUID();
+    }
+
     const storedValue = await SecureStore.getItemAsync(
       DEVICE_ID_KEY,
       SECURE_STORE_OPTIONS,
