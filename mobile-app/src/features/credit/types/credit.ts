@@ -105,6 +105,12 @@ export type CreditCardDetailResponse = {
   latestStatement: CreditStatement | null;
 };
 
+export type CardReportedLostResponse = {
+  card: CreditCard;
+  caseId: string;
+  caseStatus: "OPEN" | "IN_REVIEW" | "RESOLVED";
+};
+
 export type CreditCardsResponse = { items: CreditCard[] };
 export type CreditAccountsResponse = { items: CreditAccount[] };
 export type CreditTransactionsResponse = {

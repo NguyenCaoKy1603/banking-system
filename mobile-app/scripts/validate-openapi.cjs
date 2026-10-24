@@ -21,6 +21,7 @@ if (!String(document.info?.version).endsWith("-draft") || !String(document.info?
 const requiredPaths = [
   "/auth/register",
   "/auth/register/verify",
+  "/auth/challenges/{challengeId}/resend",
   "/auth/otp/challenges",
   "/auth/login",
   "/auth/verify",
@@ -30,8 +31,6 @@ const requiredPaths = [
   "/mobile/control-policy",
   "/notifications",
   "/notifications/{notificationId}/read",
-  "/fraud-reports",
-  "/fraud-reports/{reportId}",
   "/accounts",
   "/accounts/{accountId}/number",
   "/accounts/{accountId}/transactions",
@@ -62,6 +61,8 @@ const requiredPaths = [
   "/credit/payment-quotes",
   "/credit/payments",
   "/credit/payments/{paymentId}",
+  "/kyc/application",
+  "/kyc/application/submit",
 ];
 
 for (const requiredPath of requiredPaths) {
@@ -104,7 +105,6 @@ const implementationMarkers = [
   'segments[1] === "logout-all"',
   'segments[1] === "control-policy"',
   'segments[0] === "notifications"',
-  'segments[0] === "fraud-reports"',
   'segments[0] === "accounts"',
   'segments[0] === "beneficiaries"',
   'segments[0] === "internal-recipients"',
@@ -113,6 +113,7 @@ const implementationMarkers = [
   'segments[0] === "cards"',
   'segments[0] === "credit"',
   'segments[1] === "applications"',
+  'segments[0] === "kyc"',
 ];
 for (const marker of implementationMarkers) {
   if (!backendHttp.includes(marker)) {
@@ -130,8 +131,8 @@ if (idempotencyParameter?.required !== true) {
 }
 
 const loginResponses = document.paths["/auth/login"].post?.responses;
-if (!loginResponses?.["200"] || !loginResponses?.["202"]) {
-  throw new Error("POST /auth/login must document both session and MFA responses.");
+if (!loginResponses?.["200"] || loginResponses?.["202"]) {
+  throw new Error("POST /auth/login must document only the password session response.");
 }
 
 const refreshResponses = document.paths["/auth/refresh"].post?.responses;
@@ -152,22 +153,6 @@ if (creditIdempotencyParameter?.required !== true) {
 }
 if (!submitCreditPayment?.responses?.["200"] || !submitCreditPayment?.responses?.["202"]) {
   throw new Error("POST /credit/payments must document synchronous and pending responses.");
-}
-
-const submitFraudReport = document.paths["/fraud-reports"].post;
-const fraudIdempotencyParameter = submitFraudReport?.parameters?.find(
-  (parameter) =>
-    parameter.name === "Idempotency-Key" ||
-    parameter.$ref === "#/components/parameters/IdempotencyKey",
-);
-if (
-  fraudIdempotencyParameter?.required !== true &&
-  !(
-    fraudIdempotencyParameter?.$ref === "#/components/parameters/IdempotencyKey" &&
-    document.components?.parameters?.IdempotencyKey?.required === true
-  )
-) {
-  throw new Error("POST /fraud-reports must require Idempotency-Key.");
 }
 
 const registerResponses = document.paths["/auth/register"].post?.responses;
@@ -206,6 +191,8 @@ const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete"]);
 const PUBLIC_OPERATIONS = new Set([
   "POST /auth/register",
   "POST /auth/register/verify",
+  "POST /auth/register/cancel",
+  "POST /auth/challenges/{challengeId}/resend",
   "POST /auth/login",
   "POST /auth/refresh",
   "POST /auth/verify",
@@ -254,6 +241,8 @@ function resolveParameter(parameter) {
 for (const [method, routePath] of [
   ["post", "/auth/register"],
   ["post", "/auth/register/verify"],
+  ["post", "/auth/register/cancel"],
+  ["post", "/auth/challenges/{challengeId}/resend"],
   ["post", "/auth/login"],
   ["post", "/auth/verify"],
   ["post", "/auth/refresh"],

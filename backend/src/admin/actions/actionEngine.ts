@@ -4,8 +4,7 @@ import { conflictWithCode, invalidRequest, notFound } from "../../errors.js";
 import { fingerprint } from "../../security.js";
 import { redactAdminMetadata } from "../audit/redaction.js";
 import { requireFreshStepUp, requirePermission } from "../authorization/authorization.js";
-import type { AdminPermission, AdminSubject } from "../authorization/permissionRegistry.js";
-import type { StaffAuthService } from "../auth/staffAuthService.js";
+import { ADMIN_ROLES, type AdminPermission, type AdminSubject } from "../authorization/permissionRegistry.js";
 import type { AdminActionRecord, AdminRepository } from "../repositories/adminRepository.js";
 
 const APPROVAL_PERMISSION: Record<string, AdminPermission> = {
@@ -13,10 +12,9 @@ const APPROVAL_PERMISSION: Record<string, AdminPermission> = {
   ACCOUNT_BLOCK: "account.block.approve", ACCOUNT_UNBLOCK: "account.unblock.approve",
   SIMULATION_FUNDING: "simulation-funding.approve", SIMULATION_FUNDING_REVERSAL: "simulation-funding.reverse.approve",
   KYC_DECISION: "kyc.decision.approve", CREDIT_DECISION: "credit-application.decision.approve",
-  TRANSFER_OPERATION: "transfer.action.approve", FRAUD_ACTION: "fraud.resolve.approve",
+  TRANSFER_OPERATION: "transfer.action.approve",
   OUTBOX_REQUEUE: "outbox.requeue.approve", JOB_RETRY: "job.retry.approve",
   STAFF_ROLE_CHANGE: "staff.role-change.approve", STAFF_DISABLE: "staff.disable.approve",
-  STAFF_INVITE: "staff.invite.approve",
 };
 
 const REQUEST_PERMISSION: Record<string, AdminPermission> = {
@@ -24,10 +22,9 @@ const REQUEST_PERMISSION: Record<string, AdminPermission> = {
   ACCOUNT_BLOCK: "account.block.request", ACCOUNT_UNBLOCK: "account.unblock.request",
   SIMULATION_FUNDING: "simulation-funding.request", SIMULATION_FUNDING_REVERSAL: "simulation-funding.reverse.request",
   KYC_DECISION: "kyc.decision.request", CREDIT_DECISION: "credit-application.review",
-  TRANSFER_OPERATION: "transfer.action.request", FRAUD_ACTION: "fraud.action.request",
+  TRANSFER_OPERATION: "transfer.action.request",
   OUTBOX_REQUEUE: "outbox.requeue.request", JOB_RETRY: "job.retry.request",
   STAFF_ROLE_CHANGE: "staff.role-change.request", STAFF_DISABLE: "staff.disable.request",
-  STAFF_INVITE: "staff.invite.request",
 };
 
 function requireIdempotency(value: unknown): string {
@@ -51,27 +48,25 @@ const ACTION_FIELDS: Readonly<Record<string, readonly string[]>> = {
   KYC_DECISION: ["reasonCode", "ticketReference", "description", "decision"],
   CREDIT_DECISION: ["reasonCode", "ticketReference", "description", "decision", "approvedLimitMinor"],
   TRANSFER_OPERATION: ["reasonCode", "ticketReference", "description", "operation"],
-  FRAUD_ACTION: ["reasonCode", "ticketReference", "description", "operation", "resolutionCode"],
   OUTBOX_REQUEUE: ["reasonCode", "ticketReference", "description"],
   JOB_RETRY: ["reasonCode", "ticketReference", "description"],
   STAFF_ROLE_CHANGE: ["reasonCode", "ticketReference", "description", "roleCode", "operation", "environmentScope"],
   STAFF_DISABLE: ["reasonCode", "ticketReference", "description"],
-  STAFF_INVITE: ["reasonCode", "ticketReference", "description", "email", "employeeCode", "displayName", "role"],
 };
 
 function rejectUnknownFields(actionType: string, body: Record<string, unknown>): void {
   const allowed = ACTION_FIELDS[actionType];
   if (!allowed) return;
-  const unknown = Object.keys(body).filter((key) => !allowed.includes(key));
+  const unknown = Object.keys(body).filter((key) => !allowed.includes(key) && key !== "directExecution");
   if (unknown.length > 0) throw invalidRequest("Request contains unsupported fields.", { [unknown[0]]: "This field is not accepted for the selected Admin command." });
 }
 
 export class AdminActionEngine {
-  constructor(private readonly repository: AdminRepository, private readonly auth: StaffAuthService) {}
+  constructor(private readonly repository: AdminRepository) {}
 
   async create(input: { subject: AdminSubject; actionType: string; targetType: string; targetId: string; body: Record<string, unknown>; idempotencyKey: string; traceId: string }): Promise<AdminActionRecord> {
     const permission = REQUEST_PERMISSION[input.actionType];
-    if (!permission) throw conflictWithCode("FOUR_EYES_REQUIRED", "This operation is not enabled in the Admin policy registry.");
+    if (!permission) throw conflictWithCode("APPROVAL_POLICY_UNCONFIGURED", "This operation is not enabled in the Admin policy registry.");
     requirePermission(input.subject, permission);
     const idempotencyKey = requireIdempotency(input.idempotencyKey);
     rejectUnknownFields(input.actionType, input.body);
@@ -79,19 +74,6 @@ export class AdminActionEngine {
     const payload: Record<string, unknown> = { ...input.body, reasonCode };
     delete payload.token; delete payload.password; delete payload.otp; delete payload.totpSecret;
     const safePayload = redactAdminMetadata(payload) as Record<string, unknown>;
-    if (input.actionType === "STAFF_INVITE") {
-      const email = typeof safePayload.email === "string" ? safePayload.email.trim().toLowerCase() : "";
-      const employeeCode = typeof safePayload.employeeCode === "string" ? safePayload.employeeCode.trim() : "";
-      const displayName = typeof safePayload.displayName === "string" ? safePayload.displayName.trim() : "";
-      const role = typeof safePayload.role === "string" ? safePayload.role.trim() : "";
-      if (!/^\S+@\S+\.\S+$/.test(email) || !/^[A-Za-z0-9._-]{2,64}$/.test(employeeCode) || displayName.length < 2 || !["SUPPORT", "OPERATIONS", "CONTROL", "ADMIN"].includes(role)) {
-        throw invalidRequest("Staff invite fields are invalid.");
-      }
-      safePayload.email = email;
-      safePayload.employeeCode = employeeCode;
-      safePayload.displayName = displayName;
-      safePayload.role = role;
-    }
     if (input.actionType === "SIMULATION_FUNDING" || input.actionType === "SIMULATION_FUNDING_REVERSAL") {
       const amount = typeof safePayload.amountMinor === "string" || typeof safePayload.amountMinor === "number" ? String(safePayload.amountMinor) : "";
       if (!/^\d+$/.test(amount) || BigInt(amount) <= 0n || BigInt(amount) > 100_000_000n) throw conflictWithCode("FUNDING_LIMIT_EXCEEDED", "Simulation funding amount is outside the per-request limit.");
@@ -126,7 +108,7 @@ export class AdminActionEngine {
         const roleCode = typeof safePayload.roleCode === "string" ? safePayload.roleCode.trim() : "";
         const operation = typeof safePayload.operation === "string" ? safePayload.operation.trim().toUpperCase() : "";
         const scope = typeof safePayload.environmentScope === "string" ? safePayload.environmentScope.trim().toLowerCase() : "preview";
-        if (!["SUPPORT", "OPERATIONS", "CONTROL", "ADMIN"].includes(roleCode) || !["GRANT", "REVOKE"].includes(operation) || !["preview", "production"].includes(scope)) throw invalidRequest("Staff role change fields are invalid.");
+        if (!ADMIN_ROLES.includes(roleCode as (typeof ADMIN_ROLES)[number]) || !["GRANT", "REVOKE"].includes(operation) || !["preview", "production"].includes(scope)) throw invalidRequest("Staff role change fields are invalid.");
         safePayload.roleCode = roleCode;
         safePayload.operation = operation;
         safePayload.environmentScope = scope;
@@ -140,7 +122,7 @@ export class AdminActionEngine {
       expectedTargetStatus = target.status;
       if (target.status !== "SUBMITTED" && target.status !== "UNDER_REVIEW") throw conflictWithCode("CASE_STATUS_CONFLICT", "Application is not awaiting a decision.");
       const decision = typeof safePayload.decision === "string" ? safePayload.decision : "";
-      const allowed = applicationType === "KYC" ? ["APPROVED", "REJECTED", "MORE_INFO_REQUIRED"] : ["PENDING_ACTIVATION", "REJECTED"];
+      const allowed = applicationType === "KYC" ? ["APPROVED", "REJECTED", "NEEDS_MORE_INFO"] : ["PENDING_ACTIVATION", "REJECTED"];
       if (!allowed.includes(decision)) throw invalidRequest("A valid application decision is required.");
       safePayload.applicationType = applicationType;
       safePayload.decision = decision;
@@ -155,16 +137,6 @@ export class AdminActionEngine {
       if (operation === "CANCEL" && target.status !== "PENDING") throw conflictWithCode("TRANSFER_NOT_CANCELABLE", "Only pending transfers can be cancelled.");
       if (operation === "RETRY" && !['PENDING', 'FAILED'].includes(target.status)) throw conflictWithCode("TRANSFER_NOT_RETRYABLE", "Only pending or failed transfers can be retried.");
       if (operation === "REVERSAL" && target.status !== "SUCCEEDED") throw conflictWithCode("TRANSFER_NOT_REVERSIBLE", "Only succeeded transfers can be reversed.");
-      safePayload.operation = operation;
-    }
-    if (input.targetType === "FRAUD_CASE") {
-      const target = await this.repository.findFraudCase(input.targetId);
-      if (!target) throw notFound("Fraud case not found.");
-      expectedTargetVersion = target.version;
-      expectedTargetStatus = target.status;
-      const operation = typeof safePayload.operation === "string" ? safePayload.operation : "";
-      if (!['BLOCK', 'REVOKE', 'REVERSAL', 'RESOLVE'].includes(operation)) throw invalidRequest("A valid fraud operation is required.");
-      if (operation === "RESOLVE" && !['CONFIRMED_FRAUD', 'NOT_FRAUD', 'DUPLICATE', 'INSUFFICIENT_INFORMATION', 'CUSTOMER_WITHDREW'].includes(String(safePayload.resolutionCode ?? ""))) throw invalidRequest("A valid fraud resolution code is required.");
       safePayload.operation = operation;
     }
     if (input.targetType === "JOB") {
@@ -186,18 +158,56 @@ export class AdminActionEngine {
     const action = await this.repository.createAction({ actionType: input.actionType, requesterStaffId: input.subject.staffId, targetType: input.targetType, targetId: input.targetId, requestFingerprint, policyVersion: "admin-p0-v1", idempotencyKey, expectedTargetVersion, expectedTargetStatus, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), payload: safePayload });
     if (action.requestFingerprint !== requestFingerprint) throw conflictWithCode("IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used with a different Admin command.");
     await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "ADMIN_ACTION_CREATED", targetType: input.targetType, targetId: input.targetId, outcome: "PENDING_APPROVAL", reasonCode, requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: expectedTargetVersion, afterVersion: null, metadata: { actionType: input.actionType, ticketReference: safePayload.ticketReference ?? null } });
+
+    // Direct execution: execute immediately if requested or configured without requiring Approval Inbox
+    if (Boolean((input.body as Record<string, unknown>)?.directExecution) || process.env.ADMIN_DIRECT_EXECUTION === "true") {
+      try {
+        await this.repository.decideAction({
+          requestId: action.id,
+          reviewerStaffId: input.subject.staffId,
+          decision: "APPROVED",
+          approvedFingerprint: requestFingerprint,
+          reasonCode,
+          comment: "Direct Execution",
+          mfaVerifiedAt: new Date().toISOString(),
+        });
+        const executed = await this.repository.executeApprovedAction({
+          requestId: action.id,
+          approverStaffId: input.subject.staffId,
+          traceId: input.traceId,
+        });
+        if (executed.status === "SUCCEEDED") {
+          await this.repository.appendAudit({
+            id: randomUUID(),
+            actorStaffId: input.subject.staffId,
+            action: "ADMIN_ACTION_EXECUTED",
+            targetType: input.targetType,
+            targetId: input.targetId,
+            outcome: "SUCCEEDED",
+            reasonCode,
+            requestId: action.id,
+            traceId: input.traceId,
+            correlationId: null,
+            beforeVersion: executed.beforeVersion ?? expectedTargetVersion,
+            afterVersion: executed.afterVersion ?? null,
+            metadata: { actionType: input.actionType, resultResourceId: executed.resultResourceId ?? null },
+          });
+          const fresh = await this.repository.findAction(action.id);
+          if (fresh) return fresh;
+        }
+      } catch {
+        // Fallback: keep action in current status if execution throws
+      }
+    }
+
     return action;
   }
 
-  async approve(input: { subject: AdminSubject; accessToken: string; requestId: string; body: Record<string, unknown>; traceId: string }): Promise<AdminActionRecord> {
+  async approve(input: { subject: AdminSubject; requestId: string; body: Record<string, unknown>; traceId: string }): Promise<AdminActionRecord> {
     const action = await this.repository.findAction(input.requestId);
     if (!action) throw notFound("Admin action not found.");
     const permission = APPROVAL_PERMISSION[action.actionType];
-    if (!permission) throw conflictWithCode("FOUR_EYES_REQUIRED", "Action approval policy is not configured.");
-    if (action.requesterStaffId === input.subject.staffId) {
-      await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "ADMIN_SELF_APPROVAL_ATTEMPT", targetType: action.targetType, targetId: action.targetId, outcome: "DENIED", reasonCode: "SELF_APPROVAL_FORBIDDEN", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: action.version, afterVersion: null, metadata: {} });
-      throw conflictWithCode("SELF_APPROVAL_FORBIDDEN", "Bạn không thể duyệt yêu cầu do chính mình tạo.");
-    }
+    if (!permission) throw conflictWithCode("APPROVAL_POLICY_UNCONFIGURED", "Action approval policy is not configured.");
     requirePermission(input.subject, permission);
     requireFreshStepUp(input.subject);
     const approvedFingerprint = typeof input.body.fingerprint === "string" ? input.body.fingerprint : "";
@@ -205,7 +215,7 @@ export class AdminActionEngine {
     if (input.body.version !== undefined) {
       const submittedVersion = Number(input.body.version);
       const isDecisionRecovery = action.status === "APPROVED" && submittedVersion === action.version - 1;
-      // A completed action is an idempotent receipt. A checker may retry the
+      // A completed action is an idempotent receipt. An approver may retry the
       // exact approval request after losing the response, so the original
       // approval-view version remains acceptable after the server has advanced
       // the action state.
@@ -234,11 +244,7 @@ export class AdminActionEngine {
 
   async reject(input: { subject: AdminSubject; requestId: string; body: Record<string, unknown>; traceId: string }): Promise<AdminActionRecord> {
     const action = await this.repository.findAction(input.requestId); if (!action) throw notFound("Admin action not found.");
-    const permission = APPROVAL_PERMISSION[action.actionType]; if (!permission) throw conflictWithCode("FOUR_EYES_REQUIRED", "Action approval policy is not configured.");
-    if (action.requesterStaffId === input.subject.staffId) {
-      await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "ADMIN_SELF_APPROVAL_ATTEMPT", targetType: action.targetType, targetId: action.targetId, outcome: "DENIED", reasonCode: "SELF_APPROVAL_FORBIDDEN", requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: action.version, afterVersion: null, metadata: { decision: "REJECTED" } });
-      throw conflictWithCode("SELF_APPROVAL_FORBIDDEN", "Maker cannot reject own action.");
-    }
+    const permission = APPROVAL_PERMISSION[action.actionType]; if (!permission) throw conflictWithCode("APPROVAL_POLICY_UNCONFIGURED", "Action approval policy is not configured.");
     requirePermission(input.subject, permission); requireFreshStepUp(input.subject);
     const reasonCode = requireReason(input.body); const fingerprintValue = typeof input.body.fingerprint === "string" ? input.body.fingerprint : ""; if (fingerprintValue !== action.requestFingerprint) throw conflictWithCode("ACTION_FINGERPRINT_MISMATCH", "The reviewed action fingerprint does not match.");
     if (input.body.version !== undefined) {

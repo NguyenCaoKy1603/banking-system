@@ -3,7 +3,21 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const app = fs.readFileSync(new URL("../src/App.tsx", `file://${__dirname}/`), "utf8");
+function readAllSrc(dir) {
+  let content = "";
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      content += "\n" + readAllSrc(full);
+    } else if (/\.(ts|tsx)$/.test(entry.name)) {
+      content += "\n" + fs.readFileSync(full, "utf8");
+    }
+  }
+  return content;
+}
+
+const app = readAllSrc(path.join(__dirname, "..", "src"));
 const api = fs.readFileSync(new URL("../src/api.ts", `file://${__dirname}/`), "utf8");
 const vite = fs.readFileSync(path.join(__dirname, "..", "vite.config.ts"), "utf8");
 const dockerfile = fs.readFileSync(path.join(__dirname, "..", "Dockerfile"), "utf8");
@@ -11,21 +25,50 @@ const nginxTemplate = fs.readFileSync(path.join(__dirname, "..", "nginx.conf.tem
 const runtimeScript = fs.readFileSync(path.join(__dirname, "..", "docker-entrypoint.d", "10-validate-runtime-config.sh"), "utf8");
 
 test("Admin Web exposes the P0 control-plane areas", () => {
-  for (const label of ["Approval Inbox", "KYC / Credit", "Giao dịch chờ", "Fraud cases", "Outbox / Jobs", "Staff / Roles", "Audit explorer"]) assert.match(app, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  for (const marker of ["funding-requests", "access-lock-requests", "review-recommendations", "resolution-requests", "requeue-requests", "retry-requests", "role-change-requests", "disable-requests"]) assert.match(app, new RegExp(marker));
+  for (const label of ["Hồ sơ định danh", "Giao dịch chuyển tiền", "Outbox / Jobs", "Staff / Roles", "Audit Explorer"]) {
+    assert.match(app, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  for (const marker of [
+    "funding-requests",
+    "access-lock-requests",
+    "review-recommendations",
+    "audit-export-requests",
+    "requeue-requests",
+    "retry-requests",
+    "role-change-requests",
+    "disable-requests",
+  ]) {
+    assert.match(app, new RegExp(marker));
+  }
 });
 
 test("Admin Web keeps staff tokens out of browser storage", () => {
+  assert.doesNotMatch(app, /localStorage|sessionStorage/);
   assert.doesNotMatch(api, /localStorage|sessionStorage/);
   assert.match(api, /credentials:\s*["']include["']/);
   assert.match(api, /X-CSRF-Token/);
 });
 
-test("Approval submit includes the mandatory checker comment", () => {
+test("Admin Web exposes one-time staff activation without persisting the invite token", () => {
+  assert.match(app, /\/admin\/activate/);
+  assert.match(app, /inviteToken/);
+  assert.match(app, /history\.replaceState/);
+  assert.match(app, /mfa-setup-secret/);
+  assert.doesNotMatch(app, /localStorage|sessionStorage/);
+});
+
+test("Approval submit includes the mandatory approval comment", () => {
   assert.match(app, /decision:\s*["']APPROVED["'][\s\S]*comment:\s*reason\.trim\(\)/);
   assert.match(app, /\/reject/);
   assert.match(app, /data-testid=\"step-up-mfa\"/);
   assert.doesNotMatch(app, /window\.prompt/);
+});
+
+test("Audit Explorer is gated by the staff approval permission", () => {
+  assert.match(app, /canReadApprovals/);
+  assert.match(app, /audit\.read/);
+  assert.match(app, /target === ["']audit["'][\s\S]*canReadApprovals/);
+  assert.match(app, /key:\s*["']audit["'][\s\S]*visible:\s*canReadApprovals/);
 });
 
 test("Admin Web uses a same-origin API and runtime-only upstream", () => {

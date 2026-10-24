@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveDatabaseSslConfig } from "../database/pool.js";
+import { DatabasePool, resolveDatabaseSslConfig } from "../database/pool.js";
 
 test("local development can explicitly use plaintext PostgreSQL", () => {
   assert.equal(resolveDatabaseSslConfig({
@@ -55,4 +55,37 @@ test("production-like mode rejects an explicit insecure ssl override", () => {
     }),
     /rejectUnauthorized=true/,
   );
+});
+
+test("DATABASE_URL cannot override the resolved PostgreSQL TLS policy", async () => {
+  const protectedOptions = {
+    sslMode: "verify-full" as const,
+    ca: "synthetic-local-ca",
+    serverName: "localhost",
+  };
+
+  for (const query of [
+    "ssl=0",
+    "sslmode=disable",
+    "sslmode=no-verify",
+    "sslrootcert=%2Ftmp%2Funexpected-ca.pem",
+    "sslkey=%2Ftmp%2Funexpected-key.pem",
+    "sslnegotiation=direct",
+    "uselibpqcompat=true",
+  ]) {
+    assert.throws(
+      () => new DatabasePool({
+        connectionString: `postgresql://lab:synthetic-only@localhost:55433/banking_tls_lab?${query}`,
+        ...protectedOptions,
+      }),
+      /PostgreSQL TLS options must be configured through DATABASE_SSL_MODE/,
+      `expected query option ${query} to be rejected`,
+    );
+  }
+
+  const safePool = new DatabasePool({
+    connectionString: "postgresql://lab:synthetic-only@localhost:55433/banking_tls_lab",
+    ...protectedOptions,
+  });
+  await safePool.close();
 });

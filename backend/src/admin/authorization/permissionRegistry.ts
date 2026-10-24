@@ -1,5 +1,24 @@
-export const ADMIN_ROLES = ["SUPPORT", "OPERATIONS", "CONTROL", "ADMIN"] as const;
+export const ADMIN_ROLES = ["OPERATIONS", "ADMIN"] as const;
 export type AdminRole = (typeof ADMIN_ROLES)[number];
+
+/**
+ * Canonicalize role values stored in immutable pending action payloads before
+ * the two-role migration. New API input must still be validated against
+ * ADMIN_ROLES directly.
+ */
+export function normalizeExistingAdminRole(value: string): AdminRole | null {
+  switch (value) {
+    case "OPERATIONS":
+    case "ADMIN":
+      return value;
+    case "SUPPORT":
+      return "OPERATIONS";
+    case "CONTROL":
+      return "ADMIN";
+    default:
+      return null;
+  }
+}
 
 export const ADMIN_PERMISSIONS = [
   "customer.read.masked", "customer.read.pii", "customer.access-lock.request", "customer.access-unlock.request", "customer.access-lock.approve",
@@ -8,9 +27,8 @@ export const ADMIN_PERMISSIONS = [
   "kyc.read", "kyc.review", "kyc.decision.request", "kyc.decision.approve",
   "credit-application.read", "credit-application.review", "credit-application.decision.approve",
   "transfer.pending.read", "transfer.action.request", "transfer.action.approve",
-  "fraud.read", "fraud.claim", "fraud.investigate", "fraud.action.request", "fraud.resolve.approve",
   "outbox.read", "outbox.requeue.request", "outbox.requeue.approve", "job.read", "job.retry.request", "job.retry.approve",
-  "staff.read", "staff.invite.request", "staff.invite.approve", "staff.role-change.request", "staff.role-change.approve", "staff.disable.request", "staff.disable.approve",
+  "staff.read", "staff.operations-account.create", "staff.role-change.request", "staff.role-change.approve", "staff.disable.request", "staff.disable.approve",
   "audit.read", "audit.export",
 ] as const;
 export type AdminPermission = (typeof ADMIN_PERMISSIONS)[number];
@@ -18,24 +36,18 @@ export type AdminPermission = (typeof ADMIN_PERMISSIONS)[number];
 const set = (...permissions: AdminPermission[]): ReadonlySet<AdminPermission> => new Set(permissions);
 
 export const ROLE_PERMISSIONS: Readonly<Record<AdminRole, ReadonlySet<AdminPermission>>> = Object.freeze({
-  SUPPORT: set(
-    "customer.read.masked", "customer.access-lock.request", "account.read", "account.block.request", "transfer.pending.read", "fraud.read", "fraud.claim", "outbox.read", "job.read",
-  ),
   OPERATIONS: set(
     "customer.read.masked", "customer.read.pii", "customer.access-lock.request", "customer.access-unlock.request", "account.read", "account.block.request", "account.unblock.request",
     "simulation-funding.read", "simulation-funding.request", "simulation-funding.reverse.request", "kyc.read", "kyc.review", "kyc.decision.request",
-    "credit-application.read", "credit-application.review", "transfer.pending.read", "transfer.action.request", "fraud.read", "fraud.claim", "fraud.investigate", "fraud.action.request",
+    "credit-application.read", "credit-application.review", "transfer.pending.read", "transfer.action.request",
     "outbox.read", "outbox.requeue.request", "job.read", "job.retry.request", "staff.read",
   ),
-  CONTROL: set(
-    "customer.read.masked", "customer.read.pii", "customer.access-lock.approve", "account.read", "account.block.approve", "account.unblock.approve",
-    "simulation-funding.read", "simulation-funding.approve", "simulation-funding.reverse.approve", "kyc.read", "kyc.decision.approve",
-    "credit-application.read", "credit-application.decision.approve", "transfer.pending.read", "transfer.action.approve", "fraud.read", "fraud.investigate", "fraud.resolve.approve",
-    "outbox.read", "outbox.requeue.approve", "job.read", "job.retry.approve", "staff.read", "staff.invite.approve", "staff.role-change.approve", "staff.disable.approve", "audit.read", "audit.export",
-  ),
   ADMIN: set(
-    "customer.read.masked", "customer.access-lock.request", "customer.access-unlock.request", "account.read", "simulation-funding.read", "kyc.read", "credit-application.read", "transfer.pending.read", "fraud.read", "outbox.read", "job.read", "staff.read",
-    "staff.invite.request", "staff.role-change.request", "staff.disable.request", "audit.read",
+    "customer.read.masked", "customer.read.pii", "customer.access-lock.request", "customer.access-unlock.request", "customer.access-lock.approve", "account.read", "account.block.approve", "account.unblock.approve",
+    "simulation-funding.read", "simulation-funding.approve", "simulation-funding.reverse.approve", "kyc.read", "kyc.decision.approve",
+    "credit-application.read", "credit-application.decision.approve", "transfer.pending.read", "transfer.action.approve",
+    "outbox.read", "outbox.requeue.approve", "job.read", "job.retry.approve", "staff.read", "staff.operations-account.create", "staff.role-change.approve", "staff.disable.approve", "audit.read", "audit.export",
+    "staff.role-change.request", "staff.disable.request", "audit.read",
   ),
 });
 
@@ -87,7 +99,8 @@ export const ADMIN_ROUTES: readonly AdminRouteDefinition[] = [
   { method: "GET", path: "/admin/staff/{staffId}", permission: "staff.read" },
   { method: "GET", path: "/admin/roles", permission: "staff.read" },
   { method: "GET", path: "/admin/permissions", permission: "staff.read" },
-  { method: "POST", path: "/admin/staff/invite-requests", permission: "staff.invite.request", stateChanging: true },
+  { method: "POST", path: "/admin/staff/operations-accounts/mfa-setup", permission: "staff.operations-account.create", stateChanging: true },
+  { method: "POST", path: "/admin/staff/operations-accounts", permission: "staff.operations-account.create", stateChanging: true },
   { method: "POST", path: "/admin/staff/{staffId}/role-change-requests", permission: "staff.role-change.request", stateChanging: true },
   { method: "POST", path: "/admin/staff/{staffId}/disable-requests", permission: "staff.disable.request", stateChanging: true },
   { method: "GET", path: "/admin/customers", permission: "customer.read.masked" },
@@ -119,12 +132,6 @@ export const ADMIN_ROUTES: readonly AdminRouteDefinition[] = [
   { method: "POST", path: "/admin/transfers/{transferId}/retry-requests", permission: "transfer.action.request", stateChanging: true },
   { method: "POST", path: "/admin/transfers/{transferId}/cancel-requests", permission: "transfer.action.request", stateChanging: true },
   { method: "POST", path: "/admin/transfers/{transferId}/reversal-requests", permission: "transfer.action.request", stateChanging: true },
-  { method: "GET", path: "/admin/fraud-cases", permission: "fraud.read" },
-  { method: "GET", path: "/admin/fraud-cases/{reportId}", permission: "fraud.read" },
-  { method: "POST", path: "/admin/fraud-cases/{reportId}/claim", permission: "fraud.claim", stateChanging: true },
-  { method: "POST", path: "/admin/fraud-cases/{reportId}/notes", permission: "fraud.investigate", stateChanging: true },
-  { method: "POST", path: "/admin/fraud-cases/{reportId}/action-requests", permission: "fraud.action.request", stateChanging: true },
-  { method: "POST", path: "/admin/fraud-cases/{reportId}/resolution-requests", permission: "fraud.action.request", stateChanging: true },
   { method: "GET", path: "/admin/operations/outbox/summary", permission: "outbox.read" },
   { method: "GET", path: "/admin/operations/outbox/events", permission: "outbox.read" },
   { method: "GET", path: "/admin/operations/outbox/events/{eventId}", permission: "outbox.read" },

@@ -1,5 +1,7 @@
 # Milestone status snapshot — 2026-08-24
 
+> Cập nhật 2026-10-13: chức năng khách hàng gửi báo cáo giao dịch và hàng đợi Fraud của Admin đã được gỡ khỏi ứng dụng, API và contract hiện hành theo quyết định của owner. Schema/migration và dữ liệu cũ được giữ nguyên làm legacy, không còn được dùng để tạo hoặc xử lý báo cáo mới.
+
 ## Đã kiểm chứng local
 
 Implementation evidence checkpoint hiện hành: `edbc9bb`; safety checkpoint: `e1b7b8c` trên branch local `codex/stage0-safety-20260824`. Historical gate `595afc3` (`Harden database and OpenAPI quality gates`) chỉ dùng để truy vết.
@@ -16,11 +18,11 @@ Các thay đổi hardening ngày 2026-08-24 đã được tách thành commit lo
 - Backend correctness đã có quote snapshot/one-time, beneficiary fingerprint, UUID-compatible IDs, exact route, registration/step-up rate limit, reconciliation formula và outbox retry threshold.
 - Persistent PostgreSQL relational reference adapter, migration runner và CI service đã được thêm; integration test core chạy khi có `DATABASE_URL`, còn relational regression dùng `RELATIONAL_DATABASE_URL` disposable.
 - OpenAPI validation, Maestro syntax validation, Expo native config và web export đều đã chạy lại sau các route hiện tại; Mobile validator hiện bao phủ 43 path OpenAPI, 10 flow Maestro hợp lệ và 33 static route. Critical flow M0–M4/M8, M6 savings, credit payment, credit pending-resume, Credit card lock/restart/unlock, Credit overdue notification và offline login retry đã chạy thành công trên Android emulator.
-- Auth/session/device binding/MFA, accounts/history/detail/filter, transfer quote/step-up/idempotency/pending recovery, notifications và fraud report có reference flow.
+- Auth/session/device binding/MFA, accounts/history/detail/filter, transfer quote/step-up/idempotency/pending recovery và notifications có reference flow.
 - M2 có eKYC customer mock với form/ảnh mẫu và trạng thái DRAFT/PENDING; app không còn quyền tự APPROVED/REJECTED.
 - M4 có transfer flow, danh bạ người nhận CRUD và QR scanner/manual fallback. Dữ liệu QR hiện bị đánh dấu `UNVERIFIED` và không thể khởi tạo transfer khi chưa có server alias lookup.
 - M8 có notification list/read, notification detail và deep link tới transaction detail hoặc profile.
-- M5 có Card mock/reference: list/detail, lock/unlock, ẩn/hiện số mô phỏng và đổi PIN mô phỏng; không lưu PIN/CVV thật.
+- M5 có Card mock/reference: list/detail, lock/unlock, ẩn/hiện số thẻ thử nghiệm và đổi PIN thử nghiệm; không lưu PIN/CVV thật.
 - Có seed sandbox tự động cho E2E và report release/device nêu rõ các gate chưa thể chạy tại workspace.
 
 ## Chưa đủ điều kiện đóng milestone
@@ -80,9 +82,9 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 ### Đã có implementation/reference regression
 
 - Transfer, Savings opening và Credit payment dùng client intent chung `DRAFT_QUOTE`, `SUBMIT_UNKNOWN`, `ACCEPTED_PENDING`, `ACCEPTED_TERMINAL`. Intent đã submit không bị xóa vì quote hết hạn; accepted operation chỉ refresh qua status endpoint, receipt terminal giữ tới lúc user xác nhận/rời chủ đích. Transfer/Savings scope theo user, Credit theo user+card; legacy global migrate an toàn cho đúng owner.
-- Auth session có `sessionEpoch`; refresh/retry không dùng single-flight chung giữa hai phiên. `401` refresh là terminal, còn network/timeout/abort/429/5xx giữ session và recovery intent. Logout/logout-all trả kết quả local/remote riêng để UI không tuyên bố revoke mọi thiết bị khi server chưa xác nhận; chỉ xóa auth session, không purge intent tài chính/fraud đang cần resume.
+- Auth session có `sessionEpoch`; refresh/retry không dùng single-flight chung giữa hai phiên. `401` refresh là terminal, còn network/timeout/abort/429/5xx giữ session và recovery intent. Logout/logout-all trả kết quả local/remote riêng để UI không tuyên bố revoke mọi thiết bị khi server chưa xác nhận; chỉ xóa auth session, không purge intent tài chính đang cần resume.
 - Persistent HTTP transaction boundary không còn suy ra commit chỉ từ status code: DomainError chỉ giữ whitelist mutation bảo mật và audit thất bại step-up tương ứng; audit nghiệp vụ của aggregate rollback không được giữ. Regression bao phủ refresh-family reuse, login rate-limit, challenge lock qua restart, security-failure audit và forced business rollback.
-- Fraud report kiểm tra `Idempotency-Key` tối thiểu 8 ký tự, từ chối field thừa, có fingerprint, durable report record, PostgreSQL projection, audit/outbox và `GET /fraud-reports/{reportId}`. Invariant chỉ cho một case `RECEIVED` trên mỗi customer/transaction; retry cùng nội dung dù dùng key mới trả report cũ, còn nội dung xung đột trả `409`. Status reference hiện chỉ là `RECEIVED`.
+- Fraud reporting đã được gỡ khỏi UI, API và Admin workflow ngày 2026-10-13. Các migration và record cũ được giữ nguyên; không tạo hoặc xử lý case mới.
 - Credit chặn payment trên statement cũ, chặn payment mới khi account còn payment `PENDING`, revalidate overpay ở quote/submit/settle và đưa invariant vào reconciliation/health. Đã trả đủ minimum không bị đánh `OVERDUE` chỉ vì còn statement balance.
 - Public Savings/Credit GET đã read-only ở domain reference; operator command sandbox settle transfer/savings opening/credit payment `PENDING` trước khi chạy maturity/statement. Đây chưa phải durable worker/core callback.
 - Pending registration snapshot không còn chứa plaintext password; state migration loại field plaintext legacy.
@@ -91,7 +93,7 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 - eKYC customer không còn tự duyệt và QR `UNVERIFIED` không còn shortcut sang chuyển tiền.
 - OpenAPI v0.2 bind mọi operation bearer với `X-Device-ID`, Auth public khai báo header trực tiếp và mọi step-up bắt buộc `challengeId`; validator Backend/Mobile chống tái lệch contract.
 - Step-up sai trong command tài chính trả `409 STEP_UP_VERIFICATION_FAILED` để không kích hoạt refresh/replay; canonical replay sau quote consume giữ nguyên operation, còn state thiếu chuyển manual review.
-- Transfer/Savings/Credit/Fraud recovery intent fail-closed khi SecureStore malformed/read error; fraud rejection đã biết dọn local intent sau cleanup thành công, còn outcome không rõ vẫn retry cùng key.
+- Transfer/Savings/Credit recovery intent fail-closed khi SecureStore malformed/read error; outcome không rõ vẫn retry cùng key.
 
 ### Bằng chứng local hiện có cho worktree
 
@@ -101,9 +103,9 @@ Các kết quả local là bằng chứng cho reference implementation, không p
 ### Chưa đóng
 
 - Chưa có durable worker/scheduler chạy các command đã tách: job lease/idempotency, retry/backoff, crash recovery, core callback và monitoring vẫn là target DRAFT, chưa triển khai đầy đủ.
-- PostgreSQL live validator và relational concurrency đã đạt trên database disposable local; fraud/device cloud evidence, registry scan và managed backup/restore vẫn chưa có.
-- Chưa có device E2E cho timeout sau server commit, force-stop sau quote TTL, logout rồi re-login cùng user để resume, cross-user isolation, logout-all remote revoke hoặc fraud retry/status.
-- Mọi API/behavior mới vẫn là DRAFT; chưa có core/fraud/identity/credit product/legal approval, staging, physical-device evidence, monitoring hoặc signing. Không thay đổi kết luận: **chưa pilot/production-ready**.
+- PostgreSQL live validator và relational concurrency đã đạt trên database disposable local; device/cloud evidence, registry scan và managed backup/restore vẫn chưa có.
+- Chưa có device E2E cho timeout sau server commit, force-stop sau quote TTL, logout rồi re-login cùng user để resume, cross-user isolation hoặc logout-all remote revoke.
+- Mọi API/behavior mới vẫn là DRAFT; chưa có core/identity/credit product/legal approval, staging, physical-device evidence, monitoring hoặc signing. Không thay đổi kết luận: **chưa pilot/production-ready**.
 
 ## Giai đoạn 1 — Docker và Preview Persistent — 2026-08-24
 

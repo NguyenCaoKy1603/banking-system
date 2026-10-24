@@ -7,9 +7,17 @@ import {
 type ReceiveQrInput = Omit<ReceiveQrPayload, "version" | "kind" | "currency">;
 
 const MAX_QR_PAYLOAD_LENGTH = 4096;
-const MAX_ACCOUNT_ID_LENGTH = 128;
 const MAX_DISPLAY_FIELD_LENGTH = 160;
 const unsafeDisplayCharacters = /[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+const receiveQrKeys = new Set([
+  "version",
+  "kind",
+  "accountNumber",
+  "displayName",
+  "maskedAccountNumber",
+  "bankName",
+  "currency",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -27,11 +35,20 @@ function isSafeDisplayString(value: unknown, maxLength: number): value is string
   );
 }
 
+function isAccountNumber(value: unknown): value is string {
+  return typeof value === "string" && /^\d{6,34}$/.test(value.trim());
+}
+
+function hasOnlyReceiveQrKeys(value: Record<string, unknown>): boolean {
+  const keys = Object.keys(value);
+  return keys.length === receiveQrKeys.size && keys.every((key) => receiveQrKeys.has(key));
+}
+
 export function createReceiveQrPayload(input: ReceiveQrInput): string {
   const payload: ReceiveQrPayload = {
     version: RECEIVE_QR_VERSION,
     kind: "RECEIVE_MONEY",
-    accountId: input.accountId.trim(),
+    accountNumber: input.accountNumber.trim(),
     displayName: input.displayName.trim(),
     maskedAccountNumber: input.maskedAccountNumber.trim(),
     bankName: input.bankName.trim(),
@@ -39,7 +56,7 @@ export function createReceiveQrPayload(input: ReceiveQrInput): string {
   };
 
   if (
-    !isSafeDisplayString(payload.accountId, MAX_ACCOUNT_ID_LENGTH) ||
+    !isAccountNumber(payload.accountNumber) ||
     !isSafeDisplayString(payload.displayName, MAX_DISPLAY_FIELD_LENGTH) ||
     !isSafeDisplayString(payload.maskedAccountNumber, MAX_DISPLAY_FIELD_LENGTH) ||
     !isSafeDisplayString(payload.bankName, MAX_DISPLAY_FIELD_LENGTH)
@@ -68,10 +85,11 @@ export function parseReceiveQrPayload(raw: string): UnverifiedReceiveQrData {
 
   if (
     !isRecord(parsed) ||
+    !hasOnlyReceiveQrKeys(parsed) ||
     parsed.version !== RECEIVE_QR_VERSION ||
     parsed.kind !== "RECEIVE_MONEY" ||
     parsed.currency !== "VND" ||
-    !isSafeDisplayString(parsed.accountId, MAX_ACCOUNT_ID_LENGTH) ||
+    !isAccountNumber(parsed.accountNumber) ||
     !isSafeDisplayString(parsed.displayName, MAX_DISPLAY_FIELD_LENGTH) ||
     !isSafeDisplayString(parsed.maskedAccountNumber, MAX_DISPLAY_FIELD_LENGTH) ||
     !isSafeDisplayString(parsed.bankName, MAX_DISPLAY_FIELD_LENGTH)
@@ -82,7 +100,7 @@ export function parseReceiveQrPayload(raw: string): UnverifiedReceiveQrData {
   return {
     version: RECEIVE_QR_VERSION,
     kind: "RECEIVE_MONEY",
-    accountId: parsed.accountId.trim(),
+    accountNumber: parsed.accountNumber.trim(),
     displayName: parsed.displayName.trim(),
     maskedAccountNumber: parsed.maskedAccountNumber.trim(),
     bankName: parsed.bankName.trim(),

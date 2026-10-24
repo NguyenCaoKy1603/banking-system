@@ -25,8 +25,8 @@ describe("requireIdempotencyKey", () => {
       ),
     ).toBe("transfer-intent-1");
     expect(
-      requireIdempotencyKey("fraud-01", GENERAL_IDEMPOTENCY_KEY_MIN_LENGTH),
-    ).toBe("fraud-01");
+      requireIdempotencyKey("command-01", GENERAL_IDEMPOTENCY_KEY_MIN_LENGTH),
+    ).toBe("command-01");
   });
 
   it("rejects keys shorter than the endpoint boundary", () => {

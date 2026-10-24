@@ -3,7 +3,7 @@
 Ngày cập nhật: 2026-08-24
 Trạng thái: **Local/CI implementation đã có; cloud preview chưa triển khai**
 
-Đây là runbook cho môi trường preview dùng dữ liệu và tiền mô phỏng. Preview local vẫn dùng `NODE_ENV=preview`; Staging/Production-like dùng `NODE_ENV=production` nhưng phải qua runtime guard, luôn `BANKING_MONEY_MODE=virtual`, không có chế độ tiền thật. Không dùng cho core banking, KYC/AML hoặc phát hành cho khách hàng.
+Đây là runbook cho môi trường preview dùng dữ liệu tổng hợp và tiền ảo. Preview local vẫn dùng `NODE_ENV=preview`; Staging/Production-like dùng `NODE_ENV=production` nhưng phải qua runtime guard, luôn `BANKING_MONEY_MODE=virtual`, không có chế độ tiền thật. Không dùng cho core banking, KYC/AML hoặc phát hành cho khách hàng.
 
 ## Kiến trúc
 

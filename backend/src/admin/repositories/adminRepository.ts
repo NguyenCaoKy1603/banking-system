@@ -3,10 +3,10 @@ import type { PoolClient } from "pg";
 
 import { DatabasePool } from "../../database/pool.js";
 import { UnitOfWork } from "../../database/unitOfWork.js";
-import { createId, createOpaqueToken, hashOpaqueToken } from "../../security.js";
+import { createId } from "../../security.js";
 import { conflictWithCode, invalidRequest, notFound } from "../../errors.js";
 import { maskAccountNumber, maskEmail, maskPhone, redactAdminMetadata } from "../audit/redaction.js";
-import type { AdminPermission, AdminRole } from "../authorization/permissionRegistry.js";
+import { normalizeExistingAdminRole, type AdminPermission, type AdminRole } from "../authorization/permissionRegistry.js";
 import { assertSafePayload, buildEnvelope, canonicalEventName, resolveEventPolicy, validateEnvelope } from "../../outbox/eventRegistry.js";
 
 export type StaffStatus = "INVITED" | "ACTIVE" | "LOCKED" | "DISABLED";
@@ -96,6 +96,13 @@ export type AdminActionRecord = {
   version: number;
   createdAt: string;
   updatedAt: string;
+  requesterName?: string | null;
+  requesterEmail?: string | null;
+  requesterEmployeeCode?: string | null;
+  targetLabel?: string | null;
+  targetDisplayName?: string | null;
+  targetEmployeeCode?: string | null;
+  targetEmail?: string | null;
 };
 
 export type AdminDecision = {
@@ -113,6 +120,11 @@ export type AdminDecision = {
 export type AdminAuditRecord = {
   id: string;
   actorStaffId: string | null;
+  actorCustomerId?: string | null;
+  actorType?: "STAFF" | "CUSTOMER" | "SYSTEM";
+  actorName?: string | null;
+  actorEmail?: string | null;
+  actorEmployeeCode?: string | null;
   action: string;
   targetType: string | null;
   targetId: string | null;
@@ -174,6 +186,13 @@ export type AdminApplication = {
   requestedLimitMinor?: string;
   approvedLimitMinor?: string | null;
   applicantLabel?: string;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+  fullName?: string | null;
+  identityNumber?: string | null;
+  address?: string | null;
+  documentUri?: string | null;
   decisionReasonCode: string | null;
   createdAt: string;
   updatedAt: string;
@@ -192,6 +211,10 @@ export type AdminTransfer = {
   lastErrorCode: string | null;
   createdAt: string;
   updatedAt: string;
+  senderName?: string | null;
+  sourceAccountNumber?: string | null;
+  destinationOwnerName?: string | null;
+  destinationAccountNumber?: string | null;
 };
 
 export type AdminFraudCase = {
@@ -257,6 +280,21 @@ export type CreateActionInput = {
   payload: Record<string, unknown>;
 };
 
+export type CreateOperationsStaffAccountInput = {
+  staffId: string;
+  employeeCode: string;
+  emailNormalized: string;
+  displayName: string;
+  passwordSalt: string;
+  passwordDigest: string;
+  creatorStaffId: string;
+  environmentScope: "preview" | "production";
+  mfaCredential: StaffMfaRecord;
+  idempotencyKey: string;
+  requestFingerprint: string;
+  traceId: string;
+};
+
 export type ExecuteActionResult = {
   status: "SUCCEEDED" | "STALE" | "FAILED";
   resultResourceId?: string;
@@ -279,6 +317,7 @@ export interface AdminRepository {
   findStaffByEmail(email: string): Promise<StaffRecord | null>;
   findStaffById(id: string): Promise<StaffRecord | null>;
   listStaff(): Promise<StaffRecord[]>;
+  createOperationsStaffAccount(input: CreateOperationsStaffAccountInput): Promise<{ staff: StaffRecord; replayed: boolean }>;
   createStaffInvite(input: Omit<StaffInviteRecord, "usedAt"> & { createdByStaffId?: string | null }): Promise<void>;
   findInviteByHash(tokenHash: string): Promise<StaffInviteRecord | null>;
   activateInvite(input: { inviteId: string; passwordSalt: string; passwordDigest: string; staffId: string }): Promise<StaffRecord>;
@@ -303,7 +342,7 @@ export interface AdminRepository {
   updateActionStatus(id: string, status: ActionStatus, result?: { resourceId?: string; failureCode?: string }): Promise<AdminActionRecord>;
   executeApprovedAction(input: { requestId: string; approverStaffId: string; traceId: string }): Promise<ExecuteActionResult>;
   appendAudit(input: Omit<AdminAuditRecord, "occurredAt"> & { occurredAt?: string }): Promise<void>;
-  listAudit(limit?: number): Promise<AdminAuditRecord[]>;
+  listAudit(limit?: number, actorType?: string): Promise<AdminAuditRecord[]>;
   findCustomers(query?: string): Promise<CustomerSummary[]>;
   findCustomer(id: string): Promise<CustomerSummary | null>;
   listCustomerAccounts(customerId: string): Promise<AdminAccount[]>;
@@ -339,6 +378,12 @@ function normalizedEmail(email: string): string { return email.trim().toLowerCas
 function asNumber(value: unknown, fallback = 0): number { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
 function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function mapApplication(row: Record<string, unknown>, applicationType: "KYC" | "CREDIT"): AdminApplication {
+  const syntheticPayload = row.synthetic_payload && typeof row.synthetic_payload === "object"
+    ? row.synthetic_payload as Record<string, unknown>
+    : typeof row.synthetic_payload === "string"
+      ? (() => { try { return JSON.parse(row.synthetic_payload); } catch { return {}; } })()
+      : {};
+
   return {
     id: String(row.id), applicationType, customerId: String(row.customer_id), status: String(row.status),
     version: asNumber(row.version, 1), requestFingerprint: String(row.request_fingerprint),
@@ -346,12 +391,36 @@ function mapApplication(row: Record<string, unknown>, applicationType: "KYC" | "
     requestedLimitMinor: row.requested_limit_minor === undefined ? undefined : String(row.requested_limit_minor),
     approvedLimitMinor: row.approved_limit_minor === undefined ? undefined : row.approved_limit_minor === null ? null : String(row.approved_limit_minor),
     applicantLabel: row.applicant_label === undefined ? undefined : String(row.applicant_label),
+    customerName: row.customer_name ? String(row.customer_name) : null,
+    customerEmail: row.customer_email ? String(row.customer_email) : null,
+    customerPhone: row.customer_phone ? String(row.customer_phone) : null,
     decisionReasonCode: row.decision_reason_code ? String(row.decision_reason_code) : null,
     createdAt: new Date(String(row.created_at)).toISOString(), updatedAt: new Date(String(row.updated_at)).toISOString(),
+    fullName: syntheticPayload.fullName ? String(syntheticPayload.fullName) : (row.customer_name ? String(row.customer_name) : null),
+    identityNumber: syntheticPayload.identityNumber ? String(syntheticPayload.identityNumber) : null,
+    address: syntheticPayload.address ? String(syntheticPayload.address) : null,
+    documentUri: syntheticPayload.documentUri ? String(syntheticPayload.documentUri) : null,
   };
 }
 function mapTransfer(row: Record<string, unknown>): AdminTransfer {
-  return { id: String(row.id), customerId: String(row.customer_id), sourceAccountId: String(row.source_account_id), reference: String(row.reference), amountMinor: String(row.amount_minor), feeMinor: String(row.fee_minor), currency: String(row.currency), status: String(row.status), version: asNumber(row.version, 1), lastErrorCode: row.last_error_code ? String(row.last_error_code) : null, createdAt: new Date(String(row.created_at)).toISOString(), updatedAt: new Date(String(row.updated_at)).toISOString() };
+  return {
+    id: String(row.id),
+    customerId: String(row.customer_id),
+    sourceAccountId: String(row.source_account_id),
+    reference: String(row.reference),
+    amountMinor: String(row.amount_minor),
+    feeMinor: String(row.fee_minor),
+    currency: String(row.currency),
+    status: String(row.status),
+    version: asNumber(row.version, 1),
+    lastErrorCode: row.last_error_code ? String(row.last_error_code) : null,
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    updatedAt: new Date(String(row.updated_at)).toISOString(),
+    senderName: row.sender_name ? String(row.sender_name) : null,
+    sourceAccountNumber: row.source_account_number ? maskAccountNumber(String(row.source_account_number)) : null,
+    destinationOwnerName: row.dest_owner ? String(row.dest_owner) : null,
+    destinationAccountNumber: row.dest_account ? maskAccountNumber(String(row.dest_account)) : null,
+  };
 }
 function mapFraud(row: Record<string, unknown>): AdminFraudCase {
   return { id: String(row.id), customerId: String(row.customer_id), accountId: String(row.account_id), transactionId: String(row.transaction_id), reasonPreview: String(row.reason ?? "").slice(0, 160), status: String(row.status), severity: String(row.severity ?? "MEDIUM"), assignedStaffId: row.assigned_staff_id ? String(row.assigned_staff_id) : null, resolutionCode: row.resolution_code ? String(row.resolution_code) : null, version: asNumber(row.version, 1), createdAt: new Date(String(row.created_at)).toISOString(), updatedAt: new Date(String(row.updated_at ?? row.created_at)).toISOString() };
@@ -397,9 +466,7 @@ async function insertTypedActionDetail(client: PoolClient, input: CreateActionIn
   } else if (input.actionType === "JOB_RETRY") {
     await client.query("INSERT INTO job_retry_requests (request_id, job_id, reason_code, ticket_reference) VALUES ($1,$2,$3,$4)", [requestId, input.targetId, reason, String(payload.ticketReference ?? "ADMIN")]);
   } else if (input.actionType === "STAFF_ROLE_CHANGE") {
-    await client.query("INSERT INTO staff_role_change_requests (request_id, staff_id, role_code, operation, environment_scope, reason_code) VALUES ($1,$2,$3,$4,$5,$6)", [requestId, input.targetId, String(payload.roleCode ?? "SUPPORT"), String(payload.operation ?? "GRANT"), String(payload.environmentScope ?? "preview"), reason]);
-  } else if (input.actionType === "STAFF_INVITE") {
-    await client.query("INSERT INTO staff_invite_requests (request_id, email_normalized, employee_code, display_name, role_code, reason_code) VALUES ($1, lower($2), $3, $4, $5, $6)", [requestId, String(payload.email ?? ""), String(payload.employeeCode ?? ""), String(payload.displayName ?? ""), String(payload.role ?? "SUPPORT"), reason]);
+    await client.query("INSERT INTO staff_role_change_requests (request_id, staff_id, role_code, operation, environment_scope, reason_code) VALUES ($1,$2,$3,$4,$5,$6)", [requestId, input.targetId, String(payload.roleCode ?? "OPERATIONS"), String(payload.operation ?? "GRANT"), String(payload.environmentScope ?? "preview"), reason]);
   }
 }
 
@@ -411,6 +478,8 @@ async function insertAdminOutboxEvent(client: PoolClient, input: {
   deduplicationKey: string;
   payload: Record<string, unknown>;
   traceId: string | null;
+  subjectCustomerIds?: readonly string[];
+  notificationIds?: readonly string[];
 }): Promise<void> {
   const eventId = createId("outbox");
   const policy = resolveEventPolicy(input.eventType, 1);
@@ -425,6 +494,8 @@ async function insertAdminOutboxEvent(client: PoolClient, input: {
     aggregateVersion: input.aggregateVersion,
     occurredAt: new Date().toISOString(),
     traceId: input.traceId,
+    subjectCustomerIds: input.subjectCustomerIds,
+    notificationIds: input.notificationIds,
   });
   const payload = { ...input.payload, ...envelope };
   await client.query(
@@ -437,6 +508,7 @@ export class InMemoryAdminRepository implements AdminRepository {
   private readonly roles = new Map<AdminRole, { code: AdminRole; displayName: string; description: string }>();
   private readonly permissions = new Map<string, { code: AdminPermission; description: string }>();
   private readonly staff = new Map<string, StaffRecord>();
+  private readonly staffAccountCreations = new Map<string, { requestFingerprint: string; staffId: string }>();
   private readonly invites = new Map<string, StaffInviteRecord>();
   private readonly mfa = new Map<string, StaffMfaRecord>();
   private readonly challenges = new Map<string, StaffChallengeRecord>();
@@ -459,7 +531,7 @@ export class InMemoryAdminRepository implements AdminRepository {
 
   async initialize(): Promise<void> {
     const roleDefinitions: Array<[AdminRole, string, string]> = [
-      ["SUPPORT", "Hỗ trợ", "Tra cứu dữ liệu đã che"], ["OPERATIONS", "Vận hành", "Xử lý nghiệp vụ"], ["CONTROL", "Kiểm soát", "Phê duyệt độc lập"], ["ADMIN", "Quản trị", "Quản lý danh tính và policy"],
+      ["OPERATIONS", "Vận hành", "Xử lý nghiệp vụ và hỗ trợ khách hàng"], ["ADMIN", "Quản trị", "Quản lý nhân viên, phê duyệt độc lập và kiểm toán"],
     ];
     for (const [code, displayName, description] of roleDefinitions) this.roles.set(code, { code, displayName, description });
     const { ADMIN_PERMISSIONS } = await import("../authorization/permissionRegistry.js");
@@ -483,6 +555,55 @@ export class InMemoryAdminRepository implements AdminRepository {
   findStaffByEmail(email: string) { const row = [...this.staff.values()].find((item) => item.emailNormalized === normalizedEmail(email)); return Promise.resolve(row ? structuredClone(row) : null); }
   findStaffById(id: string) { const row = this.staff.get(id); return Promise.resolve(row ? structuredClone(row) : null); }
   listStaff() { return Promise.resolve([...this.staff.values()].map((row) => structuredClone(row))); }
+  async createOperationsStaffAccount(input: CreateOperationsStaffAccountInput): Promise<{ staff: StaffRecord; replayed: boolean }> {
+    const requestKey = `${input.creatorStaffId}:${input.idempotencyKey}`;
+    const existingRequest = this.staffAccountCreations.get(requestKey);
+    if (existingRequest) {
+      if (existingRequest.requestFingerprint !== input.requestFingerprint) throw new Error("STAFF_ACCOUNT_IDEMPOTENCY_CONFLICT");
+      const existingStaff = this.staff.get(existingRequest.staffId);
+      if (!existingStaff) throw new Error("STAFF_ACCOUNT_CREATION_RESULT_MISSING");
+      return { staff: structuredClone(existingStaff), replayed: true };
+    }
+    if ([...this.staff.values()].some((staff) => staff.emailNormalized === input.emailNormalized || staff.employeeCode === input.employeeCode)) {
+      throw new Error("STAFF_ACCOUNT_ALREADY_EXISTS");
+    }
+    const createdAt = nowIso();
+    const staff: StaffRecord = {
+      id: input.staffId,
+      employeeCode: input.employeeCode,
+      emailNormalized: input.emailNormalized,
+      displayName: input.displayName,
+      passwordSalt: input.passwordSalt,
+      passwordDigest: input.passwordDigest,
+      status: "ACTIVE",
+      authorizationVersion: 1,
+      passwordChangedAt: createdAt,
+      mfaEnrolledAt: createdAt,
+      lastLoginAt: null,
+      createdAt,
+      roles: [{ role: "OPERATIONS", environmentScope: input.environmentScope, expiresAt: null }],
+    };
+    this.staff.set(staff.id, staff);
+    this.mfa.set(staff.id, structuredClone(input.mfaCredential));
+    this.staffAccountCreations.set(requestKey, { requestFingerprint: input.requestFingerprint, staffId: staff.id });
+    await this.appendAudit({
+      id: randomUUID(),
+      actorStaffId: input.creatorStaffId,
+      action: "STAFF_OPERATIONS_ACCOUNT_CREATED",
+      targetType: "STAFF",
+      targetId: staff.id,
+      outcome: "SUCCEEDED",
+      reasonCode: "OPERATIONS_ACCOUNT_CREATED",
+      requestId: null,
+      traceId: input.traceId,
+      correlationId: null,
+      beforeVersion: null,
+      afterVersion: staff.authorizationVersion,
+      metadata: { role: "OPERATIONS", environmentScope: input.environmentScope },
+      occurredAt: createdAt,
+    });
+    return { staff: structuredClone(staff), replayed: false };
+  }
   async createStaffInvite(input: Omit<StaffInviteRecord, "usedAt"> & { createdByStaffId?: string | null }): Promise<void> {
     const row: StaffInviteRecord = { ...input, usedAt: null };
     this.invites.set(row.tokenHash, structuredClone(row));
@@ -553,7 +674,7 @@ export class InMemoryAdminRepository implements AdminRepository {
       else if (action.targetType === "FRAUD_CASE") target = this.fraudCases.get(action.targetId) as unknown as Record<string, unknown> | undefined;
       else if (action.targetType === "JOB") target = this.jobs.get(action.targetId) as unknown as Record<string, unknown> | undefined;
       else if (action.targetType === "OUTBOX_EVENT") target = this.outboxEvents.get(action.targetId);
-      if (action.targetType !== "STAFF_INVITE" && !target) return finish("FAILED", undefined, `${action.targetType}_NOT_FOUND`);
+      if (!target) return finish("FAILED", undefined, `${action.targetType}_NOT_FOUND`);
       if (target && action.expectedTargetVersion !== null && targetVersion(target) !== action.expectedTargetVersion) return finish("STALE", undefined, "ACTION_STALE");
       if (target && action.expectedTargetStatus !== null && targetStatus(target) !== action.expectedTargetStatus) return finish("STALE", undefined, "ACTION_STALE");
 
@@ -565,16 +686,11 @@ export class InMemoryAdminRepository implements AdminRepository {
         if (customer.accessStatus === "LOCKED") await this.revokeStaffSessions(`customer:${customer.id}`, "CUSTOMER_ACCESS_LOCK");
         return finish("SUCCEEDED", customer.id, undefined) as ExecuteActionResult & { beforeVersion?: number; afterVersion?: number };
       }
-      if (action.actionType === "STAFF_INVITE") {
-        const token = createOpaqueToken();
-        const inviteId = randomUUID();
-        await this.createStaffInvite({ id: inviteId, emailNormalized: String(action.payload.email ?? "").trim().toLowerCase(), employeeCode: String(action.payload.employeeCode ?? "").trim(), displayName: String(action.payload.displayName ?? "").trim(), roleCode: String(action.payload.role ?? "SUPPORT") as AdminRole, tokenHash: hashOpaqueToken(token), expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), createdByStaffId: action.requesterStaffId });
-        return finish("SUCCEEDED", inviteId);
-      }
       if (action.actionType === "STAFF_ROLE_CHANGE") {
         const staff = this.staff.get(action.targetId)!;
         const operation = String(action.payload.operation ?? "GRANT").toUpperCase();
-        const role = String(action.payload.roleCode ?? "SUPPORT") as AdminRole;
+        const role = normalizeExistingAdminRole(String(action.payload.roleCode ?? "OPERATIONS"));
+        if (!role) return finish("FAILED", undefined, "STAFF_ROLE_INVALID");
         if (operation === "GRANT" && !staff.roles.some((item) => item.role === role && item.environmentScope === String(action.payload.environmentScope ?? "preview"))) staff.roles.push({ role, environmentScope: String(action.payload.environmentScope ?? "preview"), expiresAt: null });
         if (operation === "REVOKE") staff.roles = staff.roles.filter((item) => !(item.role === role && item.environmentScope === String(action.payload.environmentScope ?? "preview")));
         staff.authorizationVersion += 1;
@@ -663,7 +779,10 @@ export class InMemoryAdminRepository implements AdminRepository {
     }
   }
   appendAudit(input: Omit<AdminAuditRecord, "occurredAt"> & { occurredAt?: string }) { this.audit.push({ ...input, metadata: redactAdminMetadata(input.metadata) as Record<string, unknown>, occurredAt: input.occurredAt ?? nowIso() }); return Promise.resolve(); }
-  listAudit(limit = 100) { return Promise.resolve(this.audit.slice(-Math.min(limit, 1000)).reverse().map((row) => structuredClone(row))); }
+  listAudit(limit = 100, actorType?: string) {
+    const filtered = actorType ? this.audit.filter((row) => row.actorType === actorType) : this.audit;
+    return Promise.resolve(filtered.slice(-Math.min(limit, 1000)).reverse().map((row) => structuredClone(row)));
+  }
   findCustomers(query = "") { const term = query.trim().toLowerCase(); return Promise.resolve([...this.customers.values()].filter((row) => !term || `${row.fullName} ${row.email} ${row.phoneNumber}`.toLowerCase().includes(term)).map((row) => maskedCustomer(structuredClone(row)))); }
   findCustomer(id: string) { const row = this.customers.get(id); return Promise.resolve(row ? maskedCustomer(structuredClone(row)) : null); }
   listCustomerAccounts(customerId: string) { return Promise.resolve([...this.accounts.values()].filter((row) => row.customerId === customerId).map((row) => ({ ...structuredClone(row), maskedNumber: maskAccountNumber(row.maskedNumber) }))); }
@@ -706,7 +825,35 @@ export class InMemoryAdminRepository implements AdminRepository {
 function mapStaff(row: Record<string, unknown>, roles: StaffRecord["roles"] = []): StaffRecord {
   return { id: String(row.id), employeeCode: String(row.employee_code), emailNormalized: String(row.email_normalized), displayName: String(row.display_name), passwordSalt: row.password_salt ? String(row.password_salt) : null, passwordDigest: row.password_digest ? String(row.password_digest) : null, status: String(row.status) as StaffStatus, authorizationVersion: asNumber(row.authorization_version, 1), passwordChangedAt: row.password_changed_at ? new Date(String(row.password_changed_at)).toISOString() : null, mfaEnrolledAt: row.mfa_enrolled_at ? new Date(String(row.mfa_enrolled_at)).toISOString() : null, lastLoginAt: row.last_login_at ? new Date(String(row.last_login_at)).toISOString() : null, createdAt: new Date(String(row.created_at)).toISOString(), roles };
 }
-function mapAction(row: Record<string, unknown>): AdminActionRecord { return { id: String(row.id), actionType: String(row.action_type), requesterStaffId: String(row.requester_staff_id), targetType: String(row.target_type), targetId: String(row.target_id), requestFingerprint: String(row.request_fingerprint), policyVersion: String(row.policy_version), status: String(row.status) as ActionStatus, idempotencyKey: String(row.idempotency_key), expectedTargetVersion: row.expected_target_version === null ? null : asNumber(row.expected_target_version), expectedTargetStatus: row.expected_target_status ? String(row.expected_target_status) : null, expiresAt: new Date(String(row.expires_at)).toISOString(), payload: asRecord(row.payload), resultResourceId: row.result_resource_id ? String(row.result_resource_id) : null, failureCode: row.failure_code ? String(row.failure_code) : null, version: asNumber(row.version, 1), createdAt: new Date(String(row.created_at)).toISOString(), updatedAt: new Date(String(row.updated_at)).toISOString() }; }
+function mapAction(row: Record<string, unknown>): AdminActionRecord {
+  return {
+    id: String(row.id),
+    actionType: String(row.action_type),
+    requesterStaffId: String(row.requester_staff_id),
+    targetType: String(row.target_type),
+    targetId: String(row.target_id),
+    requestFingerprint: String(row.request_fingerprint),
+    policyVersion: String(row.policy_version),
+    status: String(row.status) as ActionStatus,
+    idempotencyKey: String(row.idempotency_key),
+    expectedTargetVersion: row.expected_target_version === null ? null : asNumber(row.expected_target_version),
+    expectedTargetStatus: row.expected_target_status ? String(row.expected_target_status) : null,
+    expiresAt: new Date(String(row.expires_at)).toISOString(),
+    payload: asRecord(row.payload),
+    resultResourceId: row.result_resource_id ? String(row.result_resource_id) : null,
+    failureCode: row.failure_code ? String(row.failure_code) : null,
+    version: asNumber(row.version, 1),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    updatedAt: new Date(String(row.updated_at)).toISOString(),
+    requesterName: row.requester_name ? String(row.requester_name) : null,
+    requesterEmail: row.requester_email ? String(row.requester_email) : null,
+    requesterEmployeeCode: row.requester_employee_code ? String(row.requester_employee_code) : null,
+    targetLabel: row.target_label ? String(row.target_label) : null,
+    targetDisplayName: row.target_display_name ? String(row.target_display_name) : null,
+    targetEmployeeCode: row.target_employee_code ? String(row.target_employee_code) : null,
+    targetEmail: row.target_email ? String(row.target_email) : null,
+  };
+}
 function mapSession(row: Record<string, unknown>): StaffSessionRecord { return { id: String(row.id), staffId: String(row.staff_id), accessTokenHash: String(row.access_token_hash), refreshTokenHash: String(row.refresh_token_hash), familyId: String(row.family_id), authorizationVersion: asNumber(row.authorization_version, 1), idleExpiresAt: new Date(String(row.idle_expires_at)).toISOString(), absoluteExpiresAt: new Date(String(row.absolute_expires_at)).toISOString(), lastSeenAt: new Date(String(row.last_seen_at)).toISOString(), csrfTokenHash: String(row.csrf_token_hash), deviceFingerprint: row.device_fingerprint ? String(row.device_fingerprint) : null, ipHash: row.ip_hash ? String(row.ip_hash) : null, stepUpVerifiedAt: row.step_up_verified_at ? new Date(String(row.step_up_verified_at)).toISOString() : null, revokedAt: row.revoked_at ? new Date(String(row.revoked_at)).toISOString() : null }; }
 
 /** PostgreSQL repository used by the separate Admin API process. */
@@ -723,6 +870,55 @@ export class PostgresAdminRepository implements AdminRepository {
   async findStaffByEmail(email: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT * FROM staff_users WHERE email_normalized = lower($1)", [email]); return result.rows[0] ? this.staffWithRoles(client, result.rows[0] as Record<string, unknown>) : null; }); }
   async findStaffById(id: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT * FROM staff_users WHERE id = $1", [id]); return result.rows[0] ? this.staffWithRoles(client, result.rows[0] as Record<string, unknown>) : null; }); }
   async listStaff() { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT * FROM staff_users ORDER BY created_at DESC"); return Promise.all(result.rows.map((row) => this.staffWithRoles(client, row as Record<string, unknown>))); }); }
+  async createOperationsStaffAccount(input: CreateOperationsStaffAccountInput): Promise<{ staff: StaffRecord; replayed: boolean }> {
+    try {
+      return await this.unitOfWork.transaction(async ({ client }) => {
+        const lockKey = `${input.creatorStaffId}:${input.idempotencyKey}`;
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lockKey]);
+        const existingRequest = await client.query(
+          "SELECT request_fingerprint, staff_id FROM admin_staff_account_creation_requests WHERE requester_staff_id = $1 AND idempotency_key = $2 FOR UPDATE",
+          [input.creatorStaffId, input.idempotencyKey],
+        );
+        if (existingRequest.rows[0]) {
+          if (String(existingRequest.rows[0].request_fingerprint) !== input.requestFingerprint) throw new Error("STAFF_ACCOUNT_IDEMPOTENCY_CONFLICT");
+          const existingStaff = await client.query("SELECT * FROM staff_users WHERE id = $1", [existingRequest.rows[0].staff_id]);
+          if (!existingStaff.rows[0]) throw new Error("STAFF_ACCOUNT_CREATION_RESULT_MISSING");
+          return { staff: await this.staffWithRoles(client, existingStaff.rows[0] as Record<string, unknown>), replayed: true };
+        }
+        const duplicate = await client.query(
+          "SELECT id FROM staff_users WHERE email_normalized = lower($1) OR employee_code = $2 LIMIT 1 FOR UPDATE",
+          [input.emailNormalized, input.employeeCode],
+        );
+        if (duplicate.rows[0]) throw new Error("STAFF_ACCOUNT_ALREADY_EXISTS");
+
+        const insertedStaff = await client.query(
+          "INSERT INTO staff_users (id, employee_code, email_normalized, display_name, password_salt, password_digest, status, authorization_version, password_changed_at, mfa_enrolled_at, created_by_staff_id) VALUES ($1,$2,lower($3),$4,$5,$6,'ACTIVE',1,NOW(),NOW(),$7) RETURNING *",
+          [input.staffId, input.employeeCode, input.emailNormalized, input.displayName, input.passwordSalt, input.passwordDigest, input.creatorStaffId],
+        );
+        await client.query(
+          "INSERT INTO staff_user_roles (staff_id, role_code, environment_scope, granted_by_staff_id) VALUES ($1,'OPERATIONS',$2,$3)",
+          [input.staffId, input.environmentScope, input.creatorStaffId],
+        );
+        const credential = input.mfaCredential;
+        await client.query(
+          "INSERT INTO staff_mfa_credentials (id, staff_id, secret_ciphertext, encryption_key_id, secret_cipher_version, secret_aad_version, secret_encryption_algorithm, secret_encrypted_data_key, last_accepted_time_step) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+          [credential.id, credential.staffId, credential.secretCiphertext, credential.encryptionKeyId, credential.secretCipherVersion ?? "v2", credential.secretAadVersion ?? "aad-v1", credential.secretEncryptionAlgorithm ?? "AES-256-GCM-ENVELOPE", credential.secretEncryptedDataKey ?? null, credential.lastAcceptedTimeStep],
+        );
+        await client.query(
+          "INSERT INTO admin_staff_account_creation_requests (requester_staff_id, idempotency_key, request_fingerprint, staff_id) VALUES ($1,$2,$3,$4)",
+          [input.creatorStaffId, input.idempotencyKey, input.requestFingerprint, input.staffId],
+        );
+        await client.query(
+          "INSERT INTO audit_events (id,event_type,actor_type,actor_staff_id,action,target_type,target_id,outcome,reason_code,request_id,trace_id,correlation_id,before_version,after_version,payload,occurred_at) VALUES ($1,'ADMIN_AUDIT_EVENT','STAFF',$2,'STAFF_OPERATIONS_ACCOUNT_CREATED','STAFF',$3,'SUCCEEDED','OPERATIONS_ACCOUNT_CREATED',NULL,$4,NULL,NULL,1,$5,NOW())",
+          [randomUUID(), input.creatorStaffId, input.staffId, input.traceId, JSON.stringify({ role: "OPERATIONS", environmentScope: input.environmentScope })],
+        );
+        return { staff: await this.staffWithRoles(client, insertedStaff.rows[0] as Record<string, unknown>), replayed: false };
+      });
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "23505") throw new Error("STAFF_ACCOUNT_ALREADY_EXISTS");
+      throw error;
+    }
+  }
   async createStaffInvite(input: Omit<StaffInviteRecord, "usedAt"> & { createdByStaffId?: string | null }): Promise<void> { await this.unitOfWork.transaction(async ({ client }) => { await client.query("INSERT INTO staff_users (id, employee_code, email_normalized, display_name, status, created_by_staff_id) VALUES ($1, $2, lower($3), $4, 'INVITED', $5)", [input.id, input.employeeCode, input.emailNormalized, input.displayName, input.createdByStaffId ?? null]); await client.query("INSERT INTO staff_invites (id, email_normalized, employee_code, display_name, role_code, token_hash, expires_at, created_by_staff_id) VALUES ($1, lower($2), $3, $4, $5, $6, $7, $8)", [input.id, input.emailNormalized, input.employeeCode, input.displayName, input.roleCode, input.tokenHash, input.expiresAt, input.createdByStaffId ?? null]); await client.query("INSERT INTO staff_user_roles (staff_id, role_code, granted_by_staff_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", [input.id, input.roleCode, input.createdByStaffId ?? null]); }); }
   async findInviteByHash(tokenHash: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT id, email_normalized, employee_code, display_name, role_code, token_hash, expires_at, used_at FROM staff_invites WHERE token_hash = $1 AND used_at IS NULL AND expires_at > NOW()", [tokenHash]); if (!result.rows[0]) return null; const row = result.rows[0]; return { id: String(row.id), emailNormalized: String(row.email_normalized), employeeCode: String(row.employee_code), displayName: String(row.display_name), roleCode: String(row.role_code) as AdminRole, tokenHash: String(row.token_hash), expiresAt: new Date(String(row.expires_at)).toISOString(), usedAt: null }; }); }
   async activateInvite(input: { inviteId: string; passwordSalt: string; passwordDigest: string; staffId: string }) { return this.unitOfWork.transaction(async ({ client }) => { const invite = await client.query("SELECT * FROM staff_invites WHERE id = $1 AND used_at IS NULL AND expires_at > NOW() FOR UPDATE", [input.inviteId]); if (!invite.rows[0]) throw new Error("INVITE_INVALID"); await client.query("UPDATE staff_invites SET used_at = NOW() WHERE id = $1", [input.inviteId]); await client.query("UPDATE staff_users SET password_salt = $2, password_digest = $3, status = 'ACTIVE', password_changed_at = NOW(), updated_at = NOW(), authorization_version = authorization_version + 1 WHERE id = $1", [input.staffId, input.passwordSalt, input.passwordDigest]); const row = await client.query("SELECT * FROM staff_users WHERE id = $1", [input.staffId]); return this.staffWithRoles(client, row.rows[0] as Record<string, unknown>); }); }
@@ -750,10 +946,91 @@ export class PostgresAdminRepository implements AdminRepository {
       return mapAction(result.rows[0] as Record<string, unknown>);
     });
   }
-  async findAction(id: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT * FROM admin_action_requests WHERE id = $1", [id]); return result.rows[0] ? mapAction(result.rows[0] as Record<string, unknown>) : null; }); }
-  async listActions(status?: ActionStatus, scope?: AdminCaseScope) { return this.unitOfWork.transaction(async ({ client }) => { if (scope) await client.query("SELECT set_config('app.staff_id',$1,true), set_config('app.staff_scope',$2,true)", [scope.staffId, scope.scope]); const predicates: string[] = []; const values: unknown[] = []; if (status) { values.push(status); predicates.push(`status = $${values.length}`); } if (scope && !scope.canSeeAll) { values.push(scope.staffId); predicates.push(`requester_staff_id = $${values.length}`); } const where = predicates.length ? `WHERE ${predicates.join(" AND ")}` : ""; const result = await client.query(`SELECT * FROM admin_action_requests ${where} ORDER BY created_at DESC LIMIT 500`, values); return result.rows.map((row) => mapAction(row as Record<string, unknown>)); }); }
+  async findAction(id: string) {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query(`
+        SELECT a.*,
+               req.display_name AS requester_name,
+               req.email_normalized AS requester_email,
+               req.employee_code AS requester_employee_code,
+               CASE
+                 WHEN a.target_type = 'STAFF' THEN 'Nhân viên: ' || tgt_staff.display_name || ' (' || tgt_staff.employee_code || ' · ' || tgt_staff.email_normalized || ')'
+                 WHEN a.target_type = 'TRANSFER' THEN 'Chuyển tiền: ' || COALESCE(tr_sender.full_name, 'Khách hàng') || ' ➔ ' || COALESCE(tr_dest.full_name, 'Thụ hưởng') || ' (' || to_char(tr.amount_minor, 'FM999,999,999,999') || ' VND) · ' || COALESCE(a.payload->>'operation', 'Xử lý')
+                 WHEN a.target_type = 'KYC_APPLICATION' THEN 'Hồ sơ eKYC: ' || COALESCE(kyc_c.full_name, a.target_id) || ' (Mã: #' || substring(a.target_id from 1 for 8) || ')'
+                 WHEN a.target_type = 'CREDIT_APPLICATION' THEN 'Hồ sơ Tín dụng: ' || COALESCE(cr_c.full_name, a.target_id) || ' (Mã: #' || substring(a.target_id from 1 for 8) || ')'
+                 WHEN a.target_type = 'ACCOUNT' THEN 'Tài khoản thanh toán: #' || substring(a.target_id from 1 for 8)
+                 WHEN a.target_type = 'CUSTOMER' THEN 'Khách hàng: #' || substring(a.target_id from 1 for 8)
+                 ELSE a.target_type || ' #' || substring(a.target_id from 1 for 8)
+               END AS target_label,
+               tgt_staff.display_name AS target_staff_name,
+               tgt_staff.employee_code AS target_employee_code,
+               tgt_staff.email_normalized AS target_email,
+               COALESCE(tr_sender.full_name, kyc_c.full_name, cr_c.full_name, tgt_staff.display_name) AS target_display_name
+        FROM admin_action_requests a
+        LEFT JOIN staff_users req ON a.requester_staff_id = req.id
+        LEFT JOIN staff_users tgt_staff ON a.target_type = 'STAFF' AND a.target_id::text = tgt_staff.id::text
+        LEFT JOIN transfers tr ON a.target_type = 'TRANSFER' AND a.target_id::text = tr.id::text
+        LEFT JOIN customers tr_sender ON tr.customer_id = tr_sender.id
+        LEFT JOIN customers tr_dest ON tr.destination_owner_id = tr_dest.id
+        LEFT JOIN kyc_applications kyc_app ON a.target_type = 'KYC_APPLICATION' AND a.target_id::text = kyc_app.id::text
+        LEFT JOIN customers kyc_c ON kyc_app.customer_id = kyc_c.id
+        LEFT JOIN credit_applications cr_app ON a.target_type = 'CREDIT_APPLICATION' AND a.target_id::text = cr_app.id::text
+        LEFT JOIN customers cr_c ON cr_app.customer_id = cr_c.id
+        WHERE a.id = $1
+      `, [id]);
+      return result.rows[0] ? mapAction(result.rows[0] as Record<string, unknown>) : null;
+    });
+  }
+  async listActions(status?: ActionStatus, scope?: AdminCaseScope) {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      if (scope) await client.query("SELECT set_config('app.staff_id',$1,true), set_config('app.staff_scope',$2,true)", [scope.staffId, scope.scope]);
+      const predicates: string[] = [];
+      const values: unknown[] = [];
+      if (status) {
+        values.push(status);
+        predicates.push(`a.status = $${values.length}`);
+      }
+      if (scope && !scope.canSeeAll) {
+        values.push(scope.staffId);
+        predicates.push(`a.requester_staff_id = $${values.length}`);
+      }
+      const where = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
+      const result = await client.query(`
+        SELECT a.*,
+               req.display_name AS requester_name,
+               req.email_normalized AS requester_email,
+               req.employee_code AS requester_employee_code,
+               CASE
+                 WHEN a.target_type = 'STAFF' THEN 'Nhân viên: ' || tgt_staff.display_name || ' (' || tgt_staff.employee_code || ' · ' || tgt_staff.email_normalized || ')'
+                 WHEN a.target_type = 'TRANSFER' THEN 'Chuyển tiền: ' || COALESCE(tr_sender.full_name, 'Khách hàng') || ' ➔ ' || COALESCE(tr_dest.full_name, 'Thụ hưởng') || ' (' || to_char(tr.amount_minor, 'FM999,999,999,999') || ' VND) · ' || COALESCE(a.payload->>'operation', 'Xử lý')
+                 WHEN a.target_type = 'KYC_APPLICATION' THEN 'Hồ sơ eKYC: ' || COALESCE(kyc_c.full_name, a.target_id) || ' (Mã: #' || substring(a.target_id from 1 for 8) || ')'
+                 WHEN a.target_type = 'CREDIT_APPLICATION' THEN 'Hồ sơ Tín dụng: ' || COALESCE(cr_c.full_name, a.target_id) || ' (Mã: #' || substring(a.target_id from 1 for 8) || ')'
+                 WHEN a.target_type = 'ACCOUNT' THEN 'Tài khoản thanh toán: #' || substring(a.target_id from 1 for 8)
+                 WHEN a.target_type = 'CUSTOMER' THEN 'Khách hàng: #' || substring(a.target_id from 1 for 8)
+                 ELSE a.target_type || ' #' || substring(a.target_id from 1 for 8)
+               END AS target_label,
+               tgt_staff.display_name AS target_staff_name,
+               tgt_staff.employee_code AS target_employee_code,
+               tgt_staff.email_normalized AS target_email,
+               COALESCE(tr_sender.full_name, kyc_c.full_name, cr_c.full_name, tgt_staff.display_name) AS target_display_name
+        FROM admin_action_requests a
+        LEFT JOIN staff_users req ON a.requester_staff_id = req.id
+        LEFT JOIN staff_users tgt_staff ON a.target_type = 'STAFF' AND a.target_id::text = tgt_staff.id::text
+        LEFT JOIN transfers tr ON a.target_type = 'TRANSFER' AND a.target_id::text = tr.id::text
+        LEFT JOIN customers tr_sender ON tr.customer_id = tr_sender.id
+        LEFT JOIN customers tr_dest ON tr.destination_owner_id = tr_dest.id
+        LEFT JOIN kyc_applications kyc_app ON a.target_type = 'KYC_APPLICATION' AND a.target_id::text = kyc_app.id::text
+        LEFT JOIN customers kyc_c ON kyc_app.customer_id = kyc_c.id
+        LEFT JOIN credit_applications cr_app ON a.target_type = 'CREDIT_APPLICATION' AND a.target_id::text = cr_app.id::text
+        LEFT JOIN customers cr_c ON cr_app.customer_id = cr_c.id
+        ${where}
+        ORDER BY a.created_at DESC LIMIT 500
+      `, values);
+      return result.rows.map((row) => mapAction(row as Record<string, unknown>));
+    });
+  }
   async decideAction(input: { requestId: string; reviewerStaffId: string; decision: "APPROVED" | "REJECTED"; approvedFingerprint: string; reasonCode: string; comment?: string | null; mfaVerifiedAt: string }) { return this.unitOfWork.transaction(async ({ client }) => {
-    // Serialize all checker decisions on the action row before checking the
+    // Serialize all approval decisions on the action row before checking the
     // unique decision record. Without this lock two simultaneous approvals
     // could both pass the preflight SELECT and race on the INSERT.
     const action = await client.query("SELECT id FROM admin_action_requests WHERE id = $1 FOR UPDATE", [input.requestId]);
@@ -911,7 +1188,31 @@ export class PostgresAdminRepository implements AdminRepository {
           ? await client.query("UPDATE kyc_applications SET status=$2, decision_reason_code=$3, decision_at=NOW(), version=version+1, updated_at=NOW() WHERE id=$1 RETURNING version", [action.targetId, decision, String(action.payload.reasonCode ?? "ADMIN_DECISION")])
           : await client.query("UPDATE credit_applications SET status=$2, approved_limit_minor=CASE WHEN $3='PENDING_ACTIVATION' THEN COALESCE($4, requested_limit_minor) ELSE approved_limit_minor END, decision_reason_code=$5, decision_at=NOW(), version=version+1, updated_at=NOW() WHERE id=$1 RETURNING version", [action.targetId, decision, decision, action.payload.approvedLimitMinor ? String(action.payload.approvedLimitMinor) : null, String(action.payload.reasonCode ?? "ADMIN_DECISION")]);
         const after = asNumber(update.rows[0]?.version, before + 1);
-        if (applicationType === "KYC") await client.query("INSERT INTO kyc_reviews (id, application_id, reviewer_staff_id, recommendation, application_version, request_fingerprint, reason_code) VALUES ($1,$2,$3,$4,$5,$6,$7)", [createId("kyc-review"), action.targetId, input.approverStaffId, decision, before, action.requestFingerprint, String(action.payload.reasonCode ?? "ADMIN_DECISION")]);
+        if (applicationType === "KYC") {
+          await client.query("INSERT INTO kyc_reviews (id, application_id, reviewer_staff_id, recommendation, application_version, request_fingerprint, reason_code) VALUES ($1,$2,$3,$4,$5,$6,$7)", [createId("kyc-review"), action.targetId, input.approverStaffId, decision === "NEEDS_MORE_INFO" ? "MORE_INFO_REQUIRED" : decision, before, action.requestFingerprint, String(action.payload.reasonCode ?? "ADMIN_DECISION")]);
+          const customerId = String(target.rows[0].customer_id);
+          const notificationId = createId("kyc-notification");
+          const message = decision === "APPROVED"
+            ? "Hồ sơ định danh đã được phê duyệt."
+            : decision === "REJECTED"
+              ? "Hồ sơ định danh chưa được phê duyệt."
+              : "Hồ sơ định danh cần bổ sung thông tin.";
+          await client.query(
+            "INSERT INTO notifications (id, customer_id, notification_type, title, body, resource_id, resource_account_id, is_read, created_at) VALUES ($1,$2,'SECURITY','Cập nhật hồ sơ định danh',$3,$4,NULL,false,NOW())",
+            [notificationId, customerId, message, action.targetId],
+          );
+          await insertAdminOutboxEvent(client, {
+            eventType: "SECURITY_KYC_STATUS_CHANGED",
+            aggregateType: "kyc-application",
+            aggregateId: action.targetId,
+            aggregateVersion: after,
+            deduplicationKey: `kyc-status:${action.targetId}:${after}`,
+            traceId: input.traceId,
+            subjectCustomerIds: [customerId],
+            notificationIds: [notificationId],
+            payload: { applicationId: action.targetId, status: decision },
+          });
+        }
         await client.query("INSERT INTO audit_events (id,event_type,actor_type,actor_staff_id,action,target_type,target_id,outcome,reason_code,request_id,trace_id,before_version,after_version,payload,occurred_at) VALUES ($1,$2,'STAFF',$3,$4,$5,$6,'SUCCEEDED',$7,$8,$9,$10,$11,$12,NOW())", [createId("audit"), `${applicationType}_DECISION_APPROVED`, input.approverStaffId, action.actionType, applicationType, action.targetId, String(action.payload.reasonCode ?? "ADMIN_DECISION"), action.id, input.traceId, before, after, JSON.stringify(redactAdminMetadata({ decision }))]);
         await client.query("UPDATE admin_action_execution_attempts SET outcome='SUCCEEDED', finished_at=NOW() WHERE id=$1", [attempt]);
         await client.query("UPDATE admin_action_requests SET status='SUCCEEDED', result_resource_id=$2, updated_at=NOW() WHERE id=$1", [action.id, action.targetId]);
@@ -1027,36 +1328,6 @@ export class PostgresAdminRepository implements AdminRepository {
         await client.query("UPDATE admin_action_requests SET status='SUCCEEDED', result_resource_id=$2, updated_at=NOW() WHERE id=$1", [action.id, action.targetId]);
         return { status: "SUCCEEDED", resultResourceId: action.targetId, beforeVersion: before, afterVersion: before };
       }
-      if (action.actionType === "STAFF_INVITE") {
-        const email = String(action.payload.email ?? "").trim().toLowerCase();
-        const employeeCode = String(action.payload.employeeCode ?? "").trim();
-        const displayName = String(action.payload.displayName ?? "").trim();
-        const roleCode = String(action.payload.role ?? "");
-        if (!['SUPPORT', 'OPERATIONS', 'CONTROL', 'ADMIN'].includes(roleCode)) {
-          await client.query("UPDATE admin_action_execution_attempts SET outcome='FAILED', error_code='STAFF_ROLE_INVALID', finished_at=NOW() WHERE id=$1", [attempt]);
-          await client.query("UPDATE admin_action_requests SET status='FAILED', failure_code='STAFF_ROLE_INVALID', updated_at=NOW() WHERE id=$1", [action.id]);
-          return { status: "FAILED", failureCode: "STAFF_ROLE_INVALID" };
-        }
-        const duplicate = await client.query("SELECT id FROM staff_users WHERE email_normalized=$1 OR employee_code=$2 FOR UPDATE", [email, employeeCode]);
-        if (duplicate.rows[0]) {
-          await client.query("UPDATE admin_action_execution_attempts SET outcome='FAILED', error_code='STAFF_ALREADY_EXISTS', finished_at=NOW() WHERE id=$1", [attempt]);
-          await client.query("UPDATE admin_action_requests SET status='FAILED', failure_code='STAFF_ALREADY_EXISTS', updated_at=NOW() WHERE id=$1", [action.id]);
-          return { status: "FAILED", failureCode: "STAFF_ALREADY_EXISTS" };
-        }
-        const inviteId = createId("staff-invite");
-        // Only a hash is persisted.  A delivery provider should consume the
-        // outbox event; the plaintext invitation is never put in the action,
-        // audit, database or response.
-        const inviteTokenHash = hashOpaqueToken(createOpaqueToken());
-        await client.query("INSERT INTO staff_users (id, employee_code, email_normalized, display_name, status, created_by_staff_id) VALUES ($1,$2,$3,$4,'INVITED',$5)", [inviteId, employeeCode, email, displayName, action.requesterStaffId]);
-        await client.query("INSERT INTO staff_invites (id, email_normalized, employee_code, display_name, role_code, token_hash, expires_at, created_by_staff_id) VALUES ($1,$2,$3,$4,$5,$6,NOW()+INTERVAL '24 hours',$7)", [inviteId, email, employeeCode, displayName, roleCode, inviteTokenHash, action.requesterStaffId]);
-        await client.query("INSERT INTO staff_user_roles (staff_id, role_code, environment_scope, granted_by_staff_id, approved_by_staff_id) VALUES ($1,$2,'preview',$3,$4)", [inviteId, roleCode, action.requesterStaffId, input.approverStaffId]);
-        await insertAdminOutboxEvent(client, { eventType: "STAFF_INVITE_CREATED", aggregateType: "staff", aggregateId: inviteId, aggregateVersion: 1, deduplicationKey: `staff-invite:${action.id}`, traceId: input.traceId, payload: { actionId: action.id, inviteId, email, employeeCode, role: roleCode } });
-        await client.query("INSERT INTO audit_events (id,event_type,actor_type,actor_staff_id,action,target_type,target_id,outcome,reason_code,request_id,trace_id,before_version,after_version,payload,occurred_at) VALUES ($1,'ADMIN_STAFF_INVITE_CREATED','STAFF',$2,'STAFF_INVITE','STAFF_INVITE',$3,'SUCCEEDED',$4,$5,$6,NULL,NULL,$7,NOW())", [createId("audit"), input.approverStaffId, inviteId, String(action.payload.reasonCode ?? "STAFF_INVITE"), action.id, input.traceId, JSON.stringify(redactAdminMetadata({ email, employeeCode, role: roleCode }))]);
-        await client.query("UPDATE admin_action_execution_attempts SET outcome='SUCCEEDED', finished_at=NOW() WHERE id=$1", [attempt]);
-        await client.query("UPDATE admin_action_requests SET status='SUCCEEDED', result_resource_id=$2, updated_at=NOW() WHERE id=$1", [action.id, inviteId]);
-        return { status: "SUCCEEDED", resultResourceId: inviteId };
-      }
       if (action.actionType === "STAFF_ROLE_CHANGE") {
         const target = await client.query("SELECT id, status, authorization_version, version FROM staff_users WHERE id=$1 FOR UPDATE", [action.targetId]);
         if (!target.rows[0]) { await client.query("UPDATE admin_action_requests SET status='FAILED', failure_code='STAFF_NOT_FOUND', updated_at=NOW() WHERE id=$1", [action.id]); return { status: "FAILED", failureCode: "STAFF_NOT_FOUND" }; }
@@ -1067,8 +1338,13 @@ export class PostgresAdminRepository implements AdminRepository {
           return { status: "STALE", failureCode: "ACTION_STALE", beforeVersion: before };
         }
         const operation = String(action.payload.operation ?? "GRANT");
-        const roleCode = String(action.payload.roleCode ?? "SUPPORT");
+        const roleCode = normalizeExistingAdminRole(String(action.payload.roleCode ?? "OPERATIONS"));
         const scope = String(action.payload.environmentScope ?? "preview");
+        if (!roleCode) {
+          await client.query("UPDATE admin_action_execution_attempts SET outcome='FAILED', error_code='STAFF_ROLE_INVALID', finished_at=NOW() WHERE id=$1", [attempt]);
+          await client.query("UPDATE admin_action_requests SET status='FAILED', failure_code='STAFF_ROLE_INVALID', updated_at=NOW() WHERE id=$1", [action.id]);
+          return { status: "FAILED", failureCode: "STAFF_ROLE_INVALID" };
+        }
         if (operation === "GRANT") await client.query("INSERT INTO staff_user_roles (staff_id, role_code, environment_scope, granted_by_staff_id, approved_by_staff_id) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (staff_id, role_code, environment_scope) DO UPDATE SET revoked_at=NULL, granted_by_staff_id=EXCLUDED.granted_by_staff_id, approved_by_staff_id=EXCLUDED.approved_by_staff_id", [action.targetId, roleCode, scope, action.requesterStaffId, input.approverStaffId]);
         else await client.query("UPDATE staff_user_roles SET revoked_at=NOW(), approved_by_staff_id=$4 WHERE staff_id=$1 AND role_code=$2 AND environment_scope=$3 AND revoked_at IS NULL", [action.targetId, roleCode, scope, input.approverStaffId]);
         await client.query("UPDATE staff_users SET authorization_version=authorization_version+1, version=version+1, updated_at=NOW() WHERE id=$1", [action.targetId]);
@@ -1100,7 +1376,55 @@ export class PostgresAdminRepository implements AdminRepository {
     });
   }
   async appendAudit(input: Omit<AdminAuditRecord, "occurredAt"> & { occurredAt?: string }) { await this.unitOfWork.transaction(async ({ client }) => { await client.query("INSERT INTO audit_events (id,event_type,actor_type,actor_staff_id,action,target_type,target_id,outcome,reason_code,request_id,trace_id,correlation_id,before_version,after_version,payload,occurred_at) VALUES ($1,'ADMIN_AUDIT_EVENT','STAFF',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)", [input.id, input.actorStaffId, input.action, input.targetType, input.targetId, input.outcome, input.reasonCode, input.requestId, input.traceId, input.correlationId, input.beforeVersion, input.afterVersion, JSON.stringify(redactAdminMetadata(input.metadata)), input.occurredAt ?? nowIso()]); }); }
-  async listAudit(limit = 100) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT id, actor_staff_id, action, target_type, target_id, outcome, reason_code, request_id, trace_id, correlation_id, before_version, after_version, payload, occurred_at FROM audit_events WHERE actor_type='STAFF' ORDER BY occurred_at DESC LIMIT $1", [Math.min(limit, 1000)]); return result.rows.map((row) => ({ id: String(row.id), actorStaffId: row.actor_staff_id ? String(row.actor_staff_id) : null, action: String(row.action ?? row.event_type), targetType: row.target_type ? String(row.target_type) : null, targetId: row.target_id ? String(row.target_id) : null, outcome: String(row.outcome ?? "UNKNOWN"), reasonCode: row.reason_code ? String(row.reason_code) : null, requestId: row.request_id ? String(row.request_id) : null, traceId: row.trace_id ? String(row.trace_id) : null, correlationId: row.correlation_id ? String(row.correlation_id) : null, beforeVersion: row.before_version === null ? null : asNumber(row.before_version), afterVersion: row.after_version === null ? null : asNumber(row.after_version), metadata: redactAdminMetadata(asRecord(row.payload)) as Record<string, unknown>, occurredAt: new Date(String(row.occurred_at)).toISOString() })); }); }
+  async listAudit(limit = 100, actorType?: string) {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const params: unknown[] = [];
+      let whereClause = "";
+      if (actorType && ["STAFF", "CUSTOMER", "SYSTEM"].includes(actorType)) {
+        params.push(actorType);
+        whereClause = `WHERE a.actor_type = $${params.length}`;
+      }
+      params.push(Math.min(limit, 1000));
+      const limitParam = `$${params.length}`;
+      const query = `
+        SELECT a.id, a.actor_type, a.actor_staff_id, a.actor_customer_id,
+               a.action, a.event_type, a.target_type, a.target_id,
+               a.outcome, a.reason_code, a.request_id, a.trace_id, a.correlation_id,
+               a.before_version, a.after_version, a.payload, a.occurred_at,
+               COALESCE(s.display_name, c.full_name, CASE WHEN a.actor_type = 'SYSTEM' THEN 'Hệ thống' ELSE NULL END) AS actor_name,
+               COALESCE(s.email_normalized, c.email, NULL) AS actor_email,
+               s.employee_code AS actor_employee_code
+        FROM audit_events a
+        LEFT JOIN staff_users s ON a.actor_staff_id = s.id
+        LEFT JOIN customers c ON a.actor_customer_id = c.id
+        ${whereClause}
+        ORDER BY a.occurred_at DESC
+        LIMIT ${limitParam}
+      `;
+      const result = await client.query(query, params);
+      return result.rows.map((row) => ({
+        id: String(row.id),
+        actorStaffId: row.actor_staff_id ? String(row.actor_staff_id) : null,
+        actorCustomerId: row.actor_customer_id ? String(row.actor_customer_id) : null,
+        actorType: (row.actor_type as "STAFF" | "CUSTOMER" | "SYSTEM") || "STAFF",
+        actorName: row.actor_name ? String(row.actor_name) : null,
+        actorEmail: row.actor_email ? String(row.actor_email) : null,
+        actorEmployeeCode: row.actor_employee_code ? String(row.actor_employee_code) : null,
+        action: String(row.action || row.event_type || "UNKNOWN_ACTION"),
+        targetType: row.target_type ? String(row.target_type) : null,
+        targetId: row.target_id ? String(row.target_id) : null,
+        outcome: String(row.outcome ?? "UNKNOWN"),
+        reasonCode: row.reason_code ? String(row.reason_code) : null,
+        requestId: row.request_id ? String(row.request_id) : null,
+        traceId: row.trace_id ? String(row.trace_id) : null,
+        correlationId: row.correlation_id ? String(row.correlation_id) : null,
+        beforeVersion: row.before_version === null ? null : asNumber(row.before_version),
+        afterVersion: row.after_version === null ? null : asNumber(row.after_version),
+        metadata: redactAdminMetadata(asRecord(row.payload)) as Record<string, unknown>,
+        occurredAt: new Date(String(row.occurred_at)).toISOString(),
+      }));
+    });
+  }
   async findCustomers(query = "") { return this.unitOfWork.transaction(async ({ client }) => { const term = `%${query.trim().toLowerCase()}%`; const result = await client.query("SELECT id, full_name, email, phone_number, COALESCE(access_status,'ACTIVE') AS access_status, COALESCE(access_version,1) AS access_version, created_at FROM customers WHERE ($1 = '%%' OR lower(full_name) LIKE $1 OR lower(email) LIKE $1 OR phone_number LIKE $1) ORDER BY created_at DESC LIMIT 100", [term]); return result.rows.map((row) => maskedCustomer({ id: String(row.id), fullName: String(row.full_name), email: String(row.email), phoneNumber: String(row.phone_number), accessStatus: String(row.access_status) as "ACTIVE" | "LOCKED", accessVersion: asNumber(row.access_version, 1), createdAt: new Date(String(row.created_at)).toISOString() })); }); }
   async findCustomer(id: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT id, full_name, email, phone_number, COALESCE(access_status,'ACTIVE') AS access_status, COALESCE(access_version,1) AS access_version, created_at FROM customers WHERE id=$1", [id]); const row = result.rows[0]; return row ? maskedCustomer({ id: String(row.id), fullName: String(row.full_name), email: String(row.email), phoneNumber: String(row.phone_number), accessStatus: String(row.access_status) as "ACTIVE" | "LOCKED", accessVersion: asNumber(row.access_version, 1), createdAt: new Date(String(row.created_at)).toISOString() }) : null; }); }
   async listCustomerAccounts(customerId: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT id, customer_id, display_name, masked_number, bank_name, available_minor, current_minor, held_minor, status, version, updated_at FROM payment_accounts WHERE customer_id=$1 ORDER BY updated_at DESC", [customerId]); return result.rows.map((row) => ({ id: String(row.id), customerId: String(row.customer_id), displayName: String(row.display_name), maskedNumber: maskAccountNumber(String(row.masked_number)), bankName: String(row.bank_name ?? "Ngân hàng reference"), availableMinor: String(row.available_minor), currentMinor: String(row.current_minor), heldMinor: String(row.held_minor), status: String(row.status) as "ACTIVE" | "BLOCKED", version: asNumber(row.version), updatedAt: new Date(String(row.updated_at)).toISOString() })); }); }
@@ -1111,14 +1435,14 @@ export class PostgresAdminRepository implements AdminRepository {
       const rows: AdminApplication[] = [];
       if (scope) await client.query("SELECT set_config('app.staff_id',$1,true), set_config('app.staff_scope',$2,true)", [scope.staffId, scope.scope]);
       const scoped = scope && !scope.canSeeAll;
-      const scopeClause = scoped ? " WHERE assigned_staff_id=$1 OR assigned_staff_id IS NULL" : "";
+      const scopeClause = scoped ? " WHERE a.assigned_staff_id=$1 OR a.assigned_staff_id IS NULL" : "";
       const scopeValues = scoped ? [scope!.staffId] : [];
       if (!applicationType || applicationType === "KYC") {
-        const result = await client.query(`SELECT id, customer_id, status, applicant_label, request_fingerprint, assigned_staff_id, decision_reason_code, version, created_at, updated_at FROM kyc_applications${scopeClause} ORDER BY created_at DESC LIMIT 200`, scopeValues);
+        const result = await client.query(`SELECT a.id, a.customer_id, a.status, a.applicant_label, a.synthetic_payload, a.request_fingerprint, a.assigned_staff_id, a.decision_reason_code, a.version, a.created_at, a.updated_at, c.full_name AS customer_name, c.email AS customer_email, c.phone_number AS customer_phone FROM kyc_applications a LEFT JOIN customers c ON a.customer_id = c.id${scopeClause} ORDER BY a.created_at DESC LIMIT 200`, scopeValues);
         rows.push(...result.rows.map((row) => mapApplication(row as Record<string, unknown>, "KYC")));
       }
       if (!applicationType || applicationType === "CREDIT") {
-        const result = await client.query(`SELECT id, customer_id, status, requested_limit_minor, approved_limit_minor, request_fingerprint, assigned_staff_id, decision_reason_code, version, created_at, updated_at FROM credit_applications${scopeClause} ORDER BY created_at DESC LIMIT 200`, scopeValues);
+        const result = await client.query(`SELECT a.id, a.customer_id, a.status, a.requested_limit_minor, a.approved_limit_minor, a.request_fingerprint, a.assigned_staff_id, a.decision_reason_code, a.version, a.created_at, a.updated_at, c.full_name AS customer_name, c.email AS customer_email, c.phone_number AS customer_phone FROM credit_applications a LEFT JOIN customers c ON a.customer_id = c.id${scopeClause} ORDER BY a.created_at DESC LIMIT 200`, scopeValues);
         rows.push(...result.rows.map((row) => mapApplication(row as Record<string, unknown>, "CREDIT")));
       }
       return rows.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
@@ -1128,8 +1452,8 @@ export class PostgresAdminRepository implements AdminRepository {
     return this.unitOfWork.transaction(async ({ client }) => {
       const table = applicationType === "KYC" ? "kyc_applications" : "credit_applications";
       if (scope) await client.query("SELECT set_config('app.staff_id',$1,true), set_config('app.staff_scope',$2,true)", [scope.staffId, scope.scope]);
-      const scopeClause = scope && !scope.canSeeAll ? " AND (assigned_staff_id=$2 OR assigned_staff_id IS NULL)" : "";
-      const result = await client.query(`SELECT * FROM ${table} WHERE id=$1${scopeClause}`, scope && !scope.canSeeAll ? [id, scope.staffId] : [id]);
+      const scopeClause = scope && !scope.canSeeAll ? " AND (a.assigned_staff_id=$2 OR a.assigned_staff_id IS NULL)" : "";
+      const result = await client.query(`SELECT a.*, c.full_name AS customer_name, c.email AS customer_email, c.phone_number AS customer_phone FROM ${table} a LEFT JOIN customers c ON a.customer_id = c.id WHERE a.id=$1${scopeClause}`, scope && !scope.canSeeAll ? [id, scope.staffId] : [id]);
       return result.rows[0] ? mapApplication(result.rows[0] as Record<string, unknown>, applicationType) : null;
     });
   }
@@ -1150,12 +1474,43 @@ export class PostgresAdminRepository implements AdminRepository {
   }
   async listTransfers(status?: string) {
     return this.unitOfWork.transaction(async ({ client }) => {
-      const result = await client.query(`SELECT id, customer_id, source_account_id, reference, amount_minor, fee_minor, currency, status, version, last_error_code, created_at, updated_at FROM transfers ${status ? "WHERE status=$1" : ""} ORDER BY created_at DESC LIMIT 200`, status ? [status] : []);
+      const result = await client.query(
+        `SELECT
+           t.id, t.customer_id, t.source_account_id, t.reference, t.amount_minor, t.fee_minor,
+           t.currency, t.status, t.version, t.last_error_code, t.created_at, t.updated_at,
+           c.full_name AS sender_name,
+           a.masked_number AS source_account_number,
+           dc.full_name AS dest_owner,
+           da.masked_number AS dest_account
+         FROM transfers t
+         LEFT JOIN customers c ON t.customer_id = c.id
+         LEFT JOIN payment_accounts a ON t.source_account_id = a.id
+         LEFT JOIN customers dc ON t.destination_owner_id = dc.id
+         LEFT JOIN payment_accounts da ON t.destination_account_id = da.id
+         ${status ? "WHERE t.status=$1" : ""}
+         ORDER BY t.created_at DESC LIMIT 200`,
+        status ? [status] : []
+      );
       return result.rows.map((row) => mapTransfer(row as Record<string, unknown>));
     });
   }
   async findTransfer(id: string) {
-    const result = await this.pool.query("SELECT id, customer_id, source_account_id, reference, amount_minor, fee_minor, currency, status, version, last_error_code, created_at, updated_at FROM transfers WHERE id=$1", [id]);
+    const result = await this.pool.query(
+      `SELECT
+         t.id, t.customer_id, t.source_account_id, t.reference, t.amount_minor, t.fee_minor,
+         t.currency, t.status, t.version, t.last_error_code, t.created_at, t.updated_at,
+         c.full_name AS sender_name,
+         a.masked_number AS source_account_number,
+         dc.full_name AS dest_owner,
+         da.masked_number AS dest_account
+       FROM transfers t
+       LEFT JOIN customers c ON t.customer_id = c.id
+       LEFT JOIN payment_accounts a ON t.source_account_id = a.id
+       LEFT JOIN customers dc ON t.destination_owner_id = dc.id
+       LEFT JOIN payment_accounts da ON t.destination_account_id = da.id
+       WHERE t.id=$1`,
+      [id]
+    );
     return result.rows[0] ? mapTransfer(result.rows[0] as Record<string, unknown>) : null;
   }
   async listTransferTimeline(id: string): Promise<AdminTimelineEvent[]> {

@@ -10,7 +10,11 @@ import {
   View,
 } from "react-native";
 
-import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { BrandMark } from "@/components/brand/BrandMark";
+import { AppIcon } from "@/components/ui/AppIcon";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
@@ -18,11 +22,7 @@ import { useAuth } from "@/features/auth/context/AuthContext";
 import type { LoginFieldErrors, LoginFormValues } from "@/features/auth/types/auth";
 import { validateLoginForm } from "@/features/auth/validation/authValidation";
 import { ApiError } from "@/services/api/ApiError";
-import {
-  getDeviceBoundAssertion,
-  requestBiometricAuthentication,
-} from "@/services/security/biometricAuth";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, spacing, typography } from "@/theme";
 
 const initialValues: LoginFormValues = {
   email: "",
@@ -37,20 +37,13 @@ function isRetryableRequestError(error: unknown): boolean {
 }
 
 export function LoginScreen() {
-  const {
-    cancelLoginChallenge,
-    login,
-    logoutNotice,
-    pendingLoginChallenge,
-    verifyLoginChallenge,
-  } = useAuth();
+  const { clearPendingRecoveryCodes, login, logoutNotice, pendingRecoveryCodes } = useAuth();
   const [values, setValues] = useState<LoginFormValues>(initialValues);
   const [errors, setErrors] = useState<LoginFieldErrors>({});
   const [serverError, setServerError] = useState<string | undefined>();
   const [requestError, setRequestError] = useState<unknown>();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [challengeProof, setChallengeProof] = useState("");
-  const [isVerifyingChallenge, setIsVerifyingChallenge] = useState(false);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
   function updateField(field: keyof LoginFormValues, value: string) {
     setValues((currentValues) => ({ ...currentValues, [field]: value }));
@@ -96,91 +89,6 @@ export function LoginScreen() {
     }
   }
 
-  async function handleVerifyChallenge() {
-    if (!pendingLoginChallenge || (!pendingLoginChallenge.methods.includes("OTP") && !pendingLoginChallenge.methods.includes("TOTP"))) {
-      return;
-    }
-    if (Date.now() >= Date.parse(pendingLoginChallenge.expiresAt)) {
-      setServerError(
-        "Yêu cầu xác thực đã hết hạn. Hủy bước này và đăng nhập lại để nhận challenge mới.",
-      );
-      return;
-    }
-
-    if (!challengeProof.trim()) {
-      setServerError("Mã xác thực bổ sung là bắt buộc.");
-      return;
-    }
-
-    setIsVerifyingChallenge(true);
-    setServerError(undefined);
-
-    try {
-      await verifyLoginChallenge({
-        challengeId: pendingLoginChallenge.challengeId,
-        method: pendingLoginChallenge.methods.includes("TOTP") ? "TOTP" : "OTP",
-        proof: challengeProof,
-      });
-    } catch (error: unknown) {
-      if (isRetryableRequestError(error)) {
-        setRequestError(error);
-        return;
-      }
-
-      setRequestError(undefined);
-      setServerError(
-        error instanceof ApiError
-          ? error.message
-          : "Không thể xác thực bổ sung. Vui lòng thử lại.",
-      );
-    } finally {
-      setIsVerifyingChallenge(false);
-    }
-  }
-
-  async function handleVerifyBiometricChallenge() {
-    if (
-      !pendingLoginChallenge ||
-      !pendingLoginChallenge.methods.includes("BIOMETRIC")
-    ) {
-      return;
-    }
-    if (Date.now() >= Date.parse(pendingLoginChallenge.expiresAt)) {
-      setServerError(
-        "Yêu cầu xác thực đã hết hạn. Hủy bước này và đăng nhập lại.",
-      );
-      return;
-    }
-
-    setIsVerifyingChallenge(true);
-    setServerError(undefined);
-
-    try {
-      await requestBiometricAuthentication("Xác thực đăng nhập");
-      const biometricProof = getDeviceBoundAssertion();
-      if (!biometricProof) {
-        setServerError("Backend/risk provider chưa cung cấp biometric assertion.");
-        return;
-      }
-
-      await verifyLoginChallenge({
-        challengeId: pendingLoginChallenge.challengeId,
-        method: "BIOMETRIC",
-        proof: biometricProof,
-      });
-    } catch (error: unknown) {
-      setServerError(
-        error instanceof ApiError
-          ? error.message
-          : error instanceof Error
-            ? error.message
-            : "Không thể xác thực sinh trắc học. Vui lòng thử lại.",
-      );
-    } finally {
-      setIsVerifyingChallenge(false);
-    }
-  }
-
   return (
     <Screen>
       <KeyboardAvoidingView
@@ -191,12 +99,15 @@ export function LoginScreen() {
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
         >
+          <View style={styles.brandBlock}>
+            <BrandMark />
+            <EnvironmentBadge />
+          </View>
+
           <View style={styles.intro}>
-            <Text style={styles.eyebrow}>NGÂN HÀNG SỐ</Text>
-            <Text style={styles.title}>Đăng nhập</Text>
-            <Text style={styles.description}>
-              Đăng nhập bằng tài khoản đã được đăng ký trên hệ thống.
-            </Text>
+            <Text style={styles.eyebrow}>CHÀO MỪNG TRỞ LẠI</Text>
+            <Text style={styles.title}>Đăng nhập an toàn</Text>
+            <Text style={styles.description}>Quản lý tài khoản và giao dịch của bạn trên NOVA.</Text>
           </View>
 
           {logoutNotice ? (
@@ -205,142 +116,111 @@ export function LoginScreen() {
             </Text>
           ) : null}
 
-          {pendingLoginChallenge ? (
-            <View style={styles.form}>
-              <Text style={styles.challengeTitle}>Xác thực bổ sung</Text>
-              <Text style={styles.description}>
-                Hệ thống yêu cầu thêm một bước xác thực trước khi mở phiên đăng nhập.
+          {pendingRecoveryCodes && pendingRecoveryCodes.length > 0 ? (
+            <Card elevated style={styles.recoveryCard}>
+              <View style={styles.recoveryHeader}>
+                <AppIcon color={colors.primary} name="shield" size={24} />
+                <Text style={styles.recoveryTitle}>Lưu mã khôi phục mới</Text>
+              </View>
+              <Text style={styles.recoveryDescription}>
+                Cấu hình MFA đã được cập nhật thành công. Toàn bộ phiên đăng nhập cũ đã được thu hồi an toàn.
+                Mã khôi phục chỉ hiển thị một lần trên bộ nhớ tạm và sẽ không thể xem lại sau khi đóng. Hãy lưu ngoại tuyến ngay bây giờ.
               </Text>
-              {pendingLoginChallenge.methods.includes("OTP") || pendingLoginChallenge.methods.includes("TOTP") ? (
-                <TextField
-                  accessibilityLabel="Mã xác thực đăng nhập"
-                  autoCapitalize="none"
-                  error={serverError}
-                  label="Mã TOTP"
-                  onChangeText={(value) => {
-                    setChallengeProof(value);
-                    setServerError(undefined);
-                  }}
-                  placeholder="Nhập mã xác thực"
-                  secureTextEntry
-                  testID="login-mfa-code"
-                  value={challengeProof}
-                />
-              ) : null}
-              {serverError ? (
-                <Text accessibilityLiveRegion="polite" style={styles.serverError}>
-                  {serverError}
-                </Text>
-              ) : null}
-              {requestError ? (
-                <RequestErrorNotice
-                  error={requestError}
-                  fallbackMessage="Không thể hoàn tất đăng nhập. Vui lòng thử lại."
-                  isRetrying={isVerifyingChallenge}
-                  onRetry={() => void handleVerifyChallenge()}
-                  testID="login-request-error"
-                />
-              ) : null}
-              {pendingLoginChallenge.methods.includes("OTP") || pendingLoginChallenge.methods.includes("TOTP") ? (
-                <PrimaryButton
-                  disabled={isVerifyingChallenge}
-                  label={isVerifyingChallenge ? "Đang xác thực..." : "Xác thực và đăng nhập"}
-                  onPress={handleVerifyChallenge}
-                  testID="login-mfa-submit"
-                />
-              ) : null}
-              {pendingLoginChallenge.methods.includes("BIOMETRIC") ? (
-                <PrimaryButton
-                  disabled={isVerifyingChallenge}
-                  label="Dùng sinh trắc học"
-                  onPress={handleVerifyBiometricChallenge}
-                  testID="login-mfa-biometric"
-                />
-              ) : null}
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  cancelLoginChallenge();
-                  setChallengeProof("");
-                  setServerError(undefined);
-                  setRequestError(undefined);
-                }}
-                testID="login-mfa-cancel"
-              >
-                <Text style={styles.link}>Hủy và đăng nhập lại</Text>
-              </Pressable>
-            </View>
+              <View style={styles.recoveryCodesList}>
+                {pendingRecoveryCodes.map((code, index) => (
+                  <Text key={`${index}-${code.slice(0, 4)}`} selectable style={styles.recoveryCode}>
+                    {code}
+                  </Text>
+                ))}
+              </View>
+              <Button
+                label="Tôi đã lưu mã — Đăng nhập lại"
+                onPress={() => clearPendingRecoveryCodes()}
+                testID="mfa-recovery-codes-acknowledge"
+              />
+            </Card>
           ) : (
-            <View style={styles.form}>
-              <TextField
-                accessibilityLabel="Email đăng nhập"
-                autoCapitalize="none"
-                autoComplete="email"
-                error={errors.email}
-                keyboardType="email-address"
-                label="Email"
-                onChangeText={(value) => updateField("email", value)}
-                placeholder="Nhập email"
-                testID="login-email"
-                value={values.email}
-              />
-              <TextField
-                accessibilityLabel="Mật khẩu đăng nhập"
-                autoCapitalize="none"
-                autoComplete="current-password"
-                error={errors.password}
-                label="Mật khẩu"
-                onChangeText={(value) => updateField("password", value)}
-                placeholder="Nhập mật khẩu"
-                secureTextEntry
-                testID="login-password"
-                value={values.password}
-              />
-              {serverError ? (
-                <Text accessibilityLiveRegion="polite" style={styles.serverError}>
-                  {serverError}
-                </Text>
-              ) : null}
-              {requestError ? (
-                <RequestErrorNotice
-                  error={requestError}
-                  fallbackMessage="Không thể kết nối để đăng nhập. Vui lòng thử lại."
-                  isRetrying={isSubmitting}
-                  onRetry={() => void handleLogin()}
-                  testID="login-request-error"
+            <>
+              <Card elevated style={styles.form}>
+                <Text style={styles.formTitle}>Thông tin đăng nhập</Text>
+                <TextField
+                  accessibilityLabel="Email đăng nhập"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  error={errors.email}
+                  keyboardType="email-address"
+                  label="Email"
+                  onChangeText={(value) => updateField("email", value)}
+                  placeholder="tenban@example.com"
+                  returnKeyType="next"
+                  testID="login-email"
+                  value={values.email}
                 />
-              ) : null}
-              <PrimaryButton
-                disabled={isSubmitting}
-                label={isSubmitting ? "Đang đăng nhập..." : "Đăng nhập"}
-                onPress={handleLogin}
-                testID="login-submit"
-              />
-            </View>
+                <TextField
+                  accessibilityLabel="Mật khẩu đăng nhập"
+                  autoCapitalize="none"
+                  autoComplete="current-password"
+                  error={errors.password}
+                  label="Mật khẩu"
+                  onChangeText={(value) => updateField("password", value)}
+                  onSubmitEditing={() => void handleLogin()}
+                  placeholder="Nhập mật khẩu"
+                  returnKeyType="done"
+                  secureTextEntry={!isPasswordVisible}
+                  testID="login-password"
+                  trailing={
+                    <Pressable
+                      accessibilityLabel={isPasswordVisible ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                      accessibilityRole="button"
+                      hitSlop={8}
+                      onPress={() => setIsPasswordVisible((current) => !current)}
+                      testID="login-toggle-password"
+                    >
+                      <AppIcon color={colors.muted} name={isPasswordVisible ? "eyeOff" : "eye"} size={21} />
+                    </Pressable>
+                  }
+                  value={values.password}
+                />
+                {serverError ? (
+                  <Text accessibilityLiveRegion="polite" style={styles.serverError}>
+                    {serverError}
+                  </Text>
+                ) : null}
+                {requestError ? (
+                  <RequestErrorNotice
+                    error={requestError}
+                    fallbackMessage="Không thể kết nối để đăng nhập. Vui lòng thử lại."
+                    isRetrying={isSubmitting}
+                    onRetry={() => void handleLogin()}
+                    testID="login-request-error"
+                  />
+                ) : null}
+                <Button
+                  disabled={isSubmitting}
+                  label="Đăng nhập"
+                  loading={isSubmitting}
+                  onPress={handleLogin}
+                  testID="login-submit"
+                />
+              </Card>
+
+              <View style={styles.footer}>
+                <Text style={styles.footerText}>Chưa có tài khoản?</Text>
+                <Link href="./register" asChild>
+                  <Pressable accessibilityRole="link" hitSlop={8} testID="login-register">
+                    <Text style={styles.link}>Đăng ký ngay</Text>
+                  </Pressable>
+                </Link>
+              </View>
+
+              <View style={styles.notice}>
+                <View style={styles.noticeIcon}>
+                  <AppIcon color={colors.success} name="shield" size={20} />
+                </View>
+                <Text style={styles.noticeText}>Phiên đăng nhập được mã hóa và lưu trong vùng bảo mật của thiết bị.</Text>
+              </View>
+            </>
           )}
-
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Chưa có tài khoản?</Text>
-            <Link href="./register" asChild>
-              <Pressable accessibilityRole="link" hitSlop={8}>
-                <Text style={styles.link}>Mở màn hình đăng ký</Text>
-              </Pressable>
-            </Link>
-          </View>
-
-          {!pendingLoginChallenge ? (
-            <Link href="./recover" asChild>
-              <Pressable accessibilityRole="link" hitSlop={8}>
-                <Text style={styles.link}>Mất Authenticator? Dùng recovery code</Text>
-              </Pressable>
-            </Link>
-          ) : null}
-
-          <View style={styles.notice}>
-            <Text style={styles.noticeText}>
-              Đăng nhập sẽ xác thực với API và lưu phiên bảo mật trên thiết bị.
-            </Text>
-          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>
@@ -355,37 +235,40 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: "center",
     width: "100%",
-    maxWidth: 520,
+    maxWidth: 500,
     alignSelf: "center",
     padding: spacing.lg,
-    gap: spacing.xl,
+    gap: spacing.lg,
+  },
+  brandBlock: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
   },
   intro: {
     gap: spacing.sm,
   },
   eyebrow: {
+    ...typography.label,
     color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.4,
+    letterSpacing: 0.9,
   },
   title: {
+    ...typography.display,
     color: colors.text,
-    fontSize: 32,
-    fontWeight: "700",
   },
   description: {
+    ...typography.body,
     color: colors.muted,
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  challengeTitle: {
-    color: colors.text,
-    fontSize: 20,
-    fontWeight: "700",
   },
   form: {
     gap: spacing.md,
+    ...shadows.card,
+  },
+  formTitle: {
+    ...typography.subheading,
+    color: colors.text,
   },
   footer: {
     flexDirection: "row",
@@ -394,34 +277,78 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   footerText: {
+    ...typography.body,
     color: colors.muted,
-    fontSize: 14,
   },
   link: {
+    ...typography.bodyStrong,
     color: colors.primary,
-    fontSize: 14,
-    fontWeight: "600",
   },
   notice: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.smd,
     padding: spacing.md,
     borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: spacing.md,
+    borderColor: colors.successSoft,
+    borderRadius: radius.md,
+    backgroundColor: colors.successSoft,
+  },
+  noticeIcon: {
+    width: 38,
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.sm,
     backgroundColor: colors.surface,
   },
   noticeText: {
+    flex: 1,
+    ...typography.caption,
     color: colors.muted,
-    fontSize: 13,
-    textAlign: "center",
   },
   serverError: {
+    ...typography.body,
     color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
   },
   logoutNotice: {
-    color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
+    ...typography.body,
+    padding: spacing.smd,
+    borderRadius: radius.sm,
+    color: colors.warning,
+    backgroundColor: colors.warningSoft,
+  },
+  recoveryCard: {
+    gap: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.surface,
+    ...shadows.card,
+  },
+  recoveryHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  recoveryTitle: {
+    ...typography.subheading,
+    color: colors.text,
+  },
+  recoveryDescription: {
+    ...typography.body,
+    color: colors.muted,
+  },
+  recoveryCodesList: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+  },
+  recoveryCode: {
+    color: colors.text,
+    fontFamily: Platform.select({ ios: "Courier", default: "monospace" }),
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "600",
   },
 });

@@ -67,6 +67,7 @@ services:
       BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
       BANKING_STORAGE: postgres
       BANKING_SECRET_PROVIDER: ${BANKING_SECRET_PROVIDER:-local}
+      REGISTRATION_FINGERPRINT_KEY: ${REGISTRATION_FINGERPRINT_KEY:?REGISTRATION_FINGERPRINT_KEY is required}
       BANKING_PERSISTENCE_MODE: ${BANKING_PERSISTENCE_MODE:-legacy-state}
       BANKING_RELATIONAL_HTTP_ROUTES: ${BANKING_RELATIONAL_HTTP_ROUTES:-}
       BANKING_MANAGED_SECRETS_DIR: ${BANKING_MANAGED_SECRETS_DIR:-}
@@ -96,15 +97,31 @@ services:
       BANKING_SANDBOX_CREDIT_OVERDUE: ${BANKING_SANDBOX_CREDIT_OVERDUE:-0}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-disabled}
       EMAIL_PROVIDER_URL: ${EMAIL_PROVIDER_URL:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SECURE: ${SMTP_SECURE:-1}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      EMAIL_PROVIDER_TOKEN: ${EMAIL_PROVIDER_TOKEN:-}
       EMAIL_PROVIDER_TIMEOUT_MS: ${EMAIL_PROVIDER_TIMEOUT_MS:-5000}
       EMAIL_PROVIDER_MAX_ATTEMPTS: ${EMAIL_PROVIDER_MAX_ATTEMPTS:-3}
       EMAIL_PROVIDER_RETRY_DELAY_MS: ${EMAIL_PROVIDER_RETRY_DELAY_MS:-100}
+      ASSISTANT_ENABLED: ${ASSISTANT_ENABLED:-0}
+      ASSISTANT_PROVIDER: ${ASSISTANT_PROVIDER:-radox}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-gemini-3.6-flash}
+      ASSISTANT_RADOX_BASE_URL: ${ASSISTANT_RADOX_BASE_URL:-https://radoxai.com/v1}
+      ASSISTANT_RADOX_API_KEY: ${ASSISTANT_RADOX_API_KEY:-}
+      ASSISTANT_PROVIDER_TIMEOUT_MS: ${ASSISTANT_PROVIDER_TIMEOUT_MS:-15000}
+      ASSISTANT_REQUEST_TIMEOUT_MS: ${ASSISTANT_REQUEST_TIMEOUT_MS:-20000}
       DB_POOL_MAX: ${DB_POOL_MAX:-4}
       DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-5000}
       DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
       DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-3000}
       DB_IDLE_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_TRANSACTION_TIMEOUT_MS:-15000}
       DB_APPLICATION_NAME: ${DB_APPLICATION_NAME:-banking-reference-backend}
+      BANKING_STRUCTURED_LOGS: ${BANKING_STRUCTURED_LOGS:-0}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -133,7 +150,9 @@ services:
       NODE_ENV: ${NODE_ENV:-preview}
       BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
       ADMIN_STORAGE: postgres
+      ADMIN_DIRECT_EXECUTION: ${ADMIN_DIRECT_EXECUTION:-true}
       BANKING_SECRET_PROVIDER: ${BANKING_SECRET_PROVIDER:-local}
+      REGISTRATION_FINGERPRINT_KEY: ${REGISTRATION_FINGERPRINT_KEY:?REGISTRATION_FINGERPRINT_KEY is required}
       ADMIN_PORT: 5001
       ADMIN_BIND: 0.0.0.0
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
@@ -195,10 +214,9 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # Opt-in only: local customer HTTP routes are now direct relational-v2 when
-  # BANKING_PERSISTENCE_MODE=relational-v2, but registration and scheduled
-  # settlement/maturity remain out of scope. Do not enable this profile until
-  # those boundaries have their approved worker/core evidence.
+  # Opt-in only: local customer HTTP routes and scheduled lifecycle use the
+  # direct relational-v2 boundary in the confirmed academic rehearsal. This is
+  # still synthetic local preview and is not staging/production evidence.
   worker:
     profiles: ["worker"]
     build:

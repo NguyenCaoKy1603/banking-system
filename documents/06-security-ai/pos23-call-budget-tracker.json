@@ -1,0 +1,30 @@
+{
+  "totalCalls": 98,
+  "runs": [
+    {
+      "suite": "pos23-dev",
+      "runId": "nova-intent-pos23-dev-20260923095227419-d3a7dc34-3e83-4b38-8235-2edc20d92b6c",
+      "calls": 24
+    },
+    {
+      "suite": "pos23-exp-baseline-dev",
+      "runId": "nova-intent-pos23-exp-baseline-dev-20260923105204940-3574c7ed-fb02-4dab-ad7f-56671e907200",
+      "calls": 8
+    },
+    {
+      "suite": "pos23-exp-candidate-dev",
+      "runId": "nova-intent-pos23-exp-candidate-dev-20260923105348283-0dd33e2d-279a-43da-8a48-4515fa9277b6",
+      "calls": 8
+    },
+    {
+      "suite": "pos23-exp-holdout",
+      "runId": "nova-intent-pos23-exp-holdout-20260923105414316-b696dde3-403f-41a3-80a6-ddb0ca07776a",
+      "calls": 8
+    },
+    {
+      "suite": "pos23-exp-benchmark",
+      "runId": "nova-intent-pos23-exp-benchmark-20260923105428157-51a0df5c-5354-415b-b133-f0de995a38ec",
+      "calls": 50
+    }
+  ]
+}

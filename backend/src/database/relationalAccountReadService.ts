@@ -20,6 +20,7 @@ function decodeCursor(cursor: string | undefined, scope: string): CursorPosition
     if (parsed.version !== 1 || parsed.kind !== "ACCOUNT_TRANSACTIONS" || parsed.scope !== scope || typeof parsed.sortValue !== "string" || typeof parsed.id !== "string") {
       throw new Error("invalid cursor");
     }
+    if (!UUID_PATTERN.test(parsed.id) || Number.isNaN(Date.parse(parsed.sortValue))) throw new Error("invalid cursor");
     return { sortValue: parsed.sortValue, id: parsed.id };
   } catch {
     throw invalidRequest("cursor is invalid.", { cursor: "cursor is invalid." });
@@ -59,19 +60,37 @@ function toPaymentAccount(row: {
   };
 }
 
+function toTransactionKind(value: string | null): Transaction["kind"] {
+  switch (value) {
+    case "TRANSFER":
+    case "SANDBOX_FUNDING":
+    case "SAVINGS":
+    case "CREDIT_PAYMENT":
+    case "MATURITY":
+      return value;
+    default:
+      // `kind` is nullable in the relational schema and older/admin rows can
+      // contain internal values that are intentionally outside the public API
+      // enum. Omit those values rather than emitting an invalid response.
+      return undefined;
+  }
+}
+
 function toTransaction(row: AccountTransactionRow): Transaction {
-  return {
+  const transaction: Transaction = {
     id: row.id,
     accountId: row.accountId,
     direction: row.direction,
     amount: money(row.amountMinor),
     fee: money(row.feeMinor),
     status: row.status,
-    kind: row.kind as Transaction["kind"],
     description: row.description,
     counterpartyName: row.counterpartyName,
     occurredAt: row.occurredAt,
   };
+  const kind = toTransactionKind(row.kind);
+  if (kind) transaction.kind = kind;
+  return transaction;
 }
 
 function toTransactionDetail(row: AccountTransactionRow): TransactionDetail {
@@ -122,17 +141,18 @@ export class RelationalAccountReadService {
     return this.unitOfWork.transaction(async ({ client }) => {
       const accounts = new AccountRepository(client);
       if (!(await accounts.findOwnedAccount(customerId, accountId))) throw notFound("Account not found.");
-      const all = await accounts.listTransactions(accountId, 1000);
       const position = decodeCursor(cursor, accountId);
-      const sorted = [...all].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt) || right.id.localeCompare(left.id));
-      const remaining = position
-        ? sorted.filter((item) => item.occurredAt < position.sortValue || (item.occurredAt === position.sortValue && item.id < position.id))
-        : sorted;
-      const items = remaining.slice(0, limit);
+      const rows = await accounts.listTransactions(
+        accountId,
+        position ? { occurredAt: position.sortValue, id: position.id } : null,
+        limit + 1,
+      );
+      const hasMore = rows.length > limit;
+      const items = rows.slice(0, limit);
       const last = items.at(-1);
       return {
         items: items.map(toTransaction),
-        nextCursor: remaining.length > items.length && last ? encodeCursor(accountId, { sortValue: last.occurredAt, id: last.id }) : null,
+        nextCursor: hasMore && last ? encodeCursor(accountId, { sortValue: last.occurredAt, id: last.id }) : null,
       };
     });
   }

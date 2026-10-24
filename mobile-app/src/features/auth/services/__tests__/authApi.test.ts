@@ -1,10 +1,12 @@
 import {
+  beginTotpEnrollment as beginTotpEnrollmentApi,
   login as loginApi,
   refreshSession as refreshSessionApi,
   revokeAllSessions,
   register as registerApi,
+  cancelRegistration as cancelRegistrationApi,
+  resendRegistrationChallenge as resendRegistrationChallengeApi,
   revokeSession as revokeSessionApi,
-  verifyLoginChallenge as verifyLoginChallengeApi,
 } from "@/features/auth/services/authApi";
 import type {
   AuthUser,
@@ -14,7 +16,7 @@ import type {
   RegisterFormValues,
   RegisterRequest,
   RegisterResponse,
-  VerifyAuthChallengeRequest,
+  TotpEnrollmentResponse,
 } from "@/features/auth/types/auth";
 import { ApiError } from "@/services/api/ApiError";
 
@@ -52,8 +54,11 @@ const DEVICE_OPTIONS = { deviceId: "device-test" };
 const registrationChallenge: AuthChallengeResponse = {
   challengeId: "registration-challenge-1",
   expiresAt: "2026-08-14T00:05:00Z",
-  methods: ["OTP"],
-  purpose: "REGISTRATION_VERIFY",
+  methods: ["EMAIL_OTP"],
+  method: "EMAIL_OTP",
+  purpose: "REGISTRATION_EMAIL_VERIFY",
+  resendAfter: "2026-08-14T00:01:00Z",
+  maskedDestination: "te****@example.com",
 };
 const login = (
   request: LoginRequest,
@@ -67,8 +72,10 @@ const refreshSession = (refreshToken: string) =>
   refreshSessionApi(refreshToken, DEVICE_OPTIONS);
 const revokeSession = (refreshToken: string) =>
   revokeSessionApi(refreshToken, DEVICE_OPTIONS);
-const verifyLoginChallenge = (request: VerifyAuthChallengeRequest) =>
-  verifyLoginChallengeApi(request, DEVICE_OPTIONS);
+const resendRegistrationChallenge = (challengeId: string) =>
+  resendRegistrationChallengeApi(challengeId, DEVICE_OPTIONS);
+const cancelRegistration = (challengeId: string) =>
+  cancelRegistrationApi(challengeId, DEVICE_OPTIONS);
 
 const fetchMock = jest.fn<Promise<Response>, Parameters<typeof fetch>>();
 const originalFetch = globalThis.fetch;
@@ -167,7 +174,7 @@ describe("authApi", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("accepts a server-driven MFA challenge and verifies it", async () => {
+  it("fails closed when a server returns a login challenge", async () => {
     const challenge: AuthChallengeResponse = {
       challengeId: "challenge-1",
       expiresAt: "2026-08-14T00:05:00Z",
@@ -176,23 +183,8 @@ describe("authApi", () => {
     };
     fetchMock.mockResolvedValueOnce(createJsonResponse(challenge, 202));
 
-    await expect(login(loginRequest)).resolves.toEqual(challenge);
-
-    const response: LoginResponse = {
-      accessToken: "access-token-mfa",
-      refreshToken: "refresh-token-mfa",
-      expiresInSeconds: 900,
-      user: authUser,
-    };
-    fetchMock.mockResolvedValueOnce(createJsonResponse(response, 200));
-
-    await expect(
-      verifyLoginChallenge({
-        challengeId: "challenge-1",
-        method: "OTP",
-        proof: "654321",
-      }),
-    ).resolves.toEqual(response);
+    const error = await expectApiError(login(loginRequest));
+    expect(error).toMatchObject({ status: 202, code: "INVALID_RESPONSE" });
   });
 
   it("accepts a 204 response when revoking a session", async () => {
@@ -320,6 +312,92 @@ describe("authApi", () => {
     fetchMock.mockResolvedValueOnce(createJsonResponse(registrationChallenge, 202));
 
     await expect(register(registerFormValues)).resolves.toEqual(registrationChallenge);
+  });
+
+  it("gửi lại OTP đăng ký qua endpoint pre-auth và giữ device binding", async () => {
+    fetchMock.mockResolvedValueOnce(createJsonResponse(registrationChallenge, 200));
+
+    await expect(resendRegistrationChallenge("registration/challenge 1")).resolves.toEqual(registrationChallenge);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API_BASE_URL}/auth/challenges/registration%2Fchallenge%201/resend`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: expect.objectContaining({ "X-Device-ID": "device-test" }),
+      }),
+    );
+  });
+
+  it("hủy registration qua đúng POST path, body, device binding và không parse body 204", async () => {
+    const response = createInvalidJsonResponse(204);
+    fetchMock.mockResolvedValueOnce(response);
+
+    await expect(cancelRegistration("registration-challenge-1")).resolves.toBeUndefined();
+
+    expect(response.json).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledWith(
+      API_BASE_URL + "/auth/register/cancel",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ challengeId: "registration-challenge-1" }),
+        headers: expect.objectContaining({
+          "X-Device-ID": "device-test",
+        }),
+      }),
+    );
+  });
+
+  it("không ghi challenge hoặc device identifier ra console khi hủy registration", async () => {
+    const consoleLog = jest.spyOn(console, "log").mockImplementation(() => undefined);
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    fetchMock.mockResolvedValueOnce(createInvalidJsonResponse(204));
+
+    await cancelRegistration("registration-challenge-2");
+
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleLog.mockRestore();
+    consoleError.mockRestore();
+  });
+
+  it.each([404, 409, 422])("propagate cancel HTTP %s without changing status", async (status) => {
+    fetchMock.mockResolvedValueOnce(
+      createJsonResponse(
+        {
+          code: "REGISTRATION_CANCEL_ERROR",
+          message: "Yêu cầu đăng ký không thể xử lý.",
+          fieldErrors: null,
+          traceId: "trace-redacted",
+        },
+        status,
+      ),
+    );
+
+    const error = await expectApiError(cancelRegistration("registration-challenge-3"));
+
+    expect(error).toMatchObject({
+      status,
+      code: "REGISTRATION_CANCEL_ERROR",
+      traceId: "trace-redacted",
+    });
+  });
+
+  it("propagate timeout và network error để RegisterScreen quyết định giữ challenge", async () => {
+    const timeoutError = new ApiError({
+      status: null,
+      code: "TIMEOUT",
+      message: "Yêu cầu đến máy chủ đã hết thời gian chờ.",
+    });
+    fetchMock.mockRejectedValueOnce(timeoutError);
+
+    await expect(cancelRegistration("registration-challenge-4")).rejects.toBe(timeoutError);
+  });
+
+  it("fail closed trước network khi challenge hoặc device binding rỗng", async () => {
+    await expect(cancelRegistrationApi(" ", DEVICE_OPTIONS)).rejects.toThrow(TypeError);
+    await expect(cancelRegistrationApi("registration-challenge-5", { deviceId: " " })).rejects.toThrow(TypeError);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("từ chối direct registration success để không có hai state machine", async () => {
@@ -518,5 +596,74 @@ describe("authApi", () => {
     fetchMock.mockRejectedValueOnce(normalizedError);
 
     await expect(login(loginRequest)).rejects.toBe(normalizedError);
+  });
+
+  describe("beginTotpEnrollment", () => {
+    const authOptions = {
+      accessToken: "access-token-active",
+      deviceId: "device-test",
+    };
+
+    const enrollmentResponse: TotpEnrollmentResponse = {
+      credentialId: "cred-new-1",
+      manualSetupKey: "SETUPKEY123",
+      otpauthUri: "otpauth://totp/NOVA:user?secret=SETUPKEY123",
+      status: "PENDING",
+      expiresAt: "2026-09-08T00:05:00Z",
+    };
+
+    it("gửi request tạo TOTP không có step-up challenge khi chưa có factor active", async () => {
+      fetchMock.mockResolvedValueOnce(createJsonResponse(enrollmentResponse, 201));
+
+      const result = await beginTotpEnrollmentApi(
+        { password: "Password1" },
+        authOptions,
+      );
+
+      expect(result).toEqual(enrollmentResponse);
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${API_BASE_URL}/auth/mfa/totp/enroll`,
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            Authorization: "Bearer access-token-active",
+            "X-Device-ID": "device-test",
+            "Content-Type": "application/json",
+          }),
+          body: JSON.stringify({ password: "Password1" }),
+        }),
+      );
+    });
+
+    it("gửi request tạo TOTP kèm challengeId và code khi thực hiện step-up", async () => {
+      fetchMock.mockResolvedValueOnce(createJsonResponse(enrollmentResponse, 201));
+
+      const result = await beginTotpEnrollmentApi(
+        {
+          password: "Password1",
+          challengeId: "challenge-stepup-1",
+          code: "123456",
+        },
+        authOptions,
+      );
+
+      expect(result).toEqual(enrollmentResponse);
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${API_BASE_URL}/auth/mfa/totp/enroll`,
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            Authorization: "Bearer access-token-active",
+            "X-Device-ID": "device-test",
+            "Content-Type": "application/json",
+          }),
+          body: JSON.stringify({
+            password: "Password1",
+            challengeId: "challenge-stepup-1",
+            code: "123456",
+          }),
+        }),
+      );
+    });
   });
 });

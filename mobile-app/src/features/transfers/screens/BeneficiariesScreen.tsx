@@ -9,8 +9,11 @@ import {
   View,
 } from "react-native";
 
+import { AppHeader } from "@/components/ui/AppHeader";
+import { AppIcon } from "@/components/ui/AppIcon";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import {
@@ -21,7 +24,7 @@ import {
 } from "@/features/transfers/services/transfersApi";
 import type { Beneficiary } from "@/features/transfers/types/transfer";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof ApiError
@@ -160,23 +163,13 @@ export function BeneficiariesScreen() {
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="beneficiaries-back"
-        >
-          <Text style={styles.backLabel}>‹ Quay lại</Text>
-        </Pressable>
-
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>M4 · BENEFICIARIES</Text>
-          <Text style={styles.title}>Danh bạ người nhận</Text>
-          <Text style={styles.description}>
-            Thông tin tài khoản được gửi lên Backend để kiểm tra; Mobile chỉ hiển thị số tài khoản đã che.
-          </Text>
-        </View>
+        <AppHeader
+          backTestID="beneficiaries-back"
+          eyebrow="Chuyển tiền"
+          onBack={() => router.back()}
+          subtitle="Lưu người nhận thường dùng để chuyển khoản nhanh và chính xác hơn."
+          title="Danh bạ người nhận"
+        />
 
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>Thêm người nhận</Text>
@@ -257,11 +250,22 @@ export function BeneficiariesScreen() {
                     ]}
                     testID={`beneficiary-row-${beneficiary.id}`}
                   >
-                    <Text style={styles.beneficiaryName}>{beneficiary.displayName}</Text>
-                    <Text style={styles.beneficiaryDetails}>
-                      {beneficiary.bankName} · {beneficiary.maskedAccountNumber}
-                    </Text>
-                    <Text style={styles.beneficiaryStatus}>{beneficiary.status}</Text>
+                    <View style={styles.beneficiaryIdentity}>
+                      <View style={styles.beneficiaryIcon}>
+                        <AppIcon color={colors.primary} name="profile" size={20} />
+                      </View>
+                      <View style={styles.beneficiaryCopy}>
+                        <Text style={styles.beneficiaryName}>{beneficiary.displayName}</Text>
+                        <Text style={styles.beneficiaryDetails}>
+                          {beneficiary.bankName} · {beneficiary.maskedAccountNumber}
+                        </Text>
+                      </View>
+                      <StatusBadge
+                        label={beneficiary.status === "ACTIVE" ? "Hoạt động" : "Đã khóa"}
+                        tone={beneficiary.status === "ACTIVE" ? "success" : "danger"}
+                      />
+                      <AppIcon color={colors.subtle} name="chevronRight" size={18} />
+                    </View>
                   </Pressable>
 
                   {isEditing ? (
@@ -346,46 +350,19 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     width: "100%",
-    maxWidth: 720,
+    maxWidth: sizes.contentMaxWidth,
     alignSelf: "center",
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  backButton: {
-    alignSelf: "flex-start",
-    paddingVertical: spacing.xs,
-  },
-  backLabel: {
-    color: colors.primary,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  header: {
-    gap: spacing.sm,
-  },
-  eyebrow: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: "700",
-  },
-  description: {
-    color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
-  },
   card: {
     gap: spacing.md,
-    padding: spacing.lg,
+    padding: spacing.mlg,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: spacing.md,
+    borderRadius: radius.lg,
     backgroundColor: colors.surface,
+    ...shadows.card,
   },
   sectionHeader: {
     flexDirection: "row",
@@ -394,9 +371,8 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   sectionTitle: {
+    ...typography.subheading,
     color: colors.text,
-    fontSize: 18,
-    fontWeight: "700",
   },
   linkLabel: {
     color: colors.primary,
@@ -411,9 +387,10 @@ const styles = StyleSheet.create({
   listCard: {
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: spacing.md,
+    borderRadius: radius.lg,
     backgroundColor: colors.surface,
     overflow: "hidden",
+    ...shadows.card,
   },
   row: {
     gap: spacing.md,
@@ -422,24 +399,35 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   rowMain: {
-    gap: spacing.xs,
+    gap: spacing.sm,
   },
   pressedRow: {
     opacity: 0.72,
   },
+  beneficiaryIdentity: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  beneficiaryIcon: {
+    width: 42,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.md,
+    backgroundColor: colors.primarySoft,
+  },
+  beneficiaryCopy: {
+    flex: 1,
+    gap: spacing.xs,
+  },
   beneficiaryName: {
+    ...typography.bodyStrong,
     color: colors.text,
-    fontSize: 16,
-    fontWeight: "700",
   },
   beneficiaryDetails: {
+    ...typography.caption,
     color: colors.muted,
-    fontSize: 14,
-  },
-  beneficiaryStatus: {
-    color: colors.success,
-    fontSize: 12,
-    fontWeight: "700",
   },
   inlineEditor: {
     gap: spacing.sm,
@@ -490,25 +478,28 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   errorText: {
+    ...typography.body,
     color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.dangerSoft,
   },
   noticeText: {
+    ...typography.body,
     color: colors.success,
-    fontSize: 14,
-    lineHeight: 20,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.successSoft,
   },
   emptyCard: {
     padding: spacing.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: spacing.md,
+    borderRadius: radius.lg,
     backgroundColor: colors.surface,
   },
   emptyText: {
+    ...typography.bodyStrong,
     color: colors.text,
-    fontSize: 16,
-    fontWeight: "600",
   },
 });

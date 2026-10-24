@@ -1,16 +1,16 @@
 # Banking reference backend
 
-> Cập nhật 2026-08-25: reference sandbox dùng registration hai bước, TOTP-based MFA persistent cho login/transaction step-up, Admin four-eyes funding fixture, người nhận thật và Savings/Credit opt-in. User mới chỉ có một payment account 0 VND; không còn beneficiary/card/savings tự sinh. `npm run seed:e2e` yêu cầu email-code từ provider test và TOTP fixture, không đọc OTP từ backend.
+> Cập nhật 2026-10-11: theo yêu cầu người dùng, các bộ E2E chạy được của Backend và Mobile cùng fixture seed chỉ phục vụ E2E đã được gỡ. Unit test và integration test vẫn được giữ. Hướng dẫn/bằng chứng E2E cũ chỉ còn để tra cứu lịch sử.
 
-Đây là backend reference cho môi trường local của mobile app. Runtime mặc định dùng PostgreSQL persistent relational reference adapter; in-memory chỉ dành cho unit/reference test nhanh. PBKDF2 và core-banking adapter giả lập được dùng để kiểm chứng contract, state machine, refresh rotation, idempotency, audit/outbox và reconciliation.
+Đây là backend reference cho mobile app. Runtime mặc định dùng PostgreSQL persistent relational reference adapter; in-memory lưu trạng thái trong RAM. PBKDF2 và core-banking adapter nội bộ phục vụ contract, state machine, refresh rotation, idempotency, audit/outbox và reconciliation.
 
-Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql), phần mở rộng reference runtime ở [`database/005_relational_reference_runtime.sql`](database/005_relational_reference_runtime.sql). Các migration P0 `006`–`011` và `029`–`032` bổ sung command idempotency, identity/MFA, transfer, Savings, Credit, remaining customer routes và scheduled lifecycle. Local Compose hiện dùng boundary relational-v2 trực tiếp cho các route customer đã duyệt; `reference_runtime_records` chỉ còn cho migration/regression và không phải source of truth của HTTP relational-v2.
+Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql), phần mở rộng reference runtime ở [`database/005_relational_reference_runtime.sql`](database/005_relational_reference_runtime.sql). Các migration P0 `006`–`011` và `029`–`040` bổ sung command idempotency, identity/MFA, transfer, Savings, Credit, remaining customer routes, scheduled lifecycle, policy/rate-limit, beneficiary lifecycle, counterparty snapshot, KYC runtime, lifecycle suspense/keyset indexes và card-security case. Local Compose hiện dùng boundary relational-v2 trực tiếp cho các route customer đã duyệt; `reference_runtime_records` chỉ còn cho migration/regression và không phải source of truth của HTTP relational-v2.
 
-## Persistent sandbox PostgreSQL
+## PostgreSQL persistent mode
 
-Reference runtime có thêm chế độ `BANKING_STORAGE=postgres`. Local Compose với `BANKING_PERSISTENCE_MODE=relational-v2` dùng các repository transactional trực tiếp qua `UnitOfWork`; adapter `PostgresRelationalRepository` legacy và `reference_state_snapshots` chỉ còn cho migration/regression. Dữ liệu mới của HTTP relational-v2 không ghi lại thành một JSON snapshot tổng. Đây vẫn là sandbox-only; không dùng cho tiền thật.
+Reference runtime có thêm chế độ `BANKING_STORAGE=postgres`. Local Compose với `BANKING_PERSISTENCE_MODE=relational-v2` dùng các repository transactional trực tiếp qua `UnitOfWork`; adapter `PostgresRelationalRepository` legacy và `reference_state_snapshots` chỉ còn cho migration/regression. Dữ liệu mới của HTTP relational-v2 không ghi lại thành một JSON snapshot tổng.
 
-HTTP cutover local dùng `BANKING_PERSISTENCE_MODE=relational-v2` và group `auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud` để nối registration (provider boundary), session, persistent MFA lifecycle, account reads, beneficiary CRUD, transfer, Savings, Credit, recipient lookup, notification và fraud report trực tiếp qua UnitOfWork PostgreSQL, không gọi `withState`. Mã xác nhận registration chỉ được provider test giữ trong bộ nhớ; PostgreSQL chỉ giữ digest và outbox intent không chứa mã. Scheduled settlement/maturity chưa bật worker và KYC/profile customer chưa có public contract nên được ghi rõ out-of-scope. Bản đồ và gate nằm tại [`documents/05-testing/staging-readiness/relational-v2-http-cutover-matrix.md`](../documents/05-testing/staging-readiness/relational-v2-http-cutover-matrix.md). Local vẫn là `UNTRUSTED LOCAL PREVIEW` với `IMAGE_DIGEST=unknown`, không phải staging verified.
+HTTP cutover local dùng `BANKING_PERSISTENCE_MODE=relational-v2` và group `auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,kyc` để nối registration (provider boundary), session, persistent MFA lifecycle, account reads, beneficiary CRUD, transfer, Savings, Credit, recipient lookup, notification và KYC trực tiếp qua UnitOfWork PostgreSQL, không gọi `withState`. API báo cáo gian lận đã được gỡ; migration/bảng dữ liệu cũ được giữ nguyên để bảo toàn lịch sử. Mã xác nhận registration chỉ được provider đăng ký giữ trong bộ nhớ; PostgreSQL chỉ giữ digest và outbox intent không chứa mã. Scheduled settlement/maturity vẫn chưa bật worker preview. Bản đồ và gate nằm tại [`documents/05-testing/staging-readiness/relational-v2-http-cutover-matrix.md`](../documents/05-testing/staging-readiness/relational-v2-http-cutover-matrix.md). Local vẫn là `UNTRUSTED LOCAL PREVIEW` với `IMAGE_DIGEST=unknown`, không phải staging verified.
 
 ```powershell
 $env:DATABASE_URL = "postgresql://banking:banking@localhost:5432/banking_test"
@@ -52,22 +52,104 @@ npm run test:critical
 npm start
 ```
 
-Để chuẩn bị dữ liệu cho Maestro mà không lấy ID thủ công, khởi động server sandbox rồi chạy `npm run seed:e2e` ở terminal khác. Lệnh này đăng ký/đăng nhập user E2E, tạo beneficiary nếu thiếu, tạo transfer notification và chỉ in các biến không nhạy cảm như `TEST_EMAIL`, `BENEFICIARY_ID`, `QR_PAYLOAD` cùng transfer seed. Password, email confirmation code và TOTP secret/code phải được cấp sẵn trong environment của test provider và không được in ra. Hướng dẫn đầy đủ nằm tại [`../documents/05-testing/e2e-sandbox-seed.md`](../documents/05-testing/e2e-sandbox-seed.md).
-
-Server mặc định lắng nghe `http://localhost:5000/api/v1`; health/readiness tối giản ở `http://localhost:5000/healthz`. Persistent runtime yêu cầu `BANKING_MFA_METHODS=TOTP`, pepper và encryption key; thiếu key sẽ fail closed. Email provider thật chưa được nối trong reference sandbox.
+Server mặc định lắng nghe `http://localhost:5000/api/v1`; health/readiness tối giản ở `http://localhost:5000/healthz`. Persistent runtime yêu cầu `BANKING_MFA_METHODS=TOTP`, pepper và encryption key; thiếu key sẽ fail closed. Email boundary hỗ trợ `disabled`, HTTP capture và Gmail SMTP local; staging vẫn phải dùng HTTPS/credential từ secret manager và fail closed khi provider chưa cấu hình.
 
 Giai đoạn 1 bổ sung `/livez` cho liveness độc lập database, `/startupz` cho config/key/repository startup và `/readyz` là readiness có database. `/healthz` dành cho monitoring sâu hơn; `/versionz` trả release ID, commit SHA, image digest, schema/migration fingerprint và money mode, không chứa credential hoặc dữ liệu tài chính nhạy cảm. Khi `BANKING_ALLOWED_ORIGINS` là allow-list, Origin ngoài danh sách bị từ chối bằng `403 CORS_ORIGIN_DENIED`.
 
-Để kiểm thử crash/restart, có thể tắt immediate settlement bằng `BANKING_SETTLE_IMMEDIATELY=0`, `BANKING_SETTLE_SAVINGS_IMMEDIATELY=0` hoặc `BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY=0`. Scheduled lifecycle hiện chỉ có service nội bộ và disposable rehearsal; worker preview chưa được bật. Admin API chỉ tạo action retry/cancel qua quy trình bốn mắt. Public API không có operator key hoặc endpoint bypass.
+Để kiểm thử crash/restart, có thể tắt immediate settlement bằng `BANKING_SETTLE_IMMEDIATELY=0`, `BANKING_SETTLE_SAVINGS_IMMEDIATELY=0` hoặc `BANKING_SETTLE_CREDIT_PAYMENTS_IMMEDIATELY=0`. Scheduled lifecycle đã được gắn vào worker với poll/batch/readiness và được kiểm tra bằng hai scheduler trên database disposable; worker preview vẫn chưa được bật. Admin API chỉ tạo action retry/cancel qua quy trình bốn mắt. Public API không có operator key hoặc endpoint bypass.
 
 Local server mặc định cho phép CORS `*`; production phải cấu hình `BANKING_ALLOWED_ORIGINS` bằng allowlist origin đã phê duyệt. Có thể giới hạn pilot bằng `BANKING_ALLOWLIST_ENABLED=1` và `BANKING_MAX_TRANSFER_AMOUNT_MINOR` (đơn vị minor-unit VND); các giới hạn này được áp ở server.
 
-## Cấu hình chạy hiện tại — 2026-08-26
+## Cấu hình chạy hiện tại — 2026-08-29
 
 - `npm start` mặc định dùng `BANKING_STORAGE=postgres` và tự đọc `.env` nếu file tồn tại. Database phải được migrate trước; lệnh chuẩn là `npm run start:persistent`.
 - `BANKING_STORAGE=in-memory` chỉ dành cho unit/reference test nhanh, không còn là chế độ runtime mặc định.
-- PostgreSQL local preview dùng boundary relational-v2 cho các nhóm customer đã duyệt; `npm run test:relational`, `test:mfa:persistence`, `test:registration:persistence`, `test:savings:persistence`, `test:credit:persistence`, `test:remaining:persistence` và `test:lifecycle:persistence` kiểm tra restart/concurrency/rollback trên database disposable có `DATABASE_TEST_ADMIN_URL`. Worker chỉ được rehearsal trên disposable bằng `test:worker`; không bật worker runtime trên preview. Profile/KYC customer vẫn explicit out-of-scope.
-- Chương trình mô phỏng nghiệp vụ ngân hàng bằng tiền ảo. Không có kết nối core banking, payment rail, tài khoản thật, KYC/AML thật hoặc xử lý tiền thật.
+- PostgreSQL local preview dùng boundary relational-v2 cho các nhóm customer đã duyệt; `npm run test:relational`, `test:mfa:persistence`, `test:registration:persistence`, `test:savings:persistence`, `test:credit:persistence`, `test:remaining:persistence`, `test:lifecycle:persistence` và các suite KYC kiểm tra restart/concurrency/rollback trên database disposable có `DATABASE_TEST_ADMIN_URL`. Worker chỉ được rehearsal trên disposable bằng `test:worker`; không bật worker runtime trên preview. KYC runtime persistent dùng cùng nguồn PostgreSQL cho Customer/Admin; KYC/AML provider thật vẫn ngoài phạm vi.
+- Không có kết nối core banking, payment rail, tài khoản thật, KYC/AML provider thật hoặc xử lý tiền thật.
+
+## Kiến trúc phân tầng Backend (4-Layer Clean Architecture)
+
+Hệ thống Backend được tổ chức theo kiến trúc phân tầng rõ ràng nhằm đảm bảo tính module hóa, dễ đọc, dễ học và dễ bảo trì:
+
+```text
+backend/src/
+├── routes/                  # [TẦNG 1: ROUTING] Ánh xạ URL & phương thức HTTP tới Controller tương ứng
+│   ├── systemRoutes.ts      # Health checks (/livez, /readyz, /startupz, /metrics)
+│   ├── authRoutes.ts        # Route Đăng ký, Đăng nhập, MFA/TOTP
+│   ├── accountRoutes.ts     # Route Tài khoản thanh toán & Lịch sử giao dịch
+│   ├── transferRoutes.ts    # Route Chuyển tiền, Báo giá, Danh bạ thụ hưởng
+│   ├── cardRoutes.ts        # Route Thẻ ATM/Debit, Thẻ tín dụng
+│   ├── savingsRoutes.ts     # Route Tiết kiệm có kỳ hạn
+│   ├── kycRoutes.ts         # Route Định danh eKYC
+│   ├── notificationRoutes.ts# Route Thông báo
+│   ├── assistantRoutes.ts   # Route Trợ lý AI & Lời khuyên tài chính
+│   ├── mobileRoutes.ts      # Route Chính sách ứng dụng Mobile
+│   ├── httpUtils.ts         # Tiện ích HTTP chung, đệm buffer và đọc stream JSON
+│   └── index.ts             # Barrel export cho toàn bộ Router
+├── controllers/             # [TẦNG 2: CONTROLLERS] Tiếp nhận Request, bóc tách tham số, gọi Service & trả Response
+│   ├── accountController.ts # Xử lý xem tài khoản, lịch sử giao dịch
+│   ├── transferController.ts# Xử lý báo giá, thực hiện chuyển tiền, quản lý danh bạ
+│   ├── authController.ts    # Xử lý đăng ký, đăng nhập, MFA/TOTP, khôi phục tài khoản
+│   ├── savingsController.ts # Xử lý mở sổ tiết kiệm, tính lãi, tất toán trước hạn
+│   ├── cardController.ts    # Xử lý thẻ ATM, khóa/mở thẻ, hạn mức tín dụng, sao kê
+│   ├── kycController.ts     # Xử lý định danh điện tử eKYC
+│   ├── notificationController.ts # Xử lý thông báo biến động số dư
+│   ├── assistantController.ts    # Xử lý hội thoại AI và tư vấn tài chính
+│   ├── mobileController.ts  # Xử lý cấu hình chính sách ứng dụng di động
+│   └── index.ts             # Barrel export cho Controllers
+├── middlewares/             # [TẦNG TIỆN ÍCH CHUNG: MIDDLEWARES] Xử lý các quy tắc xuyên suốt (Cross-cutting Concerns)
+│   ├── corsMiddleware.ts    # Quản lý chính sách nguồn gốc CORS và OPTIONS preflight
+│   ├── authMiddleware.ts    # Kiểm tra Bearer Token, ràng buộc thiết bị, Step-Up TOTP
+│   ├── errorMiddleware.ts   # Bắt lỗi tập trung, mapping DomainError và DatabaseCommandError
+│   ├── recipientLookupRateLimiter.ts # Giới hạn tần suất tra cứu tài khoản thụ hưởng
+│   └── index.ts             # Barrel export cho Middlewares
+├── services/                # [TẦNG 3: SERVICES] Điều phối quy trình nghiệp vụ ngân hàng (Use Cases)
+│   ├── coreBanking.ts       # Nghiệp vụ ngân hàng lõi in-memory (CoreBankingPort)
+│   └── index.ts             # Barrel export cho Services
+├── domain/                  # [TẦNG 4: DOMAIN] Quy tắc tài chính thuần túy (Pure Rules)
+│   ├── ledger.ts            # Sổ cái kế toán kép (Double-entry Ledger) cân bằng Nợ/Có
+│   ├── money.ts             # Tính toán tiền tệ VND an toàn (minor units, không làm tròn sai)
+│   ├── savings/             # [Domain Tiết kiệm] Quy tắc tiền gửi, tính lãi & ngày đáo hạn
+│   │   ├── types.ts         # Khai báo thực thể & danh mục gói tiết kiệm
+│   │   ├── calculations.ts  # Thuật toán tính lãi suất, ngày đáo hạn, tất toán trước hạn
+│   │   ├── mappers.ts       # Làm sạch dữ liệu nội bộ trước khi trả ra ngoài
+│   │   └── index.ts         # Barrel export cho module Savings
+│   ├── credit/              # [Domain Tín dụng] Quy tắc thẻ tín dụng, hạn mức & chu kỳ sao kê
+│   │   ├── types.ts         # Khai báo thực thể thẻ tín dụng, giao dịch, sao kê
+│   │   ├── calculations.ts  # Thuật toán tính hạn mức khả dụng, thanh toán tối thiểu, ngày chốt sổ
+│   │   ├── mappers.ts       # Nhân bản an toàn và bảo vệ dữ liệu thẻ tín dụng
+│   │   └── index.ts         # Barrel export cho module Credit
+│   └── index.ts             # Barrel export cho Domain
+├── database/                # [TẦNG 5: INFRASTRUCTURE] Lưu trữ bền vững PostgreSQL & Repositories
+│   ├── repositories/        # Các repository lưu trữ theo domain
+│   ├── postgresRelationalRepository.ts # Bộ điều hợp lưu trữ quan hệ PostgreSQL & snapshot bridge
+│   ├── postgresSnapshotRepository.ts   # Bộ điều hợp lưu trữ snapshot JSON
+│   ├── unitOfWork.ts        # Quản lý transaction PostgreSQL UnitOfWork
+│   ├── transferService.ts   # Xử lý chuyển tiền transactional qua SQL
+│   ├── savingsService.ts    # Xử lý tiết kiệm transactional qua SQL
+│   ├── creditService.ts     # Xử lý thẻ tín dụng transactional qua SQL
+│   └── pool.ts              # Quản lý kết nối PostgreSQL
+├── mfa/                     # [TẦNG 4: INFRASTRUCTURE] Hạ tầng bảo mật xác thực 2 lớp (TOTP/Email)
+├── secrets/                 # [TẦNG 4: INFRASTRUCTURE] Quản lý khóa bí mật (Secret Manager)
+└── observability/           # [TẦNG 4: INFRASTRUCTURE] Giám sát hệ thống (Logger, Prometheus Metrics)
+```
+
+### Bảng tra cứu nhanh tính năng (Feature Lookup Table)
+
+| Tính năng nghiệp vụ | Router (Tầng 1) | Controller (Tầng 2) | Service & Domain (Tầng 3 & 4) |
+| :--- | :--- | :--- | :--- |
+| **Đăng ký, Đăng nhập, MFA/TOTP** | [`src/routes/authRoutes.ts`](src/routes/authRoutes.ts) | [`src/controllers/authController.ts`](src/controllers/authController.ts) | `relationalAuth` / `system` / `mfa/` |
+| **Chuyển tiền & Danh bạ thụ hưởng** | [`src/routes/transferRoutes.ts`](src/routes/transferRoutes.ts) | [`src/controllers/transferController.ts`](src/controllers/transferController.ts) | `services/coreBanking.ts` / `transferService.ts` |
+| **Xem tài khoản & Lịch sử giao dịch** | [`src/routes/accountRoutes.ts`](src/routes/accountRoutes.ts) | [`src/controllers/accountController.ts`](src/controllers/accountController.ts) | `services/coreBanking.ts` / `relationalAccountReadService.ts` |
+| **Tiết kiệm có kỳ hạn & Tính lãi** | [`src/routes/savingsRoutes.ts`](src/routes/savingsRoutes.ts) | [`src/controllers/savingsController.ts`](src/controllers/savingsController.ts) | `database/savingsService.ts` / [`src/domain/savings/`](src/domain/savings/) |
+| **Thẻ ghi nợ & Thẻ tín dụng** | [`src/routes/cardRoutes.ts`](src/routes/cardRoutes.ts) | [`src/controllers/cardController.ts`](src/controllers/cardController.ts) | `database/creditService.ts` / [`src/domain/credit/`](src/domain/credit/) |
+| **Định danh điện tử eKYC** | [`src/routes/kycRoutes.ts`](src/routes/kycRoutes.ts) | [`src/controllers/kycController.ts`](src/controllers/kycController.ts) | `database/kycService.ts` |
+| **Thông báo biến động số dư** | [`src/routes/notificationRoutes.ts`](src/routes/notificationRoutes.ts) | [`src/controllers/notificationController.ts`](src/controllers/notificationController.ts) | `database/` / `system` |
+| **Trợ lý AI & Lời khuyên tài chính** | [`src/routes/assistantRoutes.ts`](src/routes/assistantRoutes.ts) | [`src/controllers/assistantController.ts`](src/controllers/assistantController.ts) | `assistant/` / `financialAdvice/` |
+| **Chính sách ứng dụng Mobile** | [`src/routes/mobileRoutes.ts`](src/routes/mobileRoutes.ts) | [`src/controllers/mobileController.ts`](src/controllers/mobileController.ts) | `system` / `relationalHttp` |
+| **CORS, Bảo vệ Auth & Bắt lỗi** | — | — | [`src/middlewares/`](src/middlewares/) |
+| **Sổ cái kế toán kép (Double-entry)** | — | — | [`src/domain/ledger.ts`](src/domain/ledger.ts) |
+| **Tính toán tiền tệ VND an toàn** | — | — | [`src/domain/money.ts`](src/domain/money.ts) |
 
 ## Invariant được kiểm chứng
 

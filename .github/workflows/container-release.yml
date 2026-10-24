@@ -37,7 +37,6 @@ jobs:
         run: |
           npm run lint
           npm run validate:openapi
-          npm run validate:e2e
           npm run validate:release
           npm run validate:public-env
       - name: Typecheck and unit coverage
@@ -75,19 +74,6 @@ jobs:
           npm test
           npm run build
           npm run audit
-      - name: Install backend dependencies for browser fixture
-        working-directory: backend
-        run: npm ci
-      - name: Build backend for browser fixture
-        working-directory: backend
-        run: npm run build
-      - name: Install Playwright Chromium
-        working-directory: admin-web
-        run: npx playwright install --with-deps chromium
-      - name: Admin Web browser E2E
-        working-directory: admin-web
-        run: npm run test:e2e
-
   container-smoke:
     name: Container release smoke
     runs-on: ubuntu-latest

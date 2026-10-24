@@ -7,6 +7,7 @@ import type {
   SavingsProductsResponse,
   SavingsQuote,
   SavingsTermMonths,
+  SavingsWithdrawalReceipt,
 } from "@/features/savings/types/savings";
 import { isMoney } from "@/features/banking/validation/moneyValidators";
 import { isNonEmptyDateTime } from "@/services/api/responseValidators";
@@ -134,5 +135,26 @@ export function isSavingsDepositsResponse(
     Array.isArray(value.items) &&
     value.items.every((item) => isSavingsDeposit(item)) &&
     isMoney(value.totalPrincipal)
+  );
+}
+
+export function isSavingsWithdrawalReceipt(
+  value: unknown,
+): value is SavingsWithdrawalReceipt {
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value.depositId) &&
+    isNonEmptyString(value.sourceAccountId) &&
+    isMoney(value.principal) &&
+    typeof value.interestDays === "number" &&
+    Number.isInteger(value.interestDays) &&
+    value.interestDays >= 0 &&
+    typeof value.demandRateBasisPoints === "number" &&
+    Number.isInteger(value.demandRateBasisPoints) &&
+    isMoney(value.earlyInterest) &&
+    isMoney(value.totalPayout) &&
+    value.status === "CLOSED" &&
+    isNonEmptyString(value.reference) &&
+    isNonEmptyDateTime(value.withdrawnAt)
   );
 }

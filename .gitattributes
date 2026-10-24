@@ -12,6 +12,8 @@
 *.sh text eol=lf
 *.example text eol=lf
 *.env.example text eol=lf
+# Preserve the byte hash of the assistant's locked source fixture on Windows.
+backend/src/tests/assistantEvaluation/fixtures/pos24-baseline-response-catalog.txt text eol=lf
 *.png binary
 *.jpg binary
 *.jpeg binary

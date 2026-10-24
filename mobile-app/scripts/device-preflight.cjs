@@ -1,5 +1,4 @@
 const { spawnSync } = require("node:child_process");
-const fs = require("node:fs");
 const path = require("node:path");
 
 const DEFAULT_PACKAGE = "com.example.digitalbanking.mobile";
@@ -160,77 +159,6 @@ async function checkHealth(url) {
   }
 }
 
-function findJavaHome() {
-  const configured = process.env.JAVA_HOME?.trim();
-  if (configured) {
-    const configuredJava = path.join(configured, "bin", process.platform === "win32" ? "java.exe" : "java");
-    if (fs.existsSync(configuredJava)) {
-      return configured;
-    }
-
-    if (path.basename(configured).toLowerCase() === "bin") {
-      const parentHome = path.dirname(configured);
-      const parentJava = path.join(parentHome, "bin", process.platform === "win32" ? "java.exe" : "java");
-      if (fs.existsSync(parentJava)) {
-        return parentHome;
-      }
-    }
-  }
-
-  const javaLookup = run(process.platform === "win32" ? "where.exe" : "which", ["java"]);
-  const javaPath = javaLookup.stdout.split(/\r?\n/).find((value) => value.trim());
-  if (javaPath) {
-    return path.dirname(path.dirname(javaPath.trim()));
-  }
-
-  return null;
-}
-
-function findMaestro() {
-  const configured = process.env.MAESTRO?.trim();
-  if (configured) {
-    return configured;
-  }
-
-  const userProfile = process.env.USERPROFILE || process.env.HOME;
-  if (userProfile) {
-    const localBinary = path.join(
-      userProfile,
-      ".maestro",
-      "maestro",
-      "bin",
-      process.platform === "win32" ? "maestro.bat" : "maestro",
-    );
-    if (fs.existsSync(localBinary)) {
-      return localBinary;
-    }
-  }
-
-  return "maestro";
-}
-
-function checkMaestro() {
-  const command = findMaestro();
-  const javaHome = findJavaHome();
-  const result = run(command, ["--version"], {
-    env: javaHome ? { ...process.env, JAVA_HOME: javaHome } : process.env,
-  });
-  const failureReason = result.status === 0
-    ? null
-    : result.error
-      ? "command-not-found"
-      : result.stderr.toLowerCase().includes("java_home")
-        ? "java-not-ready"
-        : "command-failed";
-  return {
-    installed: result.status === 0,
-    version: result.status === 0 ? result.stdout.split(/\r?\n/)[0] : null,
-    command: command,
-    javaConfigured: Boolean(javaHome),
-    failureReason,
-  };
-}
-
 async function main() {
   const packageName = getOption("package", DEFAULT_PACKAGE);
   const healthUrl = getOption("health", DEFAULT_HEALTH_URL);
@@ -241,7 +169,6 @@ async function main() {
     ? parseDevices(adbResult.stdout).map((device) => inspectDevice(adb, packageName, device))
     : [];
   const health = await checkHealth(healthUrl);
-  const maestro = checkMaestro();
   const activeDevices = devices.filter((device) => device.state === "device");
   const physicalDevices = activeDevices.filter((device) => device.kind === "physical");
   const packageReady = activeDevices.some((device) => device.packageInstalled);
@@ -251,7 +178,6 @@ async function main() {
     appInstalled: packageReady,
     backendHealth: health.reachable && health.applicationStatus === "ok",
     physicalDevice: physicalDevices.length > 0,
-    maestro: maestro.installed,
   };
 
   const output = {
@@ -259,7 +185,6 @@ async function main() {
     packageName,
     adb,
     health,
-    maestro,
     devices,
     checks,
     mode: requirePhysical ? "physical-device-required" : "local-device-ready",

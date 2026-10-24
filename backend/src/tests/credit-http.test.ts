@@ -5,6 +5,7 @@ import test from "node:test";
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer } from "../http.js";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
 
 async function completeRegistration(
   system: BankingSystem,
@@ -25,7 +26,7 @@ async function completeRegistration(
   const otp = { otp: system.readTestVerificationCode(challenge.challengeId) };
   const verified = await request("/auth/register/verify", {
     method: "POST",
-    body: JSON.stringify({ challengeId: challenge.challengeId, proof: otp.otp }),
+    body: JSON.stringify({ challengeId: challenge.challengeId, method: "EMAIL_OTP", proof: otp.otp }),
   });
   assert.equal(verified.status, 201);
   return (await verified.json()) as { user: { id: string } };
@@ -36,7 +37,7 @@ test("HTTP credit sandbox exposes card, statement and idempotent payment flow", 
     sandboxOtp: "123456",
     allowUnsafeDirectSandboxStepUp: true,
   });
-  const server = createBankingServer(system);
+  const server = createBankingServer(system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 

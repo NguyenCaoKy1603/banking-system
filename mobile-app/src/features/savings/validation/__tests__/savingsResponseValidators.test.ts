@@ -4,6 +4,7 @@ import {
   isSavingsOpening,
   isSavingsProductsResponse,
   isSavingsQuote,
+  isSavingsWithdrawalReceipt,
 } from "@/features/savings/validation/savingsResponseValidators";
 
 const money = { currency: "VND" as const, amountMinor: "1000000" };
@@ -74,5 +75,21 @@ describe("savings response validators", () => {
     expect(isSavingsDepositsResponse({ items: [deposit], totalPrincipal: money })).toBe(true);
     expect(isSavingsDeposit({ ...deposit, status: "UNKNOWN" })).toBe(false);
     expect(isSavingsQuote({ ...quote, termMonths: 2 })).toBe(false);
+
+    const withdrawalReceipt = {
+      depositId: "deposit-1",
+      sourceAccountId: "account-1",
+      principal: money,
+      interestDays: 10,
+      demandRateBasisPoints: 20,
+      earlyInterest: { currency: "VND" as const, amountMinor: "54" },
+      totalPayout: { currency: "VND" as const, amountMinor: "1000054" },
+      status: "CLOSED" as const,
+      reference: "WTH-DEPOSIT-1",
+      withdrawnAt: "2026-08-24T00:00:00Z",
+    };
+    expect(isSavingsWithdrawalReceipt(withdrawalReceipt)).toBe(true);
+    expect(isSavingsWithdrawalReceipt({ ...withdrawalReceipt, status: "ACTIVE" })).toBe(false);
+    expect(isSavingsWithdrawalReceipt({ ...withdrawalReceipt, demandRateBasisPoints: "20" })).toBe(false);
   });
 });

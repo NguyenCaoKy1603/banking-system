@@ -7,7 +7,9 @@ import { readRuntimeConfig } from "./runtimeConfig.js";
 import { runtimeMetadata } from "./runtimeMetadata.js";
 import { createRuntimeSecretProvider, referenceFor } from "./secrets/runtimeSecrets.js";
 
-const runtimeConfig = readRuntimeConfig();
+const runtimeConfig = readRuntimeConfig(process.env, {
+  requireRegistrationFingerprintKey: false,
+});
 
 const port = Number(process.env.ADMIN_PORT ?? 5001);
 const bind = (process.env.ADMIN_BIND ?? "127.0.0.1").trim() || "127.0.0.1";
@@ -49,7 +51,7 @@ async function start(): Promise<void> {
       },
     );
   const auth = new StaffAuthService({ repository, encryption, environmentScope: environment });
-  const actions = new AdminActionEngine(repository, auth);
+  const actions = new AdminActionEngine(repository);
   const server = createAdminServer({
     repository,
     auth,

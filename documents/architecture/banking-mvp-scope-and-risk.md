@@ -17,7 +17,7 @@ Ngoại lệ chỉ để kiểm thử local: reference backend có registration 
 - Một tài khoản thanh toán với available/current balance do core banking cung cấp.
 - Lịch sử giao dịch cursor pagination và transaction detail.
 - Chuyển tiền: beneficiary → amount/fee quote → review → step-up → submit → pending/success/failed/reversed → receipt.
-- Transaction notification, profile và fraud reporting channel.
+- Transaction notification và profile.
 
 ### Out of scope
 

@@ -8,15 +8,18 @@ export type OtpPurpose =
   | "LOGIN"
   | "TRANSFER"
   | "SAVINGS_OPENING"
+  | "SAVINGS_WITHDRAWAL"
   | "CREDIT_APPLICATION"
   | "CARD_ACTIVATION"
   | "CREDIT_PAYMENT"
-  | "CARD_UNLOCK";
+  | "CARD_UNLOCK"
+  | "CARD_REPORT_LOST";
 
 export type CreateOtpChallengeRequest = {
   purpose: OtpPurpose;
   resourceId?: string | null;
   requestFingerprint?: string | null;
+  method?: "OTP" | "EMAIL_OTP" | "TOTP";
 };
 
 export function createOtpChallenge(

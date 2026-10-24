@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { HttpEmailProvider } from "../mfa/httpEmailProvider.js";
 import { createRuntimeEmailProvider } from "../mfa/runtimeEmailProvider.js";
+import type { SmtpTransport } from "../mfa/smtpEmailProvider.js";
 import type { SecretProvider } from "../secrets/SecretProvider.js";
 
 const input = {
@@ -93,4 +94,27 @@ test("runtime factory allows disabled local preview, rejects disabled staging, a
     createRuntimeEmailProvider({ environment: "staging", isProductionLike: true, secretProvider: secretProvider(), env: { EMAIL_PROVIDER: "http", EMAIL_PROVIDER_URL: "https://user:pass@mail.example.test/send" } }),
     /credentials/i,
   );
+});
+
+test("runtime factory resolves Gmail SMTP with the existing email provider secret seam", async () => {
+  const transport: SmtpTransport = {
+    async sendMail() {
+      return { messageId: "<runtime-smtp>", accepted: ["person@example.com"] };
+    },
+  };
+  const provider = await createRuntimeEmailProvider({
+    environment: "development",
+    isProductionLike: false,
+    secretProvider: secretProvider("1234567890123456"),
+    smtpTransport: transport,
+    env: {
+      EMAIL_PROVIDER: "smtp",
+      SMTP_HOST: "smtp.gmail.com",
+      SMTP_PORT: "465",
+      SMTP_SECURE: "1",
+      SMTP_USER: "banking.demo@gmail.com",
+      SMTP_FROM: "banking.demo@gmail.com",
+    },
+  });
+  assert.deepEqual(provider.health(), { provider: "smtp", status: "ok", configured: true, credentialConfigured: true });
 });

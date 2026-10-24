@@ -11,6 +11,9 @@ export type ScheduledLifecycleConfig = {
 
 export type ScheduledLifecycleRunResult = CreditLifecycleSummary & {
   savingsMaturities: number;
+  savingsSuspenseResolved: number;
+  savingsSuspenseRetried: number;
+  savingsSuspenseDeadLettered: number;
 };
 
 function positiveEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -69,7 +72,7 @@ export class RelationalLifecycleScheduler {
   }
 
   async runOnce(asOf = new Date().toISOString()): Promise<ScheduledLifecycleRunResult> {
-    if (!this.config.enabled) return { savingsMaturities: 0, statementsClosed: 0, statementsOverdue: 0, paymentsSettled: 0 };
+    if (!this.config.enabled) return { savingsMaturities: 0, savingsSuspenseResolved: 0, savingsSuspenseRetried: 0, savingsSuspenseDeadLettered: 0, statementsClosed: 0, statementsOverdue: 0, paymentsSettled: 0 };
     if (this.inFlight) return this.inFlight;
     const run = this.runTick(asOf);
     this.inFlight = run;
@@ -139,15 +142,25 @@ export class RelationalLifecycleScheduler {
     const beforeRetries = this.unitOfWork.metrics().retried;
     try {
       const savingsMaturities = await this.lifecycle.runSavingsMaturities(asOf, this.config.batchSize);
+      const savingsSuspense = await this.lifecycle.runSavingsSuspense(asOf, this.config.batchSize);
       const credit = await this.lifecycle.runCreditLifecycle(asOf, this.config.batchSize);
-      const result = { savingsMaturities, ...credit };
+      const result = {
+        savingsMaturities,
+        savingsSuspenseResolved: savingsSuspense.resolved,
+        savingsSuspenseRetried: savingsSuspense.retried,
+        savingsSuspenseDeadLettered: savingsSuspense.deadLettered,
+        ...credit,
+      };
       this.lastSuccessfulTick = new Date().toISOString();
       this.lastErrorAt = null;
       this.lastErrorCode = null;
       this.metrics.increment("scheduled_lifecycle_ticks_total");
       this.metrics.increment("scheduled_lifecycle_success_total");
-      this.metrics.increment("scheduled_lifecycle_jobs_succeeded_total", savingsMaturities + credit.statementsClosed + credit.statementsOverdue + credit.paymentsSettled);
-      this.metrics.increment("scheduled_lifecycle_retry_total", Math.max(0, this.unitOfWork.metrics().retried - beforeRetries));
+      this.metrics.increment("scheduled_lifecycle_jobs_succeeded_total", savingsMaturities + savingsSuspense.resolved + credit.statementsClosed + credit.statementsOverdue + credit.paymentsSettled);
+      this.metrics.increment("scheduled_lifecycle_suspense_resolved_total", savingsSuspense.resolved);
+      this.metrics.increment("scheduled_lifecycle_suspense_retry_total", savingsSuspense.retried);
+      this.metrics.increment("scheduled_lifecycle_suspense_dead_letter_total", savingsSuspense.deadLettered);
+      this.metrics.increment("scheduled_lifecycle_retry_total", savingsSuspense.retried + Math.max(0, this.unitOfWork.metrics().retried - beforeRetries));
       return result;
     } catch (error) {
       this.lastErrorAt = new Date().toISOString();

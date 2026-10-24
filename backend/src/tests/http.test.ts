@@ -4,7 +4,10 @@ import test from "node:test";
 
 import { BankingSystem } from "../bankingSystem.js";
 import { createBankingServer, createPersistentBankingServer } from "../http.js";
+import { computeRegistrationNetworkFingerprint } from "../security.js";
+import type { MfaChallengeResponse, PersistentMfaService } from "../mfa/persistentMfaService.js";
 
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
 
 async function completeRegistration(
   system: BankingSystem,
@@ -25,7 +28,7 @@ async function completeRegistration(
     headers: { "X-Device-ID": deviceId },
     body: JSON.stringify({
       challengeId: challenge.challengeId,
-      method: "OTP",
+      method: "EMAIL_OTP",
       proof: otp.otp,
     }),
   });
@@ -34,7 +37,7 @@ async function completeRegistration(
 }
 
 test("health endpoint reports reconciliation and outbox readiness", async (t) => {
-  const server = createBankingServer(new BankingSystem());
+  const server = createBankingServer(new BankingSystem(), { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -60,7 +63,7 @@ test("liveness stays available when the persistent repository is unavailable", a
       throw new Error("database unavailable");
     },
   };
-  const server = createPersistentBankingServer(repository, new BankingSystem());
+  const server = createPersistentBankingServer(repository, new BankingSystem(), { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -76,6 +79,7 @@ test("liveness stays available when the persistent repository is unavailable", a
 test("configured CORS rejects an origin outside the preview allow-list", async (t) => {
   const server = createBankingServer(new BankingSystem(), {
     allowedOrigins: ["https://preview.example.invalid"],
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
@@ -90,7 +94,7 @@ test("configured CORS rejects an origin outside the preview allow-list", async (
 });
 
 test("HTTP router rejects trailing segments instead of dispatching a prefix route", async (t) => {
-  const server = createBankingServer(new BankingSystem());
+  const server = createBankingServer(new BankingSystem(), { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -117,7 +121,7 @@ test("HTTP router rejects trailing segments instead of dispatching a prefix rout
 });
 
 test("HTTP error payload keeps trace ID and does not echo password material", async (t) => {
-  const server = createBankingServer(new BankingSystem());
+  const server = createBankingServer(new BankingSystem(), { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -149,7 +153,7 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
     sandboxOtp: "123456",
     allowUnsafeDirectSandboxStepUp: true,
   });
-  const server = createBankingServer(system);
+  const server = createBankingServer(system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -355,99 +359,6 @@ test("HTTP API supports auth, account, quote and idempotent transfer flow", asyn
   );
   assert.equal(markReadResponse.status, 200);
 
-  const fraudReportResponse = await request("/fraud-reports", {
-    method: "POST",
-    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-1" },
-    body: json({
-      accountId: accounts.accounts[0].id,
-      transactionId: history.items[0].id,
-      reason: "I do not recognize this transfer",
-    }),
-  });
-  assert.equal(fraudReportResponse.status, 201);
-  const fraudReport = (await fraudReportResponse.json()) as { reportId: string };
-  const fraudRetryResponse = await request("/fraud-reports", {
-    method: "POST",
-    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-1" },
-    body: json({
-      accountId: accounts.accounts[0].id,
-      transactionId: history.items[0].id,
-      reason: "I do not recognize this transfer",
-    }),
-  });
-  assert.equal(fraudRetryResponse.status, 201);
-  assert.equal(
-    ((await fraudRetryResponse.json()) as { reportId: string }).reportId,
-    fraudReport.reportId,
-  );
-  const fraudIdempotencyConflictResponse = await request("/fraud-reports", {
-    method: "POST",
-    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-1" },
-    body: json({
-      accountId: accounts.accounts[0].id,
-      transactionId: history.items[0].id,
-      reason: "This request reuses the key with another reason",
-    }),
-  });
-  assert.equal(fraudIdempotencyConflictResponse.status, 409);
-  assert.equal(
-    ((await fraudIdempotencyConflictResponse.json()) as { code: string }).code,
-    "IDEMPOTENCY_CONFLICT",
-  );
-  const fraudDuplicateKeyResponse = await request("/fraud-reports", {
-    method: "POST",
-    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-2" },
-    body: json({
-      accountId: accounts.accounts[0].id,
-      transactionId: history.items[0].id,
-      reason: "I do not recognize this transfer",
-    }),
-  });
-  assert.equal(fraudDuplicateKeyResponse.status, 201);
-  assert.equal(
-    ((await fraudDuplicateKeyResponse.json()) as { reportId: string }).reportId,
-    fraudReport.reportId,
-  );
-  const shortFraudKeyResponse = await request("/fraud-reports", {
-    method: "POST",
-    headers: { ...authHeaders, "Idempotency-Key": "short" },
-    body: json({
-      accountId: accounts.accounts[0].id,
-      transactionId: history.items[0].id,
-      reason: "I do not recognize this transfer",
-    }),
-  });
-  assert.equal(shortFraudKeyResponse.status, 422);
-  const extraFraudFieldResponse = await request("/fraud-reports", {
-    method: "POST",
-    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-extra" },
-    body: json({
-      accountId: accounts.accounts[0].id,
-      transactionId: history.items[0].id,
-      reason: "I do not recognize this transfer",
-      clientStatus: "BLOCKED",
-    }),
-  });
-  assert.equal(extraFraudFieldResponse.status, 422);
-  const duplicateFraudCaseResponse = await request("/fraud-reports", {
-    method: "POST",
-    headers: { ...authHeaders, "Idempotency-Key": "fraud-http-conflict" },
-    body: json({
-      accountId: accounts.accounts[0].id,
-      transactionId: history.items[0].id,
-      reason: "This is a different allegation",
-    }),
-  });
-  assert.equal(duplicateFraudCaseResponse.status, 409);
-  assert.equal(
-    ((await duplicateFraudCaseResponse.json()) as { code: string }).code,
-    "FRAUD_REPORT_ALREADY_EXISTS",
-  );
-  const fraudStatusResponse = await request(`/fraud-reports/${fraudReport.reportId}`, {
-    headers: authHeaders,
-  });
-  assert.equal(fraudStatusResponse.status, 200);
-
   const transferResponse = await request(`/transfers/${receipt.transferId}`, {
     headers: authHeaders,
   });
@@ -503,7 +414,7 @@ test("HTTP transfer reports pending status for asynchronous settlement", async (
     allowUnsafeDirectSandboxStepUp: true,
     settleTransfersImmediately: false,
   });
-  const server = createBankingServer(system);
+  const server = createBankingServer(system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -601,7 +512,7 @@ test("HTTP transfer reports pending status for asynchronous settlement", async (
 
 test("HTTP API supports beneficiary directory CRUD without exposing raw account numbers", async (t) => {
   const system = new BankingSystem();
-  const server = createBankingServer(system);
+  const server = createBankingServer(system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -696,12 +607,12 @@ test("HTTP API supports beneficiary directory CRUD without exposing raw account 
   assert.equal(deletedLookup.status, 404);
 });
 
-test("HTTP auth exposes a device-bound MFA challenge", async (t) => {
+test("HTTP auth is password-only even when the legacy MFA flag is enabled", async (t) => {
   const system = new BankingSystem({
     sandboxMfaOtp: "654321",
     mfaRequired: true,
   });
-  const server = createBankingServer(system);
+  const server = createBankingServer(system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -730,34 +641,19 @@ test("HTTP auth exposes a device-bound MFA challenge", async (t) => {
     headers: { "X-Device-ID": deviceId },
     body: json({ email: "mfa-http@example.com", password: "Password1" }),
   });
-  assert.equal(loginResponse.status, 202);
-  const challenge = (await loginResponse.json()) as {
-    challengeId: string;
-    methods: string[];
-  };
-  assert.deepEqual(challenge.methods, ["OTP"]);
-
-  const verifyResponse = await request("/auth/verify", {
-    method: "POST",
-    headers: { "X-Device-ID": deviceId },
-    body: json({
-      challengeId: challenge.challengeId,
-      method: "OTP",
-      proof: "654321",
-    }),
-  });
-  assert.equal(verifyResponse.status, 200);
-  const session = (await verifyResponse.json()) as { accessToken: string };
+  assert.equal(loginResponse.status, 200);
+  const session = (await loginResponse.json()) as { accessToken: string; refreshToken: string };
   assert.ok(session.accessToken);
+  assert.ok(session.refreshToken);
 });
 
-test("HTTP auth exposes a server-configured biometric challenge", async (t) => {
+test("HTTP auth ignores legacy biometric login configuration", async (t) => {
   const system = new BankingSystem({
     authChallengeMethods: ["BIOMETRIC"],
     mfaRequired: true,
     allowUnsafeDirectSandboxStepUp: true,
   });
-  const server = createBankingServer(system);
+  const server = createBankingServer(system, { registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => server.close());
 
@@ -789,23 +685,171 @@ test("HTTP auth exposes a server-configured biometric challenge", async (t) => {
       password: "Password1",
     }),
   });
-  assert.equal(loginResponse.status, 202);
-  const challenge = (await loginResponse.json()) as {
-    challengeId: string;
-    methods: string[];
-  };
-  assert.deepEqual(challenge.methods, ["BIOMETRIC"]);
+  assert.equal(loginResponse.status, 200);
+  const session = (await loginResponse.json()) as { accessToken: string; refreshToken: string };
+  assert.ok(session.accessToken);
+  assert.ok(session.refreshToken);
+});
 
-  const verifyResponse = await request("/auth/verify", {
+test("non-Registration MFA resend keeps its client-address derivation while Registration ignores x-forwarded-for", async (t) => {
+  type ResendCall = { challengeId: string; deviceId: string; networkFingerprint?: string | null };
+  type ResendMfaPort = {
+    resendRegistrationChallenge(input: ResendCall): Promise<MfaChallengeResponse>;
+    resendChallenge(input: ResendCall & { customerId?: string; destination: string }): Promise<MfaChallengeResponse>;
+  };
+
+  // PersistentMfaService declares private members, so TypeScript matches it
+  // nominally. The fake is checked against the real public port shape at the call
+  // site and crosses that nominal boundary on the single return line below.
+  function asResendMfaService(port: ResendMfaPort): PersistentMfaService {
+    return port as never;
+  }
+
+  const stubChallenge: MfaChallengeResponse = {
+    challengeId: "resent-challenge",
+    method: "EMAIL_OTP",
+    methods: ["EMAIL_OTP"],
+    purpose: "REGISTRATION_EMAIL_VERIFY",
+    expiresAt: "2030-01-01T00:00:00.000Z",
+  };
+
+  const registrationResendCalls: ResendCall[] = [];
+  const authenticatedResendCalls: ResendCall[] = [];
+  const mfaService = asResendMfaService({
+    resendRegistrationChallenge: async (call) => {
+      registrationResendCalls.push(call);
+      return stubChallenge;
+    },
+    resendChallenge: async (call) => {
+      authenticatedResendCalls.push(call);
+      return stubChallenge;
+    },
+  });
+
+  const system = new BankingSystem();
+  const server = createBankingServer(system, {
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
+    mfaService,
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+  const deviceId = "device-xff-split";
+  const spoofedAddress = "203.0.113.9";
+  const request = (path: string, init: RequestInit = {}) =>
+    fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        ...(init.headers ?? {}),
+      },
+    });
+
+  await completeRegistration(system, request, deviceId, {
+    fullName: "XFF Split User",
+    email: "xff-split@example.com",
+    phoneNumber: "0900000003",
+    password: "Password1",
+  });
+  const loginResponse = await request("/auth/login", {
     method: "POST",
     headers: { "X-Device-ID": deviceId },
-    body: json({
-      challengeId: challenge.challengeId,
-      method: "BIOMETRIC",
-      proof: "sandbox-biometric",
+    body: JSON.stringify({ email: "xff-split@example.com", password: "Password1" }),
+  });
+  assert.equal(loginResponse.status, 200);
+  const session = (await loginResponse.json()) as { accessToken: string };
+
+  const registrationResend = await request("/auth/challenges/challenge-registration/resend", {
+    method: "POST",
+    headers: { "X-Device-ID": deviceId, "x-forwarded-for": spoofedAddress },
+    body: JSON.stringify({}),
+  });
+  assert.equal(registrationResend.status, 200);
+
+  const authenticatedResend = await request("/auth/challenges/challenge-authenticated/resend", {
+    method: "POST",
+    headers: {
+      "X-Device-ID": deviceId,
+      "x-forwarded-for": spoofedAddress,
+      Authorization: `Bearer ${session.accessToken}`,
+    },
+    body: JSON.stringify({}),
+  });
+  assert.equal(authenticatedResend.status, 200);
+
+  assert.equal(registrationResendCalls.length, 1);
+  assert.equal(authenticatedResendCalls.length, 1);
+  assert.equal(
+    registrationResendCalls[0]!.networkFingerprint,
+    computeRegistrationNetworkFingerprint("127.0.0.1", TEST_REGISTRATION_FINGERPRINT_KEY),
+    "Registration must derive its fingerprint from the socket address, never from x-forwarded-for",
+  );
+  assert.equal(
+    authenticatedResendCalls[0]!.networkFingerprint,
+    spoofedAddress,
+    "the non-Registration resend flow must keep its pre-hardening client-address derivation",
+  );
+  assert.notEqual(
+    registrationResendCalls[0]!.networkFingerprint,
+    authenticatedResendCalls[0]!.networkFingerprint,
+  );
+});
+
+test("degraded email provider does not mark backend readiness as degraded in preview runtime", async (t) => {
+  const system = new BankingSystem();
+  const server = createBankingServer(system, {
+    environment: "preview",
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
+    emailProviderHealth: () => ({
+      provider: "smtp",
+      status: "degraded",
+      configured: true,
+      credentialConfigured: true,
+      lastErrorCode: "smtp-provider-timeout",
     }),
   });
-  assert.equal(verifyResponse.status, 200);
-  const session = (await verifyResponse.json()) as { accessToken: string };
-  assert.ok(session.accessToken);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const readyResponse = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+  assert.equal(readyResponse.status, 200);
+  const readyBody = (await readyResponse.json()) as {
+    status: string;
+    emailProvider?: { provider: string; status: string; lastErrorCode?: string };
+  };
+  assert.equal(readyBody.status, "ok");
+  assert.deepEqual(readyBody.emailProvider, {
+    provider: "smtp",
+    status: "degraded",
+    configured: true,
+    credentialConfigured: true,
+    lastErrorCode: "smtp-provider-timeout",
+  });
+});
+
+test("throwing email provider health check does not crash readyz and does not degrade readiness in preview", async (t) => {
+  const system = new BankingSystem();
+  const server = createBankingServer(system, {
+    environment: "preview",
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
+    emailProviderHealth: () => {
+      throw new Error("SMTP connection failed");
+    },
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as AddressInfo;
+  const readyResponse = await fetch(`http://127.0.0.1:${address.port}/readyz`);
+  assert.equal(readyResponse.status, 200);
+  const readyBody = (await readyResponse.json()) as {
+    status: string;
+    emailProvider?: { provider: string; status: string; lastErrorCode?: string };
+  };
+  assert.equal(readyBody.status, "ok");
+  assert.equal(readyBody.emailProvider?.status, "degraded");
+  assert.equal(readyBody.emailProvider?.lastErrorCode, "email-provider-health-failed");
 });

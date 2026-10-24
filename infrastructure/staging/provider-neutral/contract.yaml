@@ -21,17 +21,72 @@ network:
   adminApiHttpsOrigin: provider-assigned-https-origin
   adminWebHttpsOrigin: provider-assigned-https-origin
   databaseNetwork: private-or-explicitly-allowlisted
+  tls:
+    publicTermination: provider-managed-edge-gateway
+    preferredVersion: TLSv1.3
+    compatibilityVersion: TLSv1.2
+    legacyVersions: forbidden
+    redirectHttpToHttps: true
+    certificateHostnameValidation: required
+    renewalMonitoring: required
+    directPublicAccessToBackendPorts: forbidden
+    backendHop: private-provider-network
 
 secrets:
   provider: managed
-  mountDirectory: /run/secrets/banking
+  managedBackend:
+    selectionVariable: BANKING_MANAGED_SECRET_BACKEND
+    supportedValues: [mounted, google-secret-manager]
+    selectionRequiredInStaging: true
+  mountDirectory:
+    value: /run/secrets/banking
+    requiredWhenBackend: mounted
+  googleSecretManager:
+    projectIdVariable: BANKING_SECRET_PROJECT_ID
+    requiredWhenBackend: google-secret-manager
+    authentication: application-default-credentials-from-workload-identity
+    versionSelector: latest
+    serviceAccountKeyFiles: forbidden
+  namespace: banking/staging
+  versionMetadata: provider-assigned-version-required
+  initialPreviousKeyPolicy:
+    requiredBeforeFirstStart: true
+    initialState: PREPARED
+    material: unique-random-staging-only
+    firstRotation: replace-bootstrap-previous-with-former-current
+    retireBootstrapPrevious: only-after-no-data-reference-and-owner-approval
   references:
     - database-credential
     - otp-pepper
+    - otp-pepper-previous
     - mfa-encryption-key
+    - mfa-encryption-key-previous
     - email-provider-token
     - notification-endpoint-key
+    - notification-endpoint-key-previous
+    - registration-fingerprint-key
     - backup-encryption-key
+    - mobile-signing-key
+  perServiceBindings:
+    backend-api:
+      secretIds: [database-credential, otp-pepper, otp-pepper-previous, mfa-encryption-key, mfa-encryption-key-previous, email-provider-token]
+      providerManagedEnvironment:
+        REGISTRATION_FINGERPRINT_KEY: registration-fingerprint-key
+    admin-api:
+      secretIds: [database-credential, mfa-encryption-key, mfa-encryption-key-previous]
+    outbox-worker:
+      secretIds: [database-credential, notification-endpoint-key, notification-endpoint-key-previous]
+    migrator:
+      secretIds: []
+      providerManagedEnvironment:
+        DATABASE_URL: database-credential
+        DATABASE_SSL_MODE: verify-full
+        DATABASE_SERVER_NAME: database.serverName
+    backup-agent:
+      mounted: [backup-encryption-key]
+    managed-build-service:
+      signingReference: mobile-signing-key
+      availableToRuntimeServices: false
   valuesInGit: forbidden
 
 database:
@@ -43,7 +98,7 @@ database:
   migrationJob:
     image: release.backendImage
     command: node scripts/apply-migration.cjs
-    migrations: 001-032
+    migrations: 001-043
     idempotent: true
 
 services:
@@ -65,7 +120,9 @@ services:
       BANKING_STORAGE: postgres
       BANKING_PERSISTENCE_MODE: relational-v2
       BANKING_SECRET_PROVIDER: managed
-      BANKING_MANAGED_SECRETS_DIR: /run/secrets/banking
+      BANKING_MANAGED_SECRET_BACKEND: deployment.managedSecretBackend
+      BANKING_SECRET_PROJECT_ID: required-if-google-secret-manager
+      REGISTRATION_FINGERPRINT_KEY: providerSecretBindings.registration-fingerprint-key
       BANKING_MFA_REQUIRED: "1"
       BANKING_MFA_METHODS: TOTP
       DATABASE_SSL_MODE: verify-full
@@ -89,6 +146,11 @@ services:
       cpu: 0.25
       memoryMiB: 256
     environment:
+      NODE_ENV: production
+      BANKING_ENV: staging
+      BANKING_MONEY_MODE: virtual
+      BANKING_STORAGE: postgres
+      BANKING_PERSISTENCE_MODE: relational-v2
       ADMIN_STORAGE: postgres
       ADMIN_BIND: 0.0.0.0
       ADMIN_ALLOWED_ORIGINS: network.adminWebHttpsOrigin
@@ -96,7 +158,8 @@ services:
       DATABASE_SSL_MODE: verify-full
       DATABASE_SERVER_NAME: database.serverName
       BANKING_SECRET_PROVIDER: managed
-      BANKING_MANAGED_SECRETS_DIR: /run/secrets/banking
+      BANKING_MANAGED_SECRET_BACKEND: deployment.managedSecretBackend
+      BANKING_SECRET_PROJECT_ID: required-if-google-secret-manager
 
   admin-web:
     image: release.adminWebImage
@@ -122,10 +185,12 @@ services:
     environment:
       NODE_ENV: production
       BANKING_ENV: staging
+      BANKING_MONEY_MODE: virtual
       BANKING_STORAGE: postgres
       BANKING_PERSISTENCE_MODE: relational-v2
       BANKING_SECRET_PROVIDER: managed
-      BANKING_MANAGED_SECRETS_DIR: /run/secrets/banking
+      BANKING_MANAGED_SECRET_BACKEND: deployment.managedSecretBackend
+      BANKING_SECRET_PROJECT_ID: required-if-google-secret-manager
       DATABASE_SSL_MODE: verify-full
       DATABASE_SERVER_NAME: database.serverName
       BUILD_COMMIT_SHA: release.sourceCommit

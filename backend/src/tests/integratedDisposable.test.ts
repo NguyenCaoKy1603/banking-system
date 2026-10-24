@@ -6,10 +6,11 @@ import test from "node:test";
 
 import { BankingSystem } from "../bankingSystem.js";
 import { createPersistentBankingServer } from "../http.js";
-import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
+import { PostgresRelationalRepository } from "../database/postgresRelationalRepository.js";
 import { KeyEncryptionKeyringAdapter, LocalDevelopmentKeyEncryptionAdapter, OtpDigestKeyring } from "../mfa/crypto.js";
 import { PersistentMfaService } from "../mfa/persistentMfaService.js";
-import { HttpEmailProvider } from "../mfa/httpEmailProvider.js";
+import { SmtpEmailProvider, type SmtpTransport } from "../mfa/smtpEmailProvider.js";
+import type { SendMailOptions } from "nodemailer";
 import { RelationalHttpBoundary } from "../database/relationalHttpBoundary.js";
 import { UnitOfWork } from "../database/unitOfWork.js";
 import { DatabasePool } from "../database/pool.js";
@@ -20,6 +21,8 @@ import { FakeEmailProvider, FakePushProvider } from "../notifications/providers/
 import { hashOpaqueToken } from "../security.js";
 import { WorkerHealthServer } from "../workers/workerHealth.js";
 import { WorkerRuntime, type WorkerConfig } from "../workers/workerRuntime.js";
+
+const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
 
 const databaseUrl = process.env.RELATIONAL_DATABASE_URL?.trim();
 if (databaseUrl) assertDisposableDatabaseResetAllowed(databaseUrl, process.env, { targetEnvName: "RELATIONAL_DATABASE_URL" });
@@ -72,39 +75,43 @@ function workerConfig(databaseUrlValue: string, workerId: string): WorkerConfig 
   };
 }
 
-test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and two lifecycle schedulers", { skip: !databaseUrl }, async (t) => {
+test("integrated relational-v2 rehearsal uses SMTP OTP delivery, two workers and two lifecycle schedulers", { skip: !databaseUrl }, async (t) => {
   const previousPersistenceMode = process.env.BANKING_PERSISTENCE_MODE;
   process.env.BANKING_PERSISTENCE_MODE = "relational-v2";
-  const captured: CapturedMessage[] = [];
-  const captureServer = createServer((request, response) => {
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
-    request.on("end", () => {
-      try { captured.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as CapturedMessage); } catch { /* malformed provider requests are rejected below */ }
-      response.statusCode = 202;
-      response.end();
-    });
+  const sentMail: SendMailOptions[] = [];
+  const fakeTransport: SmtpTransport = {
+    async sendMail(mailOptions) {
+      sentMail.push(mailOptions);
+      return { messageId: `<smtp-${sentMail.length}>`, accepted: [String(mailOptions.to)] };
+    },
+  };
+  const emailProvider = new SmtpEmailProvider({
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    user: "banking.demo@gmail.com",
+    from: "banking.demo@gmail.com",
+    password: "test-app-password",
+    timeoutMs: 500,
+    maxAttempts: 2,
+    retryDelayMs: 0,
+    transport: fakeTransport,
   });
-  const captureAddress = await listen(captureServer);
   const repository = new PostgresRelationalRepository({ connectionString: databaseUrl! });
   await repository.initialize();
   const apiServer = createPersistentBankingServer(repository, new BankingSystem(), {
     environment: "test",
     startupReady: true,
+    registrationFingerprintKey: TEST_REGISTRATION_FINGERPRINT_KEY,
     mfaService: new PersistentMfaService({
       unitOfWork: repository.unitOfWork,
       encryption: new LocalDevelopmentKeyEncryptionAdapter(Buffer.alloc(32, 7), "integrated-mfa-v1"),
       otpDigestKeyring: new OtpDigestKeyring({ current: { id: "integrated-otp-v1", value: Buffer.alloc(32, 9) } }),
       environmentScope: "test",
-      delivery: new HttpEmailProvider({
-        endpoint: `http://127.0.0.1:${captureAddress.port}/capture`,
-        timeoutMs: 500,
-        maxAttempts: 3,
-        retryDelayMs: 0,
-      }),
+      delivery: emailProvider,
     }),
-    relationalHttp: new RelationalHttpBoundary(repository.unitOfWork, "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud"),
-    emailProviderHealth: () => ({ provider: "http", status: "ok", configured: true, credentialConfigured: false }),
+    relationalHttp: new RelationalHttpBoundary(repository.unitOfWork, "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications"),
+    emailProviderHealth: () => emailProvider.health(),
   });
   const apiAddress = await listen(apiServer);
   const baseUrl = `http://127.0.0.1:${apiAddress.port}/api/v1`;
@@ -133,7 +140,6 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
     await workerDatabaseB.close().catch(() => undefined);
     await close(apiServer).catch(() => undefined);
     await repository.close().catch(() => undefined);
-    await close(captureServer).catch(() => undefined);
     if (previousPersistenceMode === undefined) delete process.env.BANKING_PERSISTENCE_MODE;
     else process.env.BANKING_PERSISTENCE_MODE = previousPersistenceMode;
   });
@@ -146,24 +152,47 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
   });
   assert.equal(register.status, 202);
   const challenge = await register.json() as { challengeId: string };
-  assert.equal(captured.length, 1);
-  const code = String(captured[0]?.code ?? "");
+  assert.equal(sentMail.length, 1);
+  const codeMatch = String(sentMail[0]?.text ?? "").match(/Mã xác nhận của bạn là:\s*(\d{6})/);
+  const code = codeMatch ? codeMatch[1] : "";
   assert.match(code, /^\d{6}$/);
   const challengeRow = await repository.unitOfWork.transaction(async ({ client }) => client.query<{ proof_digest: string }>("SELECT proof_digest FROM auth_challenges WHERE id = $1", [hashOpaqueToken(challenge.challengeId)]));
   assert.notEqual(challengeRow.rows[0]?.proof_digest, code);
   const outboxPayload = await repository.unitOfWork.transaction(async ({ client }) => client.query<{ payload: Record<string, unknown> }>("SELECT payload FROM outbox_events WHERE event_type = 'security.registration_otp_requested.v1' ORDER BY occurred_at DESC LIMIT 1"));
   assert.equal(JSON.stringify(outboxPayload.rows[0]?.payload ?? {}).includes(code), false);
 
+  await repository.unitOfWork.transaction(async ({ client }) => {
+    await client.query(
+      "UPDATE auth_challenges SET last_sent_at = NOW() - INTERVAL '2 minutes' WHERE id = $1",
+      [hashOpaqueToken(challenge.challengeId)],
+    );
+  });
+  const resend = await request(`/auth/challenges/${encodeURIComponent(challenge.challengeId)}/resend`, {
+    method: "POST",
+    headers: { "X-Device-ID": "integrated-device" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(resend.status, 200);
+  const resentChallenge = await resend.json() as { challengeId: string; method: string; methods: string[]; purpose: string };
+  assert.equal(resentChallenge.method, "EMAIL_OTP");
+  assert.deepEqual(resentChallenge.methods, ["EMAIL_OTP"]);
+  assert.equal(resentChallenge.purpose, "REGISTRATION_EMAIL_VERIFY");
+  assert.equal(sentMail.length, 2);
+  const resentCodeMatch = String(sentMail[1]?.text ?? "").match(/Mã xác nhận của bạn là:\s*(\d{6})/);
+  const resentCode = resentCodeMatch ? resentCodeMatch[1] : "";
+  assert.match(resentCode, /^\d{6}$/);
+  assert.notEqual(resentCode, code);
+
   const verified = await request("/auth/register/verify", {
     method: "POST",
     headers: { "X-Device-ID": "integrated-device" },
-    body: JSON.stringify({ challengeId: challenge.challengeId, proof: code }),
+    body: JSON.stringify({ challengeId: resentChallenge.challengeId, method: "EMAIL_OTP", proof: resentCode }),
   });
   assert.equal(verified.status, 201);
   const replay = await request("/auth/register/verify", {
     method: "POST",
     headers: { "X-Device-ID": "integrated-device" },
-    body: JSON.stringify({ challengeId: challenge.challengeId, proof: code }),
+    body: JSON.stringify({ challengeId: resentChallenge.challengeId, method: "EMAIL_OTP", proof: resentCode }),
   });
   assert.notEqual(replay.status, 201);
   const registrationCounts = await repository.unitOfWork.transaction(async ({ client }) => client.query<{ customers: string; accounts: string }>(
@@ -171,6 +200,18 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
     [email],
   ));
   assert.deepEqual(registrationCounts.rows[0], { customers: "1", accounts: "1" });
+
+  // Registration OTP is not a login factor. A relational session is issued
+  // directly after the email/password check, even with the MFA service wired.
+  const login = await request("/auth/login", {
+    method: "POST",
+    headers: { "X-Device-ID": "integrated-login-device" },
+    body: JSON.stringify({ email, password: "Password1!" }),
+  });
+  assert.equal(login.status, 200);
+  const loginPayload = await login.json() as { accessToken?: string; refreshToken?: string };
+  assert.ok(loginPayload.accessToken);
+  assert.ok(loginPayload.refreshToken);
 
   const fixtureDatabase = new DatabasePool({ connectionString: databaseUrl!, max: 8 });
   const fixture = await disposableFixture(fixtureDatabase);
@@ -217,5 +258,5 @@ test("integrated relational-v2 rehearsal uses HTTP OTP capture, two workers and 
   const apiReady = await fetch(`${baseUrl.replace("/api/v1", "")}/readyz`);
   assert.equal(apiReady.status, 200);
   const apiHealth = await apiReady.json() as { emailProvider?: { configured: boolean; credentialConfigured: boolean } };
-  assert.deepEqual(apiHealth.emailProvider, { provider: "http", status: "ok", configured: true, credentialConfigured: false });
+  assert.deepEqual(apiHealth.emailProvider, { provider: "smtp", status: "ok", configured: true, credentialConfigured: true });
 });

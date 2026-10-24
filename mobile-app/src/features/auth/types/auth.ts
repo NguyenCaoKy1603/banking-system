@@ -50,22 +50,28 @@ export type AuthChallengeResponse = {
   challengeId: string;
   expiresAt: string;
   methods: AuthChallengeMethod[];
+  /** Server-selected factor; registration currently returns EMAIL_OTP. */
+  method?: AuthChallengeMethod;
+  /** Earliest resend time returned by the email delivery boundary. */
+  resendAfter?: string;
+  /** Redacted destination shown to the user; never the OTP itself. */
+  maskedDestination?: string;
   purpose:
     | "REGISTRATION_VERIFY"
     | "REGISTRATION_EMAIL_VERIFY"
     | "LOGIN"
     | "TRANSFER"
     | "SAVINGS_OPENING"
+    | "SAVINGS_WITHDRAWAL"
     | "CREDIT_APPLICATION"
     | "CARD_ACTIVATION"
     | "CREDIT_PAYMENT"
     | "CARD_UNLOCK"
+    | "CARD_REPORT_LOST"
     | "RECOVERY_CODE_ROTATION"
     | "MFA_FACTOR_CHANGE"
     | "MFA_FACTOR_REMOVAL";
 };
-
-export type LoginResult = LoginResponse | AuthChallengeResponse;
 
 export type VerifyAuthChallengeRequest = {
   challengeId: string;

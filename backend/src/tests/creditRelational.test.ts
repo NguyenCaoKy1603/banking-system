@@ -30,8 +30,8 @@ async function fixture(database: DatabasePool): Promise<{
   await database.query(
     `INSERT INTO credit_accounts
       (id, customer_id, currency, credit_limit_minor, posted_outstanding_minor,
-       pending_authorizations_minor, next_statement_at, status, version, updated_at)
-     VALUES ($1, $2, 'VND', 5000000, 3000000, 0, NOW() + INTERVAL '30 days', 'ACTIVE', 0, NOW())`,
+       pending_authorizations_minor, current_cycle_start_at, next_statement_at, status, version, updated_at)
+     VALUES ($1, $2, 'VND', 5000000, 3000000, 0, NOW() - INTERVAL '30 days', NOW() + INTERVAL '30 days', 'ACTIVE', 0, NOW())`,
     [creditAccountId, customerId],
   );
   await database.query(
@@ -153,7 +153,127 @@ test("relational credit payment rollback leaves quote, balances, ledger and outb
   assert.deepEqual(state.rows[0], { available: "10000000", outstanding: "3000000", remaining: "3000000", consumed: "0", payments: "0", journals: "0", outbox: "0" });
 });
 
-test("relational credit application activation creates account, card and statement atomically", { skip: !databaseUrl }, async (t) => {
+test("credit repayment remains available while new credit is frozen and fails closed only on its command switch", { skip: !databaseUrl }, async (t) => {
+  const database = new DatabasePool({ connectionString: databaseUrl, max: 8 });
+  const credit = new RelationalCreditService(new UnitOfWork(database));
+  const ids = await fixture(database);
+  const originalPolicy = (await database.query<{
+    global_kill_switch: boolean;
+    credit_enabled: boolean;
+    credit_payments_enabled: boolean;
+  }>(
+    `SELECT global_kill_switch, credit_enabled, credit_payments_enabled
+       FROM control_policy
+      WHERE singleton = true`,
+  )).rows[0]!;
+
+  t.after(async () => {
+    await database.query(
+      `UPDATE control_policy
+          SET global_kill_switch = $1,
+              credit_enabled = $2,
+              credit_payments_enabled = $3,
+              updated_at = NOW()
+        WHERE singleton = true`,
+      [
+        originalPolicy.global_kill_switch,
+        originalPolicy.credit_enabled,
+        originalPolicy.credit_payments_enabled,
+      ],
+    );
+    await database.close();
+  });
+
+  await database.query("UPDATE credit_accounts SET status = 'FROZEN', updated_at = NOW() WHERE id = $1", [ids.creditAccountId]);
+  await database.query("UPDATE credit_cards SET status = 'BLOCKED', updated_at = NOW() WHERE id = $1", [ids.cardId]);
+  await database.query(
+    `UPDATE control_policy
+        SET global_kill_switch = true,
+            credit_enabled = false,
+            credit_payments_enabled = true,
+            updated_at = NOW()
+      WHERE singleton = true`,
+  );
+
+  const quote = await credit.createPaymentQuote(ids.customerId, {
+    sourceAccountId: ids.sourceAccountId,
+    creditAccountId: ids.creditAccountId,
+    statementId: ids.statementId,
+    paymentOption: "CUSTOM",
+    amount: { currency: "VND", amountMinor: "500000" },
+  });
+  const requestFingerprint = await credit.getPaymentStepUpRequestFingerprint(quote.quoteId);
+  assert.ok(requestFingerprint);
+  const payment = await credit.submitPayment({
+    customerId: ids.customerId,
+    idempotencyKey: "credit-payment-frozen-account-1",
+    quoteId: quote.quoteId,
+    requestFingerprint,
+  });
+  assert.equal(payment.status, "SUCCEEDED");
+  assert.equal((await credit.listAccounts(ids.customerId))[0]?.status, "FROZEN");
+  assert.equal((await credit.getStatement(ids.customerId, ids.creditAccountId, ids.statementId)).remainingAmountDue.amountMinor, "2500000");
+
+  const pendingQuote = await credit.createPaymentQuote(ids.customerId, {
+    sourceAccountId: ids.sourceAccountId,
+    creditAccountId: ids.creditAccountId,
+    statementId: ids.statementId,
+    paymentOption: "CUSTOM",
+    amount: { currency: "VND", amountMinor: "100000" },
+  });
+  const pendingFingerprint = await credit.getPaymentStepUpRequestFingerprint(pendingQuote.quoteId);
+  assert.ok(pendingFingerprint);
+  const beforeDisabled = await database.query<{
+    source_balance: string;
+    outstanding: string;
+    payments: string;
+  }>(
+    `SELECT
+       (SELECT available_minor::text FROM payment_accounts WHERE id = $1) AS source_balance,
+       (SELECT posted_outstanding_minor::text FROM credit_accounts WHERE id = $2) AS outstanding,
+       (SELECT COUNT(*)::text FROM credit_payments WHERE customer_id = $3) AS payments`,
+    [ids.sourceAccountId, ids.creditAccountId, ids.customerId],
+  );
+
+  await database.query("UPDATE control_policy SET credit_payments_enabled = false, updated_at = NOW() WHERE singleton = true");
+  await assert.rejects(
+    credit.createPaymentQuote(ids.customerId, {
+      sourceAccountId: ids.sourceAccountId,
+      creditAccountId: ids.creditAccountId,
+      statementId: ids.statementId,
+      paymentOption: "CUSTOM",
+      amount: { currency: "VND", amountMinor: "100000" },
+    }),
+    /CREDIT_PAYMENTS_DISABLED|temporarily unavailable/i,
+  );
+  await assert.rejects(
+    credit.submitPayment({
+      customerId: ids.customerId,
+      idempotencyKey: "credit-payment-disabled-1",
+      quoteId: pendingQuote.quoteId,
+      requestFingerprint: pendingFingerprint,
+    }),
+    /CREDIT_PAYMENTS_DISABLED|temporarily unavailable/i,
+  );
+
+  const afterDisabled = await database.query<{
+    source_balance: string;
+    outstanding: string;
+    payments: string;
+    consumed: string;
+  }>(
+    `SELECT
+       (SELECT available_minor::text FROM payment_accounts WHERE id = $1) AS source_balance,
+       (SELECT posted_outstanding_minor::text FROM credit_accounts WHERE id = $2) AS outstanding,
+       (SELECT COUNT(*)::text FROM credit_payments WHERE customer_id = $3) AS payments,
+       (SELECT COUNT(*)::text FROM credit_payment_quotes WHERE id = $4 AND consumed_at IS NOT NULL) AS consumed`,
+    [ids.sourceAccountId, ids.creditAccountId, ids.customerId, pendingQuote.quoteId],
+  );
+  assert.deepEqual(afterDisabled.rows[0], { ...beforeDisabled.rows[0], consumed: "0" });
+  assert.equal((await credit.listStatements(ids.customerId, ids.creditAccountId)).items.length, 1);
+});
+
+test("relational credit application activation creates account and card without a zero placeholder statement", { skip: !databaseUrl }, async (t) => {
   const database = new DatabasePool({ connectionString: databaseUrl, max: 8 });
   const credit = new RelationalCreditService(new UnitOfWork(database));
   const customerId = randomUUID();
@@ -176,5 +296,66 @@ test("relational credit application activation creates account, card and stateme
        (SELECT COUNT(*)::text FROM credit_statements WHERE credit_account_id = $1) AS statements`,
     [activated.creditAccountId],
   );
-  assert.deepEqual(applicationRow.rows[0], { cards: "1", statements: "1" });
+  assert.deepEqual(applicationRow.rows[0], { cards: "1", statements: "0" });
+  const cycle = await database.query<{ current_cycle_start_at: Date; next_statement_at: Date }>(
+    "SELECT current_cycle_start_at, next_statement_at FROM credit_accounts WHERE id = $1",
+    [activated.creditAccountId],
+  );
+  assert.ok(cycle.rows[0]!.current_cycle_start_at < cycle.rows[0]!.next_statement_at);
+});
+
+test("persistent card lock is emergency-safe and idempotent while unlock remains policy-gated", { skip: !databaseUrl }, async (t) => {
+  const database = new DatabasePool({ connectionString: databaseUrl, max: 8 });
+  const credit = new RelationalCreditService(new UnitOfWork(database));
+  const ids = await fixture(database);
+  const original = (await database.query("SELECT global_kill_switch, card_controls_enabled FROM control_policy WHERE singleton=true")).rows[0]!;
+  t.after(async () => {
+    await database.query("UPDATE control_policy SET global_kill_switch=$1, card_controls_enabled=$2, updated_at=NOW() WHERE singleton=true", [original.global_kill_switch, original.card_controls_enabled]);
+    await database.close();
+  });
+  await database.query("UPDATE control_policy SET global_kill_switch=true, card_controls_enabled=true, updated_at=NOW() WHERE singleton=true");
+  assert.equal((await credit.setCardStatus(ids.customerId, ids.cardId, "LOCKED")).status, "LOCKED");
+  const afterFirst = await database.query<{ audits: string; outbox: string }>(
+    `SELECT
+       (SELECT COUNT(*)::text FROM audit_events WHERE resource_id=$1 AND event_type='CREDIT_CARD_LOCKED') AS audits,
+       (SELECT COUNT(*)::text FROM outbox_events WHERE aggregate_id=$1::text AND event_type='credit.card_locked.v1') AS outbox`,
+    [ids.cardId],
+  );
+  assert.deepEqual(afterFirst.rows[0], { audits: "1", outbox: "1" });
+  assert.equal((await credit.setCardStatus(ids.customerId, ids.cardId, "LOCKED")).status, "LOCKED");
+  const afterRetry = await database.query<{ audits: string; outbox: string }>(
+    `SELECT
+       (SELECT COUNT(*)::text FROM audit_events WHERE resource_id=$1 AND event_type='CREDIT_CARD_LOCKED') AS audits,
+       (SELECT COUNT(*)::text FROM outbox_events WHERE aggregate_id=$1::text AND event_type='credit.card_locked.v1') AS outbox`,
+    [ids.cardId],
+  );
+  assert.deepEqual(afterRetry.rows[0], afterFirst.rows[0]);
+  await assert.rejects(credit.setCardStatus(ids.customerId, ids.cardId, "ACTIVE"), /CARD_CONTROLS_DISABLED|temporarily unavailable/i);
+  await database.query("UPDATE control_policy SET global_kill_switch=false, updated_at=NOW() WHERE singleton=true");
+  assert.equal((await credit.setCardStatus(ids.customerId, ids.cardId, "ACTIVE")).status, "ACTIVE");
+});
+
+test("reported-lost card is blocked and creates one durable operations case under concurrency", { skip: !databaseUrl }, async (t) => {
+  const database = new DatabasePool({ connectionString: databaseUrl, max: 12 });
+  const credit = new RelationalCreditService(new UnitOfWork(database));
+  const ids = await fixture(database);
+  t.after(() => database.close());
+  const [first, second] = await Promise.all([
+    credit.reportCardLost(ids.customerId, ids.cardId, "card-lost-a"),
+    credit.reportCardLost(ids.customerId, ids.cardId, "card-lost-b"),
+  ]);
+  assert.equal(first.caseId, second.caseId);
+  assert.equal(first.card.status, "BLOCKED");
+  assert.equal(second.card.status, "BLOCKED");
+  const persisted = await database.query<{ status: string; cases: string; audits: string; outbox: string; notifications: string }>(
+    `SELECT
+       (SELECT status FROM credit_cards WHERE id=$1) AS status,
+       (SELECT COUNT(*)::text FROM card_security_cases WHERE card_id=$1 AND case_type='REPORTED_LOST' AND status='OPEN') AS cases,
+       (SELECT COUNT(*)::text FROM audit_events WHERE resource_id=$1::text AND event_type='CREDIT_CARD_REPORTED_LOST') AS audits,
+       (SELECT COUNT(*)::text FROM outbox_events WHERE aggregate_id=$3::text AND event_type='credit.card_reported_lost.v1') AS outbox,
+       (SELECT COUNT(*)::text FROM notifications WHERE customer_id=$2 AND resource_id=$3::text) AS notifications`,
+    [ids.cardId, ids.customerId, first.caseId],
+  );
+  assert.deepEqual(persisted.rows[0], { status: "BLOCKED", cases: "1", audits: "1", outbox: "1", notifications: "1" });
+  await assert.rejects(credit.reportCardLost(randomUUID(), ids.cardId), /Card not found/i);
 });

@@ -28,6 +28,8 @@ type ResponseValidator<ResponseBody> = (
 ) => payload is ResponseBody;
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+const SAFE_SERVER_ERROR_MESSAGE =
+  "Dịch vụ đang tạm thời gián đoạn. Vui lòng thử lại sau.";
 let requestSequence = 0;
 const refreshPromises = new WeakMap<
   () => Promise<string | null>,
@@ -300,7 +302,7 @@ export async function requestJson<ResponseBody>(
     const apiError = new ApiError({
       status: response.status,
       code: payload.code,
-      message: payload.message,
+      message: response.status >= 500 ? SAFE_SERVER_ERROR_MESSAGE : payload.message,
       fieldErrors: payload.fieldErrors,
       traceId: payload.traceId,
     });

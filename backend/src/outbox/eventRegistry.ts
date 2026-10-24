@@ -43,6 +43,9 @@ export const EVENT_POLICIES: readonly EventPolicy[] = [
   policy("savings.opening_failed", "SAVINGS", ["PUSH", "EMAIL"], 30, 7 * 24 * 60 * 60, ["SAVINGS_OPENING_FAILED"]),
   policy("savings.matured", "SAVINGS", ["PUSH", "EMAIL"], 30, 14 * 24 * 60 * 60, ["SAVINGS_MATURED"]),
   policy("savings.renewed", "SAVINGS", ["PUSH", "EMAIL"], 30, 14 * 24 * 60 * 60, ["SAVINGS_RENEWED"]),
+  policy("savings.maturity_pending", "SAVINGS", ["PUSH", "EMAIL"], 20, null, ["SAVINGS_MATURITY_PENDING"]),
+  policy("savings.maturity_resolved", "SAVINGS", ["PUSH", "EMAIL"], 20, null, ["SAVINGS_MATURITY_RESOLVED"]),
+  policy("savings.maturity_dead", "SAVINGS", ["PUSH", "EMAIL"], 5, null, ["SAVINGS_MATURITY_DEAD_LETTERED"]),
   policy("credit.application_approved", "CREDIT", ["PUSH", "EMAIL"], 30, 7 * 24 * 60 * 60, ["CREDIT_APPLICATION_APPROVED"]),
   policy("credit.application_activated", "CREDIT", ["PUSH", "EMAIL"], 30, 7 * 24 * 60 * 60, ["CREDIT_APPLICATION_ACTIVATED"]),
   policy("credit.payment_pending", "CREDIT", ["PUSH"], 20, 24 * 60 * 60, ["CREDIT_PAYMENT_PENDING"]),
@@ -53,6 +56,7 @@ export const EVENT_POLICIES: readonly EventPolicy[] = [
   policy("credit.statement_overdue", "CREDIT", ["PUSH", "EMAIL"], 10, 30 * 24 * 60 * 60, ["CREDIT_STATEMENT_OVERDUE"]),
   policy("credit.card_locked", "CREDIT", ["PUSH", "EMAIL"], 5, null, ["CREDIT_CARD_LOCKED"]),
   policy("credit.card_unlocked", "CREDIT", ["PUSH", "EMAIL"], 5, null, ["CREDIT_CARD_UNLOCKED"]),
+  policy("credit.card_reported_lost", "SECURITY", ["PUSH", "EMAIL"], 1, null, ["CREDIT_CARD_REPORTED_LOST"]),
   policy("fraud.report_created", "SECURITY", ["PUSH", "EMAIL"], 5, null, ["FRAUD_REPORT_CREATED"]),
   policy("security.device_revoked", "SECURITY", ["PUSH", "EMAIL"], 5, null, ["SECURITY_DEVICE_REVOKED"]),
   policy("security.sessions_revoked", "SECURITY", ["PUSH", "EMAIL"], 5, null, ["SECURITY_SESSIONS_REVOKED"]),
@@ -60,6 +64,8 @@ export const EVENT_POLICIES: readonly EventPolicy[] = [
   // intent event is retained for reconciliation/audit and deliberately has no
   // worker fan-out so an OTP can never be reconstructed from the outbox.
   policy("security.registration_otp_requested", "SECURITY", [], 15, 10 * 60, ["REGISTRATION_OTP_REQUESTED"]),
+  policy("security.kyc_submitted", "SECURITY", ["PUSH"], 35, 14 * 24 * 60 * 60, ["SECURITY_KYC_SUBMITTED"]),
+  policy("security.kyc_status_changed", "SECURITY", ["PUSH", "EMAIL"], 30, 14 * 24 * 60 * 60, ["SECURITY_KYC_STATUS_CHANGED"]),
   policy("sandbox.funding_succeeded", "SECURITY", [], 90, 24 * 60 * 60, ["SANDBOX_FUNDING_SUCCEEDED"]),
   // Admin mutations are internal integration events.  They intentionally do
   // not fan out to customer channels, but they still use the same canonical

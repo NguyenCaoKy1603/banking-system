@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 
-import { addMonthsClamped, calculateActualDays, calculateSavingsInterest } from "../savings.js";
+import { addMonthsClamped, calculateActualDays, calculateSavingsInterest } from "../domain/savings/index.js";
 import { UnitOfWork } from "./unitOfWork.js";
 import { AccountRepository } from "./repositories/accountRepository.js";
 import { AuditRepository } from "./repositories/auditRepository.js";
@@ -13,10 +13,16 @@ import { RelationalConflictError } from "./commandErrors.js";
 
 export type SavingsMaturityResult = {
   depositId: string;
-  status: "MATURED" | "RENEWED" | "ALREADY_PROCESSED";
+  status: "MATURED" | "RENEWED" | "PENDING" | "ALREADY_PROCESSED";
   renewedDepositId: string | null;
   creditedMinor: string;
   operationKey: string;
+};
+
+export type SavingsSuspenseSummary = {
+  resolved: number;
+  retried: number;
+  deadLettered: number;
 };
 
 export type CreditLifecycleSummary = {
@@ -26,6 +32,13 @@ export type CreditLifecycleSummary = {
 };
 
 type CreditOperationType = "STATEMENT_CLOSE" | "STATEMENT_OVERDUE" | "PAYMENT_SETTLE" | "PAYMENT_REVERSE";
+
+const SAVINGS_SUSPENSE_MAX_ATTEMPTS = 5;
+
+function savingsSuspenseRetryAt(asOf: string, attempts: number): string {
+  const delaySeconds = Math.min(60 * 60, 30 * 2 ** Math.min(Math.max(attempts - 1, 0), 7));
+  return new Date(Date.parse(asOf) + delaySeconds * 1000).toISOString();
+}
 
 function iso(value: unknown): string {
   return new Date(String(value)).toISOString();
@@ -86,6 +99,184 @@ export class RelationalLifecycleService {
     return processed;
   }
 
+  async runSavingsSuspense(
+    asOf = new Date().toISOString(),
+    limit = 100,
+    maxAttempts = SAVINGS_SUSPENSE_MAX_ATTEMPTS,
+  ): Promise<SavingsSuspenseSummary> {
+    if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+      throw new Error("Savings suspense maxAttempts must be a positive integer.");
+    }
+    const ids = await this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query<{ id: string }>(
+        `SELECT id
+           FROM savings_maturity_suspense
+          WHERE status = 'PENDING' AND next_attempt_at <= $1
+          ORDER BY next_attempt_at, created_at, id
+          LIMIT $2
+          FOR UPDATE SKIP LOCKED`,
+        [asOf, limit],
+      );
+      return result.rows.map((row) => row.id);
+    });
+    const summary: SavingsSuspenseSummary = { resolved: 0, retried: 0, deadLettered: 0 };
+    for (const id of ids) {
+      const outcome = await this.resolveSavingsSuspense(id, asOf, maxAttempts);
+      if (outcome === "RESOLVED") summary.resolved += 1;
+      if (outcome === "RETRY") summary.retried += 1;
+      if (outcome === "DEAD") summary.deadLettered += 1;
+    }
+    return summary;
+  }
+
+  private async resolveSavingsSuspense(
+    suspenseId: string,
+    asOf: string,
+    maxAttempts: number,
+  ): Promise<"RESOLVED" | "RETRY" | "DEAD" | "SKIPPED"> {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query<Record<string, unknown>>(
+        `SELECT s.*, d.opening_id, d.source_account_id AS deposit_source_account_id
+           FROM savings_maturity_suspense s
+           JOIN savings_deposits d ON d.id = s.deposit_id
+          WHERE s.id = $1
+          FOR UPDATE OF s`,
+        [suspenseId],
+      );
+      const suspense = result.rows[0];
+      if (
+        !suspense ||
+        String(suspense.status) !== "PENDING" ||
+        Date.parse(iso(suspense.next_attempt_at)) > Date.parse(asOf)
+      ) {
+        return "SKIPPED";
+      }
+
+      const attempts = Number(suspense.attempts ?? 0) + 1;
+      const accountId = String(suspense.source_account_id ?? suspense.deposit_source_account_id ?? "");
+      const accounts = new AccountRepository(client);
+      const account = accountId ? await accounts.lockById(accountId) : null;
+      const usableAccount = account &&
+        account.customerId === String(suspense.customer_id) &&
+        account.status === "ACTIVE"
+        ? account
+        : null;
+
+      if (!usableAccount) {
+        const dead = attempts >= maxAttempts;
+        await client.query(
+          `UPDATE savings_maturity_suspense
+              SET status = $2, attempts = $3, last_attempt_at = $4,
+                  last_error_code = 'SOURCE_ACCOUNT_UNAVAILABLE',
+                  next_attempt_at = $5, updated_at = NOW()
+            WHERE id = $1 AND status = 'PENDING'`,
+          [suspenseId, dead ? "DEAD" : "PENDING", attempts, asOf, savingsSuspenseRetryAt(asOf, attempts)],
+        );
+        if (!dead) return "RETRY";
+
+        const notificationId = randomUUID();
+        await client.query(
+          `INSERT INTO notifications
+             (id, customer_id, notification_type, title, body, resource_id,
+              resource_account_id, is_read, created_at, savings_deposit_id)
+           VALUES ($1,$2,'SAVINGS','Đáo hạn cần xử lý thủ công',
+                   'Khoản đáo hạn chưa thể chuyển về tài khoản và đã được chuyển sang hàng đợi vận hành.',
+                   $3,NULL,false,$4,$5)`,
+          [notificationId, suspense.customer_id, suspense.deposit_id, asOf, suspense.deposit_id],
+        );
+        await new AuditRepository(client).append({
+          id: randomUUID(),
+          eventType: "SAVINGS_MATURITY_DEAD_LETTERED",
+          actorCustomerId: String(suspense.customer_id),
+          resourceId: String(suspense.deposit_id),
+          occurredAt: asOf,
+          payload: { suspenseId, operationKey: String(suspense.operation_key), attempts, reasonCode: "SOURCE_ACCOUNT_UNAVAILABLE" },
+        });
+        await new OutboxRepository(client).append({
+          id: randomUUID(),
+          eventType: "savings.maturity_dead",
+          aggregateId: String(suspense.deposit_id),
+          occurredAt: asOf,
+          subjectCustomerIds: [String(suspense.customer_id)],
+          notificationIds: [notificationId],
+          payload: { depositId: String(suspense.deposit_id), suspenseId, attempts, reasonCode: "SOURCE_ACCOUNT_UNAVAILABLE" },
+        });
+        return "DEAD";
+      }
+
+      const amount = bigint(suspense.amount_minor, "suspense_amount_minor");
+      const updatedAccount = await accounts.updateBalances(usableAccount.id, {
+        availableMinor: (BigInt(usableAccount.availableMinor) + amount).toString(),
+        currentMinor: (BigInt(usableAccount.currentMinor) + amount).toString(),
+        heldMinor: usableAccount.heldMinor,
+        expectedVersion: usableAccount.version,
+      });
+      await accounts.appendTransaction({
+        id: randomUUID(),
+        accountId: updatedAccount.id,
+        savingsOpeningId: String(suspense.opening_id),
+        savingsDepositId: String(suspense.deposit_id),
+        direction: "CREDIT",
+        amountMinor: amount.toString(),
+        feeMinor: "0",
+        status: "SUCCEEDED",
+        description: "Hoàn tất đáo hạn tiền gửi từ tài khoản chờ xử lý",
+        reference: `MAT-RSL-${suspenseId.slice(-8).toUpperCase()}`,
+        occurredAt: asOf,
+        completedAt: asOf,
+        kind: "SAVINGS_MATURITY",
+      });
+      const ledger = new LedgerRepository(client);
+      const journalId = randomUUID();
+      await ledger.appendJournal({
+        id: journalId,
+        aggregateId: suspenseId,
+        journalType: "SAVINGS_MATURITY_SUSPENSE_RESOLUTION",
+        occurredAt: asOf,
+      });
+      await ledger.appendEntries(journalId, [
+        { lineNumber: 1, accountRef: `savings-maturity-suspense:${suspenseId}`, side: "DEBIT", amountMinor: amount.toString(), entryId: randomUUID(), occurredAt: asOf },
+        { lineNumber: 2, accountRef: `payment-account:${updatedAccount.id}`, side: "CREDIT", amountMinor: amount.toString(), entryId: randomUUID(), occurredAt: asOf },
+      ]);
+      const notificationId = randomUUID();
+      await client.query(
+        `INSERT INTO notifications
+           (id, customer_id, notification_type, title, body, resource_id,
+            resource_account_id, is_read, created_at, savings_deposit_id)
+         VALUES ($1,$2,'SAVINGS','Đáo hạn đã hoàn tất',
+                 'Khoản đáo hạn đã được chuyển về tài khoản thanh toán.',
+                 $3,$4,false,$5,$6)`,
+        [notificationId, suspense.customer_id, suspense.deposit_id, updatedAccount.id, asOf, suspense.deposit_id],
+      );
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "SAVINGS_MATURITY_SUSPENSE_RESOLVED",
+        actorCustomerId: String(suspense.customer_id),
+        resourceId: String(suspense.deposit_id),
+        occurredAt: asOf,
+        payload: { suspenseId, operationKey: String(suspense.operation_key), attempts, amountMinor: amount.toString() },
+      });
+      await new OutboxRepository(client).append({
+        id: randomUUID(),
+        eventType: "savings.maturity_resolved",
+        aggregateId: String(suspense.deposit_id),
+        occurredAt: asOf,
+        subjectCustomerIds: [String(suspense.customer_id)],
+        notificationIds: [notificationId],
+        payload: { depositId: String(suspense.deposit_id), suspenseId, amountMinor: amount.toString(), attempts },
+      });
+      await client.query(
+        `UPDATE savings_maturity_suspense
+            SET status = 'RESOLVED', attempts = $2, last_attempt_at = $3,
+                last_error_code = NULL, resolved_account_id = $4,
+                resolved_at = $3, updated_at = NOW()
+          WHERE id = $1 AND status = 'PENDING'`,
+        [suspenseId, attempts, asOf, updatedAccount.id],
+      );
+      return "RESOLVED";
+    }, { maxRetries: 1 });
+  }
+
   async matureSavingsDeposit(depositId: string, asOf = new Date().toISOString()): Promise<SavingsMaturityResult> {
     return this.unitOfWork.transaction(async ({ client }) => {
       const savings = new SavingsRepository(client);
@@ -122,8 +313,17 @@ export class RelationalLifecycleService {
       const principal = bigint(deposit.principalMinor, "principal_minor");
       const interest = bigint(deposit.expectedInterestMinor, "expected_interest_minor");
       const total = bigint(deposit.totalAtMaturityMinor, "total_at_maturity_minor");
-      const renews = deposit.maturityInstruction !== "RETURN_PRINCIPAL_AND_INTEREST";
-      const creditedMinor = deposit.maturityInstruction === "RETURN_PRINCIPAL_AND_INTEREST"
+      let renews = deposit.maturityInstruction !== "RETURN_PRINCIPAL_AND_INTEREST";
+      let renewalProduct = renews ? await savings.findActiveProduct(deposit.productCode) : null;
+      let fallbackReason: "PRODUCT_INACTIVE" | null = null;
+      if (renews && !renewalProduct) {
+        // A product may be retired while an existing deposit is still due.
+        // Maturity is an obligation, so fall back to returning principal and
+        // interest instead of leaving the deposit ACTIVE forever.
+        renews = false;
+        fallbackReason = "PRODUCT_INACTIVE";
+      }
+      const creditedMinor = !renews
         ? total
         : deposit.maturityInstruction === "RENEW_PRINCIPAL"
           ? interest
@@ -138,21 +338,73 @@ export class RelationalLifecycleService {
       // command cannot observe half of the settlement.
       const accounts = new AccountRepository(client);
       const source = await accounts.lockById(deposit.sourceAccountId);
-      if (!source || source.customerId !== deposit.customerId || source.status !== "ACTIVE") {
-        throw new RelationalConflictError("SAVINGS_ACCOUNT_INVALID", "Savings source account is not active.");
+      const sourceUsable = Boolean(source && source.customerId === deposit.customerId && source.status === "ACTIVE");
+      if (!sourceUsable) {
+        // The obligation is moved out of ACTIVE and recorded for operations;
+        // a later manual resolution can credit the customer without replaying
+        // the maturity operation or creating a second ledger entry.
+        const suspenseId = randomUUID();
+        const reasonCode = "SOURCE_ACCOUNT_UNAVAILABLE" as const;
+        await client.query(
+          `INSERT INTO savings_maturity_suspense
+             (id, deposit_id, customer_id, source_account_id, amount_minor, reason_code, operation_key)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)
+           ON CONFLICT (deposit_id) DO UPDATE SET updated_at = NOW()`,
+          [suspenseId, deposit.id, deposit.customerId, source?.id ?? null, total.toString(), reasonCode, operationKey],
+        );
+        await client.query(
+          `UPDATE savings_deposits
+              SET status = 'MATURED', maturity_operation_key = $2, updated_at = NOW()
+            WHERE id = $1 AND status = 'ACTIVE'`,
+          [deposit.id, operationKey],
+        );
+        const now = new Date().toISOString();
+        const journalId = randomUUID();
+        await new LedgerRepository(client).appendJournal({ id: journalId, aggregateId: deposit.id, journalType: "SAVINGS_MATURITY_SUSPENSE", occurredAt: now });
+        await new LedgerRepository(client).appendEntries(journalId, [
+          { lineNumber: 1, accountRef: `savings-deposit:${deposit.id}`, side: "DEBIT", amountMinor: total.toString(), entryId: randomUUID(), occurredAt: now },
+          { lineNumber: 2, accountRef: `savings-maturity-suspense:${suspenseId}`, side: "CREDIT", amountMinor: total.toString(), entryId: randomUUID(), occurredAt: now },
+        ]);
+        await new AuditRepository(client).append({
+          id: randomUUID(), eventType: "SAVINGS_MATURITY_PENDING", actorCustomerId: deposit.customerId, resourceId: deposit.id,
+          occurredAt: now, payload: { operationKey, suspenseId, amountMinor: total.toString(), reasonCode },
+        });
+        const notificationId = randomUUID();
+        await client.query(
+          `INSERT INTO notifications
+             (id, customer_id, notification_type, title, body, resource_id,
+              resource_account_id, is_read, created_at, savings_deposit_id)
+           VALUES ($1, $2, 'SAVINGS', 'Đáo hạn đang chờ xử lý',
+                   'Khoản tiết kiệm đã đáo hạn và đang chờ bộ phận vận hành xử lý.', $3, NULL, false, $4, $5)`,
+          [notificationId, deposit.customerId, deposit.id, now, deposit.id],
+        );
+        await new OutboxRepository(client).append({
+          id: randomUUID(), eventType: "savings.maturity_pending", aggregateId: deposit.id,
+          occurredAt: now, subjectCustomerIds: [deposit.customerId], notificationIds: [notificationId],
+          payload: { depositId: deposit.id, suspenseId, amountMinor: total.toString(), reasonCode, operationKey },
+        });
+        const responsePayload = { depositId: deposit.id, status: "PENDING", renewedDepositId: null, creditedMinor: "0", operationKey, suspenseId };
+        await client.query(
+          `UPDATE savings_maturity_operations
+              SET status = 'SUCCEEDED', response_payload = $2::jsonb, updated_at = NOW()
+            WHERE deposit_id = $1 AND operation_key = $3`,
+          [deposit.id, JSON.stringify(responsePayload), operationKey],
+        );
+        return { depositId: deposit.id, status: "PENDING", renewedDepositId: null, creditedMinor: "0", operationKey };
       }
-      let updatedSource = source;
+      const usableSource = source!;
+      let updatedSource = usableSource;
       if (creditedMinor > 0n) {
-        updatedSource = await accounts.updateBalances(source.id, {
-          availableMinor: (BigInt(source.availableMinor) + creditedMinor).toString(),
-          currentMinor: (BigInt(source.currentMinor) + creditedMinor).toString(),
-          heldMinor: source.heldMinor,
-          expectedVersion: source.version,
+        updatedSource = await accounts.updateBalances(usableSource.id, {
+          availableMinor: (BigInt(usableSource.availableMinor) + creditedMinor).toString(),
+          currentMinor: (BigInt(usableSource.currentMinor) + creditedMinor).toString(),
+          heldMinor: usableSource.heldMinor,
+          expectedVersion: usableSource.version,
         });
         const now = new Date().toISOString();
         await accounts.appendTransaction({
           id: randomUUID(),
-          accountId: source.id,
+          accountId: usableSource.id,
           savingsOpeningId: deposit.openingId,
           savingsDepositId: deposit.id,
           direction: "CREDIT",
@@ -169,8 +421,7 @@ export class RelationalLifecycleService {
 
       let renewedDepositId: string | null = null;
       if (renews) {
-        const product = await savings.findActiveProduct(deposit.productCode);
-        if (!product) throw new RelationalConflictError("SAVINGS_PRODUCT_INACTIVE", "Savings product is no longer active.");
+        const product = renewalProduct!;
         renewedDepositId = randomUUID();
         const openedAt = deposit.maturityAt;
         const maturityAt = addMonthsClamped(openedAt, product.termMonths);
@@ -227,7 +478,7 @@ export class RelationalLifecycleService {
         actorCustomerId: deposit.customerId,
         resourceId: deposit.id,
         occurredAt: now,
-        payload: { operationKey, renewedDepositId, creditedMinor: creditedMinor.toString() },
+        payload: { operationKey, renewedDepositId, creditedMinor: creditedMinor.toString(), fallbackReason },
       });
       const notificationId = randomUUID();
       await client.query(
@@ -235,7 +486,7 @@ export class RelationalLifecycleService {
           (id, customer_id, notification_type, title, body, resource_id,
            resource_account_id, is_read, created_at, savings_deposit_id)
          VALUES ($1, $2, 'SAVINGS', $3, $4, $5, $6, false, $7, $8)`,
-        [notificationId, deposit.customerId, renews ? "Tiền gửi đã được tái tục" : "Tiền gửi đã đáo hạn", renews ? "Khoản tiết kiệm đã được tái tục theo chỉ thị." : "Khoản tiết kiệm đã chuyển tiền về tài khoản thanh toán.", renewedDepositId ?? deposit.id, source.id, now, renewedDepositId ?? deposit.id],
+        [notificationId, deposit.customerId, renews ? "Tiền gửi đã được tái tục" : "Tiền gửi đã đáo hạn", renews ? "Khoản tiết kiệm đã được tái tục theo chỉ thị." : "Khoản tiết kiệm đã chuyển tiền về tài khoản thanh toán.", renewedDepositId ?? deposit.id, usableSource.id, now, renewedDepositId ?? deposit.id],
       );
       await new OutboxRepository(client).append({
         id: randomUUID(),
@@ -244,7 +495,7 @@ export class RelationalLifecycleService {
         occurredAt: now,
         subjectCustomerIds: [deposit.customerId],
         notificationIds: [notificationId],
-        payload: { depositId: deposit.id, renewedDepositId, creditedMinor: creditedMinor.toString(), operationKey },
+        payload: { depositId: deposit.id, renewedDepositId, creditedMinor: creditedMinor.toString(), operationKey, fallbackReason },
       });
       const responsePayload = { depositId: deposit.id, status: renews ? "RENEWED" : "MATURED", renewedDepositId, creditedMinor: creditedMinor.toString(), operationKey };
       await client.query(
@@ -310,7 +561,12 @@ export class RelationalLifecycleService {
         [accountId],
       );
       const previousStatement = previous.rows[0];
-      const cycleStart = previousStatement ? iso(previousStatement.cycle_end_at) : previousMonth(cycleEnd);
+      const cycleStart = previousStatement
+        ? iso(previousStatement.cycle_end_at)
+        : iso(account.current_cycle_start_at ?? previousMonth(cycleEnd));
+      if (Date.parse(cycleStart) >= Date.parse(cycleEnd)) {
+        throw new RelationalConflictError("CREDIT_CYCLE_INVALID", "Credit statement cycle start must be before cycle end.");
+      }
       const operationKey = `credit-statement-close:${accountId}:${cycleEnd}`;
       const operation = await claimCreditOperation(client, {
         accountId,
@@ -321,7 +577,7 @@ export class RelationalLifecycleService {
       const transactions = await client.query<Record<string, unknown>>(
         `SELECT id, type, amount_minor, debt_effect FROM credit_transactions
          WHERE credit_account_id = $1 AND statement_id IS NULL AND status = 'POSTED'
-           AND posted_at > $2 AND posted_at <= $3
+            AND posted_at >= $2 AND posted_at < $3
          ORDER BY posted_at, id`,
         [accountId, cycleStart, cycleEnd],
       );
@@ -356,7 +612,7 @@ export class RelationalLifecycleService {
         await client.query("UPDATE credit_transactions SET statement_id = $2 WHERE id = $1 AND statement_id IS NULL", [transaction.id, statementId]);
         await client.query("INSERT INTO credit_statement_items (statement_id, transaction_id) VALUES ($1, $2)", [statementId, transaction.id]);
       }
-      await client.query("UPDATE credit_accounts SET next_statement_at = $2, version = version + 1, updated_at = NOW() WHERE id = $1", [accountId, nextMonth(cycleEnd)]);
+      await client.query("UPDATE credit_accounts SET current_cycle_start_at = $2, next_statement_at = $3, version = version + 1, updated_at = NOW() WHERE id = $1", [accountId, cycleEnd, nextMonth(cycleEnd)]);
       const now = new Date().toISOString();
       await new AuditRepository(client).append({ id: randomUUID(), eventType: "CREDIT_STATEMENT_ISSUED", resourceId: statementId, occurredAt: now, payload: { operationKey, creditAccountId: accountId, closingAmountMinor: closingPositive.toString() } });
       const customerId = String(account.customer_id);

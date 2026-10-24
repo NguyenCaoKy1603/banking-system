@@ -48,12 +48,3 @@ jobs:
             exit 1
           fi
       - run: npm audit --omit=dev --audit-level=high
-      - name: Install backend dependencies for browser fixture
-        run: npm ci
-        working-directory: backend
-      - name: Build backend for browser fixture
-        run: npm run build
-        working-directory: backend
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e

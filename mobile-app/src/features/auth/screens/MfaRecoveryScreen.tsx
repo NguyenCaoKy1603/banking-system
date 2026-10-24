@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 
+import { BrandMark } from "@/components/brand/BrandMark";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
@@ -14,7 +15,7 @@ import {
   startMfaRecovery,
 } from "@/features/auth/services/authApi";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, spacing, typography } from "@/theme";
 
 function errorMessage(error: unknown): string {
   return error instanceof ApiError ? error.message : "Không thể hoàn tất khôi phục MFA.";
@@ -30,6 +31,7 @@ export function MfaRecoveryScreen() {
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
   const [enrollment, setEnrollment] = useState<{ credentialId: string; manualSetupKey: string; otpauthUri: string } | null>(null);
   const [totpCode, setTotpCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [error, setError] = useState<string | undefined>();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -45,7 +47,7 @@ export function MfaRecoveryScreen() {
 
   async function handleStart() {
     if (!deviceOptions || !email.trim() || !password || recoveryCode.length < 16) {
-      setError("Cần email, mật khẩu và recovery code hợp lệ.");
+      setError("Cần email, mật khẩu và mã khôi phục hợp lệ.");
       return;
     }
     setIsSubmitting(true);
@@ -68,7 +70,19 @@ export function MfaRecoveryScreen() {
     setIsSubmitting(true);
     setError(undefined);
     try {
-      await completeMfaRecovery(recoveryToken, deviceOptions);
+      try {
+        await completeMfaRecovery(recoveryToken, deviceOptions);
+      } catch (completeError: unknown) {
+        if (
+          !(
+            completeError instanceof ApiError &&
+            completeError.status === 409 &&
+            completeError.code === "MFA_RECOVERY_ALREADY_COMPLETED"
+          )
+        ) {
+          throw completeError;
+        }
+      }
       const setup = await beginRecoveryTotpEnrollment({ recoveryToken }, deviceOptions);
       setEnrollment(setup);
     } catch (approveError: unknown) {
@@ -86,8 +100,16 @@ export function MfaRecoveryScreen() {
     setIsSubmitting(true);
     setError(undefined);
     try {
-      await confirmRecoveryTotpEnrollment({ recoveryToken, credentialId: enrollment.credentialId, code: totpCode }, deviceOptions);
-      router.replace("/login");
+      const response = await confirmRecoveryTotpEnrollment(
+        { recoveryToken, credentialId: enrollment.credentialId, code: totpCode },
+        deviceOptions,
+      );
+      setRecoveryCodes(response.recoveryCodes);
+      setPassword("");
+      setTotpCode("");
+      setRecoveryCode("");
+      setRecoveryToken(null);
+      setEnrollment(null);
     } catch (confirmError: unknown) {
       setError(errorMessage(confirmError));
     } finally {
@@ -95,19 +117,43 @@ export function MfaRecoveryScreen() {
     }
   }
 
+  function handleAcknowledgeRecoveryCodes() {
+    setRecoveryCodes(null);
+    router.replace("/login");
+  }
+
   return (
     <Screen>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.flex}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <BrandMark />
           <View style={styles.header}>
-            <Text style={styles.eyebrow}>KHÔI PHỤC MFA</Text>
-            <Text style={styles.title}>Đăng ký Authenticator mới</Text>
-            <Text style={styles.description}>Recovery code chỉ dùng một lần. Máy chủ sẽ thu hồi phiên và factor cũ trước khi cho đăng ký lại.</Text>
+            <Text style={styles.eyebrow}>KHÔI PHỤC BẢO MẬT</Text>
+            <Text style={styles.title}>Thiết lập Authenticator mới</Text>
+            <Text style={styles.description}>Mã khôi phục chỉ dùng một lần. Các phiên và phương thức xác thực cũ sẽ được thu hồi để bảo vệ tài khoản.</Text>
           </View>
 
           {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
 
-          {!recoveryToken ? (
+          {recoveryCodes ? (
+            <View style={styles.recoveryCard}>
+              <Text style={styles.sectionTitle}>Lưu mã khôi phục mới</Text>
+              <Text style={styles.recoveryWarning}>
+                Mã khôi phục chỉ hiển thị một lần duy nhất tại đây. Hãy ghi lại hoặc lưu trữ ngoại tuyến ở nơi an toàn.
+              </Text>
+              <Text style={styles.description}>
+                Sau khi rời khỏi bước này, bạn sẽ không thể xem lại các mã này từ ứng dụng.
+              </Text>
+              <Text selectable style={styles.recoveryCodes} testID="mfa-recovery-codes">
+                {recoveryCodes.join("\n")}
+              </Text>
+              <PrimaryButton
+                label="Tôi đã lưu mã — Đăng nhập lại"
+                onPress={handleAcknowledgeRecoveryCodes}
+                testID="mfa-recovery-done"
+              />
+            </View>
+          ) : !recoveryToken ? (
             <View style={styles.card}>
               <TextField autoCapitalize="none" autoComplete="email" keyboardType="email-address" label="Email" onChangeText={setEmail} placeholder="email@example.com" testID="mfa-recovery-email" value={email} />
               <TextField autoCapitalize="none" label="Mật khẩu" onChangeText={setPassword} placeholder="Nhập mật khẩu" secureTextEntry testID="mfa-recovery-password" value={password} />
@@ -129,11 +175,13 @@ export function MfaRecoveryScreen() {
               <View style={styles.qrFrame}><QRCode value={enrollment.otpauthUri} size={210} /></View>
               <Text selectable style={styles.secret}>{enrollment.manualSetupKey}</Text>
               <TextField keyboardType="number-pad" label="Mã TOTP đầu tiên" onChangeText={(value) => setTotpCode(value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" secureTextEntry testID="mfa-recovery-totp" value={totpCode} />
-              <PrimaryButton disabled={isSubmitting} label="Kích hoạt và quay lại đăng nhập" onPress={() => void handleConfirm()} testID="mfa-recovery-confirm" />
+              <PrimaryButton disabled={isSubmitting} label="Kích hoạt và xem mã khôi phục" onPress={() => void handleConfirm()} testID="mfa-recovery-confirm" />
             </View>
           )}
 
-          <Link href="./login" replace asChild><Pressable accessibilityRole="link"><Text style={styles.link}>Quay về đăng nhập</Text></Pressable></Link>
+          {!recoveryCodes ? (
+            <Link href="./login" replace asChild><Pressable accessibilityRole="link"><Text style={styles.link}>Quay về đăng nhập</Text></Pressable></Link>
+          ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
     </Screen>
@@ -144,13 +192,16 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   content: { flexGrow: 1, justifyContent: "center", width: "100%", maxWidth: 520, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
   header: { gap: spacing.sm },
-  eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "700", letterSpacing: 1.4 },
-  title: { color: colors.text, fontSize: 28, fontWeight: "700" },
-  description: { color: colors.muted, fontSize: 14, lineHeight: 21 },
-  sectionTitle: { color: colors.text, fontSize: 18, fontWeight: "700" },
-  card: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: spacing.md, backgroundColor: colors.surface },
-  qrFrame: { alignSelf: "center", padding: spacing.md, backgroundColor: colors.surface },
+  eyebrow: { ...typography.label, color: colors.primary, letterSpacing: 1 },
+  title: { ...typography.title, color: colors.text },
+  description: { ...typography.body, color: colors.muted },
+  sectionTitle: { ...typography.subheading, color: colors.text },
+  card: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, ...shadows.card },
+  recoveryCard: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.primary, borderRadius: radius.lg, backgroundColor: colors.primarySoft, ...shadows.card },
+  recoveryWarning: { ...typography.body, color: colors.text, fontWeight: "600" },
+  recoveryCodes: { color: colors.text, fontFamily: Platform.OS === "ios" ? "Courier" : "monospace", fontSize: 15, lineHeight: 24 },
+  qrFrame: { alignSelf: "center", padding: spacing.md, borderWidth: 2, borderColor: colors.primarySoft, borderRadius: radius.lg, backgroundColor: colors.surface },
   secret: { color: colors.text, fontSize: 16, fontWeight: "700", letterSpacing: 1.5 },
-  error: { color: colors.danger, fontSize: 14, lineHeight: 20 },
+  error: { ...typography.body, padding: spacing.md, borderRadius: radius.md, color: colors.danger, backgroundColor: colors.dangerSoft },
   link: { color: colors.primary, fontSize: 14, fontWeight: "600", textAlign: "center" },
 });

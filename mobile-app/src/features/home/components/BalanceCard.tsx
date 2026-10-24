@@ -1,13 +1,11 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { AppIcon } from "@/components/ui/AppIcon";
 import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
+import { getAccountNumberDisplay, getAccountStatusLabel } from "@/features/accounts/presentation/accountPresentation";
 import type { PaymentAccount } from "@/features/accounts/types/account";
-import {
-  getAccountNumberDisplay,
-  getAccountStatusLabel,
-} from "@/features/accounts/presentation/accountPresentation";
 import { getBalanceDisplay } from "@/features/home/presentation/homePresentation";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, spacing, typography } from "@/theme";
 
 type BalanceCardProps = {
   account: PaymentAccount;
@@ -38,91 +36,87 @@ export function BalanceCard({
   onCopyAccountNumber,
   onRetryAccountNumber,
 }: BalanceCardProps) {
+  const accountNumber = getAccountNumberDisplay(account.maskedNumber, revealedAccountNumber, isAccountNumberVisible);
+
   return (
     <>
-      <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Mở chi tiết ${account.displayName}`}
-      onPress={onPress}
-      style={({ pressed }) => [styles.card, pressed ? styles.pressed : null]}
-      testID="account-detail"
-    >
-      <View testID="home-balance-card">
+      <View style={styles.card} testID="home-balance-card">
+        <View pointerEvents="none" style={styles.decorativeOrbLarge} />
+        <View pointerEvents="none" style={styles.decorativeOrbSmall} />
+
         <View style={styles.headerRow}>
-          <Text style={styles.cardTitle}>Tổng số dư VND</Text>
+          <View style={styles.titleBlock}>
+            <Text style={styles.cardLabel}>TỔNG SỐ DƯ VND</Text>
+            <Text style={styles.totalBalance}>{getBalanceDisplay(account.currentBalance.amountMinor, isBalanceVisible)}</Text>
+          </View>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={isBalanceVisible ? "Ẩn số dư" : "Hiện số dư"}
+            hitSlop={6}
             onPress={onToggleBalance}
-            style={styles.eyeButton}
+            style={({ pressed }) => [styles.iconAction, pressed ? styles.pressed : null]}
             testID="home-toggle-balance"
           >
-            <Text style={styles.eyeIcon}>{isBalanceVisible ? "◉" : "◎"}</Text>
+            <AppIcon color={colors.onPrimary} name={isBalanceVisible ? "eyeOff" : "eye"} size={21} />
           </Pressable>
         </View>
 
-        <Text style={styles.totalBalance}>
-          {getBalanceDisplay(account.currentBalance.amountMinor, isBalanceVisible)}
-        </Text>
-
-        <View style={styles.accountLine}>
-          <View style={styles.accountLineText}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Mở chi tiết ${account.displayName}`}
+          onPress={onPress}
+          style={({ pressed }) => [styles.accountLine, pressed ? styles.pressed : null]}
+          testID="account-detail"
+        >
+          <View style={styles.accountCopy}>
             <Text style={styles.accountName}>{account.displayName}</Text>
-            <Text style={styles.maskedNumber} testID="home-account-number">
-              {getAccountNumberDisplay(
-                account.maskedNumber,
-                revealedAccountNumber,
-                isAccountNumberVisible,
-              )}
-            </Text>
+            <Text numberOfLines={1} style={styles.accountNumber} testID="home-account-number">{accountNumber}</Text>
           </View>
-          <Text style={styles.chevron}>›</Text>
-        </View>
+          <AppIcon color={colors.onPrimary} name="chevronRight" size={20} />
+        </Pressable>
 
         <View style={styles.accountActions}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={
-              isAccountNumberVisible ? "Ẩn số tài khoản" : "Hiện đầy đủ số tài khoản"
-            }
+            accessibilityLabel={isAccountNumberVisible ? "Ẩn số tài khoản" : "Hiện đầy đủ số tài khoản"}
             disabled={isAccountNumberLoading}
             onPress={onToggleAccountNumber}
-            style={[styles.accountAction, isAccountNumberLoading ? styles.disabledAction : null]}
+            style={({ pressed }) => [styles.textAction, pressed ? styles.pressed : null, isAccountNumberLoading ? styles.disabled : null]}
             testID="home-toggle-account-number"
           >
-            <Text style={styles.accountActionLabel}>
-              {isAccountNumberLoading ? "Đang tải" : isAccountNumberVisible ? "Ẩn" : "Hiện đầy đủ"}
-            </Text>
+            <AppIcon color={colors.onPrimary} name={isAccountNumberVisible ? "eyeOff" : "eye"} size={16} />
+            <Text style={styles.textActionLabel}>{isAccountNumberLoading ? "Đang tải" : isAccountNumberVisible ? "Ẩn" : "Hiện đầy đủ"}</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Sao chép đầy đủ số tài khoản"
             disabled={isCopyingAccountNumber || isAccountNumberLoading}
             onPress={onCopyAccountNumber}
-            style={[
-              styles.accountAction,
-              isCopyingAccountNumber || isAccountNumberLoading ? styles.disabledAction : null,
-            ]}
+            style={({ pressed }) => [styles.textAction, pressed ? styles.pressed : null, isCopyingAccountNumber || isAccountNumberLoading ? styles.disabled : null]}
             testID="home-copy-account-number"
           >
-            <Text style={styles.accountActionLabel}>
-              {isCopyingAccountNumber ? "Đang sao chép" : "Sao chép"}
-            </Text>
+            <AppIcon color={colors.onPrimary} name="copy" size={16} />
+            <Text style={styles.textActionLabel}>{isCopyingAccountNumber ? "Đang sao chép" : "Sao chép"}</Text>
           </Pressable>
         </View>
 
-        <View style={styles.statusRow}>
-          <View
-            style={[
-              styles.statusPill,
-              account.status === "BLOCKED" ? styles.statusPillBlocked : null,
-            ]}
-          >
-            <Text style={styles.statusText}>{getAccountStatusLabel(account.status)}</Text>
+        <View style={styles.balanceGrid}>
+          <View style={styles.balanceCell}>
+            <Text style={styles.balanceLabel}>Khả dụng</Text>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.balanceValue}>{getBalanceDisplay(account.availableBalance.amountMinor, isBalanceVisible)}</Text>
+          </View>
+          <View style={styles.balanceDivider} />
+          <View style={styles.balanceCell}>
+            <Text style={styles.balanceLabel}>Hiện tại</Text>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.balanceValue}>{getBalanceDisplay(account.currentBalance.amountMinor, isBalanceVisible)}</Text>
           </View>
         </View>
+
+        <View style={styles.statusPill}>
+          <View style={[styles.statusDot, account.status === "BLOCKED" ? styles.statusDotBlocked : null]} />
+          <Text style={styles.statusText}>{getAccountStatusLabel(account.status)}</Text>
+        </View>
       </View>
-      </Pressable>
       {accountNumberError ? (
         <RequestErrorNotice
           error={accountNumberError}
@@ -136,117 +130,30 @@ export function BalanceCard({
 }
 
 const styles = StyleSheet.create({
-  card: {
-    padding: spacing.lg,
-    borderRadius: 24,
-    backgroundColor: colors.primary,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 6,
-  },
-  pressed: {
-    opacity: 0.92,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md,
-  },
-  cardTitle: {
-    color: colors.surface,
-    fontSize: 14,
-    fontWeight: "700",
-    letterSpacing: 0.2,
-  },
-  eyeButton: {
-    minWidth: 44,
-    minHeight: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.55)",
-    borderRadius: 14,
-  },
-  eyeIcon: {
-    color: colors.surface,
-    fontSize: 19,
-    fontWeight: "700",
-  },
-  totalBalance: {
-    marginTop: spacing.sm,
-    color: colors.surface,
-    fontSize: 30,
-    fontWeight: "800",
-    letterSpacing: 0.5,
-  },
-  accountLine: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md,
-    marginTop: spacing.lg,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.28)",
-  },
-  accountLineText: {
-    flex: 1,
-    gap: spacing.xs,
-  },
-  accountActions: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  accountAction: {
-    minHeight: 40,
-    justifyContent: "center",
-    paddingHorizontal: spacing.sm,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.55)",
-    borderRadius: 12,
-  },
-  disabledAction: {
-    opacity: 0.55,
-  },
-  accountActionLabel: {
-    color: colors.surface,
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  accountName: {
-    color: colors.surface,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  maskedNumber: {
-    color: "rgba(255,255,255,0.78)",
-    fontSize: 14,
-  },
-  chevron: {
-    color: colors.surface,
-    fontSize: 28,
-    fontWeight: "300",
-  },
-  statusRow: {
-    alignItems: "flex-end",
-    marginTop: spacing.lg,
-  },
-  statusPill: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.18)",
-  },
-  statusPillBlocked: {
-    backgroundColor: "rgba(255,221,221,0.28)",
-  },
-  statusText: {
-    color: colors.surface,
-    fontSize: 10,
-    fontWeight: "800",
-  },
+  card: { position: "relative", overflow: "hidden", gap: spacing.md, padding: spacing.lg, borderRadius: radius.xl, backgroundColor: colors.navy, ...shadows.floating },
+  decorativeOrbLarge: { position: "absolute", top: -90, right: -70, width: 230, height: 230, borderRadius: 115, backgroundColor: "rgba(21,94,239,0.38)" },
+  decorativeOrbSmall: { position: "absolute", bottom: -90, left: -60, width: 180, height: 180, borderRadius: 90, backgroundColor: "rgba(99,214,197,0.10)" },
+  headerRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.md },
+  titleBlock: { flex: 1, gap: spacing.xs },
+  cardLabel: { ...typography.label, color: "rgba(255,255,255,0.70)", letterSpacing: 0.8 },
+  totalBalance: { ...typography.amount, color: colors.onPrimary },
+  iconAction: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.30)", borderRadius: radius.md, backgroundColor: "rgba(255,255,255,0.10)" },
+  accountLine: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
+  accountCopy: { flex: 1, gap: 2 },
+  accountName: { ...typography.bodyStrong, color: colors.onPrimary },
+  accountNumber: { ...typography.body, color: "rgba(255,255,255,0.72)", letterSpacing: 0.5 },
+  accountActions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  textAction: { minHeight: 40, flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.smd, borderWidth: 1, borderColor: "rgba(255,255,255,0.28)", borderRadius: radius.sm, backgroundColor: "rgba(255,255,255,0.08)" },
+  textActionLabel: { ...typography.caption, color: colors.onPrimary, fontWeight: "700" },
+  balanceGrid: { flexDirection: "row", gap: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
+  balanceCell: { flex: 1, gap: spacing.xs },
+  balanceDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.18)" },
+  balanceLabel: { ...typography.caption, color: "rgba(255,255,255,0.64)" },
+  balanceValue: { ...typography.bodyStrong, color: colors.onPrimary },
+  statusPill: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.smd, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.12)" },
+  statusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#63D6C5" },
+  statusDotBlocked: { backgroundColor: "#FF8A80" },
+  statusText: { ...typography.caption, color: colors.onPrimary, fontWeight: "700" },
+  pressed: { opacity: 0.72 },
+  disabled: { opacity: 0.5 },
 });

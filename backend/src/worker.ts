@@ -8,7 +8,9 @@ async function main(): Promise<void> {
     throw new Error("WORKER_ENABLED must be 1 to start the worker process.");
   }
   assertWorkerCutoverConfirmed();
-  const runtimeConfig = readRuntimeConfig();
+  const runtimeConfig = readRuntimeConfig(process.env, {
+    requireRegistrationFingerprintKey: false,
+  });
   const secretProvider = createRuntimeSecretProvider(runtimeConfig);
   const databaseSecret = await secretProvider.getSecret(referenceFor("databaseUrl", runtimeConfig.bankingEnvironment));
   const config = workerConfigFromEnv(databaseSecret.value);

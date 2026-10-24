@@ -13,5 +13,28 @@ Các invariant chính:
 - Token chỉ lưu hash; session gắn với device và refresh family.
 - Audit, ledger và outbox được thiết kế append-only ở tầng quyền database.
 - Outbox có index cho worker claim/publish và retry.
+- Migration `033_control_policy_bootstrap.sql` tạo đúng một control policy
+  idempotent cho relational-v2. Nếu bản ghi singleton bị thiếu, readiness phải
+  fail-closed thay vì nhận request với trạng thái kiểm soát không xác định.
+- Các migration `034–042` là lớp hardening forward-only của relational-v2:
+  - `034` thêm entitlement theo khách hàng và `blocked_until` bền vững cho login rate-limit;
+  - `035` thêm con trỏ chu kỳ sao kê tín dụng, chỉ phục hồi placeholder zero-value hẹp và không sửa lịch sử có nghiệp vụ;
+  - `036` tách tombstone `DELETED` khỏi `BLOCKED` cho beneficiary, đồng thời cho phép tạo lại target sau khi xóa;
+  - `037` lưu snapshot tên counterparty phía server để lịch sử không đổi khi hồ sơ đổi tên;
+  - `038` lưu KYC synthetic-only theo vòng đời DRAFT/SUBMITTED/UNDER_REVIEW/APPROVED/REJECTED/NEEDS_MORE_INFO;
+  - `039` thêm suspense bền vững cho nghĩa vụ maturity chưa thể ghi có và index keyset cho lịch sử dài;
+  - `040` thêm case báo mất thẻ, purpose `CARD_REPORT_LOST` và metadata retry/backoff/dead-letter cho suspense;
+  - `041` hợp nhất role Admin từ bốn role cũ còn `OPERATIONS` và `ADMIN`, ánh xạ role assignment/invite/request hiện có, thu hồi phiên cũ và giữ nguyên fingerprint/audit của yêu cầu đã tạo.
+  - `042` thêm khóa idempotency cho Admin tạo trực tiếp tài khoản OPERATIONS; bảng chỉ chứa fingerprint metadata, không lưu mật khẩu, khóa MFA hoặc OTP.
+  - `043` gán permission tạo Operations trực tiếp cho ADMIN, tắt policy STAFF_INVITE cũ và bỏ permission mời khỏi role; giữ nguyên request, action, invite và audit history.
+- `savings_maturity_suspense` không thay thế ledger: đây là hàng đợi vận hành có
+  operation key duy nhất, để nghĩa vụ maturity không còn ở trạng thái ACTIVE khi
+  tài khoản nguồn/sản phẩm không thể xử lý; worker retry/resume idempotent, backoff
+  có giới hạn và chuyển `DEAD` kèm operations evidence khi hết số lần thử.
+- Các migration mới chỉ lưu metadata synthetic và khóa ngoại cần thiết; không lưu
+  OTP, secret, PAN, CVV, PIN, bytes tài liệu KYC hoặc PII sản xuất.
 
-Trước khi dùng schema này cần bổ sung adapter giao dịch/locking phù hợp core banking, migration runner, backup/restore rehearsal, secret manager, RLS/role policy, retention và observability thật.
+Migration runner đọc toàn bộ file `001–043` theo thứ tự số, ghi fingerprint và
+không được bỏ qua migration. Trước khi dùng schema này với hệ thống tiền thật cần
+bổ sung adapter giao dịch/locking phù hợp core banking, backup/restore rehearsal,
+secret manager, RLS/role policy, retention và observability thật.

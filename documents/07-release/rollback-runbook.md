@@ -2,7 +2,7 @@
 
 Ngày cập nhật: 2026-08-25
 
-Áp dụng cho Staging và Production-like dùng tiền mô phỏng. Rollback ứng dụng dùng lại release manifest/digest trước đó; không rebuild commit cũ và không chạy down migration tự động.
+Áp dụng cho Staging và Production-like dùng tiền ảo. Rollback ứng dụng dùng lại release manifest/digest trước đó; không rebuild commit cũ và không chạy down migration tự động.
 
 ## Quyết định
 

@@ -1,11 +1,14 @@
 import { useCallback, useMemo, useState } from "react";
 import * as Clipboard from "expo-clipboard";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 
-import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { Card } from "@/components/ui/Card";
+import { ListRow } from "@/components/ui/ListRow";
 import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
+import { SectionHeader } from "@/components/ui/SectionHeader";
+import { StateCard } from "@/components/ui/StateCard";
 import { getAccountNumber, listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
 import { useAuth } from "@/features/auth/context/AuthContext";
@@ -13,7 +16,7 @@ import { BalanceCard } from "@/features/home/components/BalanceCard";
 import { HomeHeader } from "@/features/home/components/HomeHeader";
 import { QuickActionTile } from "@/features/home/components/QuickActionTile";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, sizes, spacing } from "@/theme";
 
 export function HomeScreen() {
   const router = useRouter();
@@ -25,6 +28,7 @@ export function HomeScreen() {
   );
   const [account, setAccount] = useState<PaymentAccount | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<unknown>();
   const [isSessionExpired, setIsSessionExpired] = useState(false);
   const [isBalanceVisible, setIsBalanceVisible] = useState(false);
@@ -34,10 +38,12 @@ export function HomeScreen() {
   const [isCopyingAccountNumber, setIsCopyingAccountNumber] = useState(false);
   const [accountNumberError, setAccountNumberError] = useState<unknown>();
 
-  const loadAccounts = useCallback(async () => {
-    setIsBalanceVisible(false);
-    setIsAccountNumberVisible(false);
-    setRevealedAccountNumber(null);
+  const loadAccounts = useCallback(async (resetVisualState = true) => {
+    if (resetVisualState) {
+      setIsBalanceVisible(false);
+      setIsAccountNumberVisible(false);
+      setRevealedAccountNumber(null);
+    }
     setAccountNumberError(undefined);
 
     if (!accessToken) {
@@ -63,6 +69,15 @@ export function HomeScreen() {
       setIsLoading(false);
     }
   }, [accessToken, auth]);
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await loadAccounts(false);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [loadAccounts]);
 
   const revealAccountNumber = useCallback(async (): Promise<string | null> => {
     if (!account) {
@@ -131,7 +146,17 @@ export function HomeScreen() {
 
   return (
     <Screen style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => void handleRefresh()}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }
+      >
         <HomeHeader
           fullName={fullName}
           onMenu={() => router.push("/profile")}
@@ -139,22 +164,18 @@ export function HomeScreen() {
         />
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Số dư tài khoản thanh toán</Text>
+          <SectionHeader title="Tài khoản thanh toán" />
           {isLoading ? (
-            <View style={styles.stateCard} testID="home-account-loading">
-              <ActivityIndicator color={colors.primary} size="large" />
-              <Text style={styles.stateText}>Đang tải số dư...</Text>
-            </View>
+            <StateCard loading message="Đang tải số dư an toàn..." testID="home-account-loading" />
           ) : isSessionExpired ? (
-            <View style={styles.stateCard} testID="home-session-expired">
-              <Text style={styles.stateTitle}>Phiên đăng nhập đã hết hạn</Text>
-              <Text style={styles.stateText}>Vui lòng đăng nhập lại để xem tài khoản.</Text>
-              <PrimaryButton
-                label="Đăng nhập lại"
-                onPress={() => router.replace("/login")}
-                testID="home-login-again"
-              />
-            </View>
+            <StateCard
+              actionLabel="Đăng nhập lại"
+              icon="lock"
+              message="Vui lòng đăng nhập lại để tiếp tục xem dữ liệu tài khoản."
+              onAction={() => router.replace("/login")}
+              testID="home-session-expired"
+              title="Phiên đăng nhập đã hết hạn"
+            />
           ) : error ? (
             <RequestErrorNotice
               error={error}
@@ -180,41 +201,65 @@ export function HomeScreen() {
               onRetryAccountNumber={() => void revealAccountNumber()}
             />
           ) : (
-            <View style={styles.stateCard} testID="home-account-empty">
-              <Text style={styles.stateTitle}>Chưa có tài khoản thanh toán</Text>
-              <Text style={styles.stateText}>Tài khoản sẽ xuất hiện khi được cấp từ hệ thống.</Text>
-            </View>
+            <StateCard
+              icon="account"
+              message="Tài khoản sẽ xuất hiện sau khi hồ sơ của bạn được hệ thống cấp."
+              testID="home-account-empty"
+              title="Chưa có tài khoản thanh toán"
+            />
           )}
         </View>
 
         <View style={styles.section}>
-          <View style={styles.sectionHeadingRow}>
-            <Text style={styles.sectionTitle}>Dịch vụ nhanh</Text>
-            <Text style={styles.sectionHint}>Sandbox đồ án</Text>
-          </View>
+          <SectionHeader title="Dịch vụ nhanh" />
           <View style={styles.quickActions}>
             <QuickActionTile
-              icon="↗"
+              icon="transfer"
               onPress={() => router.push("/transfer")}
-              subtitle="Thực hiện ngay"
+              subtitle="Chuyển khoản"
               testID="quick-transfer"
               title="Chuyển tiền"
             />
             <QuickActionTile
-              icon="◫"
+              icon="savings"
               onPress={() => router.push("/savings")}
-              subtitle="Dữ liệu sandbox"
+              subtitle="Quản lý kỳ hạn"
               testID="quick-deposit"
               title="Tiền gửi"
             />
             <QuickActionTile
-              icon="▣"
+              icon="card"
               onPress={() => router.push("/cards")}
-              subtitle="Dữ liệu sandbox"
+              subtitle="Hạn mức và sao kê"
               testID="quick-cards"
               title="Thẻ tín dụng"
             />
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <SectionHeader title="Quản lý" />
+          <Card style={styles.toolsCard}>
+            <ListRow
+              icon="history"
+              onPress={() => router.push("/history")}
+              subtitle="Tra cứu trạng thái và biên nhận"
+              title="Lịch sử giao dịch"
+            />
+            <ListRow
+              icon="users"
+              onPress={() => router.push("/beneficiaries")}
+              subtitle="Thêm và quản lý người nhận"
+              title="Danh bạ người nhận"
+            />
+            <ListRow
+              icon="account"
+              onPress={() => router.push("/assistant")}
+              subtitle="Hỏi đáp về cách sử dụng ứng dụng"
+              testID="home-assistant-entry"
+              title="Trợ lý hướng dẫn NOVA"
+            />
+          </Card>
         </View>
       </ScrollView>
     </Screen>
@@ -228,7 +273,7 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     width: "100%",
-    maxWidth: 720,
+    maxWidth: sizes.contentMaxWidth,
     alignSelf: "center",
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
@@ -238,44 +283,14 @@ const styles = StyleSheet.create({
   section: {
     gap: spacing.sm,
   },
-  sectionHeadingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md,
-  },
-  sectionTitle: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  sectionHint: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: "600",
-  },
   quickActions: {
     flexDirection: "row",
     gap: spacing.sm,
   },
-  stateCard: {
-    minHeight: 150,
-    justifyContent: "center",
-    gap: spacing.md,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 20,
-    backgroundColor: colors.surface,
-  },
-  stateTitle: {
-    color: colors.text,
-    fontSize: 17,
-    fontWeight: "800",
-  },
-  stateText: {
-    color: colors.muted,
-    fontSize: 14,
-    lineHeight: 20,
+  toolsCard: {
+    overflow: "hidden",
+    gap: 0,
+    padding: 0,
+    borderRadius: radius.lg,
   },
 });

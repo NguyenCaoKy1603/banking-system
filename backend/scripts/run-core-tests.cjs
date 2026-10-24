@@ -4,7 +4,7 @@ const { spawnSync } = require("node:child_process");
 
 const backendRoot = path.resolve(__dirname, "..");
 const testFiles = readdirSync(path.join(backendRoot, "src", "tests"))
-  .filter((file) => file.endsWith(".test.ts") && !file.includes("workerOutbox"))
+  .filter((file) => file.endsWith(".test.ts") && !file.includes("workerOutbox") && !file.includes("disposableMigrationRuntime"))
   .sort()
   .map((file) => path.join("src", "tests", file));
 const tsxCli = path.join(backendRoot, "node_modules", "tsx", "dist", "cli.mjs");

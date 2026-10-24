@@ -14,7 +14,7 @@ import {
   type CoreSavingsMaturityInput,
   type InMemoryCoreState,
   type TerminalTransferStatus,
-} from "./coreBanking.js";
+} from "./services/coreBanking.js";
 import {
   CREDIT_MINIMUM_PAYMENT_FLOOR_MINOR,
   CREDIT_POLICY_VERSION,
@@ -63,8 +63,8 @@ import {
   type CreditTransactionStatus,
   type CreditTransactionType,
   type CreditCardStatus,
-} from "./credit.js";
-import { parseMoney, toMoney } from "./money.js";
+} from "./domain/credit/index.js";
+import { parseMoney, toMoney } from "./domain/money.js";
 import {
   DEFAULT_SAVINGS_PRODUCTS,
   addMonthsClamped,
@@ -78,6 +78,7 @@ import {
   toPublicSavingsOpening,
   toPublicSavingsQuote,
   type MaturityInstruction,
+  calculateEarlyWithdrawal,
   type SavingsDeposit,
   type SavingsDepositRecord,
   type SavingsOpening,
@@ -86,7 +87,8 @@ import {
   type SavingsQuote,
   type SavingsQuoteRecord,
   type SavingsTermMonths,
-} from "./savings.js";
+  type SavingsWithdrawalReceipt,
+} from "./domain/savings/index.js";
 import {
   createId,
   createOpaqueToken,
@@ -110,7 +112,6 @@ import type {
   Beneficiary,
   ControlPolicy,
   FundingReceipt,
-  FraudReportResponse,
   InternalRecipientLookup,
   LoginResponse,
   LoginResult,
@@ -183,7 +184,12 @@ type SavingsIdempotencyRecord = {
   openingId: string;
 };
 
-type FraudReportRecord = FraudReportResponse & {
+// Retained only so snapshots created before removal can still be imported and
+// exported without discarding their historical report data.
+type FraudReportRecord = {
+  reportId: string;
+  status: "RECEIVED" | "IN_REVIEW" | "RESOLVED";
+  createdAt: string;
   userId: string;
   accountId: string;
   transactionId: string;
@@ -246,7 +252,7 @@ export type ServiceHealth = {
   outbox: "ok" | "degraded";
   pendingOutboxEvents: number;
   emailProvider?: {
-    provider: "fake" | "disabled" | "http";
+    provider: "fake" | "disabled" | "http" | "smtp";
     status: "ok" | "disabled" | "degraded";
     configured: boolean;
     credentialConfigured: boolean;
@@ -1480,6 +1486,7 @@ export class BankingSystem {
       "CARD_ACTIVATION",
       "CREDIT_PAYMENT",
       "CARD_UNLOCK",
+      "CARD_REPORT_LOST",
     ];
     if (!supportedPurposes.includes(purpose)) {
       throw invalidRequest("OTP purpose is invalid.");
@@ -1498,7 +1505,7 @@ export class BankingSystem {
           ? this.policy.savingsStepUpMethods
           : purpose === "CREDIT_PAYMENT"
             ? this.policy.creditPaymentStepUpMethods
-            : purpose === "CARD_UNLOCK"
+            : purpose === "CARD_UNLOCK" || purpose === "CARD_REPORT_LOST"
               ? this.policy.cardUnlockStepUpMethods
               : ["OTP"] as StepUpMethod[];
     const effectiveFingerprint =
@@ -2801,6 +2808,77 @@ export class BankingSystem {
     return toPublicSavingsDeposit(this.savingsDeposits.get(depositId)!);
   }
 
+  updateSavingsDepositMaturityInstruction(
+    userId: string,
+    depositId: string,
+    maturityInstruction: MaturityInstruction,
+  ): SavingsDeposit {
+    this.assertSavingsAvailable(userId);
+    const deposit = this.savingsDeposits.get(depositId);
+    if (!deposit || deposit.userId !== userId) {
+      throw notFound("Savings deposit not found.");
+    }
+    if (deposit.status !== "ACTIVE") {
+      throw conflict("Only ACTIVE savings deposits can update maturity instruction.");
+    }
+    deposit.maturityInstruction = maturityInstruction;
+    deposit.updatedAt = new Date(this.clock()).toISOString();
+    return toPublicSavingsDeposit(deposit);
+  }
+
+  withdrawSavingsDepositEarly(
+    userId: string,
+    depositId: string,
+    idempotencyKey?: string,
+  ): SavingsWithdrawalReceipt {
+    this.assertSavingsAvailable(userId);
+    const deposit = this.savingsDeposits.get(depositId);
+    if (!deposit || deposit.userId !== userId) {
+      throw notFound("Savings deposit not found.");
+    }
+    if (deposit.status !== "ACTIVE") {
+      throw conflict("Only ACTIVE savings deposits can be withdrawn.");
+    }
+    const now = new Date(this.clock()).toISOString();
+    const principalMinor = BigInt(deposit.principal.amountMinor);
+    const calc = calculateEarlyWithdrawal(principalMinor, deposit.openedAt, now);
+    const payoutMinor = BigInt(calc.totalPayout.amountMinor);
+    const interestMinor = BigInt(calc.earlyInterest.amountMinor);
+    const key = idempotencyKey?.trim() || `early-wth:${depositId}`;
+
+    const maturityInput: CoreSavingsMaturityInput = {
+      idempotencyKey: key,
+      depositId: deposit.depositId,
+      accountId: deposit.sourceAccountId,
+      principalMinor,
+      interestMinor,
+      creditToPaymentMinor: payoutMinor,
+      newSavingsPrincipalMinor: 0n,
+      now,
+      description: `Tất toán trước hạn tiết kiệm ${deposit.productName}`,
+    };
+    this.core.postSavingsMaturity(userId, maturityInput);
+
+    deposit.status = "CLOSED";
+    deposit.updatedAt = now;
+    deposit.earlyWithdrawnAt = now;
+    deposit.earlyInterest = calc.earlyInterest;
+
+    const reference = `WTH-${deposit.depositId.slice(-12).toUpperCase()}`;
+    return {
+      depositId: deposit.depositId,
+      sourceAccountId: deposit.sourceAccountId,
+      principal: deposit.principal,
+      interestDays: calc.interestDays,
+      demandRateBasisPoints: calc.demandRateBasisPoints,
+      earlyInterest: calc.earlyInterest,
+      totalPayout: calc.totalPayout,
+      status: "CLOSED",
+      reference,
+      withdrawnAt: now,
+    };
+  }
+
   lookupBeneficiary(userId: string, beneficiaryId: string): Beneficiary {
     const beneficiary = this.beneficiaries
       .get(userId)
@@ -2820,7 +2898,12 @@ export class BankingSystem {
       normalizeAccountNumber(accountNumber),
     );
     if (target.ownerId === userId) {
-      throw conflict("Không thể chuyển tiền cho chính tài khoản của mình.");
+      const ownedAccounts = this.listAccounts(userId).filter(
+        (a) => a.id !== target.accountId && a.status === "ACTIVE",
+      );
+      if (ownedAccounts.length === 0) {
+        throw conflict("Không thể chuyển tiền cho chính tài khoản của mình.");
+      }
     }
     if (target.status !== "ACTIVE") {
       throw conflict("Tài khoản người nhận không hoạt động.");
@@ -2982,6 +3065,9 @@ export class BankingSystem {
     if (beneficiary.status !== "ACTIVE") {
       throw conflict("Beneficiary is not active.");
     }
+    if (destinationAccountId === sourceAccountId) {
+      throw conflict("A transfer cannot be sent to the source account.");
+    }
 
     const feeMinor = 1_000n;
     const quote: TransferQuote = {
@@ -3125,6 +3211,11 @@ export class BankingSystem {
     });
     const transferTarget = this.core.getTransferTarget(userId, receipt.transferId);
     quoteRecord.consumedTransferId = receipt.transferId;
+    for (const [hash, lookup] of this.recipientLookups.entries()) {
+      if (lookup.userId === userId && lookup.destinationAccountId === quoteRecord.destinationAccountId) {
+        this.recipientLookups.delete(hash);
+      }
+    }
     this.transfers.set(receipt.transferId, { userId, receipt });
     this.idempotency.set(`${userId}:${normalizedKey}`, {
       userId,
@@ -4579,108 +4670,6 @@ export class BankingSystem {
     return { ...notification };
   }
 
-  reportFraud(
-    userId: string,
-    accountId: string,
-    transactionId: string,
-    reason: string,
-    idempotencyKey: string,
-  ): FraudReportResponse {
-    const normalizedAccountId = requireString(accountId, "accountId");
-    const normalizedTransactionId = requireString(transactionId, "transactionId");
-    const normalizedReason = requireString(reason, "reason");
-    if (normalizedReason.length < 5) {
-      throw invalidRequest("reason must contain at least 5 characters.", {
-        reason: "reason must contain at least 5 characters.",
-      });
-    }
-    if (normalizedReason.length > 1_000) {
-      throw invalidRequest("reason must not exceed 1000 characters.", {
-        reason: "reason must not exceed 1000 characters.",
-      });
-    }
-
-    const normalizedKey = requireIdempotencyKey(idempotencyKey, 8);
-    const requestFingerprint = fingerprint({
-      accountId: normalizedAccountId,
-      transactionId: normalizedTransactionId,
-      reason: normalizedReason,
-    });
-    const scopedKey = `${userId}:${normalizedKey}`;
-    const existing = this.fraudReportIdempotency.get(scopedKey);
-    if (existing) {
-      if (existing.fingerprint !== requestFingerprint) {
-        throw conflictWithCode(
-          "IDEMPOTENCY_CONFLICT",
-          "Idempotency-Key đã được dùng cho một báo cáo khác.",
-        );
-      }
-      return this.getFraudReport(userId, existing.reportId);
-    }
-    const transaction = this.core.getTransaction(
-      userId,
-      normalizedAccountId,
-      normalizedTransactionId,
-    );
-    const existingOpenReport = [...this.fraudReports.values()].find(
-      (report) =>
-        report.userId === userId &&
-        report.transactionId === transaction.id &&
-        report.status === "RECEIVED",
-    );
-    if (existingOpenReport) {
-      if (
-        existingOpenReport.accountId !== normalizedAccountId ||
-        existingOpenReport.reason !== normalizedReason
-      ) {
-        throw conflictWithCode(
-          "FRAUD_REPORT_ALREADY_EXISTS",
-          "Giao dịch này đã có một báo cáo gian lận đang mở.",
-        );
-      }
-      this.fraudReportIdempotency.set(scopedKey, {
-        userId,
-        fingerprint: requestFingerprint,
-        reportId: existingOpenReport.reportId,
-      });
-      return this.getFraudReport(userId, existingOpenReport.reportId);
-    }
-    const report: FraudReportRecord = {
-      reportId: createId("fraud-report"),
-      status: "RECEIVED",
-      createdAt: nowIso(this.clock),
-      userId,
-      accountId: normalizedAccountId,
-      transactionId: transaction.id,
-      reason: normalizedReason,
-    };
-    this.fraudReports.set(report.reportId, report);
-    this.fraudReportIdempotency.set(scopedKey, {
-      userId,
-      fingerprint: requestFingerprint,
-      reportId: report.reportId,
-    });
-    this.recordAudit("FRAUD_REPORT_CREATED", userId, transaction.id);
-    this.enqueueOutbox("FRAUD_REPORT_CREATED", report.reportId, report.createdAt);
-    return {
-      reportId: report.reportId,
-      status: report.status,
-      createdAt: report.createdAt,
-    };
-  }
-
-  getFraudReport(userId: string, reportId: string): FraudReportResponse {
-    const report = this.fraudReports.get(requireString(reportId, "reportId"));
-    if (!report || report.userId !== userId) {
-      throw notFound("Fraud report not found.");
-    }
-    return {
-      reportId: report.reportId,
-      status: report.status,
-      createdAt: report.createdAt,
-    };
-  }
-
   reconcile() {
     const rows = this.core.reconcile();
     for (const row of rows) {
@@ -4898,6 +4887,9 @@ export class BankingSystem {
     }
     if (purpose === "SAVINGS_OPENING") {
       return this.savingsQuotes.has(resourceId) ? fingerprint({ quoteId: resourceId }) : null;
+    }
+    if (purpose === "SAVINGS_WITHDRAWAL") {
+      return this.savingsDeposits.has(resourceId) ? fingerprint({ depositId: resourceId, action: "EARLY_WITHDRAWAL" }) : null;
     }
     if (purpose === "CREDIT_PAYMENT") {
       return this.creditQuotes.has(resourceId) ? fingerprint({ quoteId: resourceId }) : null;

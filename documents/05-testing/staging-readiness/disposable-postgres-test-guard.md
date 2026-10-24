@@ -42,7 +42,7 @@ Remove-Item Env:DATABASE_TEST_ADMIN_URL
 ```
 
 Mỗi lệnh PostgreSQL tự tạo tên `banking_test_<pid>_<random>`, chạy migration
-001–032, chạy đúng suite được chọn và xóa database bằng `DROP DATABASE ... WITH
+001–040, chạy đúng suite được chọn và xóa database bằng `DROP DATABASE ... WITH
 (FORCE)` kể cả khi suite thất bại. `test:worker` dùng cùng cơ chế khi worker
 được phép kiểm thử. Worker chỉ được bật trong disposable rehearsal với các cờ
 test riêng; không bật worker runtime trên `banking_preview`.
@@ -56,7 +56,7 @@ nối. CI có negative test `npm run test:database:guard` và các workflow khô
 ## Trạng thái bằng chứng
 
 Guard hiện đã được kiểm tra bằng suite thuần (5/5) và PostgreSQL disposable thật;
-mọi suite đều phải áp dụng migration 001–032, không đọc `.env.compose` preview.
+mọi suite đều phải áp dụng migration 001–040, không đọc `.env.compose` preview.
 Các lệnh foundation, relational, MFA, Savings, Credit, remaining, registration,
 lifecycle, legacy persistence và Admin PostgreSQL là các quality evidence local
 riêng biệt. Đây là quality evidence local; chưa phải staging/production evidence.

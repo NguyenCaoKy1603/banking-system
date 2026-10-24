@@ -72,7 +72,48 @@ const drRecoverySchema = fs.readFileSync(
   path.resolve(__dirname, "../database/028_dr_recovery_markers.sql"),
   "utf8",
 );
+const controlPolicyBootstrapSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/033_control_policy_bootstrap.sql"),
+  "utf8",
+);
+const policyEntitlementsSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/034_policy_entitlements_login_rate_limit.sql"),
+  "utf8",
+);
+const creditCycleSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/035_credit_cycle_start.sql"),
+  "utf8",
+);
+const beneficiaryLifecycleSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/036_beneficiary_lifecycle.sql"),
+  "utf8",
+);
+const transferSnapshotSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/037_transfer_counterparty_snapshots.sql"),
+  "utf8",
+);
+const kycRuntimeSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/038_customer_kyc_runtime.sql"),
+  "utf8",
+);
+const lifecycleHardeningSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/039_lifecycle_suspense_and_keyset_indexes.sql"),
+  "utf8",
+);
+const operationsSafetySchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/040_card_security_and_suspense_retry.sql"),
+  "utf8",
+);
 const secretSchema = `${secretMetadataSchema}\n${secretRotationSchema}`;
+const businessHardeningSchema = [
+  policyEntitlementsSchema,
+  creditCycleSchema,
+  beneficiaryLifecycleSchema,
+  transferSnapshotSchema,
+  kycRuntimeSchema,
+  lifecycleHardeningSchema,
+  operationsSafetySchema,
+].join("\n");
 
 const requiredTables = [
   "customers",
@@ -129,6 +170,7 @@ const outboxWorkerTables = [
 const mfaTables = ["mfa_credentials", "mfa_recovery_codes", "mfa_recovery_requests", "auth_security_events"];
 const secretMetadataTables = ["encryption_rekey_checkpoints"];
 const drRecoveryTables = ["dr_recovery_markers"];
+const businessHardeningTables = ["customer_feature_entitlements", "savings_maturity_suspense", "card_security_cases"];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -181,6 +223,11 @@ const mfaRecoveryCodeBlock = tableBlock(mfaRecoverySchema, "mfa_recovery_codes")
 const mfaRecoveryRequestBlock = tableBlock(mfaRecoverySchema, "mfa_recovery_requests");
 const authSecurityEventBlock = tableBlock(authSecurityEventsSchema, "auth_security_events");
 const rekeyCheckpointBlock = tableBlock(secretMetadataSchema, "encryption_rekey_checkpoints");
+const businessHardeningTableBlocks = new Map([
+  ["customer_feature_entitlements", tableBlock(policyEntitlementsSchema, "customer_feature_entitlements")],
+  ["savings_maturity_suspense", tableBlock(lifecycleHardeningSchema, "savings_maturity_suspense")],
+  ["card_security_cases", tableBlock(operationsSafetySchema, "card_security_cases")],
+]);
 
 function requireColumn(tableName, columnName, definitionPattern) {
   const block = tableBlocks.get(tableName);
@@ -374,6 +421,65 @@ if (/\bpan\b|\bcvv\b|\bpin\b/i.test(creditSchema)) {
   throw new Error("Credit migration must not define PAN, CVV or PIN columns.");
 }
 
+for (const [label, pattern] of [
+  ["singleton control-policy seed", /INSERT\s+INTO\s+control_policy\s*\(/i],
+  ["idempotent control-policy seed", /ON\s+CONFLICT\s*\(\s*singleton\s*\)\s*DO\s+NOTHING/i],
+  ["TOTP-compatible control-policy constraints", /ARRAY\s*\[\s*'OTP'\s*,\s*'TOTP'\s*,\s*'BIOMETRIC'\s*\]::text\[\]/i],
+  ["TOTP relational-v2 bootstrap", /ARRAY\s*\[\s*'TOTP'\s*\]::text\[\]/i],
+]) {
+  if (!pattern.test(controlPolicyBootstrapSchema)) {
+    throw new Error(`Missing control-policy bootstrap invariant: ${label}`);
+  }
+}
+
+for (const [label, pattern] of [
+  ["login blocked window", /ALTER\s+TABLE\s+rate_limit_buckets[\s\S]*blocked_until\s+timestamptz/i],
+  ["customer feature entitlement table", /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+customer_feature_entitlements/i],
+  ["customer entitlement allow-list", /feature_code\s+text\s+NOT\s+NULL\s+CHECK\s*\(feature_code\s+IN\s*\('TRANSFERS',\s*'SAVINGS',\s*'CREDIT'\)/i],
+  ["new-customer entitlement seeding", /CREATE\s+TRIGGER\s+customers_seed_feature_entitlements/i],
+  ["credit lifecycle cursor", /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+current_cycle_start_at\s+timestamptz/i],
+  ["credit ambiguous backfill review marker", /cycle_backfill_review_required\s+boolean\s+NOT\s+NULL\s+DEFAULT\s+false[\s\S]*AMBIGUOUS_LEGACY_STATEMENT/i],
+  ["credit placeholder boundary", /cs\.issued_at\s*=\s*cs\.cycle_start_at[\s\S]*cs\.cycle_start_at\s*<\s*cs\.cycle_end_at/i],
+  ["credit placeholder no payment evidence", /NOT\s+EXISTS\s*\(SELECT\s+1\s+FROM\s+credit_transactions[\s\S]*NOT\s+EXISTS\s*\(SELECT\s+1\s+FROM\s+credit_payments/i],
+  ["beneficiary deletion timestamp", /ALTER\s+TABLE\s+beneficiaries[\s\S]*ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+deleted_at\s+timestamptz/i],
+  ["beneficiary deleted status", /CHECK\s*\(status\s+IN\s*\('ACTIVE',\s*'BLOCKED',\s*'DELETED'\)/i],
+  ["beneficiary active-only uniqueness", /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+beneficiaries_identity_active_idx[\s\S]*WHERE\s+deleted_at\s+IS\s+NULL/i],
+  ["counterparty owner snapshot", /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+destination_owner_name\s+text/i],
+  ["synthetic KYC payload", /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+synthetic_payload\s+jsonb\s+NOT\s+NULL/i],
+  ["KYC lifecycle statuses", /CHECK\s*\(status\s+IN\s*\('DRAFT',\s*'SUBMITTED',\s*'UNDER_REVIEW',\s*'NEEDS_MORE_INFO',\s*'APPROVED',\s*'REJECTED'\)/i],
+  ["KYC open application uniqueness", /CREATE\s+UNIQUE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+kyc_applications_customer_open_idx[\s\S]*WHERE\s+status\s+IN/i],
+  ["savings maturity suspense", /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+savings_maturity_suspense/i],
+  ["savings suspense operation uniqueness", /operation_key\s+text\s+NOT\s+NULL\s+UNIQUE/i],
+  ["savings suspense dead-letter status", /savings_maturity_suspense_status_check[\s\S]*CHECK\s*\(status\s+IN\s*\('PENDING',\s*'RESOLVED',\s*'DEAD'\)\)/i],
+  ["savings suspense retry metadata", /ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+attempts\s+integer[\s\S]*next_attempt_at\s+timestamptz[\s\S]*last_error_code\s+text/i],
+  ["reported-lost card operations case", /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+card_security_cases[\s\S]*case_type\s+text[\s\S]*'REPORTED_LOST'/i],
+  ["reported-lost TOTP purpose", /auth_challenges_purpose_ck[\s\S]*'CARD_REPORT_LOST'/i],
+  ["history keyset indexes", /account_transactions_account_occurred_keyset_idx[\s\S]*credit_transactions_account_occurred_keyset_idx[\s\S]*credit_statements_account_issued_keyset_idx/i],
+]) {
+  if (!pattern.test(businessHardeningSchema)) {
+    throw new Error(`Missing business-hardening invariant: ${label}`);
+  }
+}
+
+for (const [tableName, columnName, pattern] of [
+  ["customer_feature_entitlements", "customer_id", /uuid\s+NOT\s+NULL\s+REFERENCES\s+customers/i],
+  ["customer_feature_entitlements", "feature_code", /text\s+NOT\s+NULL\s+CHECK/i],
+  ["customer_feature_entitlements", "enabled", /boolean\s+NOT\s+NULL/i],
+  ["savings_maturity_suspense", "deposit_id", /uuid\s+NOT\s+NULL\s+UNIQUE\s+REFERENCES\s+savings_deposits/i],
+  ["savings_maturity_suspense", "amount_minor", /bigint\s+NOT\s+NULL\s+CHECK\s*\(amount_minor\s*>\s*0\)/i],
+  ["savings_maturity_suspense", "reason_code", /text\s+NOT\s+NULL\s+CHECK/i],
+  ["card_security_cases", "card_id", /uuid\s+NOT\s+NULL\s+REFERENCES\s+credit_cards/i],
+  ["card_security_cases", "customer_id", /uuid\s+NOT\s+NULL\s+REFERENCES\s+customers/i],
+  ["card_security_cases", "case_type", /text\s+NOT\s+NULL\s+CHECK/i],
+]) {
+  const block = businessHardeningTableBlocks.get(tableName);
+  const columnPattern = new RegExp(`^\\s*${escapeRegExp(columnName)}\\s+([^,\\n]+)`, "mi");
+  const match = block.match(columnPattern);
+  if (!match || !pattern.test(match[1])) {
+    throw new Error(`Column ${tableName}.${columnName} does not match business-hardening requirements.`);
+  }
+}
+
 for (const tableName of savingsTables) {
   const block = savingsTableBlocks.get(tableName);
   if (!/\bid\s+uuid\s+PRIMARY\s+KEY\b/i.test(block)) {
@@ -526,7 +632,7 @@ for (const [label, pattern] of [
   }
 }
 
-if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(`${schema}\n${savingsSchema}\n${creditSchema}\n${runtimeSchema}\n${v2Schema}\n${identityV2Schema}\n${transferV2Schema}\n${savingsV2Schema}\n${creditV2Schema}\n${registrationSchema}\n${outboxWorkerSchema}\n${outboxWorkerOperationsSchema}\n${secretSchema}\n${drRecoverySchema}`)) {
+if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(`${schema}\n${savingsSchema}\n${creditSchema}\n${runtimeSchema}\n${v2Schema}\n${identityV2Schema}\n${transferV2Schema}\n${savingsV2Schema}\n${creditV2Schema}\n${registrationSchema}\n${outboxWorkerSchema}\n${outboxWorkerOperationsSchema}\n${secretSchema}\n${drRecoverySchema}\n${businessHardeningSchema}`)) {
   throw new Error("The draft migration must not contain destructive DROP statements.");
 }
 
@@ -534,7 +640,7 @@ async function validateLiveDatabase() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
     console.log(
-        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length + secretMetadataTables.length + drRecoveryTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
+        `Database source contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length + secretMetadataTables.length + drRecoveryTables.length + businessHardeningTables.length} table definitions and column/constraint invariants present (live DB check skipped; DATABASE_URL is not set).`,
     );
     return;
   }
@@ -565,10 +671,15 @@ async function validateLiveDatabase() {
       ...mfaTables,
       ...secretMetadataTables,
       ...drRecoveryTables,
+      ...businessHardeningTables,
     ]) {
       if (!liveTables.has(tableName)) {
         throw new Error(`Live PostgreSQL database is missing table: ${tableName}`);
       }
+    }
+    const controlPolicyCount = await pool.query("SELECT COUNT(*)::text AS count FROM control_policy");
+    if (controlPolicyCount.rows[0]?.count !== "1") {
+      throw new Error("Live PostgreSQL database must contain exactly one control_policy row.");
     }
 
     const columnResult = await pool.query(
@@ -620,9 +731,32 @@ async function validateLiveDatabase() {
       ["credit_statements", "version", "int8"],
       ["credit_payment_quotes", "statement_id", "uuid"],
       ["credit_payments", "idempotency_key", "text"],
+      ["credit_accounts", "current_cycle_start_at", "timestamptz"],
+      ["credit_accounts", "cycle_backfill_review_required", "bool"],
       ["control_policy", "card_unlock_step_up_methods", "_text"],
       ["payment_accounts", "account_number", "text"],
       ["payment_accounts", "held_minor", "int8"],
+      ["rate_limit_buckets", "blocked_until", "timestamptz"],
+      ["beneficiaries", "deleted_at", "timestamptz"],
+      ["transfer_quotes", "destination_owner_name", "text"],
+      ["kyc_applications", "synthetic_payload", "jsonb"],
+      ["kyc_applications", "submitted_at", "timestamptz"],
+      ["customer_feature_entitlements", "customer_id", "uuid"],
+      ["customer_feature_entitlements", "feature_code", "text"],
+      ["customer_feature_entitlements", "enabled", "bool"],
+      ["savings_maturity_suspense", "deposit_id", "uuid"],
+      ["savings_maturity_suspense", "customer_id", "uuid"],
+      ["savings_maturity_suspense", "amount_minor", "int8"],
+      ["savings_maturity_suspense", "reason_code", "text"],
+      ["savings_maturity_suspense", "operation_key", "text"],
+      ["savings_maturity_suspense", "status", "text"],
+      ["savings_maturity_suspense", "attempts", "int4"],
+      ["savings_maturity_suspense", "next_attempt_at", "timestamptz"],
+      ["savings_maturity_suspense", "resolved_account_id", "uuid"],
+      ["card_security_cases", "card_id", "uuid"],
+      ["card_security_cases", "customer_id", "uuid"],
+      ["card_security_cases", "case_type", "text"],
+      ["card_security_cases", "status", "text"],
       ["reference_runtime_records", "payload", "jsonb"],
       ["command_idempotency", "customer_id", "uuid"],
       ["command_idempotency", "operation_type", "text"],
@@ -707,6 +841,20 @@ async function validateLiveDatabase() {
     const definitions = constraintResult.rows.map((row) =>
       `${row.table_name} ${row.definition}`,
     );
+    for (const columnName of [
+      "step_up_methods",
+      "savings_step_up_methods",
+      "credit_payment_step_up_methods",
+      "card_unlock_step_up_methods",
+    ]) {
+      if (!definitions.some((definition) =>
+        definition.startsWith("control_policy ") &&
+        definition.includes(columnName) &&
+        /TOTP/i.test(definition),
+      )) {
+        throw new Error(`Live control_policy constraint must allow TOTP for ${columnName}.`);
+      }
+    }
     for (const pattern of [
       /transfers UNIQUE \(customer_id, idempotency_key\)/i,
       /transfers UNIQUE \(quote_id\)/i,
@@ -731,14 +879,46 @@ async function validateLiveDatabase() {
       /mfa_recovery_codes FOREIGN KEY \(customer_id\) REFERENCES customers/i,
       /mfa_recovery_requests FOREIGN KEY \(customer_id\) REFERENCES customers/i,
       /auth_security_events FOREIGN KEY \(customer_id\) REFERENCES customers/i,
+      /customer_feature_entitlements PRIMARY KEY \(customer_id, feature_code\)/i,
+      /savings_maturity_suspense UNIQUE \(deposit_id\)/i,
+      /savings_maturity_suspense UNIQUE \(operation_key\)/i,
+      /savings_maturity_suspense FOREIGN KEY \(deposit_id\) REFERENCES savings_deposits/i,
+      /savings_maturity_suspense FOREIGN KEY \(customer_id\) REFERENCES customers/i,
+      /savings_maturity_suspense FOREIGN KEY \(resolved_account_id\) REFERENCES payment_accounts/i,
+      /card_security_cases FOREIGN KEY \(card_id\) REFERENCES credit_cards/i,
+      /card_security_cases FOREIGN KEY \(customer_id\) REFERENCES customers/i,
     ]) {
       if (!definitions.some((definition) => pattern.test(definition))) {
         throw new Error(`Live PostgreSQL constraint missing: ${pattern}`);
       }
     }
 
+    const indexResult = await pool.query(
+      `
+        SELECT tablename, indexname, indexdef
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+      `,
+    );
+    const indexDefinitions = indexResult.rows.map((row) =>
+      `${row.tablename} ${row.indexname} ${row.indexdef}`,
+    );
+    for (const pattern of [
+      /beneficiaries_identity_active_idx[\s\S]*deleted_at IS NULL[\s\S]*status <> 'DELETED'/i,
+      /kyc_applications_customer_open_idx[\s\S]*status = ANY/i,
+      /account_transactions_account_occurred_keyset_idx/i,
+      /credit_transactions_account_occurred_keyset_idx/i,
+      /credit_statements_account_issued_keyset_idx/i,
+      /card_security_cases_one_open_idx/i,
+      /savings_maturity_suspense_queue_idx[\s\S]*next_attempt_at/i,
+    ]) {
+      if (!indexDefinitions.some((definition) => pattern.test(definition))) {
+        throw new Error(`Live PostgreSQL index missing: ${pattern}`);
+      }
+    }
+
     console.log(
-      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length + secretMetadataTables.length + drRecoveryTables.length} tables, live columns and key constraints verified against PostgreSQL.`,
+      `Database contract valid: ${requiredTables.length + savingsTables.length + creditTables.length + runtimeTables.length + v2Tables.length + identityV2Tables.length + savingsV2Tables.length + creditV2Tables.length + registrationTables.length + outboxWorkerTables.length + mfaTables.length + secretMetadataTables.length + drRecoveryTables.length + businessHardeningTables.length} tables, live columns, indexes and key constraints verified against PostgreSQL.`,
     );
   } finally {
     await pool.end();

@@ -1,21 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "expo-router";
 import {
   ActivityIndicator,
-  Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from "react-native";
 
+import { AppHeader } from "@/components/ui/AppHeader";
+import { Button } from "@/components/ui/Button";
+import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
-import {
-  getMockKycApplication,
-  submitMockKycApplication,
-} from "@/features/kyc/services/kycMock";
+import { getKycApplication, saveKycDraft, submitKycApplication } from "@/features/kyc/services/kycApi";
 import type { KycApplication, KycDraft, KycStatus } from "@/features/kyc/types/kyc";
 import {
   hasKycFieldErrors,
@@ -23,46 +23,111 @@ import {
   type KycFieldErrors,
 } from "@/features/kyc/validation/kycValidators";
 import { useAuth } from "@/features/auth/context/AuthContext";
-import { colors, spacing } from "@/theme";
+import { ApiError } from "@/services/api/ApiError";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getStatusLabel(status: KycStatus): string {
   switch (status) {
     case "DRAFT":
       return "Bản nháp";
-    case "PENDING":
+    case "SUBMITTED":
       return "Đang chờ duyệt";
+    case "UNDER_REVIEW":
+      return "Đang được xem xét";
+    case "NEEDS_MORE_INFO":
+      return "Cần bổ sung thông tin";
     case "APPROVED":
       return "Đã duyệt";
     case "REJECTED":
-      return "Cần bổ sung";
+      return "Không được phê duyệt";
   }
 }
 
-function maskIdentityNumber(identityNumber: string): string {
-  if (identityNumber.length < 4) {
-    return "••••";
-  }
+function maskIdentityNumberLast4(identityNumberLast4: string): string {
+  return `••••${identityNumberLast4}`;
+}
 
-  return `${"•".repeat(Math.max(identityNumber.length - 4, 0))}${identityNumber.slice(-4)}`;
+function getRejectionReasonText(status: KycStatus, reason: string | null | undefined): string {
+  const trimmed = reason?.trim();
+  if (trimmed && trimmed.length > 0) {
+    return trimmed.replace(/\.+$/, "");
+  }
+  return status === "NEEDS_MORE_INFO"
+    ? "Cần cập nhật và hoàn thiện hồ sơ định danh"
+    : "Thông tin định danh chưa đáp ứng tiêu chuẩn đối chiếu";
+}
+
+function resolveErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    if (err.code === "NETWORK_ERROR") {
+      return "Không thể kết nối đến máy chủ. Vui lòng kiểm tra đường truyền.";
+    }
+    if (err.code === "TIMEOUT") {
+      return "Yêu cầu đến máy chủ đã hết thời gian chờ. Vui lòng thử lại sau.";
+    }
+    if (err.status === 401 || err.code === "UNAUTHORIZED") {
+      return "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.";
+    }
+    if (err.message && err.message.trim().length > 0) {
+      return err.message;
+    }
+  }
+  return fallback;
+}
+
+const ALLOWLISTED_FIELDS: (keyof KycDraft)[] = [
+  "fullName",
+  "identityNumber",
+  "address",
+  "documentUri",
+  "syntheticDataConfirmed",
+];
+
+function extractFieldErrors(apiError: ApiError): KycFieldErrors {
+  const rawErrors = apiError.fieldErrors;
+  if (!rawErrors || typeof rawErrors !== "object") return {};
+  const filtered: KycFieldErrors = {};
+  for (const key of ALLOWLISTED_FIELDS) {
+    if (typeof rawErrors[key] === "string" && rawErrors[key].trim().length > 0) {
+      filtered[key] = rawErrors[key];
+    }
+  }
+  return filtered;
 }
 
 const emptyErrors: KycFieldErrors = {};
 
 export function KycScreen() {
   const router = useRouter();
-  const { session } = useAuth();
+  const { deviceId, refreshAccessToken, session } = useAuth();
   const userId = session?.user.id ?? null;
+  const auth = useMemo(
+    () => ({
+      accessToken: session?.accessToken ?? null,
+      deviceId,
+      refreshAccessToken,
+    }),
+    [deviceId, refreshAccessToken, session?.accessToken],
+  );
   const [application, setApplication] = useState<KycApplication | null>(null);
+  const [identityChanged, setIdentityChanged] = useState(false);
   const [draft, setDraft] = useState<KycDraft>({
     fullName: session?.user.fullName ?? "",
     identityNumber: "",
     address: "",
-    documentUri: "",
+    documentUri: "mock://identity-card-front",
+    syntheticDataConfirmed: true,
   });
   const [fieldErrors, setFieldErrors] = useState<KycFieldErrors>(emptyErrors);
   const [isLoading, setIsLoading] = useState(true);
+  const [initialLoadFailed, setInitialLoadFailed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const hasLoadedRef = useRef(false);
+
+  useEffect(() => {
+    hasLoadedRef.current = application !== null;
+  }, [application]);
 
   const loadApplication = useCallback(async () => {
     if (!userId) {
@@ -74,22 +139,29 @@ export function KycScreen() {
     setError(undefined);
 
     try {
-      const current = await getMockKycApplication(userId);
+      const current = await getKycApplication(auth);
       setApplication(current);
+      setInitialLoadFailed(false);
       if (current) {
         setDraft({
           fullName: current.fullName,
-          identityNumber: current.identityNumber,
+          identityNumber: "",
           address: current.address,
           documentUri: current.documentUri,
+          syntheticDataConfirmed: true,
         });
+        setIdentityChanged(false);
       }
-    } catch {
-      setError("Không thể tải hồ sơ eKYC mô phỏng.");
+    } catch (loadError) {
+      const msg = resolveErrorMessage(loadError, "Không thể tải hồ sơ định danh.");
+      setError(msg);
+      if (!hasLoadedRef.current) {
+        setInitialLoadFailed(true);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [userId]);
+  }, [auth, userId]);
 
   useEffect(() => {
     void Promise.resolve().then(() => loadApplication());
@@ -97,9 +169,79 @@ export function KycScreen() {
 
   const updateDraft = useCallback(<K extends keyof KycDraft>(field: K, value: KycDraft[K]) => {
     setDraft((current) => ({ ...current, [field]: value }));
-    setFieldErrors((current) => ({ ...current, [field]: undefined }));
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
     setError(undefined);
+    if (field === "identityNumber") {
+      setIdentityChanged(true);
+    }
   }, []);
+
+  const identityRequired = !application || identityChanged;
+
+  const handleSaveDraft = useCallback(async () => {
+    if (!userId) {
+      setError("Phiên đăng nhập không còn hợp lệ.");
+      return;
+    }
+
+    const errors = validateKycDraft(draft, { identityRequired });
+    setFieldErrors(errors);
+    if (hasKycFieldErrors(errors)) {
+      setError("Vui lòng kiểm tra các trường hồ sơ trước khi lưu.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError(undefined);
+
+    try {
+      const saved = await saveKycDraft(draft, auth, {
+        includeIdentityNumber: identityRequired,
+      });
+      setApplication(saved);
+      setDraft((current) => ({ ...current, identityNumber: "" }));
+      setIdentityChanged(false);
+      setFieldErrors(emptyErrors);
+    } catch (saveError) {
+      if (saveError instanceof ApiError) {
+        if (saveError.status === 422) {
+          const mapped = extractFieldErrors(saveError);
+          setFieldErrors(mapped);
+          setError(saveError.message || "Vui lòng kiểm tra các trường thông tin không hợp lệ.");
+          return;
+        }
+        if (saveError.status === 409 || saveError.code === "CONFLICT") {
+          try {
+            const canonical = await getKycApplication(auth);
+            setApplication(canonical);
+            if (canonical) {
+              setDraft({
+                fullName: canonical.fullName,
+                identityNumber: "",
+                address: canonical.address,
+                documentUri: canonical.documentUri,
+                syntheticDataConfirmed: true,
+              });
+              setIdentityChanged(false);
+              setFieldErrors(emptyErrors);
+            }
+            setError(saveError.message || "Hồ sơ đã được cập nhật từ máy chủ.");
+          } catch {
+            setError("Xung đột dữ liệu và không thể tải lại hồ sơ. Vui lòng kiểm tra kết nối.");
+          }
+          return;
+        }
+      }
+      setError(resolveErrorMessage(saveError, "Không thể lưu bản nháp. Vui lòng thử lại."));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [auth, draft, identityRequired, userId]);
 
   const handleSubmit = useCallback(async () => {
     if (!userId) {
@@ -107,7 +249,7 @@ export function KycScreen() {
       return;
     }
 
-    const errors = validateKycDraft(draft);
+    const errors = validateKycDraft(draft, { identityRequired });
     setFieldErrors(errors);
     if (hasKycFieldErrors(errors)) {
       setError("Vui lòng kiểm tra các trường hồ sơ trước khi gửi.");
@@ -118,48 +260,88 @@ export function KycScreen() {
     setError(undefined);
 
     try {
-      const submitted = await submitMockKycApplication(userId, draft);
+      const submitted = await submitKycApplication(draft, auth, {
+        includeIdentityNumber: identityRequired,
+      });
       setApplication(submitted);
-    } catch {
-      setError("Không thể gửi hồ sơ eKYC mô phỏng. Vui lòng thử lại.");
+      setDraft((current) => ({ ...current, identityNumber: "" }));
+      setIdentityChanged(false);
+      setFieldErrors(emptyErrors);
+    } catch (submitError) {
+      if (submitError instanceof ApiError) {
+        if (submitError.status === 422) {
+          const mapped = extractFieldErrors(submitError);
+          setFieldErrors(mapped);
+          setError(submitError.message || "Vui lòng kiểm tra các trường thông tin không hợp lệ.");
+          return;
+        }
+        if (submitError.status === 409 || submitError.code === "CONFLICT") {
+          try {
+            const canonical = await getKycApplication(auth);
+            setApplication(canonical);
+            if (canonical) {
+              setDraft({
+                fullName: canonical.fullName,
+                identityNumber: "",
+                address: canonical.address,
+                documentUri: canonical.documentUri,
+                syntheticDataConfirmed: true,
+              });
+              setIdentityChanged(false);
+              setFieldErrors(emptyErrors);
+            }
+            setError(submitError.message || "Hồ sơ đã được cập nhật từ máy chủ.");
+          } catch {
+            setError("Xung đột dữ liệu và không thể tải lại hồ sơ. Vui lòng kiểm tra kết nối.");
+          }
+          return;
+        }
+      }
+      setError(resolveErrorMessage(submitError, "Không thể gửi hồ sơ định danh. Vui lòng thử lại."));
     } finally {
       setIsSubmitting(false);
     }
-  }, [draft, userId]);
+  }, [auth, draft, identityRequired, userId]);
 
-  const isEditable = !application || application.status === "DRAFT" || application.status === "REJECTED";
+  const isEditable = !application || application.status === "DRAFT" || application.status === "REJECTED" || application.status === "NEEDS_MORE_INFO";
 
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="kyc-back"
-        >
-          <Text style={styles.backLabel}>‹ Quay lại</Text>
-        </Pressable>
+        <AppHeader
+          backTestID="kyc-back"
+          eyebrow="Xác minh danh tính"
+          onBack={() => router.back()}
+          subtitle="Cung cấp thông tin định danh và theo dõi trạng thái xét duyệt hồ sơ."
+          title="Hồ sơ định danh"
+        />
+        <EnvironmentBadge />
 
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>M2 · eKYC</Text>
-          <Text style={styles.title}>Hồ sơ định danh</Text>
-          <Text style={styles.description}>
-            Ứng dụng khách hàng chỉ gửi hồ sơ và đọc trạng thái. Quyết định duyệt phải đến từ dịch vụ có thẩm quyền phía server.
-          </Text>
-        </View>
-
-        {isLoading ? (
+        {isLoading && !initialLoadFailed && !application ? (
           <View style={styles.centerState}>
             <ActivityIndicator color={colors.primary} size="large" />
+          </View>
+        ) : initialLoadFailed && !application ? (
+          <View style={styles.card} testID="kyc-load-error-card">
+            <Text style={styles.statusTitleDanger}>Không thể tải hồ sơ</Text>
+            <Text style={styles.errorText} testID="kyc-load-error-message">
+              {error || "Đã xảy ra lỗi khi tải hồ sơ định danh."}
+            </Text>
+            <PrimaryButton
+              disabled={isLoading}
+              label={isLoading ? "Đang tải lại..." : "Thử lại"}
+              onPress={() => void loadApplication()}
+              testID="kyc-retry-load"
+            />
           </View>
         ) : application && !isEditable ? (
           <View style={styles.card}>
             <Text style={styles.statusTitle}>{getStatusLabel(application.status)}</Text>
             <Text style={styles.description}>
-              {application.status === "PENDING"
-                ? "Hồ sơ đã được gửi và đang chờ dịch vụ kiểm duyệt xử lý."
+              {application.status === "APPROVED"
+                ? "Hồ sơ định danh đã được phê duyệt."
+                : application.status === "SUBMITTED" || application.status === "UNDER_REVIEW"
+                ? "Hồ sơ đã được lưu trên máy chủ và đang chờ nhân viên có thẩm quyền xử lý."
                 : "Đây là trạng thái chỉ đọc từ nguồn kiểm duyệt; ứng dụng khách hàng không thể thay đổi quyết định."}
             </Text>
             <View style={styles.summaryRow}>
@@ -168,24 +350,41 @@ export function KycScreen() {
             </View>
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Số định danh</Text>
-              <Text style={styles.summaryValue}>{maskIdentityNumber(application.identityNumber)}</Text>
+              <Text style={styles.summaryValue}>{maskIdentityNumberLast4(application.identityNumberLast4)}</Text>
             </View>
             {application.rejectionReason ? (
               <Text style={styles.errorText}>{application.rejectionReason}</Text>
             ) : null}
-            <PrimaryButton label="Tải lại trạng thái" onPress={loadApplication} testID="kyc-refresh-status" />
-            {application.status === "PENDING" ? (
+            {application.status !== "APPROVED" ? (
+              <PrimaryButton
+                disabled={isLoading}
+                label={isLoading ? "Đang tải..." : "Tải lại trạng thái"}
+                onPress={() => void loadApplication()}
+                testID="kyc-refresh-status"
+              />
+            ) : null}
+            {application.status === "SUBMITTED" || application.status === "UNDER_REVIEW" ? (
               <Text style={styles.noteText} testID="kyc-pending-entitlement-note">
-                Bản reference chưa có entitlement/API kiểm duyệt phía server nên hồ sơ sẽ giữ trạng thái chờ; không có thao tác tự duyệt trên ứng dụng này.
+                Hồ sơ sẽ giữ trạng thái chờ cho đến khi nhân viên có thẩm quyền hoàn tất xét duyệt.
               </Text>
             ) : null}
           </View>
         ) : (
           <View style={styles.card}>
             {application?.status === "REJECTED" ? (
-              <Text style={styles.errorText}>
-                Hồ sơ trước đó cần bổ sung. Bạn có thể chỉnh sửa và gửi lại bản mô phỏng.
-              </Text>
+              <View style={styles.dangerBox} testID="kyc-rejected-banner">
+                <Text style={styles.dangerTitle}>Hồ sơ không được phê duyệt</Text>
+                <Text style={styles.errorText}>
+                  {`Hồ sơ trước đó đã bị từ chối: ${getRejectionReasonText(application.status, application.rejectionReason)}. Lần lưu hoặc nộp tiếp theo sẽ tạo một hồ sơ định danh mới.`}
+                </Text>
+              </View>
+            ) : application?.status === "NEEDS_MORE_INFO" ? (
+              <View style={styles.warningBox} testID="kyc-needs-more-info-banner">
+                <Text style={styles.warningTitle}>Yêu cầu bổ sung thông tin</Text>
+                <Text style={styles.warningText}>
+                  {`Ngân hàng yêu cầu bổ sung thông tin: ${getRejectionReasonText(application.status, application.rejectionReason)}. Vui lòng cập nhật và nộp lại trên hồ sơ hiện tại.`}
+                </Text>
+              </View>
             ) : null}
             <TextField
               accessibilityLabel="Họ tên trên giấy tờ"
@@ -196,11 +395,19 @@ export function KycScreen() {
               testID="kyc-full-name"
               value={draft.fullName}
             />
+            {application ? (
+              <View style={styles.summaryRow} testID="kyc-identity-last4-summary">
+                <Text style={styles.summaryLabel}>Số định danh hiện tại</Text>
+                <Text style={styles.summaryValue}>
+                  {maskIdentityNumberLast4(application.identityNumberLast4)}
+                </Text>
+              </View>
+            ) : null}
             <TextField
               accessibilityLabel="Số định danh"
               error={fieldErrors.identityNumber}
               keyboardType="number-pad"
-              label="Số định danh (mô phỏng)"
+              label="Số CCCD hoặc định danh"
               onChangeText={(value) => updateDraft("identityNumber", value.replace(/\D/g, ""))}
               testID="kyc-identity-number"
               value={draft.identityNumber}
@@ -214,24 +421,56 @@ export function KycScreen() {
               testID="kyc-address"
               value={draft.address}
             />
-            <View style={styles.documentBox}>
-              <Text style={styles.summaryLabel}>Ảnh giấy tờ</Text>
-              <Text style={styles.documentText}>
-                {draft.documentUri ? "Đã chọn ảnh mẫu identity-card-front" : "Chưa chọn ảnh giấy tờ mẫu"}
-              </Text>
-              {fieldErrors.documentUri ? <Text style={styles.errorText}>{fieldErrors.documentUri}</Text> : null}
-              <PrimaryButton
-                label="Chọn ảnh mẫu (eKYC mô phỏng)"
-                onPress={() => updateDraft("documentUri", "mock://identity-card-front")}
-                testID="kyc-select-sample-document"
-              />
+            <View style={styles.hiddenSandboxFields}>
+              <View style={styles.documentBox}>
+                <Text style={styles.summaryLabel}>Ảnh giấy tờ</Text>
+                <Text style={styles.documentText}>
+                  {draft.documentUri ? "Đã chọn ảnh giấy tờ" : "Chưa chọn ảnh giấy tờ"}
+                </Text>
+                {fieldErrors.documentUri ? <Text style={styles.errorText}>{fieldErrors.documentUri}</Text> : null}
+                <PrimaryButton
+                  label="Chọn ảnh giấy tờ"
+                  onPress={() => updateDraft("documentUri", "mock://identity-card-front")}
+                  testID="kyc-select-sample-document"
+                />
+              </View>
+              <View style={styles.confirmationBox}>
+                <View style={styles.confirmationCopy}>
+                  <Text style={styles.summaryLabel}>Xác nhận thông tin</Text>
+                  <Text style={styles.noteText}>
+                    Vui lòng không nhập thông tin cá nhân thật.
+                  </Text>
+                </View>
+                <Switch
+                  accessibilityLabel="Xác nhận không nhập thông tin cá nhân thật"
+                  onValueChange={(value) => updateDraft("syntheticDataConfirmed", value)}
+                  testID="kyc-synthetic-confirmation"
+                  value={draft.syntheticDataConfirmed}
+                />
+              </View>
+              {fieldErrors.syntheticDataConfirmed ? <Text style={styles.errorText}>{fieldErrors.syntheticDataConfirmed}</Text> : null}
             </View>
+
             {error ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>{error}</Text> : null}
+
             <PrimaryButton
               disabled={isSubmitting}
-              label={isSubmitting ? "Đang gửi hồ sơ..." : "Gửi hồ sơ eKYC"}
+              label={
+                isSubmitting
+                  ? "Đang gửi hồ sơ..."
+                  : application?.status === "NEEDS_MORE_INFO"
+                  ? "Gửi cập nhật hồ sơ"
+                  : "Gửi hồ sơ định danh"
+              }
               onPress={() => void handleSubmit()}
               testID="kyc-submit"
+            />
+            <Button
+              disabled={isSubmitting}
+              label={isSubmitting ? "Đang lưu..." : "Lưu bản nháp"}
+              onPress={() => void handleSaveDraft()}
+              testID="kyc-save-draft"
+              variant="outline"
             />
           </View>
         )}
@@ -248,38 +487,14 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     width: "100%",
-    maxWidth: 720,
+    maxWidth: sizes.contentMaxWidth,
     alignSelf: "center",
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  backButton: {
-    alignSelf: "flex-start",
-    paddingVertical: spacing.xs,
-  },
-  backLabel: {
-    color: colors.primary,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  header: {
-    gap: spacing.sm,
-  },
-  eyebrow: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: "700",
-  },
   description: {
+    ...typography.body,
     color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
   },
   centerState: {
     minHeight: 180,
@@ -288,16 +503,20 @@ const styles = StyleSheet.create({
   },
   card: {
     gap: spacing.md,
-    padding: spacing.lg,
+    padding: spacing.mlg,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: spacing.md,
+    borderRadius: radius.lg,
     backgroundColor: colors.surface,
+    ...shadows.card,
   },
   statusTitle: {
+    ...typography.heading,
     color: colors.success,
-    fontSize: 21,
-    fontWeight: "700",
+  },
+  statusTitleDanger: {
+    ...typography.heading,
+    color: colors.danger,
   },
   summaryRow: {
     flexDirection: "row",
@@ -305,34 +524,77 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   summaryLabel: {
+    ...typography.body,
     color: colors.muted,
-    fontSize: 14,
   },
   summaryValue: {
     flex: 1,
+    ...typography.bodyStrong,
     color: colors.text,
-    fontSize: 14,
-    fontWeight: "600",
     textAlign: "right",
   },
   documentBox: {
     gap: spacing.sm,
     padding: spacing.md,
-    borderRadius: spacing.sm,
+    borderRadius: radius.md,
     backgroundColor: colors.background,
   },
   documentText: {
+    ...typography.body,
     color: colors.text,
-    fontSize: 14,
+  },
+  confirmationBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.infoSoft,
+  },
+  confirmationCopy: {
+    flex: 1,
+    gap: spacing.xs,
   },
   errorText: {
+    ...typography.body,
     color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
   },
   noteText: {
+    ...typography.caption,
+    padding: spacing.md,
+    borderRadius: radius.md,
     color: colors.muted,
-    fontSize: 13,
-    lineHeight: 19,
+    backgroundColor: colors.infoSoft,
+  },
+  warningBox: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.warningSoft,
+    borderWidth: 1,
+    borderColor: colors.warning,
+  },
+  warningTitle: {
+    ...typography.bodyStrong,
+    color: colors.warning,
+  },
+  warningText: {
+    ...typography.body,
+    color: colors.text,
+  },
+  dangerBox: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1,
+    borderColor: colors.danger,
+  },
+  dangerTitle: {
+    ...typography.bodyStrong,
+    color: colors.danger,
+  },
+  hiddenSandboxFields: {
+    display: "none",
   },
 });

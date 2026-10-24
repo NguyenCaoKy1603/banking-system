@@ -385,3 +385,80 @@ test("credit application recovery and idempotency keys are scoped per customer",
   assert.equal(bobActivated.status, "ACTIVE");
   assert.notEqual(aliceActivated.creditAccountId, bobActivated.creditAccountId);
 });
+
+test("own-account transfer between multiple accounts of the same user works and cleans up lookup", () => {
+  const system = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+  });
+  const alice = register(system, "alice-multi", "0900000031");
+  const aliceAcc1 = system.listAccounts(alice.id)[0]!;
+  const aliceAcc1Number = system.getAccountNumber(alice.id, aliceAcc1.id);
+
+  // When Alice has only 1 account, looking up her own account throws conflict
+  assert.throws(
+    () => system.lookupInternalRecipient(alice.id, aliceAcc1Number),
+    (err: unknown) => (err as { status?: number }).status === 409,
+  );
+
+  // Create second payment account for Alice
+  const aliceAcc2 = system.core.createPaymentAccount(alice.id, new Date().toISOString());
+  const aliceAcc2Number = system.getAccountNumber(alice.id, aliceAcc2.id);
+
+  // Fund account 1
+  system.seedReferenceFunding("funding-multi-1", {
+    recipientAccountNumber: aliceAcc1Number,
+    amount: { currency: "VND", amountMinor: "5000000" },
+    reason: "Fund acc 1",
+  });
+
+  // Now Alice can look up her second account
+  const lookup = system.lookupInternalRecipient(alice.id, aliceAcc2Number);
+  assert.equal(lookup.accountHolderName, "Nguyễn Văn B");
+
+  // Attempting to quote transfer to the same source account fails
+  assert.throws(
+    () =>
+      system.createQuote(alice.id, {
+        sourceAccountId: aliceAcc2.id,
+        lookupId: lookup.lookupId,
+        amount: { currency: "VND", amountMinor: "1000000" },
+      }),
+    (err: unknown) => (err as { status?: number }).status === 409,
+  );
+
+  // Quote transfer from Acc 1 -> Acc 2 succeeds
+  const quote = system.createQuote(alice.id, {
+    sourceAccountId: aliceAcc1.id,
+    lookupId: lookup.lookupId,
+    amount: { currency: "VND", amountMinor: "1000000" },
+  });
+
+  // Submit transfer
+  const receipt = system.submitTransfer(alice.id, "own-transfer-intent", {
+    quoteId: quote.quoteId,
+    stepUp: { method: "OTP", proof: "123456" },
+  });
+  assert.equal(receipt.status, "SUCCEEDED");
+
+  // Balances updated
+  assert.equal(
+    system.core.getPaymentAccount(alice.id, aliceAcc1.id).currentBalance.amountMinor,
+    "3999000",
+  );
+  assert.equal(
+    system.core.getPaymentAccount(alice.id, aliceAcc2.id).currentBalance.amountMinor,
+    "1000000",
+  );
+
+  // Lookup record was cleaned up upon transfer completion
+  assert.throws(
+    () =>
+      system.createQuote(alice.id, {
+        sourceAccountId: aliceAcc1.id,
+        lookupId: lookup.lookupId,
+        amount: { currency: "VND", amountMinor: "500000" },
+      }),
+    (err: unknown) => (err as { status?: number }).status === 409,
+  );
+});

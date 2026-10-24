@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { validateRegistrationFingerprintKey } from "./security.js";
 
 export type BankingRuntimeEnvironment =
   | "development"
@@ -7,7 +8,7 @@ export type BankingRuntimeEnvironment =
   | "staging"
   | "production-like";
 
-export type RuntimeConfig = {
+type RuntimeConfigBase = {
   nodeEnv: "development" | "test" | "preview" | "production";
   bankingEnvironment: BankingRuntimeEnvironment;
   moneyMode: "virtual";
@@ -17,6 +18,14 @@ export type RuntimeConfig = {
   commitSha: string;
   releaseId: string;
   imageDigest: string;
+};
+
+export type RuntimeConfig = RuntimeConfigBase & {
+  registrationFingerprintKey?: Buffer;
+};
+
+export type RegistrationFingerprintRuntimeConfig = RuntimeConfigBase & {
+  registrationFingerprintKey: Buffer;
 };
 
 const RUNTIME_ENVIRONMENTS = new Set<BankingRuntimeEnvironment>([
@@ -68,7 +77,19 @@ function rejectDeterministicSecrets(env: NodeJS.ProcessEnv): void {
  * promotion target. Staging and production-like must run Node in production
  * mode but continue to use virtual money only.
  */
-export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
+export function readRuntimeConfig(): RegistrationFingerprintRuntimeConfig;
+export function readRuntimeConfig(env: NodeJS.ProcessEnv): RegistrationFingerprintRuntimeConfig;
+export function readRuntimeConfig(
+  env: NodeJS.ProcessEnv,
+  options: { requireRegistrationFingerprintKey: false },
+): RuntimeConfig;
+export function readRuntimeConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { requireRegistrationFingerprintKey?: boolean } = {},
+): RuntimeConfig {
+  const registrationFingerprintKey = options.requireRegistrationFingerprintKey === false
+    ? undefined
+    : validateRegistrationFingerprintKey(env.REGISTRATION_FINGERPRINT_KEY);
   const nodeEnv = (env.NODE_ENV?.trim().toLowerCase() || "development") as RuntimeConfig["nodeEnv"];
   const bankingEnvironment = (env.BANKING_ENV?.trim().toLowerCase() || "development") as BankingRuntimeEnvironment;
   const moneyMode = (env.BANKING_MONEY_MODE?.trim().toLowerCase() || "virtual");
@@ -148,6 +169,7 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
       commitSha,
       releaseId: required(env.RELEASE_ID, "RELEASE_ID"),
       imageDigest,
+      ...(registrationFingerprintKey ? { registrationFingerprintKey } : {}),
     };
   }
 
@@ -165,6 +187,7 @@ export function readRuntimeConfig(env: NodeJS.ProcessEnv = process.env): Runtime
     commitSha: env.BUILD_COMMIT_SHA?.trim() || "local",
     releaseId: env.RELEASE_ID?.trim() || "local",
     imageDigest: env.IMAGE_DIGEST?.trim() || "unknown",
+    ...(registrationFingerprintKey ? { registrationFingerprintKey } : {}),
   };
 }
 

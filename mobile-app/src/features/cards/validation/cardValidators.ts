@@ -38,10 +38,10 @@ export function isCardsResponse(value: unknown): value is CardsResponse {
 
 export function validateMockPin(pin: string, confirmation: string): string | undefined {
   if (!/^\d{4,6}$/.test(pin)) {
-    return "PIN mô phỏng phải có 4–6 chữ số.";
+    return "PIN phải có 4–6 chữ số.";
   }
   if (/^(\d)\1+$/.test(pin)) {
-    return "PIN mô phỏng không được lặp cùng một chữ số.";
+    return "PIN không được lặp cùng một chữ số.";
   }
   if (pin !== confirmation) {
     return "Xác nhận PIN không khớp.";

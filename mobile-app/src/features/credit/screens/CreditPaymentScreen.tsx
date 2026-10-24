@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AppHeader } from "@/components/ui/AppHeader";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
@@ -24,30 +25,30 @@ import { clearCardPaymentIntent, loadCardPaymentIntent, saveCardPaymentIntent } 
 import type { CreditCardDetailResponse, CreditPayment, CreditPaymentOption, CreditPaymentQuote, CreditStatement, CreditStepUpMethod } from "@/features/credit/types/credit";
 import { ApiError } from "@/services/api/ApiError";
 import { getDeviceBoundAssertion, requestBiometricAuthentication } from "@/services/security/biometricAuth";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 type PaymentStep = "input" | "review" | "stepUp" | "result";
 function getErrorMessage(error: unknown): string {
   if (!(error instanceof ApiError)) return "Không thể thực hiện thanh toán thẻ.";
   const messages: Record<string, string> = {
-    CREDIT_DISABLED: "Thanh toán tín dụng sandbox đang tạm dừng.",
+    CREDIT_DISABLED: "Dịch vụ thanh toán thẻ đang tạm dừng.",
     CREDIT_ACCOUNT_NOT_FOUND: "Không tìm thấy tài khoản tín dụng. Vui lòng quay về danh sách thẻ.",
     STATEMENT_NOT_FOUND: "Không tìm thấy sao kê. Vui lòng tải lại danh sách sao kê.",
     STATEMENT_PAID: "Sao kê này đã được thanh toán đủ.",
-    STATEMENT_CHANGED: "Sao kê đã thay đổi. Vui lòng tạo lại quote.",
+    STATEMENT_CHANGED: "Sao kê đã thay đổi. Vui lòng kiểm tra lại số tiền.",
     STATEMENT_SUPERSEDED: "Sao kê đã được thay thế. Vui lòng tải lại kỳ hiện hành.",
     PAYMENT_PENDING: "Đã có một thanh toán đang xử lý. Vui lòng cập nhật trạng thái trước khi tạo lệnh mới.",
-    QUOTE_EXPIRED: "Quote đã hết hạn. Vui lòng tạo lại quote.",
+    QUOTE_EXPIRED: "Thông tin thanh toán đã hết hạn. Vui lòng tạo lại.",
     PAYMENT_AMOUNT_INVALID: "Số tiền thanh toán không hợp lệ.",
     OVERPAYMENT: "Số tiền vượt quá dư nợ còn phải trả.",
     INSUFFICIENT_FUNDS: "Tài khoản nguồn không đủ số dư. Vui lòng chọn tài khoản hoặc số tiền khác.",
     SOURCE_ACCOUNT_BLOCKED: "Tài khoản nguồn không hoạt động. Vui lòng chọn tài khoản khác.",
-    IDEMPOTENCY_CONFLICT: "Yêu cầu này đã có khóa idempotency khác nội dung; không tạo ý định mới.",
-    STEP_UP_VERIFICATION_FAILED: "Xác thực bước hai không thành công. Vui lòng tạo challenge mới và thử lại.",
+    IDEMPOTENCY_CONFLICT: "Nội dung yêu cầu đã thay đổi. Vui lòng quay lại và tạo yêu cầu mới.",
+    STEP_UP_VERIFICATION_FAILED: "Xác thực không thành công. Vui lòng tạo mã mới và thử lại.",
     STEP_UP_INVALID: "Xác thực bước hai không hợp lệ. Vui lòng xác thực lại.",
     RATE_LIMITED: "Bạn thao tác quá nhiều lần. Vui lòng thử lại sau.",
-    TIMEOUT: "Máy chủ chưa trả kết quả. Giữ nguyên yêu cầu để kiểm tra lại cùng khóa idempotency.",
-    NETWORK_ERROR: "Không thể kết nối máy chủ. Giữ nguyên yêu cầu để thử lại an toàn.",
+    TIMEOUT: "Chưa nhận được kết quả. Hãy giữ nguyên yêu cầu và cập nhật trạng thái.",
+    NETWORK_ERROR: "Không thể kết nối. Yêu cầu được giữ lại để bạn thử lại an toàn.",
   };
   return messages[error.code] ?? error.message;
 }
@@ -410,8 +411,7 @@ export function CreditPaymentScreen() {
   const isPaymentChallengeUnavailable =
     !paymentChallenge || clockMs >= Date.parse(paymentChallenge.expiresAt);
   return <Screen><ScrollView contentContainerStyle={styles.content}>
-    <Pressable accessibilityRole="button" accessibilityState={{ disabled: isSubmitting }} disabled={isSubmitting} onPress={handleBack} style={styles.backButton} testID="credit-payment-back"><Text style={styles.backLabel}>‹ Quay lại</Text></Pressable>
-    <View style={styles.header}><Text style={styles.eyebrow}>M7 · PAYMENT</Text><Text style={styles.title}>Thanh toán thẻ</Text><Text style={styles.description}>Server tính quote, kiểm tra MFA, idempotency và trạng thái. Mobile không tự cập nhật số dư.</Text></View>
+    <AppHeader backTestID="credit-payment-back" eyebrow="Quản lý dư nợ" onBack={() => void handleBack()} subtitle="Chọn nguồn tiền và xác thực để thanh toán sao kê an toàn." title="Thanh toán thẻ" />
     {isLoading || isRestoring ? <View style={styles.centerState} testID="credit-payment-loading"><Text style={styles.mutedText}>Đang tải dữ liệu thanh toán…</Text></View> : recoveryBlocked ? <View style={styles.card} testID="credit-recovery-blocked"><Text style={styles.sectionTitle}>Chưa thể khôi phục an toàn</Text><Text style={styles.errorText}>{error ?? "Không thể đọc trạng thái yêu cầu trước đó. Chưa cho phép tạo thanh toán mới để tránh trùng lệnh."}</Text><PrimaryButton label="Kiểm tra lại dữ liệu khôi phục" onPress={() => { setError(undefined); void restoreIntent(); }} testID="credit-recovery-retry" /></View> : error && !detail ? <View style={styles.card}><Text style={styles.errorText}>{error}</Text><PrimaryButton label="Thử lại" onPress={loadData} /></View> : !detail || !statement ? <View style={styles.card}><Text style={styles.mutedText}>Không có sao kê cần thanh toán.</Text></View> : !canPay && step !== "result" ? <View style={styles.card}><Text style={styles.mutedText}>Sao kê này đã được thanh toán đủ.</Text></View> : <>
       {step === "input" ? <View style={styles.card} testID="credit-payment-input"><Text style={styles.sectionTitle}>Chọn tài khoản nguồn</Text>{accounts.map((account) => <Pressable accessibilityRole="button" accessibilityState={{ selected: sourceAccountId === account.id }} key={account.id} onPress={() => setSourceAccountId(account.id)} style={[styles.optionRow, sourceAccountId === account.id ? styles.optionSelected : null]} testID={`credit-source-${account.id}`}><View><Text style={styles.optionTitle}>{account.displayName}</Text><Text style={styles.optionMeta}>{account.maskedNumber} · Khả dụng {formatVndMinor(account.availableBalance.amountMinor)}</Text></View><Text style={styles.radio}>{sourceAccountId === account.id ? "●" : "○"}</Text></Pressable>)}<Text style={styles.sectionTitle}>Mức thanh toán</Text><View style={styles.choiceRow}>{(["MINIMUM", "FULL_STATEMENT", "CUSTOM"] as CreditPaymentOption[]).map((option) => <Pressable accessibilityRole="button" accessibilityState={{ selected: paymentOption === option }} key={option} onPress={() => setPaymentOption(option)} style={[styles.choice, paymentOption === option ? styles.choiceSelected : null]} testID={`credit-option-${option}`}><Text style={styles.choiceLabel}>{getCreditPaymentOptionLabel(option)}</Text></Pressable>)}</View>{paymentOption === "CUSTOM" ? <TextField keyboardType="number-pad" label="Số tiền (VND)" onChangeText={(value) => setCustomAmount(value.replace(/\D/g, ""))} testID="credit-custom-amount" value={customAmount} /> : null}<PrimaryButton disabled={isSubmitting || !sourceAccountId} label={isSubmitting ? "Đang tính quote…" : "Xem lại thanh toán"} onPress={() => void handleQuote()} testID="credit-create-quote" /></View> : null}
       {step === "review" && quote ? <View style={styles.card} testID="credit-payment-review"><Text style={styles.sectionTitle}>Xác nhận quote</Text><SummaryRow label="Mức thanh toán" value={getCreditPaymentOptionLabel(quote.paymentOption)} /><SummaryRow label="Nguồn tiền" value={quote.sourceAccountMaskedNumber} /><SummaryRow label="Thẻ" value={`•••• ${quote.cardLastFour}`} /><SummaryRow label="Kỳ sao kê" value={`${formatCreditDate(statement.cycleStartAt)} – ${formatCreditDate(statement.cycleEndAt)}`} /><SummaryRow label="Số tiền" value={formatVndMinor(quote.amount.amountMinor)} /><SummaryRow label="Dư nợ dự kiến còn lại" value={formatVndMinor(quote.outstandingAfter.amountMinor)} /><SummaryRow label="Tối thiểu còn thiếu" value={formatVndMinor(quote.minimumPaymentRemainingAfter.amountMinor)} /><SummaryRow label="Phí" value={formatVndMinor(quote.fee.amountMinor)} /><SummaryRow label="Quote hết hạn" value={new Date(quote.expiresAt).toLocaleString("vi-VN")} /><Text style={styles.noticeText}>{quote.terms}</Text><PrimaryButton disabled={isSubmitting || Boolean(manualReviewCode)} label={manualReviewCode ? "Đang chờ đối soát" : "Tiếp tục xác thực"} onPress={() => void handleContinueToStepUp()} testID="credit-review-confirm" /><PrimaryButton disabled={Boolean(manualReviewCode)} label={manualReviewCode ? "Đang chờ đối soát" : "Chỉnh sửa"} onPress={handleEditQuote} testID="credit-review-edit" /></View> : null}
@@ -423,5 +423,23 @@ export function CreditPaymentScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { flexGrow: 1, width: "100%", maxWidth: 720, alignSelf: "center", padding: spacing.lg, gap: spacing.lg }, backButton: { alignSelf: "flex-start", paddingVertical: spacing.xs }, backLabel: { color: colors.primary, fontSize: 15, fontWeight: "600" }, header: { gap: spacing.sm }, eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "700", letterSpacing: 1.4 }, title: { color: colors.text, fontSize: 30, fontWeight: "700" }, description: { color: colors.muted, fontSize: 15, lineHeight: 22 }, centerState: { minHeight: 220, alignItems: "center", justifyContent: "center" }, card: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: 20, backgroundColor: colors.surface }, sectionTitle: { color: colors.text, fontSize: 18, fontWeight: "800" }, summaryRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md }, label: { color: colors.muted, fontSize: 14 }, value: { flex: 1, color: colors.text, fontSize: 14, fontWeight: "800", textAlign: "right" }, optionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: 14 }, optionSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, optionTitle: { color: colors.text, fontSize: 15, fontWeight: "800" }, optionMeta: { color: colors.muted, fontSize: 13, marginTop: 4 }, radio: { color: colors.primary, fontSize: 20 }, choiceRow: { flexDirection: "row", gap: spacing.sm }, choice: { minHeight: 44, flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: 12 }, choiceSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft }, choiceLabel: { color: colors.primary, fontSize: 13, fontWeight: "700", textAlign: "center" }, mutedText: { color: colors.muted, fontSize: 14, lineHeight: 20 }, noticeText: { color: colors.primary, fontSize: 13, lineHeight: 19 }, errorText: { color: colors.danger, fontSize: 14, lineHeight: 20 },
+  content: { flexGrow: 1, width: "100%", maxWidth: sizes.contentMaxWidth, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
+  centerState: { minHeight: 220, alignItems: "center", justifyContent: "center" },
+  card: { gap: spacing.md, padding: spacing.mlg, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.surface, ...shadows.card },
+  sectionTitle: { ...typography.subheading, color: colors.text },
+  summaryRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md },
+  label: { ...typography.body, color: colors.muted },
+  value: { flex: 1, ...typography.bodyStrong, color: colors.text, textAlign: "right" },
+  optionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md, padding: spacing.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md },
+  optionSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  optionTitle: { ...typography.bodyStrong, color: colors.text },
+  optionMeta: { ...typography.caption, color: colors.muted, marginTop: 4 },
+  radio: { color: colors.primary, fontSize: 20 },
+  choiceRow: { flexDirection: "row", gap: spacing.sm },
+  choice: { minHeight: 44, flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm },
+  choiceSelected: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+  choiceLabel: { ...typography.label, color: colors.primary, textAlign: "center" },
+  mutedText: { ...typography.body, color: colors.muted },
+  noticeText: { ...typography.caption, color: colors.primary },
+  errorText: { ...typography.body, padding: spacing.md, borderRadius: radius.md, color: colors.danger, backgroundColor: colors.dangerSoft },
 });

@@ -14,9 +14,10 @@ import {
   login as loginRequest,
   refreshSession as refreshSessionRequest,
   register as registerRequest,
+  resendRegistrationChallenge as resendRegistrationChallengeRequest,
+  cancelRegistration as cancelRegistrationRequest,
   revokeAllSessions,
   revokeSession,
-  verifyLoginChallenge as verifyLoginChallengeRequest,
   verifyRegistrationChallenge as verifyRegistrationChallengeRequest,
 } from "@/features/auth/services/authApi";
 import type {
@@ -26,7 +27,6 @@ import type {
   RegisterResponse,
   VerifyAuthChallengeRequest,
 } from "@/features/auth/types/auth";
-import { isAuthChallengeResponse } from "@/features/auth/services/authResponseValidators";
 import { isTerminalRefreshFailure } from "@/features/auth/domain/refreshFailure";
 import {
   createAuthSession,
@@ -116,19 +116,26 @@ async function revokeAllSessionsForLogout(
   }
 }
 
+export type CompleteMfaRevocationInput = {
+  recoveryCodes?: string[];
+  notice?: string;
+};
+
 type AuthContextValue = {
   status: AuthStatus;
   session: AuthSession | null;
-  pendingLoginChallenge: AuthChallengeResponse | null;
   logoutNotice: string | null;
   deviceId: string | null;
   isAuthenticated: boolean;
+  pendingRecoveryCodes: string[] | null;
   refreshAccessToken: RefreshAccessToken;
   login: (request: LoginRequest) => Promise<void>;
   register: (request: RegisterRequest) => Promise<AuthChallengeResponse>;
-  verifyLoginChallenge: (request: VerifyAuthChallengeRequest) => Promise<void>;
   verifyRegistrationChallenge: (request: VerifyAuthChallengeRequest) => Promise<RegisterResponse>;
-  cancelLoginChallenge: () => void;
+  resendRegistrationChallenge: (challengeId: string) => Promise<AuthChallengeResponse>;
+  cancelRegistration?: (challengeId: string) => Promise<void>;
+  completeMfaRevocation: (input?: CompleteMfaRevocationInput) => Promise<void>;
+  clearPendingRecoveryCodes: () => void;
   logout: () => Promise<LogoutResult>;
   logoutAll: () => Promise<LogoutResult>;
 };
@@ -138,10 +145,9 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<AuthStatus>("booting");
   const [session, setSession] = useState<AuthSession | null>(null);
-  const [pendingLoginChallenge, setPendingLoginChallenge] =
-    useState<AuthChallengeResponse | null>(null);
   const [logoutNotice, setLogoutNotice] = useState<string | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [pendingRecoveryCodes, setPendingRecoveryCodes] = useState<string[] | null>(null);
   const sessionRef = useRef<AuthSession | null>(null);
   const statusRef = useRef<AuthStatus>("booting");
   const appStateRef = useRef<AppStateStatus>(AppState.currentState ?? "active");
@@ -152,6 +158,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const invalidatedSessionEpochsRef = useRef(new Set<string>());
   const sessionLifecycleEpochRef = useRef(0);
   const logoutOperationRef = useRef<Promise<LogoutResult> | null>(null);
+  const pendingStorageClearRef = useRef<Promise<void> | null>(null);
   const isMountedRef = useRef(true);
 
   const setActiveSession = useCallback(
@@ -372,35 +379,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const login = useCallback(
     async (request: LoginRequest) => {
+      sessionLifecycleEpochRef.current += 1;
       setLogoutNotice(null);
-      const currentDeviceId = await ensureDeviceId();
-      const response = await loginRequest(request, { deviceId: currentDeviceId });
+      setPendingRecoveryCodes(null);
 
-      if (isAuthChallengeResponse(response)) {
-        setPendingLoginChallenge(response);
-        return;
+      if (pendingStorageClearRef.current) {
+        await pendingStorageClearRef.current.catch(() => undefined);
       }
 
-      setPendingLoginChallenge(null);
-      const nextSession = createAuthSession(response);
-
-      await saveAuthSession(nextSession);
-      setActiveSession(nextSession, "authenticated");
-    },
-    [ensureDeviceId, setActiveSession],
-  );
-
-  const verifyLoginChallenge = useCallback(
-    async (request: VerifyAuthChallengeRequest) => {
       const currentDeviceId = await ensureDeviceId();
-      const response = await verifyLoginChallengeRequest(request, {
-        deviceId: currentDeviceId,
-      });
+      const response = await loginRequest(request, { deviceId: currentDeviceId });
       const nextSession = createAuthSession(response);
 
       await saveAuthSession(nextSession);
-      setLogoutNotice(null);
-      setPendingLoginChallenge(null);
       setActiveSession(nextSession, "authenticated");
     },
     [ensureDeviceId, setActiveSession],
@@ -424,9 +415,21 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [ensureDeviceId],
   );
 
-  const cancelLoginChallenge = useCallback(() => {
-    setPendingLoginChallenge(null);
-  }, []);
+  const resendRegistrationChallenge = useCallback(
+    async (challengeId: string) => {
+      const currentDeviceId = await ensureDeviceId();
+      return resendRegistrationChallengeRequest(challengeId, { deviceId: currentDeviceId });
+    },
+    [ensureDeviceId],
+  );
+
+  const cancelRegistration = useCallback(
+    async (challengeId: string) => {
+      const currentDeviceId = await ensureDeviceId();
+      return cancelRegistrationRequest(challengeId, { deviceId: currentDeviceId });
+    },
+    [ensureDeviceId],
+  );
 
   const waitForPendingRefreshes = useCallback(async (
     sessionEpoch: string | null,
@@ -451,12 +454,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const clearLocalSession = useCallback(async () => {
     let localSessionCleared = true;
+    const clearOperation = (async () => {
+      try {
+        await clearAuthSession();
+      } catch {
+        localSessionCleared = false;
+      }
+    })();
+
+    pendingStorageClearRef.current = clearOperation;
     try {
-      await clearAuthSession();
-    } catch {
-      localSessionCleared = false;
+      await clearOperation;
+    } finally {
+      if (pendingStorageClearRef.current === clearOperation) {
+        pendingStorageClearRef.current = null;
+      }
     }
-    setPendingLoginChallenge(null);
     setActiveSession(null, "anonymous");
     return localSessionCleared;
   }, [setActiveSession]);
@@ -545,38 +558,101 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [beginLogout],
   );
 
+  const clearPendingRecoveryCodes = useCallback(() => {
+    if (isMountedRef.current) {
+      setPendingRecoveryCodes(null);
+    }
+  }, []);
+
+  const completeMfaRevocation = useCallback(
+    async (input?: CompleteMfaRevocationInput) => {
+      const currentSession = sessionRef.current;
+      const sessionEpoch = currentSession?.sessionEpoch ?? null;
+      if (sessionEpoch) {
+        invalidatedSessionEpochsRef.current.add(sessionEpoch);
+      }
+      const completionLifecycleEpoch = (sessionLifecycleEpochRef.current += 1);
+
+      sessionRef.current = null;
+      statusRef.current = "anonymous";
+      if (isMountedRef.current) {
+        setSession(null);
+        setStatus("anonymous");
+        setPendingRecoveryCodes(input?.recoveryCodes ?? null);
+      }
+
+      let storageCleared = true;
+      const clearOperation = (async () => {
+        try {
+          await clearAuthSession();
+        } catch {
+          storageCleared = false;
+        }
+      })();
+
+      pendingStorageClearRef.current = clearOperation;
+      try {
+        await clearOperation;
+      } finally {
+        if (pendingStorageClearRef.current === clearOperation) {
+          pendingStorageClearRef.current = null;
+        }
+      }
+
+      if (sessionLifecycleEpochRef.current !== completionLifecycleEpoch) {
+        return;
+      }
+
+      let notice: string | null = null;
+      if (!storageCleared) {
+        notice = "Phiên đã kết thúc nhưng chưa thể dọn bộ nhớ an toàn trên thiết bị. Vui lòng đăng nhập lại.";
+      } else if (input?.notice) {
+        notice = input.notice;
+      }
+
+      if (isMountedRef.current) {
+        setLogoutNotice(notice);
+      }
+    },
+    [],
+  );
+
   const value = useMemo(
     () => ({
       status,
       session,
-      pendingLoginChallenge,
       logoutNotice,
       deviceId,
       isAuthenticated:
         status === "authenticated" && session !== null,
+      pendingRecoveryCodes,
       refreshAccessToken,
       login,
       register,
-      verifyLoginChallenge,
       verifyRegistrationChallenge,
-      cancelLoginChallenge,
+      resendRegistrationChallenge,
+      cancelRegistration,
+      completeMfaRevocation,
+      clearPendingRecoveryCodes,
       logout,
       logoutAll,
     }),
     [
-      cancelLoginChallenge,
+      clearPendingRecoveryCodes,
+      completeMfaRevocation,
       deviceId,
       login,
       logout,
       logoutAll,
-      pendingLoginChallenge,
       logoutNotice,
+      pendingRecoveryCodes,
       refreshAccessToken,
       register,
       session,
       status,
-      verifyLoginChallenge,
       verifyRegistrationChallenge,
+      resendRegistrationChallenge,
+      cancelRegistration,
     ],
   );
 

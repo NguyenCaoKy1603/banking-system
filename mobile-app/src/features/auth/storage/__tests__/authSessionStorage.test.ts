@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import * as Crypto from "expo-crypto";
+import { Platform } from "react-native";
 
 import {
   clearAuthSession,
@@ -43,6 +44,20 @@ const deleteItemAsyncMock = jest.mocked(SecureStore.deleteItemAsync);
 const getItemAsyncMock = jest.mocked(SecureStore.getItemAsync);
 const setItemAsyncMock = jest.mocked(SecureStore.setItemAsync);
 const randomUUIDMock = jest.mocked(Crypto.randomUUID);
+const originalPlatformOSDescriptor = Object.getOwnPropertyDescriptor(
+  Platform,
+  "OS",
+);
+
+function setPlatformOSForTest(os: "web" | "ios"): void {
+  Object.defineProperty(Platform, "OS", { configurable: true, value: os });
+}
+
+function restorePlatformOSForTest(): void {
+  if (originalPlatformOSDescriptor) {
+    Object.defineProperty(Platform, "OS", originalPlatformOSDescriptor);
+  }
+}
 
 function createDeferred<T>() {
   let resolvePromise!: (value: T | PromiseLike<T>) => void;
@@ -73,11 +88,22 @@ function mockStoredValues(
   getItemAsyncMock.mockImplementation(async (key) => storedValues[key] ?? null);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.resetAllMocks();
   deleteItemAsyncMock.mockResolvedValue(undefined);
   setItemAsyncMock.mockResolvedValue(undefined);
   randomUUIDMock.mockReturnValue("00000000-0000-4000-8000-000000000002");
+
+  setPlatformOSForTest("web");
+  try {
+    await clearAuthSession();
+  } finally {
+    restorePlatformOSForTest();
+  }
+});
+
+afterEach(() => {
+  restorePlatformOSForTest();
 });
 
 describe("authSessionStorage", () => {
@@ -90,6 +116,20 @@ describe("authSessionStorage", () => {
       JSON.stringify(session),
       SECURE_STORE_OPTIONS,
     );
+  });
+
+  it("keeps a Web session in tab memory and clears it without SecureStore", async () => {
+    setPlatformOSForTest("web");
+
+    await expect(loadAuthSession()).resolves.toBeNull();
+    await saveAuthSession(session);
+    await expect(loadAuthSession()).resolves.toEqual(session);
+    await clearAuthSession();
+    await expect(loadAuthSession()).resolves.toBeNull();
+
+    expect(getItemAsyncMock).not.toHaveBeenCalled();
+    expect(setItemAsyncMock).not.toHaveBeenCalled();
+    expect(deleteItemAsyncMock).not.toHaveBeenCalled();
   });
 
   it("không ghi thêm dữ liệu bí mật ra ngoài bản ghi SecureStore", async () => {

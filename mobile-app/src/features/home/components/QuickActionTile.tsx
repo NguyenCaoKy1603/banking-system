@@ -1,42 +1,34 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { colors, spacing } from "@/theme";
+import { AppIcon, type AppIconName } from "@/components/ui/AppIcon";
+import { colors, radius, shadows, spacing, typography } from "@/theme";
 
 type QuickActionTileProps = {
   disabled?: boolean;
-  icon: string;
+  icon: AppIconName;
   onPress?: () => void;
   subtitle: string;
   testID: string;
   title: string;
 };
 
-export function QuickActionTile({
-  disabled = false,
-  icon,
-  onPress,
-  subtitle,
-  testID,
-  title,
-}: QuickActionTileProps) {
+export function QuickActionTile({ disabled = false, icon, onPress, subtitle, testID, title }: QuickActionTileProps) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.tile,
-        disabled ? styles.disabledTile : null,
-        pressed && !disabled ? styles.pressed : null,
-      ]}
+      style={({ pressed }) => [styles.tile, disabled ? styles.disabledTile : null, pressed && !disabled ? styles.pressed : null]}
       testID={testID}
     >
       <View style={[styles.iconBadge, disabled ? styles.disabledIconBadge : null]}>
-        <Text style={styles.icon}>{icon}</Text>
+        <AppIcon color={disabled ? colors.muted : colors.primary} name={icon} size={23} />
       </View>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={[styles.subtitle, disabled ? styles.disabledText : null]}>{subtitle}</Text>
+      <View style={styles.copy}>
+        <Text numberOfLines={2} style={styles.title}>{title}</Text>
+        <Text numberOfLines={2} style={[styles.subtitle, disabled ? styles.disabledText : null]}>{subtitle}</Text>
+      </View>
     </Pressable>
   );
 }
@@ -44,50 +36,22 @@ export function QuickActionTile({
 const styles = StyleSheet.create({
   tile: {
     flex: 1,
-    minHeight: 132,
+    minHeight: 142,
     justifyContent: "space-between",
-    gap: spacing.sm,
+    gap: spacing.smd,
     padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 20,
+    borderRadius: radius.lg,
     backgroundColor: colors.surface,
+    ...shadows.card,
   },
-  disabledTile: {
-    backgroundColor: colors.background,
-    opacity: 0.78,
-  },
-  pressed: {
-    opacity: 0.72,
-  },
-  iconBadge: {
-    width: 36,
-    height: 36,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 12,
-    backgroundColor: colors.primarySoft,
-  },
-  disabledIconBadge: {
-    backgroundColor: colors.border,
-  },
-  icon: {
-    color: colors.primary,
-    fontSize: 20,
-    fontWeight: "800",
-  },
-  title: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "800",
-    lineHeight: 19,
-  },
-  subtitle: {
-    color: colors.primary,
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  disabledText: {
-    color: colors.muted,
-  },
+  disabledTile: { backgroundColor: colors.surfaceMuted, opacity: 0.78 },
+  pressed: { opacity: 0.78, transform: [{ translateY: 1 }] },
+  iconBadge: { width: 46, height: 46, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.primarySoft },
+  disabledIconBadge: { backgroundColor: colors.border },
+  copy: { gap: spacing.xs },
+  title: { ...typography.bodyStrong, color: colors.text },
+  subtitle: { ...typography.caption, color: colors.primary },
+  disabledText: { color: colors.muted },
 });

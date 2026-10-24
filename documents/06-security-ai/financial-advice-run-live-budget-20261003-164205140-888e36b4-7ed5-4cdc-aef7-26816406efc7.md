@@ -1,0 +1,70 @@
+# Financial Advice evaluation evidence — 888e36b4-7ed5-4cdc-aef7-26816406efc7
+
+- Run ID: `888e36b4-7ed5-4cdc-aef7-26816406efc7`
+- Timestamp UTC: `2026-10-03T16:42:05.140Z`
+- Timestamp Asia/Bangkok: `2026-10-03 23:42:05 +07:00`
+- Git: `codex/staging-academic-completion` @ `dc741f6213d0f0391f9b334e3145698e39abec84`
+- Dataset: `2026.10-fa-v2` / SHA-256 `2aba2665369637793f13fe6a1a93a5c18ad125f0c8be2657c16de80afe2d3cfb`
+- Policy/calculation/catalog: `fa-selection-v2` / `fa-calc-v1` / `fa-catalog-v2`
+- Advisor prompt SHA-256: `35b75310934a5a0bbfff931b4cb47aa7b6ccd3528d4870f43906ae36b35b4163`
+- Node/runtime: `v24.19.0`; host=win32/x64.
+- Relevant source SHA-256 manifest:
+
+| Path | SHA-256 |
+| --- | --- |
+| `backend/src/financialAdvice/adviceService.ts` | `42c7db921dcbdf4eadc4591d01a96d915b67915cf97059a0b1a4eb4427112c8b` |
+| `backend/src/financialAdvice/advisorPrompt.ts` | `fececd95e6ff14951d26fb81e2b3722cf878bf3ed00986c43b75ae80cede439c` |
+| `backend/src/financialAdvice/calculations.ts` | `8e84f145a51e4f2629acf8a4abf8d7e4641c627f08b68b03626c112b32b2b808` |
+| `backend/src/financialAdvice/explanationCatalog.ts` | `6815fe35b556e0db31460c08ba400fa944a8c456d19294ac239bbb5e9b18ea38` |
+| `backend/src/financialAdvice/options.ts` | `e62443bed9f87e22bc10bf584b413a74baaa7d0f986383bd5214e0214ba88002` |
+| `backend/src/financialAdvice/selectionPolicy.ts` | `c8f7242f580ebe3ea42b11defd011fd64627b8f37954ca3305ec07986ce576c3` |
+| `backend/src/financialAdvice/selectorValidation.ts` | `7fcae7ae6f9fa9bf14773b65d2c0acd3e1a663eb031c86f11ce18d01ab67e31f` |
+| `backend/src/financialAdvice/types.ts` | `398ddecd5cc6466318fe3aeeee94c9da3513511dd0acf77babebf660b6817265` |
+| `backend/src/financialAdvice/validation.ts` | `070b39e61e37bf17dd94a94c32c99e057cab92d01d5482d8ea1b00b93d64e8b4` |
+| `backend/src/assistant/helpConfig.ts` | `8f1df7f1c6b38d7603006bab3b02816e65edcd5d0c26ec27b34a4282e19df818` |
+| `backend/src/assistant/ollamaHelpProvider.ts` | `8e01a3adc2c00de1d9e6096caefe7cf65cdef78d8a6d688e7eb3fc599c84b07e` |
+| `backend/src/assistant/rateLimiter.ts` | `78cc44510f5fd04a49350163e49e02acc02d18c34dcc91fd3cca20e18e0ff772` |
+| `backend/src/tests/financialAdviceEvaluation/dataset.ts` | `08e6adadc0d05c2d2aa91288adbb8accdfb3bde9c702f5b8d3182dd6e064eee1` |
+| `backend/src/tests/financialAdviceEvaluation/reporting.ts` | `39528bd1f1929ce2240b044209868b92428d6e1a2aa89e4604f1f67f7dc7773f` |
+| `backend/src/tests/financialAdviceEvaluation/runner.ts` | `ddfbae85d5f9d2fe43e768ca67fa4d2620b06c26ac1f6b0a0596f90ae15f4e03` |
+| `backend/scripts/evaluate-financial-advice.ts` | `1b111f8bf5dc6cacb88c096f5d45accaa88a823a1be7982623cedea345c380dc` |
+| `backend/scripts/aggregate-financial-advice-evaluation.ts` | `922d2d9485e8dfd8dc90a2bff02cab91156a0cfe7e493c8d77b7f098acc07929` |
+| `mobile-app/src/features/financial-advice/types/financialAdvice.ts` | `d06668d948eb575d5e6934a6214ee79ecd71cbd606a22206e8ccd69735553640` |
+| `mobile-app/src/features/financial-advice/validation/financialAdviceValidators.ts` | `e6cf0e66f1db23b13c5e046d65b8cbbc7a9d9723fc3b4207d78f77ddd5c8ebde` |
+
+- Mode/batch: `live-service` / `budget`
+- Model: `qwen3.5:4b`; digest: `2a654d98e6fba55d452b7043684e9b57a947e393bbffa62485a7aac05ee4eefd`
+- Command: `node --import=tsx scripts/evaluate-financial-advice.ts --live --batch=budget`
+- Resolved service fixture config: enabled=true; requestTimeoutMs=30000; providerTimeoutMs=25000; per-user-rate=5/min; maxConcurrent=2; provider budget=10/process
+- Threshold source: PROVISIONAL — OWNER DECISION REQUIRED; selection: `UNRESOLVED`
+
+## Summary (each ratio reports numerator / configured denominator)
+
+- Configured cases/results: 8/8; complete=true; missing=0; duplicates=0.
+- Provider attempted/charged: 8/8 / 8/8; per-run quota invariant=true; runs=888e36b4-7ed5-4cdc-aef7-26816406efc7:8/8.
+- AI_ASSISTED: 8/8 (100%); RULE_BASED: 0/8 (0%).
+- Raw schema valid: 8/8 (100%) of attempted; 8/8 (100%) of configured.
+- Semantic valid: 8/8 (100%) of attempted; 8/8 (100%) of configured.
+- Metrics/status/candidate feasibility/preferred-primary/warnings/public: 8/8 (100%) / 8/8 (100%) / 8/8 (100%)+8/8 (100%) / 7/8 (87.50%)+8/8 (100%) / 8/8 (100%) / 8/8 (100%).
+- Valid and appropriate live selectors: 7/8 (87.50%).
+- Latency min/median/max/average: 819 ms / 899 ms / 1131 ms / 940.25 ms.
+- Provisional threshold checks: >=15/16=BLOCKED; >=95%=BLOCKED; product gate=PASS; offline gate=NOT_APPLICABLE; live gate=BLOCKED; exit=2.
+
+## Case results (no raw request, provider text, financial values, or exception messages)
+
+| Case | Batch | Run | Execution | Attempt | Raw schema | Semantic | Public | Status | Metrics | Candidates/feasible | Preferred/primary | Warnings | Mode | Fallback | Selected ID | Reason IDs | Latency | Failure category |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |
+| B-01 | budget | 888e36b4-7ed5-4cdc-aef7-26816406efc7 | FAIL | true | true | true | true | true | true | true/true | false/true | true | AI_ASSISTED | NONE | REDUCE_FLEXIBLE_SPENDING | MONTHLY_GAP | 1087 | ORACLE_MISMATCH |
+| B-02 | budget | 888e36b4-7ed5-4cdc-aef7-26816406efc7 | PASS | true | true | true | true | true | true | true/true | true/true | true | AI_ASSISTED | NONE | MAINTAIN_BUDGET | BUDGET_TARGET_MET | 819 | NONE |
+| B-03 | budget | 888e36b4-7ed5-4cdc-aef7-26816406efc7 | PASS | true | true | true | true | true | true | true/true | true/true | true | AI_ASSISTED | NONE | MAINTAIN_BUDGET | BUDGET_TARGET_MET | 850 | NONE |
+| B-04 | budget | 888e36b4-7ed5-4cdc-aef7-26816406efc7 | PASS | true | true | true | true | true | true | true/true | true/true | true | AI_ASSISTED | NONE | MAINTAIN_BUDGET | BUDGET_TARGET_MET | 879 | NONE |
+| B-05 | budget | 888e36b4-7ed5-4cdc-aef7-26816406efc7 | PASS | true | true | true | true | true | true | true/true | true/true | true | AI_ASSISTED | NONE | REVIEW_BASE_BUDGET | BASE_BUDGET_DEFICIT | 993 | NONE |
+| B-06 | budget | 888e36b4-7ed5-4cdc-aef7-26816406efc7 | PASS | true | true | true | true | true | true | true/true | true/true | true | AI_ASSISTED | NONE | REDUCE_FLEXIBLE_SPENDING | MONTHLY_GAP | 919 | NONE |
+| B-07 | budget | 888e36b4-7ed5-4cdc-aef7-26816406efc7 | PASS | true | true | true | true | true | true | true/true | true/true | true | AI_ASSISTED | NONE | ADJUST_SAVINGS_TARGET | MONTHLY_GAP,PRESERVE_CURRENT_SPENDING | 1131 | NONE |
+| B-08 | budget | 888e36b4-7ed5-4cdc-aef7-26816406efc7 | PASS | true | true | true | true | true | true | true/true | true/true | true | AI_ASSISTED | NONE | ADJUST_SAVINGS_TARGET | MONTHLY_GAP | 844 | NONE |
+
+## Interpretation
+
+Service-level live evidence only. This is not HTTP, emulator, or device E2E evidence. Fallback rows do not count as valid live selectors.
+
+95% on 16 cases requires 16/16; 15/16 is 93.75%. Threshold approval is not inferred from these measurements.

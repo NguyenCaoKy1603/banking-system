@@ -86,6 +86,8 @@ export type SavingsDeposit = {
   reference: string;
   updatedAt: string;
   renewedDepositId: string | null;
+  earlyWithdrawnAt?: string | null;
+  earlyInterest?: Money | null;
 };
 
 export type SavingsDepositsResponse = {
@@ -100,4 +102,29 @@ export type SubmitSavingsOpeningRequest = {
     proof: string;
     challengeId?: string;
   };
+};
+
+export type UpdateSavingsMaturityInstructionRequest = {
+  maturityInstruction: MaturityInstruction;
+};
+
+export type SubmitSavingsWithdrawalRequest = {
+  stepUp: {
+    method: "TOTP" | "OTP";
+    proof: string;
+    challengeId: string;
+  };
+};
+
+export type SavingsWithdrawalReceipt = {
+  depositId: string;
+  sourceAccountId: string;
+  principal: Money;
+  interestDays: number;
+  demandRateBasisPoints: number;
+  earlyInterest: Money;
+  totalPayout: Money;
+  status: "CLOSED";
+  reference: string;
+  withdrawnAt: string;
 };

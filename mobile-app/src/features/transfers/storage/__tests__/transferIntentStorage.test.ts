@@ -1,9 +1,11 @@
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 import {
   clearTransferIntent,
   loadTransferIntent,
+  resetTransferIntentCacheForTests,
   saveTransferIntent,
   type PendingTransferIntent,
 } from "@/features/transfers/storage/transferIntentStorage";
@@ -215,5 +217,22 @@ describe("transferIntentStorage", () => {
 
     expect(scopedKeys()).toHaveLength(0);
     expect(mockStore.has(LEGACY_KEY)).toBe(false);
+  });
+
+  it("operates gracefully on web platform without calling native SecureStore", async () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Platform, "OS");
+    Object.defineProperty(Platform, "OS", { configurable: true, value: "web" });
+    try {
+      resetTransferIntentCacheForTests();
+      await expect(loadTransferIntent("user-1")).resolves.toBeNull();
+      await saveTransferIntent(intent);
+      await expect(loadTransferIntent("user-1")).resolves.toEqual(intent);
+      await clearTransferIntent("user-1");
+      await expect(loadTransferIntent("user-1")).resolves.toBeNull();
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Platform, "OS", originalDescriptor);
+      }
+    }
   });
 });

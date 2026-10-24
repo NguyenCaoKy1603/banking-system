@@ -11,7 +11,7 @@ export type DeliveryResult =
   | { status: "FAILED"; reason: string };
 
 export type EmailProviderHealth = {
-  provider: "fake" | "disabled" | "http";
+  provider: "fake" | "disabled" | "http" | "smtp";
   status: "ok" | "disabled" | "degraded";
   configured: boolean;
   credentialConfigured: boolean;

@@ -1,21 +1,32 @@
 import { useCallback, useMemo, useState } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { AppHeader } from "@/components/ui/AppHeader";
+import { AppIcon } from "@/components/ui/AppIcon";
+import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { Screen } from "@/components/ui/Screen";
+import { StateCard } from "@/components/ui/StateCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAuth } from "@/features/auth/context/AuthContext";
-import { getCreditCardStatusLabel } from "@/features/credit/presentation/creditPresentation";
-import { listCreditCards } from "@/features/credit/services/creditApi";
-import type { CreditCard } from "@/features/credit/types/credit";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
+import { getCreditCardStatusLabel } from "@/features/credit/presentation/creditPresentation";
+import { listCreditApplications, listCreditCards } from "@/features/credit/services/creditApi";
+import type { CreditApplication, CreditCard, CreditCardStatus } from "@/features/credit/types/credit";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof ApiError
     ? error.message
-    : "Không thể tải thẻ tín dụng sandbox. Vui lòng thử lại.";
+    : "Không thể tải danh sách thẻ. Vui lòng thử lại.";
+}
+
+function getStatusTone(status: CreditCardStatus): "success" | "warning" | "danger" | "neutral" {
+  if (status === "ACTIVE") return "success";
+  if (status === "LOCKED") return "warning";
+  if (status === "BLOCKED") return "danger";
+  return "neutral";
 }
 
 type CardsScreenProps = { showBackButton?: boolean };
@@ -24,8 +35,12 @@ export function CardsScreen({ showBackButton = true }: CardsScreenProps) {
   const router = useRouter();
   const { deviceId, refreshAccessToken, session } = useAuth();
   const accessToken = session?.accessToken ?? null;
-  const auth = useMemo(() => ({ accessToken, deviceId, refreshAccessToken }), [accessToken, deviceId, refreshAccessToken]);
+  const auth = useMemo(
+    () => ({ accessToken, deviceId, refreshAccessToken }),
+    [accessToken, deviceId, refreshAccessToken],
+  );
   const [cards, setCards] = useState<CreditCard[]>([]);
+  const [application, setApplication] = useState<CreditApplication | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | undefined>();
 
@@ -38,7 +53,14 @@ export function CardsScreen({ showBackButton = true }: CardsScreenProps) {
     setIsLoading(true);
     setError(undefined);
     try {
-      setCards((await listCreditCards(auth)).items);
+      const [cardsResponse, applicationsResponse] = await Promise.all([
+        listCreditCards(auth),
+        listCreditApplications(auth),
+      ]);
+      setCards(cardsResponse.items);
+      setApplication(
+        applicationsResponse.items.find((item) => item.status !== "REJECTED" && item.status !== "ACTIVE") ?? null,
+      );
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
     } finally {
@@ -55,48 +77,90 @@ export function CardsScreen({ showBackButton = true }: CardsScreenProps) {
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        {showBackButton ? (
-          <Pressable accessibilityRole="button" onPress={() => router.back()} style={styles.backButton} testID="cards-back">
-            <Text style={styles.backLabel}>‹ Quay lại</Text>
-          </Pressable>
-        ) : null}
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>M7 · CREDIT SANDBOX</Text>
-          <Text style={styles.title}>Thẻ tín dụng</Text>
-          <Text style={styles.description}>
-            Dữ liệu thẻ, hạn mức và dư nợ lấy từ backend reference. Đây không phải thẻ tín dụng thật.
-          </Text>
-        </View>
+        <AppHeader
+          backTestID="cards-back"
+          eyebrow="Quản lý tài chính"
+          onBack={showBackButton ? () => router.back() : undefined}
+          subtitle="Theo dõi hạn mức, dư nợ và trạng thái thẻ tại một nơi."
+          title="Thẻ tín dụng"
+        />
+        <EnvironmentBadge />
 
         {isLoading ? (
-          <View style={styles.centerState} testID="credit-cards-loading"><ActivityIndicator color={colors.primary} size="large" /></View>
+          <StateCard loading message="Đang tải danh sách thẻ..." testID="credit-cards-loading" />
         ) : error ? (
-          <View style={styles.stateCard} testID="credit-cards-error">
-            <Text style={styles.errorText}>{error}</Text>
-            <PrimaryButton label="Thử lại" onPress={loadCards} testID="credit-cards-retry" />
-          </View>
+          <StateCard
+            actionLabel="Thử lại"
+            actionTestID="credit-cards-retry"
+            icon="alert"
+            message={error}
+            onAction={loadCards}
+            testID="credit-cards-error"
+            title="Không thể tải dữ liệu"
+          />
         ) : cards.length === 0 ? (
-          <View style={styles.stateCard} testID="credit-cards-empty">
-            <Text style={styles.emptyText}>Chưa có thẻ trong sandbox.</Text>
-            <Text style={styles.description}>Bạn cần đăng ký và xác nhận kích hoạt trước khi thẻ xuất hiện.</Text>
-            <PrimaryButton label="Đăng ký thẻ tín dụng sandbox" onPress={() => router.push("/cards/apply")} testID="credit-apply-open" />
-          </View>
+          <StateCard
+            actionLabel={application ? "Xem hồ sơ đăng ký" : "Đăng ký thẻ"}
+            icon="card"
+            message={
+              application
+                ? "Hồ sơ thẻ của bạn đang được xử lý. Mở hồ sơ để xem trạng thái và bước tiếp theo."
+                : "Bạn chưa có thẻ tín dụng. Hãy gửi đăng ký để bắt đầu."
+            }
+            onAction={() => router.push("/cards/apply")}
+            testID="credit-cards-empty"
+            title="Chưa có thẻ"
+          />
         ) : (
-          <View style={styles.listCard} testID="credit-cards-list">
+          <View style={styles.list} testID="credit-cards-list">
             {cards.map((card, index) => (
               <Pressable
+                accessibilityLabel={`Mở chi tiết ${card.displayName}`}
                 accessibilityRole="button"
                 key={card.cardId}
-                onPress={() => router.push({ pathname: "/cards/[cardId]", params: { cardId: card.cardId } })}
-                style={({ pressed }) => [styles.cardRow, pressed ? styles.pressedRow : null]}
+                onPress={() =>
+                  router.push({ pathname: "/cards/[cardId]", params: { cardId: card.cardId } })
+                }
+                style={({ pressed }) => [styles.cardShell, pressed ? styles.pressed : null]}
                 testID={index === 0 ? "card-first" : `credit-card-${card.cardId}`}
               >
-                <View style={styles.cardMain}>
+                <View style={styles.bankCard}>
+                  <View style={styles.cardTopRow}>
+                    <View style={styles.cardBrandRow}>
+                      <View style={styles.cardIcon}>
+                        <AppIcon color={colors.onPrimary} name="card" size={19} />
+                      </View>
+                      <Text style={styles.novaLabel}>NOVA</Text>
+                    </View>
+                    <Text style={styles.networkLabel}>{card.brand}</Text>
+                  </View>
                   <Text style={styles.cardName}>{card.displayName}</Text>
-                  <Text style={styles.cardNumber}>{card.brand} · {card.maskedNumber}</Text>
-                  <Text style={styles.cardMeta}>Dư nợ {formatVndMinor(card.postedOutstanding.amountMinor)} · Còn khả dụng {formatVndMinor(card.availableCredit.amountMinor)}</Text>
+                  <Text style={styles.cardNumber}>{card.maskedNumber}</Text>
+                  <View style={styles.cardBottomRow}>
+                    <View>
+                      <Text style={styles.cardCaption}>Hiệu lực đến</Text>
+                      <Text style={styles.cardExpiry}>
+                        {String(card.expiryMonth).padStart(2, "0")}/{String(card.expiryYear).slice(-2)}
+                      </Text>
+                    </View>
+                    <StatusBadge label={getCreditCardStatusLabel(card.status)} tone={getStatusTone(card.status)} />
+                  </View>
                 </View>
-                <Text style={[styles.status, card.status === "LOCKED" ? styles.locked : null]}>{getCreditCardStatusLabel(card.status)}</Text>
+
+                <View style={styles.balancePanel}>
+                  <View style={styles.balanceItem}>
+                    <Text style={styles.balanceLabel}>Dư nợ hiện tại</Text>
+                    <Text style={styles.balanceValue}>{formatVndMinor(card.postedOutstanding.amountMinor)}</Text>
+                  </View>
+                  <View style={styles.divider} />
+                  <View style={styles.balanceItem}>
+                    <Text style={styles.balanceLabel}>Hạn mức khả dụng</Text>
+                    <Text style={[styles.balanceValue, styles.availableValue]}>
+                      {formatVndMinor(card.availableCredit.amountMinor)}
+                    </Text>
+                  </View>
+                  <AppIcon color={colors.subtle} name="chevronRight" size={20} />
+                </View>
               </Pressable>
             ))}
           </View>
@@ -107,24 +171,56 @@ export function CardsScreen({ showBackButton = true }: CardsScreenProps) {
 }
 
 const styles = StyleSheet.create({
-  content: { flexGrow: 1, width: "100%", maxWidth: 720, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
-  backButton: { alignSelf: "flex-start", paddingVertical: spacing.xs },
-  backLabel: { color: colors.primary, fontSize: 15, fontWeight: "600" },
-  header: { gap: spacing.sm },
-  eyebrow: { color: colors.primary, fontSize: 12, fontWeight: "700", letterSpacing: 1.4 },
-  title: { color: colors.text, fontSize: 30, fontWeight: "700" },
-  description: { color: colors.muted, fontSize: 15, lineHeight: 22 },
-  centerState: { minHeight: 180, alignItems: "center", justifyContent: "center" },
-  stateCard: { gap: spacing.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, borderRadius: spacing.md, backgroundColor: colors.surface },
-  listCard: { borderWidth: 1, borderColor: colors.border, borderRadius: spacing.md, backgroundColor: colors.surface, overflow: "hidden" },
-  cardRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.md, padding: spacing.lg, borderBottomWidth: 1, borderBottomColor: colors.border },
-  pressedRow: { opacity: 0.72 },
-  cardMain: { flex: 1, gap: spacing.xs },
-  cardName: { color: colors.text, fontSize: 17, fontWeight: "700" },
-  cardNumber: { color: colors.muted, fontSize: 14 },
-  cardMeta: { color: colors.muted, fontSize: 13, lineHeight: 19 },
-  status: { color: colors.success, fontSize: 12, fontWeight: "700", textAlign: "right" },
-  locked: { color: colors.danger },
-  emptyText: { color: colors.text, fontSize: 16, fontWeight: "600" },
-  errorText: { color: colors.danger, fontSize: 14, lineHeight: 20 },
+  content: {
+    flexGrow: 1,
+    width: "100%",
+    maxWidth: sizes.contentMaxWidth,
+    alignSelf: "center",
+    padding: spacing.lg,
+    gap: spacing.lg,
+  },
+  list: { gap: spacing.lg },
+  cardShell: {
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.xl,
+    backgroundColor: colors.surface,
+    ...shadows.card,
+  },
+  pressed: { opacity: 0.82, transform: [{ scale: 0.995 }] },
+  bankCard: {
+    minHeight: 210,
+    justifyContent: "space-between",
+    padding: spacing.mlg,
+    backgroundColor: colors.navy,
+  },
+  cardTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  cardBrandRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  cardIcon: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radius.sm,
+    backgroundColor: colors.primary,
+  },
+  novaLabel: { ...typography.label, color: colors.onPrimary, letterSpacing: 1.2 },
+  networkLabel: { ...typography.subheading, color: colors.onPrimary, fontStyle: "italic" },
+  cardName: { ...typography.bodyStrong, color: "rgba(255,255,255,0.78)" },
+  cardNumber: { ...typography.heading, color: colors.onPrimary, letterSpacing: 2.2 },
+  cardBottomRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" },
+  cardCaption: { ...typography.caption, color: "rgba(255,255,255,0.62)" },
+  cardExpiry: { ...typography.bodyStrong, color: colors.onPrimary },
+  balancePanel: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.mlg,
+  },
+  balanceItem: { flex: 1, gap: spacing.xs },
+  balanceLabel: { ...typography.caption, color: colors.muted },
+  balanceValue: { ...typography.bodyStrong, color: colors.text },
+  availableValue: { color: colors.success },
+  divider: { width: 1, height: 40, backgroundColor: colors.divider },
 });

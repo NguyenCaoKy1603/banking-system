@@ -18,9 +18,15 @@ const secretMetadataSchemaPath = path.resolve(__dirname, "../database/026_secret
 const secretMetadataSchema = fs.readFileSync(secretMetadataSchemaPath, "utf8");
 const secretRotationSchemaPath = path.resolve(__dirname, "../database/027_secret_rotation_inventory.sql");
 const secretRotationSchema = fs.readFileSync(secretRotationSchemaPath, "utf8");
+const twoRoleMigrationPath = path.resolve(__dirname, "../database/041_admin_two_roles.sql");
+const twoRoleMigration = fs.readFileSync(twoRoleMigrationPath, "utf8");
+const directOperationsMigrationPath = path.resolve(__dirname, "../database/042_admin_direct_operations_accounts.sql");
+const directOperationsMigration = fs.readFileSync(directOperationsMigrationPath, "utf8");
+const retireInviteApprovalMigrationPath = path.resolve(__dirname, "../database/043_retire_staff_invite_approval.sql");
+const retireInviteApprovalMigration = fs.readFileSync(retireInviteApprovalMigrationPath, "utf8");
 const secretSchema = `${secretMetadataSchema}\n${secretRotationSchema}`;
 
-if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(schema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(caseSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(policySchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(hardeningSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(invitePolicySchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(scopeSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(secretSchema)) {
+if (/\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(schema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(caseSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(policySchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(hardeningSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(invitePolicySchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(scopeSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(secretSchema) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(twoRoleMigration) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(directOperationsMigration) || /\bDROP\s+(TABLE|SCHEMA|DATABASE)\b/i.test(retireInviteApprovalMigration)) {
   throw new Error("Admin migration must be additive and must not drop data.");
 }
 
@@ -36,10 +42,13 @@ const requiredTables = [
   "case_assignments", "case_internal_notes", "fraud_case_actions",
   "admin_bootstrap_state",
   "staff_invite_requests", "simulation_funding_reversals",
+  "admin_staff_account_creation_requests",
 ];
 
 for (const table of requiredTables) {
-  const source = table === "staff_invite_requests" || table === "simulation_funding_reversals"
+  const source = table === "admin_staff_account_creation_requests"
+    ? directOperationsMigration
+    : table === "staff_invite_requests" || table === "simulation_funding_reversals"
     ? hardeningSchema
     : table.startsWith("kyc_") || table === "credit_applications" || table.startsWith("case_") || table === "fraud_case_actions" || table === "admin_bootstrap_state" ? (table === "admin_bootstrap_state" ? fs.readFileSync(path.resolve(__dirname, "../database/021_admin_bootstrap_guard.sql"), "utf8") : caseSchema) : schema;
   if (!new RegExp(`CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+${table}\\b`, "i").test(source)) {
@@ -111,6 +120,33 @@ for (const marker of [
 }
 
 for (const marker of [
+  /CASE\s+role_code\s+WHEN\s+'SUPPORT'\s+THEN\s+'OPERATIONS'\s+ELSE\s+'ADMIN'\s+END/i,
+  /UPDATE\s+staff_invites[\s\S]*UPDATE\s+staff_invite_requests[\s\S]*UPDATE\s+staff_role_change_requests/i,
+  /DELETE\s+FROM\s+staff_roles\s+WHERE\s+code\s+IN\s*\('SUPPORT',\s*'CONTROL'\)/i,
+  /Payload fingerprints and audit history are intentionally untouched/i,
+]) {
+  if (!marker.test(twoRoleMigration)) throw new Error(`Admin two-role migration invariant missing: ${marker}`);
+}
+
+for (const marker of [
+  /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+admin_staff_account_creation_requests/i,
+  /PRIMARY\s+KEY\s*\(\s*requester_staff_id\s*,\s*idempotency_key\s*\)/i,
+  /request_fingerprint\s+text\s+NOT\s+NULL/i,
+  /GRANT\s+SELECT\s*,\s*INSERT\s+ON\s+admin_staff_account_creation_requests\s+TO\s+banking_admin_api/i,
+]) {
+  if (!marker.test(directOperationsMigration)) throw new Error(`Direct Operations-account migration invariant missing: ${marker}`);
+}
+
+for (const marker of [
+  /staff\.operations-account\.create/i,
+  /UPDATE\s+admin_action_policies[\s\S]*enabled\s*=\s*false[\s\S]*WHERE\s+action_type\s*=\s*'STAFF_INVITE'/i,
+  /DELETE\s+FROM\s+staff_role_permissions[\s\S]*staff\.invite\.request[\s\S]*staff\.invite\.approve/i,
+  /DELETE\s+FROM\s+staff_permissions[\s\S]*staff\.invite\.request[\s\S]*staff\.invite\.approve/i,
+]) {
+  if (!marker.test(retireInviteApprovalMigration)) throw new Error(`Admin staff-invite retirement migration invariant missing: ${marker}`);
+}
+
+for (const marker of [
   /DROP\s+POLICY\s+IF\s+EXISTS\s+kyc_case_scope/i,
   /assigned_staff_id\s+IS\s+NULL[\s\S]*SUPPORT/i,
   /case_internal_notes\.case_type/i,
@@ -121,7 +157,7 @@ for (const marker of [
 async function validateLiveDatabase() {
   const databaseUrl = process.env.DATABASE_URL?.trim();
   if (!databaseUrl) {
-    console.log(`Admin schema source contract valid: ${requiredTables.length} tables and four-eyes/audit invariants verified (live DB skipped; DATABASE_URL is not set).`);
+    console.log(`Admin schema source contract valid: ${requiredTables.length} tables, two-role and direct Operations-account invariants verified (live DB skipped; DATABASE_URL is not set).`);
     return;
   }
   const { Pool } = require("pg");
@@ -137,8 +173,10 @@ async function validateLiveDatabase() {
     for (const table of requiredTables) {
       if (!found.has(table)) throw new Error(`Live database is missing Admin table ${table}; run npm run db:migrate.`);
     }
-    const roleCount = await pool.query("SELECT COUNT(*)::int AS count FROM staff_roles WHERE code IN ('SUPPORT','OPERATIONS','CONTROL','ADMIN')");
-    if (Number(roleCount.rows[0]?.count ?? 0) !== 4) throw new Error("Live database is missing one or more fixed staff roles.");
+    const roleCount = await pool.query("SELECT COUNT(*)::int AS count FROM staff_roles WHERE code IN ('OPERATIONS','ADMIN')");
+    if (Number(roleCount.rows[0]?.count ?? 0) !== 2) throw new Error("Live database is missing one or more of the two fixed staff roles; run npm run db:migrate.");
+    const legacyRoleCount = await pool.query("SELECT COUNT(*)::int AS count FROM staff_roles WHERE code IN ('SUPPORT','CONTROL')");
+    if (Number(legacyRoleCount.rows[0]?.count ?? 0) !== 0) throw new Error("Live database still has legacy staff roles; run npm run db:migrate.");
     const customerColumns = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='customers' AND column_name IN ('access_status','access_version')");
     if (customerColumns.rows.length !== 2) throw new Error("Live database is missing customer access lock columns.");
     const trigger = await pool.query("SELECT 1 FROM pg_trigger WHERE tgname='audit_events_append_only' AND NOT tgisinternal");
@@ -149,13 +187,16 @@ async function validateLiveDatabase() {
     if (Number(roles.rows[0]?.count ?? 0) !== 5) throw new Error("Live database is missing separated Admin/API/worker roles; provision roles and run npm run db:migrate.");
     const rls = await pool.query("SELECT COUNT(*)::int AS count FROM pg_class WHERE relnamespace='public'::regnamespace AND relname IN ('kyc_applications','credit_applications','case_assignments','case_internal_notes','admin_action_requests') AND relrowsecurity");
     if (Number(rls.rows[0]?.count ?? 0) !== 5) throw new Error("Live database is missing case/action RLS; run npm run db:migrate.");
-    const invitePermission = await pool.query("SELECT 1 FROM staff_permissions WHERE code='staff.invite.approve'");
-    if (invitePermission.rowCount !== 1) throw new Error("Live database is missing staff invite approval permission; run npm run db:migrate.");
-    const invitePolicy = await pool.query("SELECT 1 FROM admin_action_policies WHERE action_type='STAFF_INVITE' AND required_permission='staff.invite.approve' AND enabled=true");
-    if (invitePolicy.rowCount !== 1) throw new Error("Live database is missing STAFF_INVITE action policy; run npm run db:migrate.");
+    const directCreation = await pool.query("SELECT 1 FROM staff_role_permissions WHERE role_code='ADMIN' AND permission_code='staff.operations-account.create'");
+    if (directCreation.rowCount !== 1) throw new Error("Live database is missing the direct Operations-account permission; run npm run db:migrate.");
+    const retiredPermissions = await pool.query("SELECT COUNT(*)::int AS count FROM staff_permissions WHERE code IN ('staff.invite.request','staff.invite.approve')");
+    const retiredRoleLinks = await pool.query("SELECT COUNT(*)::int AS count FROM staff_role_permissions WHERE permission_code IN ('staff.invite.request','staff.invite.approve')");
+    if (Number(retiredPermissions.rows[0]?.count ?? 0) !== 0 || Number(retiredRoleLinks.rows[0]?.count ?? 0) !== 0) throw new Error("Live database still exposes retired staff-invite permissions; run npm run db:migrate.");
+    const invitePolicy = await pool.query("SELECT enabled, required_permission FROM admin_action_policies WHERE action_type='STAFF_INVITE'");
+    if (invitePolicy.rowCount !== 1 || invitePolicy.rows[0].enabled !== false || invitePolicy.rows[0].required_permission !== "staff.operations-account.create") throw new Error("Live database must retain the historical STAFF_INVITE policy in a disabled state; run npm run db:migrate.");
     const staffMfaColumns = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='staff_mfa_credentials' AND column_name = ANY($1::text[])", [["secret_cipher_version", "secret_aad_version", "secret_encryption_algorithm", "secret_encrypted_data_key", "secret_reencrypted_at"]]);
     if (staffMfaColumns.rows.length !== 5) throw new Error("Live database is missing staff MFA envelope metadata; run npm run db:migrate.");
-    console.log(`Admin schema contract valid: ${requiredTables.length} tables, fixed role seed, separated DB roles, case RLS and staff invite policy verified against PostgreSQL.`);
+    console.log(`Admin schema contract valid: ${requiredTables.length} tables, two fixed staff roles, direct Operations-account idempotency, retired staff-invite approval, separated DB roles and case RLS verified against PostgreSQL.`);
   } finally {
     await pool.end();
   }

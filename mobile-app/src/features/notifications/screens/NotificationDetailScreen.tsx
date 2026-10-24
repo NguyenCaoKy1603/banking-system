@@ -1,25 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { AppHeader } from "@/components/ui/AppHeader";
+import { AppIcon, type AppIconName } from "@/components/ui/AppIcon";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { Screen } from "@/components/ui/Screen";
+import { StateCard } from "@/components/ui/StateCard";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { getNotificationRoute } from "@/features/notifications/navigation/notificationRoute";
 import {
   listNotifications,
   markNotificationRead,
 } from "@/features/notifications/services/notificationsApi";
-import type { Notification } from "@/features/notifications/types/notification";
+import type {
+  Notification,
+  NotificationType,
+} from "@/features/notifications/types/notification";
 import { ApiError } from "@/services/api/ApiError";
-import { colors, spacing } from "@/theme";
+import { colors, radius, sizes, spacing, typography } from "@/theme";
 
 function getErrorMessage(error: unknown): string {
   return error instanceof ApiError
@@ -30,6 +31,16 @@ function getErrorMessage(error: unknown): string {
 function formatDate(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("vi-VN");
+}
+
+function getTypePresentation(type: NotificationType): {
+  label: string;
+  icon: AppIconName;
+} {
+  if (type === "TRANSFER") return { label: "Chuyển tiền", icon: "transfer" };
+  if (type === "SAVINGS") return { label: "Tiền gửi", icon: "savings" };
+  if (type === "CREDIT") return { label: "Thẻ tín dụng", icon: "card" };
+  return { label: "Bảo mật", icon: "shield" };
 }
 
 export function NotificationDetailScreen() {
@@ -53,7 +64,6 @@ export function NotificationDetailScreen() {
       setIsLoading(false);
       return;
     }
-
     setIsLoading(true);
     setError(undefined);
 
@@ -65,12 +75,7 @@ export function NotificationDetailScreen() {
         setError("Không tìm thấy thông báo trong phiên hiện tại.");
         return;
       }
-
-      if (!found.read) {
-        setNotification(await markNotificationRead(found.id, auth));
-      } else {
-        setNotification(found);
-      }
+      setNotification(found.read ? found : await markNotificationRead(found.id, auth));
     } catch (requestError: unknown) {
       setNotification(null);
       setError(getErrorMessage(requestError));
@@ -84,57 +89,58 @@ export function NotificationDetailScreen() {
   }, [loadNotification]);
 
   const targetRoute = notification ? getNotificationRoute(notification) : null;
+  const presentation = notification ? getTypePresentation(notification.type) : null;
 
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
-        <Pressable
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={() => router.back()}
-          style={styles.backButton}
-          testID="notification-detail-back"
-        >
-          <Text style={styles.backLabel}>‹ Quay lại</Text>
-        </Pressable>
-
-        <View style={styles.header}>
-          <Text style={styles.eyebrow}>M8 · NOTIFICATION</Text>
-          <Text style={styles.title}>Chi tiết thông báo</Text>
-          <Text style={styles.description}>
-            Nội dung do server ghi nhận; nút bên dưới chỉ điều hướng tới module đích, không tự xác nhận giao dịch.
-          </Text>
-        </View>
+        <AppHeader
+          backTestID="notification-detail-back"
+          eyebrow="Trung tâm cập nhật"
+          onBack={() => router.back()}
+          subtitle="Xem nội dung và mở nhanh chức năng liên quan."
+          title="Chi tiết thông báo"
+        />
 
         {isLoading ? (
-          <View style={styles.centerState}>
-            <ActivityIndicator color={colors.primary} size="large" />
-          </View>
+          <StateCard loading message="Đang tải thông báo..." />
         ) : error ? (
-          <View style={styles.card}>
-            <Text style={styles.errorText}>{error}</Text>
-            <PrimaryButton
-              label="Thử lại"
-              onPress={() => void loadNotification()}
-              testID="notification-detail-retry"
-            />
-          </View>
-        ) : notification ? (
-          <View style={styles.card} testID="notification-detail">
-            <Text style={styles.typeLabel}>{notification.type}</Text>
+          <StateCard
+            actionLabel="Thử lại"
+            actionTestID="notification-detail-retry"
+            icon="alert"
+            message={error}
+            onAction={() => void loadNotification()}
+            testID="notification-detail-error"
+            title="Không thể tải thông báo"
+          />
+        ) : notification && presentation ? (
+          <Card elevated style={styles.card} testID="notification-detail">
+            <View style={styles.iconBox}>
+              <AppIcon color={colors.primary} name={presentation.icon} size={27} />
+            </View>
+            <View style={styles.badges}>
+              <StatusBadge label={presentation.label} tone="info" />
+              <StatusBadge label="Đã đọc" tone="success" />
+            </View>
             <Text style={styles.notificationTitle}>{notification.title}</Text>
             <Text style={styles.notificationBody}>{notification.body}</Text>
-            <Text style={styles.notificationDate}>{formatDate(notification.createdAt)}</Text>
-            <Text style={styles.readState}>Đã đọc</Text>
+            <View style={styles.dateRow}>
+              <AppIcon color={colors.subtle} name="history" size={16} />
+              <Text style={styles.notificationDate}>{formatDate(notification.createdAt)}</Text>
+            </View>
             {targetRoute ? (
-              <PrimaryButton
+              <Button
+                icon="chevronRight"
                 label="Mở nội dung liên quan"
                 onPress={() => router.push(targetRoute)}
                 testID="notification-open-target"
               />
             ) : null}
-          </View>
-        ) : null}
+          </Card>
+        ) : (
+          <StateCard icon="bell" message="Thông báo không còn khả dụng." title="Không có dữ liệu" />
+        )}
       </ScrollView>
     </Screen>
   );
@@ -144,80 +150,23 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     width: "100%",
-    maxWidth: 720,
+    maxWidth: sizes.contentMaxWidth,
     alignSelf: "center",
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  backButton: {
-    alignSelf: "flex-start",
-    paddingVertical: spacing.xs,
-  },
-  backLabel: {
-    color: colors.primary,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  header: {
-    gap: spacing.sm,
-  },
-  eyebrow: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: "700",
-  },
-  description: {
-    color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-  centerState: {
-    minHeight: 180,
+  card: { alignItems: "flex-start" },
+  iconBox: {
+    width: 58,
+    height: 58,
     alignItems: "center",
     justifyContent: "center",
+    borderRadius: radius.lg,
+    backgroundColor: colors.primarySoft,
   },
-  card: {
-    gap: spacing.md,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: spacing.md,
-    backgroundColor: colors.surface,
-  },
-  typeLabel: {
-    color: colors.primary,
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 1,
-  },
-  notificationTitle: {
-    color: colors.text,
-    fontSize: 21,
-    fontWeight: "700",
-  },
-  notificationBody: {
-    color: colors.text,
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  notificationDate: {
-    color: colors.muted,
-    fontSize: 13,
-  },
-  readState: {
-    color: colors.success,
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  errorText: {
-    color: colors.danger,
-    fontSize: 14,
-    lineHeight: 20,
-  },
+  badges: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  notificationTitle: { ...typography.heading, color: colors.text },
+  notificationBody: { ...typography.body, color: colors.text },
+  dateRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
+  notificationDate: { ...typography.caption, color: colors.muted },
 });

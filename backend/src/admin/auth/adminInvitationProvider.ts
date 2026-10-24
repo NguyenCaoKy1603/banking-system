@@ -51,7 +51,7 @@ export type RuntimeAdminInvitationProviderOptions = {
   sleep?: (delayMs: number) => Promise<void>;
 };
 
-const LOCAL_CAPTURE_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "mailpit", "mailhog"]);
+const LOCAL_CAPTURE_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "mailpit", "mailhog", "invitation-capture"]);
 
 function retryableStatus(status: number): boolean {
   return status === 408 || status === 425 || status === 429 || status >= 500;

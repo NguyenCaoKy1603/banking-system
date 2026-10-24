@@ -187,16 +187,19 @@ export class AccountRepository {
     return mapAccount(result.rows[0] as Record<string, unknown>);
   }
 
-  async listTransactions(accountId: string, limit = 100): Promise<AccountTransactionRow[]> {
-    if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error("limit must be between 1 and 1000.");
+  async listTransactions(accountId: string, cursor?: { occurredAt: string; id: string } | null, limit = 101): Promise<AccountTransactionRow[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1001) throw new Error("limit must be between 1 and 1000.");
     const result = await this.client.query(
       `
         SELECT * FROM account_transactions
         WHERE account_id = $1
+          AND ($2::timestamptz IS NULL
+            OR occurred_at < $2::timestamptz
+            OR (occurred_at = $2::timestamptz AND id < $3::uuid))
         ORDER BY occurred_at DESC, id DESC
-        LIMIT $2
+        LIMIT $4
       `,
-      [requireUuid(accountId, "accountId"), limit],
+      [requireUuid(accountId, "accountId"), cursor?.occurredAt ?? null, cursor?.id ?? null, limit],
     );
     return result.rows.map((row) => mapTransaction(row as Record<string, unknown>));
   }

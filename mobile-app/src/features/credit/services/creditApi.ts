@@ -8,6 +8,7 @@ import {
 } from "@/features/banking/validation/idempotencyKey";
 import { isMoney } from "@/features/banking/validation/moneyValidators";
 import type {
+  CardReportedLostResponse,
   CreditAccount,
   CreditAccountsResponse,
   CreditApplication,
@@ -25,6 +26,7 @@ import type {
   CreditTransactionsResponse,
 } from "@/features/credit/types/credit";
 import {
+  isCardReportedLostResponse,
   isCreditAccountResponse,
   isCreditAccountsResponse,
   isCreditApplication,
@@ -107,7 +109,26 @@ export function getCreditCard(cardId: string, auth: RequestAuth): Promise<Credit
   );
 }
 
-export function lockCreditCard(cardId: string, auth: RequestAuth): Promise<{ card: CreditCard }> {
+type CardControlStepUp = {
+  method: "TOTP";
+  proof: string;
+  challengeId: string;
+};
+
+function validateCardControlStepUp(stepUp: CardControlStepUp): void {
+  if (
+    !stepUp.challengeId.trim() ||
+    stepUp.method !== "TOTP" ||
+    !stepUp.proof.trim()
+  ) {
+    throw new TypeError("stepUp.challengeId và stepUp.proof không được để trống.");
+  }
+}
+
+export function lockCreditCard(
+  cardId: string,
+  auth: RequestAuth,
+): Promise<{ card: CreditCard }> {
   return requestJson(
     `/cards/${requireResourceId(cardId, "cardId")}/lock`,
     { method: "POST", auth },
@@ -117,14 +138,27 @@ export function lockCreditCard(cardId: string, auth: RequestAuth): Promise<{ car
 
 export function unlockCreditCard(
   cardId: string,
-  stepUp: { method: "OTP" | "TOTP" | "BIOMETRIC"; proof: string; challengeId?: string },
+  stepUp: CardControlStepUp,
   auth: RequestAuth,
 ): Promise<{ card: CreditCard }> {
-  if (!stepUp.proof.trim()) throw new TypeError("stepUp.proof không được để trống.");
+  validateCardControlStepUp(stepUp);
   return requestJson(
     `/cards/${requireResourceId(cardId, "cardId")}/unlock`,
-    { method: "POST", body: stepUp, auth },
+    { method: "POST", body: { stepUp }, auth },
     isCreditCardResponse,
+  );
+}
+
+export function reportCreditCardLost(
+  cardId: string,
+  stepUp: CardControlStepUp,
+  auth: RequestAuth,
+): Promise<CardReportedLostResponse> {
+  validateCardControlStepUp(stepUp);
+  return requestJson(
+    `/cards/${requireResourceId(cardId, "cardId")}/report-lost`,
+    { method: "POST", body: { stepUp }, auth },
+    isCardReportedLostResponse,
   );
 }
 
@@ -251,6 +285,7 @@ export const creditApi = {
   getCreditCard,
   lockCreditCard,
   unlockCreditCard,
+  reportCreditCardLost,
   listCreditAccounts,
   listCreditApplications,
   submitCreditApplication,

@@ -13,7 +13,7 @@
 - Phân loại hiện tại: `REVIEW_REQUIRED`. Chưa đủ bằng chứng để kết luận
   recipient/freshness cho từng event nên nhân viên OPERATIONS phải đối soát từng ID và tạo Admin action.
 - Worker claim query loại `aggregate_type=legacy`/payload `{}`; 16 event này
-  vẫn PENDING cho tới khi có Admin request với lý do và checker CONTROL.
+  vẫn PENDING cho tới khi có Admin request với lý do và checker ADMIN.
 
 ## Cập nhật đối soát preview — 2026-08-25
 

@@ -79,7 +79,7 @@ export async function changeMockPin(
   pin: string,
 ): Promise<{ card: Card }> {
   if (!/^\d{4,6}$/.test(pin) || /^(\d)\1+$/.test(pin)) {
-    throw new MockServiceError("VALIDATION_ERROR", "PIN mô phỏng không hợp lệ.");
+    throw new MockServiceError("VALIDATION_ERROR", "PIN không hợp lệ.");
   }
   const card = findCard(userId, cardId);
   card.pinConfigured = true;

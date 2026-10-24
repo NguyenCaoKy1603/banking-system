@@ -307,4 +307,28 @@ export class CustomerRepository {
     );
     return (result.rowCount ?? 0) === 1;
   }
+
+  async findAndLockPendingByContact(email: string, phoneNumber: string): Promise<Array<{ id: string; isExpired: boolean }>> {
+    const result = await this.client.query(
+      `
+        SELECT id, expires_at <= NOW() AS is_expired
+        FROM pending_registrations
+        WHERE lower(email) = lower($1) OR phone_number = $2
+        ORDER BY id
+        FOR UPDATE
+      `,
+      [email, phoneNumber]
+    );
+    return result.rows.map((row) => {
+      const rowId = row.id;
+      const isExpired = row.is_expired;
+      if (typeof rowId !== "string" || rowId.trim() === "") {
+        throw new Error("Database returned invalid id for pending registration.");
+      }
+      if (typeof isExpired !== "boolean") {
+        throw new Error("Database returned invalid is_expired for pending registration.");
+      }
+      return { id: rowId, isExpired };
+    });
+  }
 }

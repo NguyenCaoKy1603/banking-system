@@ -18,10 +18,12 @@ export type OtpPurpose =
   | "LOGIN"
   | "TRANSFER"
   | "SAVINGS_OPENING"
+  | "SAVINGS_WITHDRAWAL"
   | "CREDIT_APPLICATION"
   | "CARD_ACTIVATION"
   | "CREDIT_PAYMENT"
-  | "CARD_UNLOCK";
+  | "CARD_UNLOCK"
+  | "CARD_REPORT_LOST";
 
 export type LoginResponse = {
   accessToken: string;
@@ -160,11 +162,5 @@ export type Notification = {
   resourceId: string | null;
   resourceAccountId: string | null;
   read: boolean;
-  createdAt: string;
-};
-
-export type FraudReportResponse = {
-  reportId: string;
-  status: "RECEIVED" | "IN_REVIEW" | "RESOLVED";
   createdAt: string;
 };
