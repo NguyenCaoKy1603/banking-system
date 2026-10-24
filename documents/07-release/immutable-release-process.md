@@ -100,4 +100,4 @@ Invoke-RestMethod https://api.staging.example.com/versionz
 - Inject ManagedSecretClient/KMS envelope adapter, workload identity/OIDC và rotation/rollback evidence; workspace hiện chỉ có seam fail-closed provider-neutral.
 - Chạy mobile E2E qua HTTPS staging (không dùng Metro/ADB reverse), performance và rollback rehearsal. Với phạm vi khóa luận solo, owner ghi `SOLO_ACADEMIC_OWNER`, `independentReview=false`, scope synthetic/virtual; chỉ production-like mới yêu cầu `INDEPENDENT_REVIEW`.
 
-Runbook thao tác: [`migration-runbook.md`](migration-runbook.md), [`backup-restore-runbook.md`](backup-restore-runbook.md), [`rollback-runbook.md`](rollback-runbook.md) và [`incident-checklist.md`](incident-checklist.md).
+Runbook thao tác: [`migration-runbook.md`](migration-runbook.md), [`rollback-runbook.md`](rollback-runbook.md) và [`incident-checklist.md`](incident-checklist.md).

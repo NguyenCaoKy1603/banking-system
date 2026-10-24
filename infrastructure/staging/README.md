@@ -32,6 +32,7 @@ BANKING_MONEY_MODE=virtual
 BANKING_STORAGE=postgres
 BANKING_PERSISTENCE_MODE=relational-v2
 BANKING_SECRET_PROVIDER=managed
+BANKING_MANAGED_SECRET_BACKEND=<mounted-or-google-secret-manager>
 BANKING_MFA_REQUIRED=1
 BANKING_MFA_METHODS=TOTP
 DATABASE_SSL_MODE=verify-full
@@ -43,21 +44,31 @@ RELEASE_ID=<immutable release id>
 IMAGE_DIGEST=sha256:<64-char registry manifest digest>
 ```
 
-Staging fail closed nếu thiếu một giá trị trên. `BANKING_MANAGED_SECRETS_DIR`
-có thể trỏ tới thư mục secret được provider mount vào workload; mỗi secret
-phải có file `<secret-id>` và sidecar `<secret-id>.version`. Secret value
-không được commit hoặc đưa vào release evidence.
+Staging fail closed nếu thiếu một giá trị trên. Khi dùng adapter mount, đặt
+`BANKING_MANAGED_SECRET_BACKEND=mounted` và
+`BANKING_MANAGED_SECRETS_DIR`; mỗi secret phải có file `<secret-id>` và
+sidecar `<secret-id>.version`. Candidate Google Secret Manager dùng
+`BANKING_MANAGED_SECRET_BACKEND=google-secret-manager` cùng
+`BANKING_SECRET_PROJECT_ID`, lấy danh tính qua ADC/service identity và không
+dùng thư mục mount. Hai cách binding không được bật đồng thời. Adapter Google
+mới được kiểm thử bằng fake API; chưa có project, IAM hoặc access audit thật.
+Secret value không được commit hoặc đưa vào release evidence.
+Nếu chọn `google-secret-manager`, thêm `BANKING_SECRET_PROJECT_ID` với project
+ID của môi trường staging. Đây là identifier, không phải credential.
 
 ## Thành phần hạ tầng tối thiểu
 
 - API HTTPS ổn định và Admin Web HTTPS riêng, CORS exact-origin.
+- Kết thúc TLS tại gateway có chứng chỉ đúng hostname và gia hạn được giám sát; không public trực tiếp các cổng HTTP của Backend/Admin. Cho phép TLS 1.3 và TLS 1.2 tương thích, tắt giao thức cũ.
+- Admin Web Nginx kiểm tra TLS khi proxy tới Admin API HTTPS. Public API dùng Node HTTP sau gateway trên mạng riêng; cách dựng gateway và ràng buộc mạng phải được chứng minh ở provider đã chọn.
 - Admin Web dùng image digest độc lập môi trường; deployment/IaC cấp
   `ADMIN_WEB_ENV=staging` và `ADMIN_API_UPSTREAM` là origin HTTPS thật của
   Admin API lúc container khởi động. Không cần URL staging để build image hoặc
   tạo Release Candidate; không dùng `.invalid`, localhost hay endpoint bake sẵn.
 - Managed PostgreSQL riêng, private/allowlisted, TLS `verify-full`.
 - Secret namespace riêng, workload identity hoặc cơ chế mount được provider
-  phê duyệt.
+  phê duyệt. Cấp theo từng service; khóa ký Mobile chỉ đến dịch vụ build,
+  còn `REGISTRATION_FINGERPRINT_KEY` chỉ đến Backend API.
 - Migration job chạy trước API bằng đúng backend digest.
 - Ít nhất một API, một Admin API/Web và một worker.
 - Backup/restore vào database mới, rollback application về digest trước.
@@ -91,6 +102,12 @@ như một independent review. Các manifest production-like vẫn phải dùng 
 `INDEPENDENT_REVIEW`. Artifact được kiểm tra bởi
 `backend/scripts/verify-release-manifest.cjs` nhưng script không tự tạo hoặc
 giả lập cloud evidence.
+
+Test config local và validator registry chỉ chứng minh rule trong repository;
+chúng không xác minh chứng chỉ đang phục vụ, TLS handshake từ thiết bị, quyền
+provider, log truy cập secret hay gia hạn chứng chỉ. Khi triển khai, lưu kết
+quả kiểm tra HTTPS từ Web/emulator, negative test chứng chỉ, PostgreSQL
+`verify-full`, secret version/binding đã redact và access audit cùng release ID.
 
 ## Blocker bên ngoài workspace
 

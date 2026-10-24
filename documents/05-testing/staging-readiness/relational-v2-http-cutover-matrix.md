@@ -1,5 +1,7 @@
 # Relational-v2 HTTP cutover matrix
 
+> Cập nhật 2026-10-13: group Fraud report đã được gỡ khỏi route hiện hành. Các bảng và record cũ vẫn được giữ lại làm legacy; dòng/route Fraud trong bằng chứng lịch sử không còn là API được hỗ trợ.
+
 Ngày cập nhật: 2026-08-30
 Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — business-hardening và integrated disposable rehearsal PASS; worker preview chưa bật; staging/production evidence chưa có**
 
@@ -34,7 +36,6 @@ Trạng thái: **RELATIONAL-V2 CUSTOMER CUTOVER — business-hardening và integ
 | Credit account/statement reads | `GET /api/v1/credit/accounts*`, transactions, statements | `credit_accounts`, `credit_transactions`, `credit_statements`, `credit_statement_items`, `credit_payments` | Direct khi `...=credit` | ownership, keyset cursor, GET không mutate |
 | Credit payment | `POST /api/v1/credit/payment-quotes`, `/payments`, `GET /api/v1/credit/payments/:id` | `credit_payment_quotes`, `credit_idempotency`, `payment_accounts`, `credit_accounts`, `credit_statements`, `credit_payments`, `account_transactions`, `ledger_*`, `audit_events`, `outbox_events` | Direct khi `...=credit` và persistent TOTP | latest statement, no overpay, concurrent one-winner, idempotency, atomic payment/ledger/audit/outbox, rollback/restart; repayment vẫn chạy khi global/new-credit switch tắt và account `FROZEN`, nhưng dừng khi `credit_payments_enabled=false` |
 | Notifications | `GET /api/v1/notifications`, `POST /api/v1/notifications/:id/read` | `notifications`, `audit_events` | Direct khi `...=notifications` | customer ownership, read-only list, idempotent mark-as-read, no financial mutation |
-| Fraud report | `POST /api/v1/fraud-reports`, `GET /api/v1/fraud-reports/:id` | `fraud_reports`, `fraud_report_idempotency`, `account_transactions`, `audit_events`, `outbox_events` | Direct khi `...=fraud` | transaction ownership, one open report, idempotency, redacted event payload, audit/outbox atomically |
 
 Các nhóm route trên là boundary direct của relational-v2. Local preview dùng `IMAGE_DIGEST=unknown` và không được gọi là staging verified; worker/cloud vẫn chưa bật. Worker/lifecycle chỉ được rehearsal trên database disposable.
 
@@ -65,7 +66,7 @@ Chỉ dùng local/disposable database:
 
 ```powershell
 $env:BANKING_PERSISTENCE_MODE = "relational-v2"
-$env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud,kyc"
+$env:BANKING_RELATIONAL_HTTP_ROUTES = "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,kyc"
 npm run typecheck
 npm run build
 npm run test:critical

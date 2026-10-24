@@ -1,52 +1,36 @@
-# 07-release
+# 07 — Release và vận hành
 
 ## Trạng thái
 
-Đã bổ sung package Android, EAS profile preview APK, environment mapping và công cụ kiểm tra release. Đã build APK release local, cài và mở thành công trên Android emulator; checksum và bằng chứng nằm trong [`../05-testing/device-evidence.md`](../05-testing/device-evidence.md). EAS CLI/staging signing vẫn chưa có nên artifact này chỉ là sandbox local, không phải release candidate.
+Đây là project academic/reference với tiền ảo. Local Compose, APK local, migration test và rehearsal không đồng nghĩa cloud staging đã được nghiệm thu. Trong hồ sơ hiện có chưa thấy evidence hoàn chỉnh cho public HTTPS, managed PostgreSQL, secret manager, signed APK, partner/core integration, monitoring, backup restore drill và rollback trên staging.
 
-Runbook Docker/preview persistent của Giai đoạn 1 nằm tại [`preview-deployment-runbook.md`](preview-deployment-runbook.md), ma trận môi trường tại [`preview-environment-matrix.md`](preview-environment-matrix.md) và báo cáo kiểm chứng tại [`../05-testing/stage1-deployment-report.md`](../05-testing/stage1-deployment-report.md). Cloud provider, HTTPS domain, registry, managed PostgreSQL và EAS environment vẫn chưa được cấu hình.
+Đọc [current status](../01-planning/current-status.md) trước khi dùng runbook. Hồ sơ HTTPS/secrets được lập theo các đợt 2026-10-05 và local lab 2026-10-13; xác minh lại với owner nếu môi trường ngoài workspace đã thay đổi.
 
-P0 secret management nằm tại [`secret-management-runbook.md`](secret-management-runbook.md), registry metadata-only tại [`secret-registry.yaml`](secret-registry.yaml), còn migration/checkpoint re-encryption và backup reference nằm ở [`migration-runbook.md`](migration-runbook.md) và [`backup-restore-runbook.md`](backup-restore-runbook.md).
+## Runbooks theo chủ đề
 
-P1 backup/DR policy nằm tại [`backup-policy.md`](backup-policy.md), PITR runbook tại [`pitr-runbook.md`](pitr-runbook.md), key rotation tại [`backup-key-rotation.md`](backup-key-rotation.md). Local rehearsal chỉ chứng minh encrypted logical restore; KMS/object storage/WAL/PITR thật chưa cấu hình.
+| Chủ đề | Tài liệu | Lưu ý |
+| --- | --- | --- |
+| Environment | [environment-matrix.md](environment-matrix.md), [preview-environment-matrix.md](preview-environment-matrix.md) | Runtime fail-closed; tiền ảo; local sandbox HTTP chỉ ở local |
+| Local preview | [preview-deployment-runbook.md](preview-deployment-runbook.md) | Compose/reference instructions, không phải cloud deployment approval |
+| HTTPS/secrets readiness | [https-secrets-academic-readiness.md](https-secrets-academic-readiness.md), [local HTTPS learning lab](local-https-secrets-learning-lab.md) | Lab local không chứng minh cloud IAM/HTTPS/managed secrets |
+| Secret management | [secret-management-runbook.md](secret-management-runbook.md) và secret-registry.yaml | Registry chỉ mô tả metadata/reference; không lưu secret value |
+| Database migration | [migration-runbook.md](migration-runbook.md) | Forward-only; kiểm tra checksum; không down migration |
+| Backup/restore | Đã gỡ bỏ | Đồ án học thuật vận hành 1 PostgreSQL database duy nhất; các tài liệu lý thuyết backup/PITR đã được dọn sạch để khớp với mã nguồn. |
+| Worker | [outbox-worker-runbook.md](outbox-worker-runbook.md) | Worker yêu cầu opt-in và cutover; provider thật chưa được xác minh |
+| Rollback/incident | [rollback-runbook.md](rollback-runbook.md), [incident-checklist.md](incident-checklist.md) | Chỉ chạy với image/db target có owner và evidence rõ |
+| Observability | [observability-local-preview.md](observability-local-preview.md) | Metric/health contract local không chứng minh alerting/SLO vận hành |
+| Release artifact | [immutable-release-process.md](immutable-release-process.md), [release-note.template.md](release-note.template.md) | Pin commit, digest, migration fingerprint, artifact checksum và reviewer |
 
-Observability local preview và giới hạn evidence nằm tại [`observability-local-preview.md`](observability-local-preview.md). Tài liệu này cố định trạng thái `UNTRUSTED LOCAL PREVIEW` với `IMAGE_DIGEST=unknown`; không suy diễn thành staging/production.
+## Promotion gates
 
-## Kiểm tra cấu hình
+Trước khi gọi một môi trường là staging/pilot, cần có tối thiểu:
 
-```powershell
-cd mobile-app
-npm run validate:release
-npx expo config --type public
-```
+1. Owner xác nhận môi trường, quyền truy cập, dữ liệu synthetic và chi phí.
+2. HTTPS hostname/certificate, origin allow-list và Mobile HTTPS build.
+3. PostgreSQL private, migration/checksum, persistence cutover và database TLS.
+4. Secret provider/IAM tối thiểu, không fallback environment file ở production-like.
+5. Image/build digest, commit SHA, contract/migration fingerprints và health/version evidence.
+6. Unit/integration, device, smoke, backup/restore và rollback rehearsal phù hợp.
+7. Legal/compliance, security, partner/core và release reviewer approvals.
 
-`app.json` dùng package `com.example.digitalbanking.mobile`. Profile `preview` tạo APK internal distribution và lấy `EXPO_PUBLIC_API_URL` từ EAS environment `preview`; profile `production` dùng environment `production`. URL cấp cho build phải là HTTPS và được lưu trong secret/environment của EAS, không commit vào repository.
-
-## Build APK preview
-
-Sau khi đã đăng nhập EAS và cấu hình environment:
-
-```powershell
-cd mobile-app
-eas build --platform android --profile preview
-```
-
-Sau khi tải APK về, tạo bằng chứng checksum:
-
-```powershell
-npm run release:checksum -- .\artifacts\mobile-app-preview.apk
-```
-
-Lưu JSON output cùng APK trong kho evidence của release; không commit APK hoặc credential vào source repository.
-
-## Cài đặt và kiểm tra thiết bị
-
-```powershell
-adb install -r .\artifacts\mobile-app-preview.apk
-```
-
-Trên thiết bị mới cần xác nhận cold start, cấp quyền camera/biometric, cấu hình URL staging, login/MFA, QR fallback, transfer pending/recovery và notification deep link. Ghi model, Android version, APK checksum, thời gian, kết quả và video/ảnh vào device report.
-
-## Release manifest
-
-Mẫu trường bắt buộc nằm tại [`release-manifest.template.json`](./release-manifest.template.json): version, package, profile, API environment, artifact path, SHA-256, thiết bị, device evidence, test report, owner và rollback target. Bản release note điền theo [`release-note.template.md`](./release-note.template.md).
+Không hạ threshold để pass gate. Không dùng dữ liệu thật hoặc lệnh destructive ngoài database disposable đã guard xác nhận.

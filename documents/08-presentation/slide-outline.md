@@ -5,8 +5,8 @@
 | Slide | Nội dung | Điểm cần nói | Evidence gợi ý |
 | --- | --- | --- | --- |
 | 1 | Tên đề tài và mục tiêu | Reference academic, virtual money, local scope | `thesis-report-draft.md` |
-| 2 | Bài toán và ranh giới | Điều gì mô phỏng, điều gì không tuyên bố | `function-scope.md` |
-| 3 | Yêu cầu/use case bàn giao | Registration, KYC, maker–checker, funding, transfer | Đợt 2 task |
+| 2 | Bài toán và ranh giới | Phạm vi sandbox và các giới hạn | `function-scope.md` |
+| 3 | Danh mục Use Case & Ranh giới | Tổng quan 33 Use Cases (19 Mobile, 11 Admin, 3 Worker); trọng tâm Demo Đợt 2 | `use-cases-complete-specification.md`, `USE_CASE_ROADMAP.md` |
 | 4 | Kiến trúc | Mobile/Admin/API/UnitOfWork/PostgreSQL | `architecture-and-scope.md` |
 | 5 | Database và ERD | Account, transfer, ledger, KYC, staff/action | `erd-core-demo.md` |
 | 6 | Registration/KYC | OTP challenge, metadata KYC, review boundary | `sequence-core-demo.md` |

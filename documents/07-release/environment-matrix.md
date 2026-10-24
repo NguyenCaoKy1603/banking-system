@@ -23,7 +23,7 @@
 | Staging học thuật synthetic/solo | `SOLO_ACADEMIC_OWNER` | Không; owner xác nhận bằng `verifiedBy=repository-owner` và `independentReview=false` |
 | Production-like | `INDEPENDENT_REVIEW` | Bắt buộc |
 
-Solo mode chỉ xác nhận phạm vi học thuật, tiền mô phỏng và dữ liệu synthetic;
+Solo mode chỉ xác nhận phạm vi học thuật, tiền ảo và dữ liệu synthetic;
 không phải tuyên bố production readiness.
 
 ## Admin Web runtime contract

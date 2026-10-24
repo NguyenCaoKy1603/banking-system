@@ -81,7 +81,6 @@ paths:
   /admin/approvals/{requestId}/cancel: { post: { operationId: adminCancel, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/RequestId' }, { $ref: '#/components/parameters/IdempotencyKey' }], responses: { '200': { description: Cancellation } } } }
   /admin/applications: { get: { operationId: adminApplications, security: [{ staffCookie: [] }], responses: { '200': { description: Reference application queue } } } }
   /admin/transfers: { get: { operationId: adminPendingTransfers, security: [{ staffCookie: [] }], responses: { '200': { description: Pending transfer queue } } } }
-  /admin/fraud-cases: { get: { operationId: adminFraudCases, security: [{ staffCookie: [] }], responses: { '200': { description: Fraud queue } } } }
   /admin/operations/outbox/summary: { get: { operationId: adminOutboxSummary, security: [{ staffCookie: [] }], responses: { '200': { description: Outbox health } } } }
   /admin/operations/outbox/events: { get: { operationId: adminOutboxEvents, security: [{ staffCookie: [] }], responses: { '200': { description: Sanitized event list } } } }
   /admin/audit-events: { get: { operationId: adminAuditEvents, security: [{ staffCookie: [] }], responses: { '200': { description: Append-only audit events } } } }
@@ -104,11 +103,6 @@ paths:
   /admin/transfers/{transferId}/retry-requests: { post: { operationId: adminTransferRetryRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Transfer retry request } } } }
   /admin/transfers/{transferId}/cancel-requests: { post: { operationId: adminTransferCancelRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Transfer cancel request } } } }
   /admin/transfers/{transferId}/reversal-requests: { post: { operationId: adminTransferReversalRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Transfer reversal request } } } }
-  /admin/fraud-cases/{reportId}: { get: { operationId: adminFraudDetail, security: [{ staffCookie: [] }], responses: { '200': { description: Fraud case snapshot } } } }
-  /admin/fraud-cases/{reportId}/claim: { post: { operationId: adminFraudClaim, security: [{ staffCookie: [] }], responses: { '200': { description: Fraud case claimed } } } }
-  /admin/fraud-cases/{reportId}/notes: { post: { operationId: adminFraudNote, security: [{ staffCookie: [] }], responses: { '201': { description: Internal note recorded } } } }
-  /admin/fraud-cases/{reportId}/action-requests: { post: { operationId: adminFraudActionRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Fraud action request } } } }
-  /admin/fraud-cases/{reportId}/resolution-requests: { post: { operationId: adminFraudResolutionRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Fraud resolution request } } } }
   /admin/operations/outbox/events/{eventId}: { get: { operationId: adminOutboxEventDetail, security: [{ staffCookie: [] }], responses: { '200': { description: Sanitized outbox event } } } }
   /admin/operations/outbox/dead-letters: { get: { operationId: adminOutboxDeadLetters, security: [{ staffCookie: [] }], responses: { '200': { description: Dead-letter queue } } } }
   /admin/operations/outbox/events/{eventId}/requeue-requests: { post: { operationId: adminOutboxRequeueRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Outbox requeue request created for approval } } } }

@@ -56,7 +56,7 @@ Chưa có credential thật và chưa có bằng chứng gửi Push/Email thật
 
 Worker ghi heartbeat, có `/livez`, `/readyz`, `/metrics`; metrics không dùng
 customerId/eventId làm label. `outbox:inspect` không in payload; inventory chỉ
-in metadata. Requeue phải tạo request qua Admin API, được CONTROL duyệt bằng
+in metadata. Requeue phải tạo request qua Admin API, được ADMIN duyệt bằng
 four-eyes và ghi dead-letter/audit; không còn script hoặc credential bypass.
 
 ## Đối soát legacy

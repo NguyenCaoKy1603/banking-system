@@ -6,13 +6,13 @@ Ngày cập nhật: 2026-09-07.
 
 - Đọc `AGENTS.md`, `PROJECT_CONTEXT.md`, file này và task hiện hành.
 - Kiểm tra branch, HEAD và working tree trước khi hành động; các mốc dưới đây là lịch sử, không yêu cầu reset về chúng.
-- Dự án là đồ án tốt nghiệp: dữ liệu synthetic, tiền ảo, local demo; không production, KYC thật hoặc tích hợp ngân hàng thật.
+- Dự án là đồ án tốt nghiệp, tập trung vào luồng ngân hàng số và quy trình phê duyệt.
 - Danh mục 22 use case dưới đây là đề xuất lập từ chức năng hiện có và được lưu theo yêu cầu Owner. Lưu danh mục không tự cấp quyền triển khai tất cả mục, thay đổi acceptance hoặc quyền Git.
 - Không đồng nhất các mã này với milestone cũ M0–M11 hoặc giai đoạn S1–S5.
 
 ## Trạng thái và bước tiếp theo
 
-**UC-M01 — Registration và Synthetic KYC: COMPLETED — OWNER APPROVED.**
+**UC-M01 — Registration và KYC: COMPLETED — OWNER APPROVED.**
 
 - Đóng nghiệm thu ngày 2026-09-07, qua chuỗi M01-01 đến M01-09.
 - Commit implementation/relational verification: `b5ef30cb78eaa43932a2ba14f3989aab6e648994`.
@@ -46,45 +46,67 @@ Ngày cập nhật: 2026-09-07.
   2. Recovery continuation chỉ hoạt động khi `recoveryToken` còn trong memory state của màn hình; không hỗ trợ khôi phục sau cold restart hoặc process-kill.
 - Điểm tiếp tục Đợt 2: Chuẩn bị backend local phục vụ demo và kiểm chứng tích hợp Mobile trực tiếp trên emulator.
 
-## Khách hàng Mobile — 16 use case
+## Danh mục Use Case toàn diện (Cập nhật 14/10/2026)
 
-| Mã | Tên | Phạm vi chính |
-| --- | --- | --- |
-| UC-M01 | Đăng ký và Synthetic KYC | Đăng ký, OTP, KYC Draft/Submit; đã hoàn tất với giới hạn được duyệt. |
-| UC-M02 | Đăng nhập, quản lý phiên và đăng xuất | Login, refresh, restore, route guard, logout, logout-all. |
-| UC-M03 | Quản lý phương thức xác thực và khôi phục MFA | TOTP enrollment/confirmation, quản lý phương thức và recovery theo contract. |
-| UC-M04 | Xem tài khoản và số dư | Dashboard, account detail, số dư từ server, hiện/sao chép số tài khoản. |
-| UC-M05 | Tra cứu lịch sử và chi tiết giao dịch | Danh sách, lọc/phân trang, chi tiết và trạng thái. |
-| UC-M06 | Quản lý người thụ hưởng | Xem, thêm, đổi tên, xóa; validation và duplicate handling. |
-| UC-M07 | Chuyển tiền nội bộ mô phỏng | Recipient lookup, quote/phí, step-up, submit, receipt, retry/resume không chuyển trùng. |
-| UC-M08 | Xem và quét QR thông tin tài khoản | Hiển thị/quét/nhập QR; UNVERIFIED, không tự khởi tạo thanh toán. |
-| UC-M09 | Xem và đánh dấu thông báo | List/detail, mark-read, điều hướng; không yêu cầu push thật. |
-| UC-M10 | Báo cáo giao dịch đáng ngờ | Gửi báo cáo, chống trùng và tra cứu trạng thái theo API. |
-| UC-M11 | Mở khoản tiết kiệm mô phỏng | Sản phẩm, quote, xác nhận, xác thực, kết quả mở khoản. |
-| UC-M12 | Theo dõi khoản tiết kiệm | List/detail, trạng thái, kết quả đáo hạn theo sandbox; không tự thêm tất toán sớm. |
-| UC-M13 | Đăng ký và kích hoạt thẻ tín dụng mô phỏng | Hồ sơ, trạng thái xét duyệt, kích hoạt; không CIC/processor thật. |
-| UC-M14 | Xem và quản lý trạng thái thẻ | List/detail, khóa, mở khóa, báo mất theo quyền/xác thực. |
-| UC-M15 | Tra cứu tài khoản tín dụng và sao kê | Hạn mức, dư nợ, giao dịch, danh sách/chi tiết sao kê. |
-| UC-M16 | Thanh toán dư nợ tín dụng mô phỏng | Quote, số tiền, xác thực, submit, phục hồi không ghi nợ trùng. |
+> Tài liệu đặc tả chi tiết toàn bộ luồng sự kiện, ngoại lệ, bất biến và đối chiếu code xem tại:  
+> [`documents/02-design/use-cases-complete-specification.md`](documents/02-design/use-cases-complete-specification.md).
 
-## Nhân viên/Admin — 6 use case
+### 1. Phân hệ Khách hàng Mobile — 17 Use Case (15 Nghiệp vụ + 2 AI)
 
-| Mã | Tên | Phạm vi chính |
-| --- | --- | --- |
-| UC-A01 | Đăng nhập và quản lý quyền nhân viên | Staff auth/MFA/session, staff/role và quyền truy cập hiện có. |
-| UC-A02 | Tra cứu và kiểm soát khách hàng/tài khoản | Masked reads, yêu cầu khóa/chặn, cấp tiền ảo theo quy trình phê duyệt. |
-| UC-A03 | Xét duyệt hồ sơ KYC | Yêu cầu bổ sung, duyệt/từ chối; Mobile không tự duyệt. |
-| UC-A04 | Xét duyệt hồ sơ tín dụng | Quyết định theo rule sandbox, không mở nghiệp vụ cho vay thật. |
-| UC-A05 | Xử lý giao dịch và báo cáo đáng ngờ | Pending/reversal, fraud case theo quyền và hành động hiện có. |
-| UC-A06 | Phê duyệt yêu cầu và tra cứu nhật ký | Approval Inbox, maker-checker, audit trail cho thao tác quản trị. |
+| Mã | Tên Use Case | Phạm vi chính trong source code | Trạng thái |
+| --- | --- | --- | --- |
+| UC-M01 | Đăng ký tài khoản & Khai báo định danh (KYC) | Đăng ký EMAIL_OTP, nộp hồ sơ định danh KYC draft/submit; kiểm chứng relational. | COMPLETED — APPROVED |
+| UC-M02 | Đăng nhập & Quản lý phiên | Login, refresh rotation, app lock, restore, logout, logout-all. | COMPLETED — APPROVED |
+| UC-M03 | Quản lý MFA TOTP & Khôi phục | TOTP enroll/confirm, quản lý methods, xoay recovery codes, khôi phục. | COMPLETED — APPROVED |
+| UC-M04 | Xem tài khoản và số dư | Dashboard, account detail, số dư authoritative, mở che số tài khoản. | COMPLETED (Đợt 2 demo) |
+| UC-M05 | Tra cứu lịch sử & Chi tiết giao dịch | Danh sách phân trang keyset cursor, bộ lọc, chi tiết biên lai. | COMPLETED (Đợt 2 demo) |
+| UC-M06 | Quản lý người thụ hưởng | Xem danh bạ, thêm mới, sửa tên gợi nhớ, xóa người thụ hưởng. | COMPLETED (Đợt 2 demo) |
+| UC-M07 | Chuyển tiền nội bộ NOVA | Lookup, quote/phí, TOTP step-up, idempotent submit, double-entry ledger. | COMPLETED — APPROVED (Đợt 2) |
+| UC-M08 | Xem và quét QR thông tin tài khoản | Hiển thị/quét QR chuẩn versioned; nhãn UNVERIFIED, không tự chuyển tiền. | IMPLEMENTED |
+| UC-M09 | Xem và quản lý thông báo | Danh sách thông báo, đánh dấu đã đọc, deep-link chuyển màn hình. | IMPLEMENTED |
+| *UC-M10* | *Báo cáo giao dịch đáng ngờ* | *Đã gỡ bỏ khỏi app, API và OpenAPI theo quyết định D-39 (13/10/2026).* | *RETIRED / GỠ BỎ* |
+| UC-M11 | Mở khoản tiền gửi tiết kiệm | Sản phẩm, quote lãi thực tế actual-days, chỉ thị tái tục, step-up, mở sổ. | IMPLEMENTED |
+| UC-M12 | Quản lý danh mục & Tất toán tiết kiệm | Danh sách, chi tiết sổ, đổi phương án đáo hạn (PATCH), tất toán trước hạn lãi không kỳ hạn (POST /withdraw), liên kết tái tục. | IMPLEMENTED |
+| UC-M13 | Đăng ký & Kích hoạt thẻ tín dụng | Nộp hồ sơ hạn mức, theo dõi xét duyệt, kích hoạt thẻ tín dụng sandbox. | IMPLEMENTED |
+| UC-M14 | Quản lý an toàn thẻ tín dụng | Khóa thẻ khẩn cấp (không cần OTP), mở khóa (TOTP), báo mất thẻ. | IMPLEMENTED |
+| UC-M15 | Tra cứu thẻ, giao dịch & Sao kê | Hạn mức khả dụng, dư nợ ghi sổ, lịch sử quẹt thẻ, chi tiết sao kê kỳ. | IMPLEMENTED |
+| UC-M16 | Thanh toán dư nợ thẻ tín dụng | Quote (tối thiểu, toàn bộ, tùy chọn), trích nợ tài khoản, cấn trừ dư nợ. | IMPLEMENTED |
+| **UC-AI-01** | Trợ lý giải đáp NOVA Help | Lọc dữ liệu nhạy cảm, tra cứu FAQ, mô hình AI Radox chọn câu trả lời chuẩn. | IMPLEMENTED |
+| **UC-AI-02** | Tư vấn lập kế hoạch tài chính | SAVINGS_PLAN & BUDGET_BALANCE; BigInt calculator + Bounded AI selector. | IMPLEMENTED |
 
-Ngoài UC-M01, danh mục không tuyên bố use case nào đã được audit/đóng nghiệm thu. Có implementation không đồng nghĩa COMPLETED.
+### 2. Phân hệ Vận hành & Quản trị Admin Web — 11 Use Case
+
+| Mã | Tên Use Case | Phạm vi chính trong source code | Trạng thái |
+| --- | --- | --- | --- |
+| UC-A01 | Xác thực nhân viên & Quản lý phiên | Staff login (Operations/Admin TOTP), HttpOnly cookie + CSRF, timeout. | IMPLEMENTED |
+| UC-A02 | Quản lý nhân sự & Phân quyền RBAC | Quản lý Staff, Roles, Permissions, khởi tạo tài khoản vận hành. | IMPLEMENTED |
+| UC-A03 | Tra cứu & Kiểm soát tài khoản | Tra cứu masked, yêu cầu khóa/mở khóa truy cập, phong tỏa tài khoản. | IMPLEMENTED |
+| UC-A04 | Cấp vốn thử nghiệm & Đảo ngược | Yêu cầu nạp tiền ảo (Simulation funding) và Đảo ngược thu hồi vốn ảo. | COMPLETED (Đợt 2 demo) |
+| UC-A05 | Thẩm định & Phê duyệt hồ sơ định danh | Hàng đợi Hồ sơ định danh, Claim tiếp nhận, thẩm định ảnh CCCD và phê duyệt trực tiếp 1 cấp. | COMPLETED (Đợt 2 demo) |
+| UC-A06 | Thẩm định & Phê duyệt hồ sơ tín dụng | Hàng đợi Hồ sơ tín dụng, Claim tiếp nhận, thẩm định thu nhập và phê duyệt cấp hạn mức thẻ tín dụng trực tiếp 1 cấp. | IMPLEMENTED |
+| UC-A07 | Giám sát & Xử lý sự cố chuyển tiền | Tra cứu transfer timeline, yêu cầu retry, cancel hoặc reversal giao dịch. | IMPLEMENTED |
+| UC-A08 | Phê duyệt đa cấp Maker–Checker | Hòm thư Approvals, Four-Eyes Policy (chống tự duyệt), TOTP fresh step-up. | COMPLETED — APPROVED (Đợt 2) |
+| UC-A09 | Giám sát Outbox & Dead-Letters | Thống kê gửi tin, xem sự kiện lỗi vĩnh viễn, yêu cầu Requeue gửi lại. | IMPLEMENTED |
+| UC-A10 | Giám sát & Thử lại Background Jobs | Danh sách background jobs, xem lịch sử attempts, yêu cầu Retry job lỗi. | IMPLEMENTED |
+| UC-A11 | Nhật ký kiểm toán & Xuất báo cáo | Tra cứu audit events (DB trigger chống xóa/sửa), tạo yêu cầu xuất báo cáo. | IMPLEMENTED |
+
+### 3. Phân hệ Hệ thống ngầm tự động (System Worker) — 3 Use Case
+
+| Mã | Tên Use Case | Phạm vi chính trong source code | Trạng thái |
+| --- | --- | --- | --- |
+| **UC-S01** | Transactional Outbox Dispatcher | Polling lease claim, gửi Email/Push, Exponential Backoff, Dead-Letter. | IMPLEMENTED |
+| **UC-S02** | Đáo hạn & Tái tục Tiết kiệm | Tự động tính lãi thực tế, tất toán về tài khoản hoặc mở sổ tái tục, suspense. | IMPLEMENTED |
+| **UC-S03** | Chốt sao kê & Quá hạn Thẻ tín dụng | Tự động chốt kỳ sao kê, tính minimum due, đánh giá sao kê nợ quá hạn. | IMPLEMENTED |
+
+---
+
+Ngoài UC-M01, UC-M02, UC-M03 và kịch bản lõi Đợt 2 (UC-M04, UC-M06, UC-M07, UC-A04, UC-A05, UC-A08), các use case khác ở trạng thái IMPLEMENTED sẵn sàng trong source code phục vụ kiểm thử và mở rộng.
 
 ## Thứ tự đề xuất và dependency
 
 1. UC-M02 → UC-M03 → UC-M04 → UC-M05 → UC-M06.
-2. Kiểm chứng phần UC-A01/A02/A03/A06 cần thiết cho quyền KYC, tài khoản và tiền ảo của demo; không bypass quyền để chạy giao dịch.
-3. UC-M07 → UC-M09 → UC-M10; phối hợp UC-A05 khi kiểm chứng xử lý phía nhân viên.
+2. Kiểm chứng phần UC-A01/A02/A03/A06 cần thiết cho quyền KYC, tài khoản và cập nhật số dư; không bypass quyền để chạy giao dịch.
+3. UC-M07 → UC-M09; phối hợp UC-A05 (KYC) khi kiểm chứng xử lý phía nhân viên.
 4. UC-M08.
 5. UC-M11 → UC-M12.
 6. UC-A04 phối hợp UC-M13 → UC-M14 → UC-M15 → UC-M16.
@@ -111,7 +133,7 @@ Danh mục dựa trên kiểm tra source/contract và tài liệu, không phải
 ## Cập nhật Đợt 2 — Demo ngân hàng cốt lõi (2026-09-08)
 
 - Demo local trên snapshot `3b38cabc39c9254231e5ef0ccb90e2ae278a532f` đã chạy
-  được luồng synthetic customer A/B, KYC maker–checker, sandbox funding, Mobile
+  được luồng customer A/B, KYC maker–checker, cấp tiền, Mobile
   login/MFA, internal beneficiary lookup, quote, TOTP step-up và transfer receipt.
 - Đối soát PostgreSQL cho thấy A giảm đúng amount + fee, B tăng đúng amount;
   account history và double-entry ledger cân bằng. Lần insufficient-funds không

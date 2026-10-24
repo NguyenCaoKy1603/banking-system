@@ -9,7 +9,7 @@ Phạm vi: reference sandbox cho đồ án; không phải hệ thống xử lý 
 - PostgreSQL runtime mặc định đã dùng `PostgresRelationalRepository`: customer/account/beneficiary/quote/transfer/transaction/ledger/notification/audit/outbox được chiếu vào bảng relational. Snapshot cũ chỉ được đọc một lần để nâng dữ liệu; state auth tạm thời và M6/M7 bonus nằm theo từng record trong `reference_runtime_records`.
 - `npm run seed:e2e` đã chạy lại trên adapter mới sau restart backend: registration/MFA, Funding, transfer `SUCCEEDED`, savings `SUCCEEDED` và credit activation đều đạt; không in secret.
 
-- M0–M4 và M8 vẫn có trong chương trình: nền tảng, auth/eKYC mô phỏng, account/history, transfer/beneficiary/QR và notification/deep-link.
+- M0–M4 và M8 vẫn có trong chương trình: nền tảng, auth/eKYC dùng dữ liệu thử nghiệm, account/history, transfer/beneficiary/QR và notification/deep-link.
 - Đăng ký mới hoàn tất qua hai bước OTP; trước khi xác minh chưa tạo user/account. Sau xác minh chỉ có một payment account, số dư 0 VND, không tự tạo beneficiary, savings hoặc credit.
 - Sandbox Funding chỉ còn là fixture nội bộ hoặc Admin action four-eyes; không có customer route/operator-key endpoint. Funding tạo journal cân bằng, transaction, audit và outbox.
 - Tra cứu người nhận dùng số tài khoản thật; beneficiary lưu destination nội bộ và chỉ trả dữ liệu công khai đã che. Quote lưu snapshot bất biến và chỉ được submit một lần.
@@ -64,8 +64,8 @@ Sau khi sửa code, khởi động lại backend và reload/rebuild Mobile. Đă
 - PostgreSQL 16 local đã chạy đủ migration, database validator xác nhận 28 bảng và constraint chính; health trả reconciliation/outbox `ok`.
 - Backend đạt 70/70 test khi chạy cùng PostgreSQL, typecheck, build, critical API, OpenAPI và dependency audit đều đạt. Dữ liệu user/account/balance đã được kiểm tra còn nguyên sau khi restart backend.
 - Lần chạy Maestro đầu tiên phát hiện lỗi contract notification: dữ liệu funding cũ có loại nội bộ `SANDBOX_FUNDING`, khiến Mobile từ chối cả danh sách. Đã sửa generator và thêm state migration sang notification `SECURITY`, đồng thời thêm regression test.
-- Luồng M0–M4/M8 đã pass trên Android emulator sau sửa: login + MFA, Home, hiện/sao chép số tài khoản đầy đủ ở Home và Account Detail, KYC mô phỏng, beneficiary, QR manual fallback và notification deep-link. Artifact: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
-- Phạm vi vẫn là ngân hàng mô phỏng bằng tiền ảo; chưa kết nối core banking, payment rail, repository relational production cho toàn bộ M6/M7/auth runtime, thiết bị vật lý, camera/biometric native, tải lớn, staging hoặc compliance production.
+- Luồng M0–M4/M8 đã pass trên Android emulator sau sửa: login + MFA, Home, hiện/sao chép số tài khoản đầy đủ ở Home và Account Detail, KYC dùng dữ liệu thử nghiệm, beneficiary, QR manual fallback và notification deep-link. Artifact: `C:\Users\admin\.maestro\tests\2026-08-17_121849`.
+- Phạm vi vẫn là hệ thống thử nghiệm dùng tiền ảo; chưa kết nối core banking, payment rail, repository relational production cho toàn bộ M6/M7/auth runtime, thiết bị vật lý, camera/biometric native, tải lớn, staging hoặc compliance production.
 
 ## Xác nhận transfer pending sau restart — 2026-08-17
 

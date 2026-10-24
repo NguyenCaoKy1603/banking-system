@@ -11,7 +11,7 @@ Code checkpoint hiện hành: `cab97e0`; evidence checkpoint cũ chỉ giữ đ�
 | --- | --- |
 | M0 | AGENTS, repository map, backlog, decision log, risk register, milestone status, device matrix, API/design/testing/release index và evidence rules đã có. |
 | M1 | Expo/React Native foundation, route guard, SecureStore session, device binding, refresh rotation, MFA, HTTP client, lint/typecheck/test/build/export đã có. |
-| M2 | Auth flow và eKYC mô phỏng có form, document mẫu và trạng thái DRAFT/PENDING/APPROVED/REJECTED. |
+| M2 | Auth flow và eKYC dùng dữ liệu thử nghiệm có form, document mẫu và trạng thái DRAFT/PENDING/APPROVED/REJECTED. |
 | M3 | Dashboard/account detail, cursor history, transaction detail và filter status/direction trên dữ liệu đã tải. |
 | M4 | Transfer quote/review/step-up/idempotency/pending recovery; beneficiary list/create/rename/delete; QR My QR, camera scanner, payload validation và manual fallback. |
 | M8 | Notification list/read, notification detail và deep link theo loại TRANSFER/SECURITY tới transaction detail/profile. |

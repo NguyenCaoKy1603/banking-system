@@ -254,7 +254,7 @@ Submit một quote sau step-up authentication.
 Idempotency-Key: <opaque unique key per user intent>
 ```
 
-Key của Transfer, Savings opening và Credit payment có tối thiểu 16 ký tự sau khi trim; các command dùng shared parameter (Sandbox Funding, Fraud report, Credit application/activation) có tối thiểu 8 ký tự. Cùng một key và cùng request fingerprint phải trả cùng kết quả cuối cùng; cùng key nhưng body khác phải trả `409 IDEMPOTENCY_CONFLICT`. Mọi map idempotency của customer được scope theo `userId`; hai customer có thể dùng cùng opaque key mà không xung đột. Retry/network timeout không được tạo giao dịch thứ hai.
+Key của Transfer, Savings opening và Credit payment có tối thiểu 16 ký tự sau khi trim; các command dùng shared parameter (Sandbox Funding, Credit application/activation) có tối thiểu 8 ký tự. Cùng một key và cùng request fingerprint phải trả cùng kết quả cuối cùng; cùng key nhưng body khác phải trả `409 IDEMPOTENCY_CONFLICT`. Mọi map idempotency của customer được scope theo `userId`; hai customer có thể dùng cùng opaque key mà không xung đột. Retry/network timeout không được tạo giao dịch thứ hai.
 
 ### Request
 
@@ -269,7 +269,7 @@ type SubmitTransferRequest = {
 };
 ```
 
-Transfer, Savings opening và mọi Credit command có step-up đều phải gửi `challengeId` do server cấp. Endpoint customer `POST /auth/otp/challenges` chỉ nhận sáu purpose tài chính/thẻ, không cấp `LOGIN` hoặc `REGISTRATION_VERIFY`; tối đa 10 challenge/user/device/phút và challenge mới cùng purpose/resource làm challenge cũ hết hiệu lực. Challenge phải bind đồng thời user, device, purpose, resource và request fingerprint; sai/hết hạn trả `409 STEP_UP_VERIFICATION_FAILED`, còn vượt ngưỡng thử/cấp challenge trả `429 RATE_LIMITED`. `401` chỉ biểu thị bearer/session không hợp lệ, vì client có thể refresh/replay khi gặp mã này và tuyệt đối không được làm vậy chỉ vì OTP/challenge giao dịch sai.
+Transfer, Savings opening, Savings withdrawal và mọi Credit command có step-up đều phải gửi `challengeId` do server cấp. Endpoint customer `POST /auth/otp/challenges` chỉ nhận các purpose tài chính/thẻ (`TRANSFER`, `SAVINGS_OPENING`, `SAVINGS_WITHDRAWAL`, `CREDIT_PAYMENT`, `CARD_UNLOCK`, `CARD_REPORT_LOST`), không cấp `LOGIN` hoặc `REGISTRATION_VERIFY`; tối đa 10 challenge/user/device/phút và challenge mới cùng purpose/resource làm challenge cũ hết hiệu lực. Challenge phải bind đồng thời user, device, purpose, resource và request fingerprint; sai/hết hạn trả `409 STEP_UP_VERIFICATION_FAILED`, còn vượt ngưỡng thử/cấp challenge trả `429 RATE_LIMITED`. `401` chỉ biểu thị bearer/session không hợp lệ, vì client có thể refresh/replay khi gặp mã này và tuyệt đối không được làm vậy chỉ vì OTP/challenge giao dịch sai.
 
 ### Response `202 Accepted` hoặc `200 OK`
 
@@ -291,33 +291,13 @@ type TransferReceipt = {
 
 Trả `TransferReceipt` mới nhất. Endpoint là nguồn sự thật để resume giao dịch đang xử lý.
 
-## 11. Notifications và fraud reporting
+## 11. Notifications
 
 `GET /notifications` trả các notification đã được server ghi nhận cho customer. `POST /notifications/{notificationId}/read` đánh dấu notification đã đọc.
 
 Với notification `TRANSFER`, `resourceId` là `transactionId` và `resourceAccountId` là `accountId` để Mobile mở đúng màn hình chi tiết giao dịch. Với notification không có đích điều hướng, cả hai trường này phải là `null`; Mobile không tự suy diễn hoặc dùng `transferId` làm `transactionId`.
 
-### POST `/fraud-reports` — DRAFT
-
-Endpoint chỉ nhận `accountId`, `transactionId` và `reason` dài 5–1.000 ký tự; field thừa bị từ chối `422`. Header `Idempotency-Key` là bắt buộc, tối thiểu 8 ký tự sau khi trim và được scope theo customer. Server phải kiểm tra ownership trước khi ghi report.
-
-```ts
-type FraudReportResponse = {
-  reportId: string;
-  status: "RECEIVED";
-  createdAt: string;
-};
-```
-
-Cùng key và fingerprint `{accountId, transactionId, normalizedReason}` phải trả cùng `reportId`; cùng key với fingerprint khác trả `409 IDEMPOTENCY_CONFLICT`. Mỗi cặp `{customer, transactionId}` chỉ có tối đa một case `RECEIVED`: request trùng account/transaction/reason với key mới phải bind key mới vào report cũ và không phát thêm audit/outbox; nếu reason khác khi case còn mở thì trả `409 FRAUD_REPORT_ALREADY_EXISTS`. Report, reason, idempotency record, audit event và outbox event phải được lưu bền vững trong cùng transaction. Reason không được đưa vào log, analytics hoặc nội dung notification.
-
-### GET `/fraud-reports/{reportId}` — DRAFT
-
-Trả trạng thái server-authoritative của report thuộc customer hiện tại. Reference hiện chỉ hỗ trợ `RECEIVED`, nghĩa là hệ thống đã lưu yêu cầu, không có nghĩa giao dịch đã bị chặn, hoàn tiền hay điều tra xong. Các trạng thái triage/resolution, SLA và integration với fraud/risk engine thật chưa được phê duyệt và không được Mobile tự suy diễn.
-
-Mobile lưu cùng request, `Idempotency-Key` và receipt cục bộ trước/sau submit để retry cùng key khi timeout và refresh status sau restart. Với `FRAUD_REPORT_ALREADY_EXISTS`, `IDEMPOTENCY_CONFLICT` hoặc rejection `4xx` có cấu trúc, Mobile dọn intent cục bộ sau khi cleanup thành công và cho phép người dùng rời/nhập lại; lỗi không xác định kết quả vẫn giữ intent và retry đúng key. Dữ liệu intent hỏng hoặc SecureStore không đọc được phải fail-closed, không được coi là chưa từng gửi. Việc gửi hoặc đọc `RECEIVED` không phải bằng chứng đã xử lý gian lận.
-
-## 11.1 Credit payment invariants — DRAFT
+## 12. Credit payment invariants — DRAFT
 
 - Credit application idempotency được scope theo customer. Nếu customer đã có application `PENDING_ACTIVATION`/`ACTIVE` với cùng request fingerprint, key mới được alias vào application canonical và trả cùng `applicationId` mà không phát thêm audit/outbox; fingerprint khác vẫn bị từ chối `409`.
 - Chỉ sao kê mới nhất của credit account là payable. Sao kê cũ đã carry-forward là historical; quote/submit trên đó trả `STATEMENT_SUPERSEDED`.
@@ -330,7 +310,7 @@ Mobile lưu cùng request, `Idempotency-Key` và receipt cục bộ trước/sau
 
 Đây là rule của Credit sandbox; interest, fee, allocation nhiều nghĩa vụ, dispute và regulatory treatment vẫn cần product/legal/partner phê duyệt.
 
-## 11.2 GET read-only và worker lifecycle — DRAFT target
+## 13. GET read-only và worker lifecycle — DRAFT target
 
 Public GET không được là tác nhân tạo hoặc settle nghĩa vụ tài chính. Contract đích:
 
@@ -344,7 +324,7 @@ Các job tối thiểu cần khóa/idempotency riêng theo aggregate và kỳ x�
 
 Reference hiện tại đã tách mutation khỏi public Savings/Credit GET. Các fixture/scheduled command công khai cũ đã bị loại bỏ; worker và Admin action four-eyes là đường vận hành/recovery duy nhất trong phạm vi P0. Phần còn mở là durable scheduler cho toàn bộ lifecycle, job ownership/lease ở staging, core callback, retry/backoff quy mô lớn và monitoring. Vì vậy read-only boundary đã có ở domain reference nhưng worker lifecycle vẫn là target DRAFT; chưa được tuyên bố pilot/production-ready.
 
-## 12. Quy tắc server bắt buộc trước pilot
+## 14. Quy tắc server bắt buộc trước pilot
 
 - Authorization, hạn mức, velocity/risk rule và step-up policy phải thực thi ở server.
 - Core banking là nguồn sự thật; transfer service dùng adapter, không tự làm ledger thứ hai.

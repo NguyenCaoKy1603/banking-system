@@ -1,12 +1,16 @@
 # PROJECT_CONTEXT — Banking System / NOVA
 
-> Snapshot source/worktree: **04/10/2026, Asia/Bangkok**. Repository: C:/Projects/banking-system. Branch: codex/staging-academic-completion. HEAD: dc741f6213d0f0391f9b334e3145698e39abec84.
+> Snapshot source/worktree: **14/10/2026, Asia/Bangkok**. Repository: C:/Projects/banking-system. Branch: codex/staging-academic-completion. HEAD: a5bf4a69cef4e9f4e3b4c0a8931ce8d93bd168c3.
+>
+> Cập nhật sau snapshot 2026-10-11: theo yêu cầu người dùng, các suite E2E chạy được của Backend API, Admin Web Playwright và Mobile Maestro cùng runner/fixture riêng đã được gỡ khỏi source, package scripts và CI. Các tham chiếu E2E khác trong snapshot dưới đây mô tả trạng thái tại ngày 04/10 hoặc là bằng chứng lịch sử; unit/integration test vẫn được giữ.
+>
+> Cập nhật sau snapshot 2026-10-13: chức năng khách hàng báo cáo giao dịch đáng ngờ và luồng Admin Fraud đã được gỡ khỏi app, API, quyền Admin và OpenAPI (quyết định D-39). Tham chiếu Fraud bên dưới mô tả snapshot lịch sử; migration/schema và dữ liệu cũ được giữ nguyên, không phục vụ tạo hoặc xử lý báo cáo mới.
 >
 > Đây là bản đồ code hiện tại cho người/AI mới. Phân tích gồm file tracked đã sửa, source untracked, test, script, SQL và cấu hình; không chỉ nội dung ở HEAD. Chỉ clone commit trên sẽ không có toàn bộ WIP, đặc biệt Financial Advice. Tài liệu này không phải lệnh triển khai hoặc quyền chạy database/model.
 >
 > Phương pháp: CodeGraph để tìm entrypoint/call paths; đọc toàn nội dung file qua công cụ và phân tích AST/import/export/body/type đối với TypeScript, đối chiếu DDL/OpenAPI/config; đọc sâu các luồng runtime trọng yếu. Coverage toàn file bằng công cụ khác với việc xem thủ công từng dòng style/fixture. Index cuối file là phạm vi source hiện hữu lúc tạo snapshot. Dependencies, cache/build, binary, generated JS/declaration cạnh TS, private .env và raw artifacts/credential logs được loại trừ. Không chạy test/build/server/database/model trong lần cập nhật này.
 >
-> **Inventory snapshot:** 609 canonical authored-source paths after excluding generated Expo declarations; no extracted New folder/ source tree is present. 134 textual config/contract/asset paths were indexed. Source index includes runtime code, test code, scripts and 40 SQL migration files. Full text source and repository-specific files were read; TypeScript modules were structurally inventoried and key execution flows were checked against imports/calls, OpenAPI/runtime validation, migrations and configuration. Binary/dependency/generated/cache/private credential files were intentionally excluded.
+> **Inventory snapshot:** 609 canonical authored-source paths after excluding generated Expo declarations; no extracted New folder/ source tree is present. 134 textual config/contract/asset paths were indexed. Source index includes runtime code, test code, scripts and 43 SQL migration files. Full text source and repository-specific files were read; TypeScript modules were structurally inventoried and key execution flows were checked against imports/calls, OpenAPI/runtime validation, migrations and configuration. Binary/dependency/generated/cache/private credential files were intentionally excluded.
 >
 > Source/runtime validator/SQL là căn cứ cho hành vi; OpenAPI hiện là Draft và tài liệu/evidence có thể cũ. Khi khác nhau, ghi rõ khác biệt, không tự sửa hoặc chọn một bên là phê duyệt nghiệp vụ. Đọc AGENTS.md trước khi thực hiện task mới.
 
@@ -14,9 +18,9 @@
 
 ### Mục đích và bài toán
 
-Banking System là reference implementation cho đồ án mobile banking, có tên giao diện NOVA. Dự án mô phỏng ứng dụng khách hàng, Backend giao dịch và cổng vận hành cho nhân viên trên dữ liệu synthetic và tiền ảo. Bài toán chính là tổ chức các luồng ngân hàng có kiểm tra quyền, tính toán tiền phía server, xác thực tăng cường, idempotency, transaction/ledger và phục hồi khi mạng hoặc ứng dụng gián đoạn.
+Banking System là reference implementation cho đồ án mobile banking, có tên giao diện NOVA. Dự án gồm các luồng của ứng dụng khách hàng, Backend giao dịch và cổng vận hành cho nhân viên. Bài toán chính là tổ chức các luồng ngân hàng có kiểm tra quyền, tính toán tiền phía server, xác thực tăng cường, idempotency, transaction/ledger và phục hồi khi mạng hoặc ứng dụng gián đoạn.
 
-Các adapter core/card/KYC hiện là nội bộ/sandbox. Repository chưa chứng minh tích hợp core banking hoặc payment rail thật, KYC/AML provider thật, vận hành cloud/staging hoặc xử lý tiền thật.
+Các adapter core/card/KYC hiện là nội bộ. Repository chưa chứng minh tích hợp core banking hoặc payment rail thật, KYC/AML provider thật, vận hành cloud/staging hoặc xử lý tiền thật.
 
 ### Chức năng chính
 
@@ -26,14 +30,14 @@ Các adapter core/card/KYC hiện là nội bộ/sandbox. Repository chưa chứ
 | Accounts | Tài khoản thanh toán, số dư authoritative, số tài khoản masked/reveal có quyền, lịch sử và chi tiết giao dịch |
 | Transfers | Người thụ hưởng, internal recipient lookup, quote phí, step-up, chuyển nội bộ idempotent, receipt/status/recovery |
 | Savings | Sản phẩm, quote kỳ hạn/lãi, mở tiền gửi idempotent, danh sách/chi tiết và lifecycle đáo hạn |
-| Credit/Card | Hồ sơ tín dụng sandbox, card/account, khóa/mở/báo mất, giao dịch, sao kê, minimum/full/custom repayment và lifecycle |
-| KYC | Khai báo synthetic, draft/save/submit, masked identity last4; Admin review |
-| Notifications/Fraud | Danh sách/đánh dấu đọc/thông báo liên kết tài nguyên; gửi fraud report gắn giao dịch/tài khoản có ownership |
+| Credit/Card | Hồ sơ tín dụng, card/account, khóa/mở/báo mất, giao dịch, sao kê, minimum/full/custom repayment và lifecycle |
+| KYC | Khai báo, draft/save/submit, masked identity last4; Admin review |
+| Notifications | Danh sách/đánh dấu đọc/thông báo liên kết tài nguyên; (Fraud report đã gỡ bỏ hoàn toàn theo D-39 ngày 13/10/2026) |
 | QR | Tạo/quét thông tin nhận tiền versioned, trust UNVERIFIED; không tạo payment trực tiếp từ QR |
 | Assistant Help | Hướng dẫn dùng app từ catalog/knowledge bundle và controlled selection; không thực hiện giao dịch |
 | Financial Advice | SAVINGS_PLAN và BUDGET_BALANCE từ số liệu người dùng nhập, calculator xác định + selector AI có giới hạn + rules fallback |
-| Admin | Operations password-only login after one-time TOTP enrollment; Admin password/TOTP login; cookie session; customer/account control; KYC/Credit review; maker–checker; transfer/fraud requests; outbox/jobs; staff/roles; audit |
-| Background/quality | Transactional outbox worker, lifecycle scheduler, migrations/guard, test/contract/release/performance/backup/DR harness |
+| Admin | Operations password-only login after one-time TOTP enrollment; Admin password/TOTP login; cookie session; customer/account control; KYC/Credit review; direct action execution with step-up MFA (Approval Inbox retired); transfer requests; outbox/jobs; staff/roles; audit |
+| Background/quality | Transactional outbox worker, lifecycle scheduler, migrations/guard, test/contract/release/performance harness; backup/DR design docs only (runnable scripts removed) |
 
 “Có implementation” không đồng nghĩa đã nghiệm thu toàn bộ use case ở environment hiện tại. Những khoảng trống cụ thể nằm ở mục 12.
 
@@ -41,14 +45,14 @@ Các adapter core/card/KYC hiện là nội bộ/sandbox. Repository chưa chứ
 
 | Phần | Stack thực tế và dependency quan trọng |
 | --- | --- |
-| Backend | Node.js node:http, TypeScript ESM, pg ^8.23.0, nodemailer ^9.0.5, otpauth ^9.5.1; dev tsx ^4.19.4, TypeScript ^5.8.3, yaml ^2.9.0 |
+| Backend | Node.js node:http, TypeScript ESM, pg ^8.23.0, nodemailer ^9.0.5, otpauth ^9.5.1, @google-cloud/secret-manager ^6.3.0; dev tsx ^4.19.4, TypeScript ^5.8.3, yaml ^2.9.0 |
 | Mobile | Expo ~57.0.12, expo-router ~57.0.12, React/React DOM 19.2.3, React Native 0.86.2, react-native-web ~0.21.0, TypeScript ~6.0.3 |
-| Mobile platform | SecureStore, Crypto, LocalAuthentication, Camera, Clipboard, react-native-qrcode-svg, react-native-svg, safe-area/screens/gesture-handler; Jest/jest-expo, ESLint và Maestro |
-| Admin Web | React/DOM ^19.1.1, Vite ^7.1.3, TypeScript ^5.9.2, plugin-react ^5.0.4, Playwright ^1.62.1; khóa hiện tại React 19.2.8/Vite 7.3.6/TS 5.9.3/Playwright 1.62.1 |
+| Mobile platform | SecureStore, Crypto, LocalAuthentication, Camera, Clipboard, react-native-qrcode-svg, react-native-svg, safe-area/screens/gesture-handler, expo-dev-client ~57.0.19; Jest/jest-expo và ESLint |
+| Admin Web | React/DOM ^19.1.1, Vite ^7.1.3, TypeScript ^5.9.2, plugin-react ^5.0.4; khóa hiện tại trong snapshot React 19.2.8/Vite 7.3.6/TS 5.9.3 |
 | Database | PostgreSQL; Compose chọn image PostgreSQL 16 theo digest. Driver SQL pg, không ORM |
-| AI | Ollama loopback, model tag qwen3.5:4b theo runtime config; không cloud inference mặc định |
+| AI | Radox AI Gateway (OpenAI-compatible Cloud LLM via API Key, default model gemini-3.6-flash); hỗ trợ Assistant Help và Financial Advice |
 | Packaging | Docker Compose, Backend Node 22 image, Admin static Nginx 1.27; EAS profiles/native Android scaffold |
-| API contracts | Public OpenAPI 3.1.0 / 0.2.0-draft; Admin OpenAPI 3.0.3 / 0.1.0-draft |
+| API contracts | Public OpenAPI 3.1.0 / 0.2.0-draft (63 operations); Admin OpenAPI 3.0.3 / 0.1.0-draft (58 operations) |
 
 Không có Express/Nest, ORM, Redux, React Query hoặc Axios trong kiến trúc runtime được rà soát. Admin dùng hash router tự viết; Mobile dùng Expo Router.
 
@@ -71,21 +75,21 @@ banking-system/
 ├── backend/
 │   ├── package.json / tsconfig*.json / Dockerfile / README.md
 │   ├── src/
-│   │   ├── server.ts / http.ts / adminServer.ts / worker.ts
-│   │   ├── bankingSystem.ts / coreBanking.ts / ledger.ts
-│   │   ├── types.ts / money.ts / savings.ts / credit.ts / security.ts
-│   │   ├── runtimeConfig.ts / postgresRelationalRepository.ts
-│   │   ├── database/
-│   │   │   ├── relationalHttpBoundary.ts / pool.ts / unitOfWork.ts
-│   │   │   ├── *Service.ts / rowMappers.ts / transactionRetry.ts
-│   │   │   └── repositories/
+│   │   ├── server.ts / http.ts / adminServer.ts / worker.ts / serverBind.ts
+│   │   ├── bankingSystem.ts / types.ts / errors.ts / security.ts / runtimeConfig.ts / runtimeMetadata.ts
+│   │   ├── routes/                   # [Routing] system, auth, accounts, transfers, cards, savings, kyc, notifications, assistant, mobile
+│   │   ├── controllers/              # [Controllers] auth, account, transfer, savings, card, kyc, notification, assistant, mobile
+│   │   ├── middlewares/              # [Middlewares] cors, auth, error, recipientLookupRateLimiter
+│   │   ├── services/                 # [Application Services] coreBanking (CoreBankingPort)
+│   │   ├── domain/                   # [Pure Domain] ledger (double-entry), money, savings/, credit/
+│   │   ├── database/                 # [Persistence] unitOfWork, pool, services, repositories, postgresRelationalRepository, postgresSnapshotRepository
 │   │   ├── admin/{http,auth,authorization,actions,audit,repositories}/
-│   │   ├── assistant/                # help/knowledge/provider/controlled selector
+│   │   ├── assistant/                # help/knowledge/radox-provider/controlled selector
 │   │   ├── financialAdvice/          # calculator/options/policy/validation/service
-│   │   ├── mfa/ / secrets/ / workers/ # crypto/delivery/providers/background
-│   │   ├── observability/            # runtime logger/metrics modules
+│   │   ├── mfa/ / secrets/ / outbox/ / notifications/ / workers/
+│   │   ├── observability/            # runtime logger/metrics/requestContext modules
 │   │   └── tests/                    # unit/HTTP/relational/evaluator fixtures
-│   ├── database/                     # 001–040 forward SQL migrations
+│   ├── database/                     # 001–043 forward SQL migrations
 │   └── scripts/                      # migration/guard/seed/eval/release/DR tooling
 ├── mobile-app/
 │   ├── index.ts / app.json / app.config.js / eas.json
@@ -95,15 +99,15 @@ banking-system/
 │   │   │   ├── _layout.tsx / (auth)/ / (tabs)/
 │   │   │   ├── account/ / transaction/ / cards/ / savings/
 │   │   │   └── transfer / beneficiaries / history / kyc / mfa /
-│   │   │       notifications / fraud-report / assistant / financial-advice / qr
+│   │   │       notifications / assistant / financial-advice / qr
 │   │   ├── features/
 │   │   │   ├── accounts / assistant / auth / banking / cards / control / credit
-│   │   │   ├── financial-advice / fraud / history / home / kyc
+│   │   │   ├── financial-advice / history / home / kyc
 │   │   │   └── notifications / profile / qr / savings / transfers
 │   │   ├── components/{brand,ui}/
 │   │   ├── runtime/ / services/{api,mock,security,telemetry}/
 │   │   └── theme/ / types/
-│   ├── scripts/ / e2e/maestro/
+│   ├── scripts/
 │   ├── assets/                       # binary bỏ khỏi index, SVG/config có index
 │   ├── example/                      # starter/template, excluded khỏi live app
 │   └── android/                      # local Expo-generated scaffold, ignored Git
@@ -113,8 +117,8 @@ banking-system/
 │   │   ├── main.tsx / App.tsx / api.ts / router.ts / types.ts
 │   │   ├── context/ / components/common/
 │   │   └── features/{auth,overview,customers,applications,approvals,
-│   │                 transfers,fraud,operations,staff,audit}/
-│   ├── test/ / e2e/ / scripts/
+│   │                 transfers,operations,staff,audit}/
+│   ├── test/ / scripts/
 │   └── docker-entrypoint.d/ / nginx.conf.template
 ├── documents/
 │   ├── api/                          # Public + Admin Draft OpenAPI
@@ -156,7 +160,7 @@ worker.ts process riêng
 
 Assistant/Financial Advice
   → controlled deterministic facts/options
-  → bounded provider call tới Ollama loopback nếu enabled
+  → bounded provider call tới Radox (hoặc loopback provider) nếu enabled
   → validated selector + fixed response/template hoặc rules fallback
 ~~~
 
@@ -186,7 +190,8 @@ Các tên file dưới đây có trong source hiện tại. “Được gọi b�
 
 | File | Vai trò | Được gọi bởi | Gọi tới |
 | --- | --- | --- | --- |
-| backend/src/server.ts | Public API startup, chọn storage, inject config/MFA/AI | package start/dev, runtime/container | runtimeConfig, BankingSystem, createBankingServer/createPersistentBankingServer, PostgresRelationalRepository |
+| backend/src/server.ts | Public API startup, chọn storage, inject config/MFA/AI | package start/dev, runtime/container | runtimeConfig, serverBind, BankingSystem, createBankingServer/createPersistentBankingServer, PostgresRelationalRepository |
+| backend/src/serverBind.ts | Resolve host/binding an toàn cho server | server.ts, adminServer.ts | runtimeConfig, network interfaces |
 | backend/src/runtimeConfig.ts | Validate env/storage/money/secrets/security configuration trước startup | server/adminServer/worker và scripts | secret metadata/runtime requirements |
 | backend/src/http.ts | Customer route/controller boundary, body/auth/device/rate/deadline guards | server factories; HTTP tests | BankingSystem hoặc RelationalHttpBoundary, MFA, Assistant/FA service |
 | backend/src/bankingSystem.ts | Reference facade/state orchestration | in-memory/legacy HTTP and fixtures | CoreBankingPort, LedgerPort, security, savings/credit/domain state |
@@ -199,17 +204,18 @@ Các tên file dưới đây có trong source hiện tại. “Được gọi b�
 | backend/src/database/savingsService.ts | Products/quote/opening/deposit | RelationalHttpBoundary | savings/account/ledger/audit/outbox repositories, savings math |
 | backend/src/database/creditService.ts | Credit applications/cards/statements/payments | RelationalHttpBoundary | credit/account/ledger/audit/outbox repositories, credit math |
 | backend/src/database/lifecycleService.ts | Savings maturity/credit lifecycle transactions | scheduler/worker/tests | lifecycle locks, repositories, ledger/suspense/idempotency |
-| backend/src/adminServer.ts | Admin process startup, repository/auth/action dependencies | admin:dev/start:admin | createAdminServer, staff auth/bootstrap/action engine |
-| backend/src/admin/http/adminHttp.ts | 63 registered Admin operations, cookie/CSRF/auth/response | Admin server | StaffAuthService, authorization, actionEngine, AdminRepository |
+| backend/src/adminServer.ts | Admin process startup, repository/auth/action dependencies | admin:dev/start:admin | createAdminServer, staff auth/bootstrap/action engine, serverBind |
+| backend/src/admin/http/adminHttp.ts | 58 registered Admin operations, cookie/CSRF/auth/response | Admin server | StaffAuthService, authorization, actionEngine, AdminRepository |
 | backend/src/admin/actions/actionEngine.ts | Maker–checker action lifecycle/payload/fingerprint/execute | adminHttp/tests | permission registry, AdminRepository, policy and transactional execution |
 | backend/src/admin/repositories/adminRepository.ts | Admin interface + in-memory/Postgres implementations | Admin bootstrap/auth/action/HTTP | SQL and domain mutation/adapters |
 | backend/src/worker.ts | Background process entry | worker scripts/container profile | runtime config, WorkerRuntime, optional lifecycle scheduler |
 | backend/src/workers/workerRuntime.ts | Lease/dispatch/delivery/retry/health | worker.ts | outbox repository/provider adapters/lifecycle |
 | backend/scripts/apply-migration.cjs | Ordered SQL migration/checksum/advisory-lock runner | db:migrate/start:persistent/container migrate | database/*.sql, pg |
+| backend/src/secrets/GoogleSecretManagerClient.ts | Client tích hợp Google Secret Manager | SecretProvider resolution | @google-cloud/secret-manager |
 | backend/src/mfa/persistentMfaService.ts | TOTP credentials/challenge/recovery/rotation | auth/MFA HTTP + relational services | mfaRepository, crypto, digest/encryption keyring, delivery |
 | backend/src/assistant/helpService.ts | Controlled guide/help selection | HTTP Assistant handler | knowledge/catalog/policy/provider/filter/limiter |
 | backend/src/assistant/knowledgeLoader.ts | Chọn active compiled knowledge bundle | Help service/sync | assistant/knowledgeBundle.ts |
-| backend/src/assistant/ollamaHelpProvider.ts | Local model transport/strict provider boundary | Help/FA service | loopback Ollama /api/chat + stream reader/abort |
+| backend/src/assistant/radoxHelpProvider.ts | Local model transport/strict provider boundary (thay thế Ollama) | Help/FA service | Radox / loopback provider + stream reader/abort |
 | backend/src/financialAdvice/adviceService.ts | Financial Advice orchestration | HTTP FA handler/evaluator | validation/calculations/options/selectionPolicy/advisorPrompt/selectorValidation/explanationCatalog |
 | backend/src/financialAdvice/isolatedDemoConfig.ts | Demo-only isolation/cap/counter config | demo launcher/tests | shared limiter/HTTP options; không business implementation riêng |
 | mobile-app/index.ts | JS entry/platform bootstrap/router render | Expo/native | nativeBootstrap, Expo runtime/router |
@@ -227,8 +233,8 @@ Các tên file dưới đây có trong source hiện tại. “Được gọi b�
 | admin-web/src/api.ts | Same-origin cookie/CSRF/abort/deadline/error HTTP | context/pages/helpers | fetch; no Axios |
 | admin-web/src/features/customers/actionIntent.ts | Frozen reviewed mutation/idempotency/unknown-result handling | Customers/StaffContext/tests | adminFetch/session-scoped pending state |
 | admin-web/src/features/approvals/approvalsLogic.ts | Action-to-permission checks, fail-closed unknown action | Approvals/tests | action DTO/session permissions |
-| documents/api/banking-mvp.openapi.yaml | Public Draft contract/type definitions | validators/docs/frontend contract tooling | 65 documented operations/105 schemas |
-| documents/api/admin.openapi.yaml | Admin Draft route/permission contract | Admin contract validators/docs | 63 operations; business schemas còn thiếu |
+| documents/api/banking-mvp.openapi.yaml | Public Draft contract/type definitions | validators/docs/frontend contract tooling | 63 documented operations/105 schemas |
+| documents/api/admin.openapi.yaml | Admin Draft route/permission contract | Admin contract validators/docs | 58 operations; business schemas còn thiếu |
 
 ## 5. PROGRAM FLOW
 
@@ -296,7 +302,7 @@ Recipient/beneficiary lookup → policy + amount → server quote
 → pending/unknown: GET operation hoặc retry cùng key; recovery sau restart native
 ~~~
 
-Không optimistic-update balance. Known rejection, outcome unknown và manual review được xử lý khác nhau. Relational internal transfer có settle synchronous; reference path vẫn có pending/failure/reversed mô phỏng.
+Không optimistic-update balance. Known rejection, outcome unknown và manual review được xử lý khác nhau. Relational internal transfer có settle synchronous; reference path vẫn có thể trả trạng thái pending/failure/reversed.
 
 ### 5.6 Savings/Credit/Card
 
@@ -304,15 +310,13 @@ Savings: products/accounts/policy → server quote principal/rate/actual-days/ma
 
 Credit: application → Admin decision → activation → sandbox credit account/card. Statement/payment: server totals/due/version → MINIMUM/FULL_STATEMENT/CUSTOM quote → step-up + durable submit → transaction/idempotency/ledger/outbox → receipt/recovery. Emergency card lock tách khỏi unlock/report-lost có step-up.
 
-### 5.7 Notifications/Fraud
+### 5.7 Notifications
 
-Outbox/business event → notification record → owned list/read → route tới resource. Push/email notification worker hiện fake/disabled.
-
-FraudReportScreen → owned account/transaction + reason → scoped durable idempotency → POST → report RECEIVED/status → receipt and detail. Admin claim/note/action/resolution đi qua server authorization và action workflow.
+Outbox/business event → notification record → owned list/read → route tới resource. Push/email notification worker hiện fake/disabled. Chức năng khách hàng báo cáo gian lận (FraudReportScreen) và luồng xử lý Fraud của Admin đã được gỡ bỏ hoàn toàn khỏi app, API và Admin theo quyết định D-39 (13/10/2026).
 
 ### 5.8 Assistant/Financial Advice
 
-Help: câu hỏi → sensitive input filter/knowledge/catalog → controlled provider selection hoặc deterministic answer → fixed safe guide; không gọi banking command.
+Help: câu hỏi → sensitive input filter/knowledge/catalog → controlled provider selection (Radox/loopback) hoặc deterministic answer → fixed safe guide; không gọi banking command.
 
 Financial Advice:
 
@@ -323,7 +327,7 @@ FinancialAdviceScreen chọn SAVINGS_PLAN/BUDGET_BALANCE
 → POST /api/v1/assistant/financial-advice
 → bearer/device/body/deadline/rate guards
 → BigInt calculator → feasible options/allowed reasons
-→ bounded Qwen selector nếu enabled + quota
+→ bounded Radox/Qwen selector nếu enabled + quota
 → strict JSON/duplicate-key/semantic allowlist validation
 → explanationCatalog templates
 → AI_ASSISTED hoặc RULE_BASED
@@ -442,7 +446,7 @@ Không thấy căn cứ để gán toàn project MVC/MVVM, Event Sourcing, Singl
 | CreditPaymentQuote / Payment | quote source/account/statement/version/option/amount/fee/expiry; paymentId/statement/source/amount/reference/status/failureReason | source payment account → repayment → credit statement/account |
 | KycApplication | id/userId/fullName/identityNumberLast4/address/documentUri/status/rejectionReason/submittedAt/updatedAt/version | customer → application/documents/reviews; private synthetic payload không là public identity |
 | Notification | id/type/title/body/resourceId/resourceAccountId/read/createdAt | customer + owned business resource |
-| FraudReport | reportId/accountId/transactionId/reason/status/createdAt | account/transaction thuộc customer; Admin case action/resolution |
+| FraudReport | reportId/accountId/transactionId/reason/status/createdAt | Model lịch sử (runtime API và app đã gỡ bỏ theo D-39; bảng DB giữ để bảo toàn dữ liệu) |
 | OutboxEvent / Delivery / DeadLetter | eventType/aggregateId/deduplicationKey/payload/attempts/nextAttempt/published; delivery lease/provider/status; dead-letter final error metadata | business event → deliveries/worker state |
 | MfaCredential / Recovery | credential owner/type/status/ciphertext/key metadata/time step; recovery code digest/status; recovery request cooldown/expiry | customer → credentials/challenges/recovery records |
 | Staff / Role / Session | staff id/status/authorizationVersion/roles/environmentScope/expiry; session hashes/CSRF/step-up/idle+absolute TTL | staff ↔ roles ↔ permissions; separate customer auth realm |
@@ -463,9 +467,9 @@ Public request/response có named schemas; dấu * trong danh mục schema chỉ
 
 Đặc biệt POST /auth/verify là compatibility route; relational-v2 không thực hiện login-challenge verifier. Customer login thực tế password-only. POST /assistant/financial-advice mặc định disabled cho đến FINANCIAL_ADVICE_ENABLED=1; bật AI là cấu hình riêng.
 
-### 9.2 Public API — 65 operations
+### 9.2 Public API — 63 operations
 
-Nguồn: documents/api/banking-mvp.openapi.yaml; dispatcher backend/src/http.ts. Các service path rút gọn trong bảng đều tương đối dưới backend/src/.
+Nguồn: documents/api/banking-mvp.openapi.yaml (63 operations sau khi gỡ bỏ 2 route Fraud); dispatcher backend/src/http.ts. Các service path rút gọn trong bảng đều tương đối dưới backend/src/.
 
 | Method + endpoint (thêm /api/v1 trước path) | Request body/schema; params | Response status/schema | File xử lý |
 | --- | --- | --- | --- |
@@ -491,8 +495,6 @@ Nguồn: documents/api/banking-mvp.openapi.yaml; dispatcher backend/src/http.ts.
 | GET `/mobile/control-policy` | không body được khai báo | 200:ControlPolicy; 401:body không khai báo | `backend/src/http.ts` + `database/controlPolicyRepository.ts` |
 | GET `/notifications` | không body được khai báo | 200:NotificationsResponse; 401:body không khai báo | `backend/src/http.ts` + `database/remainingService.ts` |
 | POST `/notifications/{notificationId}/read` | không body được khai báo | 200:Notification; 401:body không khai báo; 404:body không khai báo | `backend/src/http.ts` + `database/remainingService.ts` |
-| POST `/fraud-reports` | FraudReportRequest | 201:FraudReportResponse; 401:body không khai báo; 404:body không khai báo; 409:body không khai báo; 422:body không khai báo | `backend/src/http.ts` + `database/remainingService.ts` |
-| GET `/fraud-reports/{reportId}` | không body được khai báo; path:reportId* | 200:FraudReportResponse; 401:body không khai báo; 404:body không khai báo | `backend/src/http.ts` + `database/remainingService.ts` |
 | GET `/accounts` | không body được khai báo | 200:AccountsResponse; 401:body không khai báo | `backend/src/http.ts` + `database/relationalAccountReadService.ts` |
 | POST `/internal-recipients/lookup` | InternalRecipientLookupRequest | 200:InternalRecipientLookupResponse; 401:body không khai báo; 404:body không khai báo; 409:body không khai báo; 500:body không khai báo | `backend/src/http.ts` + `database/remainingService.ts` |
 | GET `/accounts/{accountId}/number` | không body được khai báo | 200:AccountNumberResponse; 401:body không khai báo; 404:body không khai báo | `backend/src/http.ts` + `database/relationalAccountReadService.ts` |
@@ -766,6 +768,9 @@ Có 40 migration forward-only, 92 CREATE TABLE distinct. Đọc đủ migration 
 | `backend/database/034_policy_entitlements_login_rate_limit.sql` | `customer_feature_entitlements` |
 | `backend/database/039_lifecycle_suspense_and_keyset_indexes.sql` | `savings_maturity_suspense` |
 | `backend/database/040_card_security_and_suspense_retry.sql` | `card_security_cases` |
+| `backend/database/041_admin_two_roles.sql` | `staff_roles`, `admin_action_policies` |
+| `backend/database/042_admin_direct_operations_accounts.sql` | `staff_users`, operations accounts direct bootstrap |
+| `backend/database/043_retire_staff_invite_approval.sql` | retire `staff_invite_requests` maker-checker |
 
 Bảng bookkeeping: reference_schema_migrations do backend/scripts/apply-migration.cjs tạo, lưu applied checksum và execution/release metadata.
 
@@ -780,7 +785,7 @@ Các quan hệ và constraint đáng đọc:
 - Outbox event → notification deliveries/endpoints/dead letters; ciphertext/key metadata cho endpoint, lease/backoff/dedup indexes cho workers.
 - Case assignments/notes dùng polymorphic case_type + case_id; không có FK cho từng loại case.
 - KYC synthetic payload full/private được lưu server, public chỉ identityNumberLast4; 038 chuẩn hóa NEEDS_MORE_INFO và vẫn có compatibility naming trong một số constraint.
-- Legacy reference_state_snapshots/reference_runtime_records còn trong schema cạnh normalized tables. Không có bảng Financial Advice hoặc lưu AI advice trong 40 migration.
+- Legacy reference_state_snapshots/reference_runtime_records còn trong schema cạnh normalized tables. Không có bảng Financial Advice hoặc lưu AI advice trong 43 migration.
 
 RLS enabled trên kyc_applications, credit_applications, case_assignments, case_internal_notes, admin_action_requests; dùng app.staff_id/app.staff_scope. Source không FORCE RLS; hiệu lực thực tế phụ thuộc DB role/owner/session binding, chưa xác minh database ở phiên này.
 
@@ -806,12 +811,12 @@ Giới hạn source guard: requiredTablesByMigration trong runner chưa có entr
 
 | Phạm vi | Manifest / công cụ | Tác dụng |
 | --- | --- | --- |
-| Backend | backend/package.json, Node.js 22 trong Docker/CI, TypeScript ESM, tsx | HTTP public/Admin/worker và scripts. Phụ thuộc runtime chính: pg, otpauth, nodemailer. Không có ORM/framework HTTP. |
-| Mobile | mobile-app/package.json, Expo SDK 57, React 19, React Native 0.86, Expo Router | App iOS/Android và Expo Web dùng chung source. SecureStore/Crypto/LocalAuthentication/Camera hỗ trợ session, thiết bị, MFA/QR; Jest/jest-expo, ESLint, Maestro cho kiểm tra. |
-| Admin Web | admin-web/package.json, React 19, Vite 7, TypeScript, Playwright | SPA vận hành nhân viên; build static để Nginx phục vụ. |
-| Database | backend/database/*.sql, pg | 40 migration PostgreSQL forward-only; không có ORM. |
-| Local packaging | compose.yaml, Dockerfiles, Nginx config | Preview local gồm PostgreSQL, API, Admin API/Web và capture services; worker opt-in. Không có Ollama trong Compose. |
-| API contract | documents/api/*.yaml | Public/Admin OpenAPI ở trạng thái Draft; implementation + runtime validator vẫn cần đối chiếu khi lệch nhau. |
+| Backend | backend/package.json, Node.js 22 trong Docker/CI, TypeScript ESM, tsx | HTTP public/Admin/worker và scripts. Phụ thuộc runtime chính: pg, otpauth, nodemailer, @google-cloud/secret-manager. Không có ORM/framework HTTP. |
+| Mobile | mobile-app/package.json, Expo SDK 57, React 19, React Native 0.86, Expo Router | App iOS/Android và Expo Web dùng chung source. SecureStore/Crypto/LocalAuthentication/Camera hỗ trợ session, thiết bị, MFA/QR; Jest/jest-expo và ESLint cho kiểm tra. |
+| Admin Web | admin-web/package.json, React 19, Vite 7, TypeScript | SPA vận hành nhân viên; build static để Nginx phục vụ. |
+| Database | backend/database/*.sql, pg | 43 migration PostgreSQL forward-only; không có ORM. |
+| Local packaging | compose.yaml, Dockerfiles, Nginx config | Preview local gồm PostgreSQL, API, Admin API/Web và capture services; worker opt-in. Không có model inference trong Compose. |
+| API contract | documents/api/*.yaml | Public (63 ops) / Admin (58 ops) OpenAPI ở trạng thái Draft; implementation + runtime validator vẫn cần đối chiếu khi lệch nhau. |
 
 Lockfiles nằm cạnh từng app manifest. Dùng phiên bản Node tương ứng với CI/container (22) và cài dependency riêng trong backend, mobile-app, admin-web; root không có một workspace package manager điều phối cả ba.
 
@@ -824,8 +829,8 @@ Chỉ ghi tên và ý nghĩa biến, không ghi bất kỳ giá trị bí mật 
 | Backend runtime | NODE_ENV, BANKING_ENV, BANKING_MONEY_MODE, BANKING_STORAGE, BANKING_PERSISTENCE_MODE | Chọn môi trường, bắt buộc virtual money cho reference runtime, persistence postgres/in-memory và legacy-state/relational-v2. Defaults nguồn cho thấy postgres + legacy-state; Compose/example có thể override. |
 | Database | DATABASE_URL, DATABASE_TEST_ADMIN_URL, ALLOW_DATABASE_TEST_RESET | Kết nối PostgreSQL và guard cho test disposable. Không dùng banking_preview, remote DB hoặc database chưa xác minh ownership cho test/destructive action. |
 | Crypto/auth | REGISTRATION_FINGERPRINT_KEY, pepper/encryption-key metadata, BANKING_MFA_METHODS | Runtime persistent fail-closed nếu thiếu/không hợp lệ. Chỉ mô tả tên tại đây; secret thật không được ghi hoặc in ra. |
-| Assistant Help | ASSISTANT_ENABLED, ASSISTANT_PROVIDER, ASSISTANT_MODEL, ASSISTANT_OLLAMA_BASE_URL, ASSISTANT_PROVIDER_TIMEOUT_MS, ASSISTANT_REQUEST_TIMEOUT_MS, ASSISTANT_OLLAMA_NUM_PREDICT, ASSISTANT_ALLOW_DOCKER_HOST | ASSISTANT_ENABLED khác 1 làm endpoint Help disabled. Khi bật, provider phải là Ollama; model phải được validate; request timeout phải lớn hơn provider timeout. Default model trong source là qwen3.5:4b và provider URL mặc định loopback. Docker preview có thể đặt URL host.docker.internal và bật ASSISTANT_ALLOW_DOCKER_HOST=1; opt-in này chỉ hợp lệ với BANKING_ENV=development/preview. Ollama phải chạy và có model tương ứng. |
-| Financial Advice | FINANCIAL_ADVICE_ENABLED cùng nhóm ASSISTANT_* | Feature route và AI selector là hai công tắc riêng. Rule-based calculator/fallback có thể hoạt động mà không có Qwen; muốn selector AI phải cấu hình Assistant provider hợp lệ. |
+| Assistant Help | ASSISTANT_ENABLED, ASSISTANT_PROVIDER, ASSISTANT_MODEL, ASSISTANT_PROVIDER_TIMEOUT_MS, ASSISTANT_REQUEST_TIMEOUT_MS | ASSISTANT_ENABLED khác 1 làm endpoint Help disabled. Provider interface hỗ trợ Radox hoặc loopback; model phải được validate; request timeout phải lớn hơn provider timeout. Default model là gemini-3.6-flash qua Radox provider. |
+| Financial Advice | FINANCIAL_ADVICE_ENABLED cùng nhóm ASSISTANT_* | Feature route và AI selector là hai công tắc riêng. Rule-based calculator/fallback có thể hoạt động mà không có LLM; muốn selector AI phải cấu hình Assistant provider hợp lệ. |
 | Mobile | EXPO_PUBLIC_API_URL, EXPO_PUBLIC_SANDBOX_HTTP | URL Backend của app. HTTP sandbox chỉ dành cho local; staging/production-like phải HTTPS và fail-closed nếu bật sandbox flag. Android emulator dùng host alias 10.0.2.2; khi Expo Web chạy trên máy local, API resolver đổi alias đó thành localhost. |
 | Operational policy | BANKING_ALLOWED_ORIGINS, BANKING_ALLOWLIST_ENABLED, BANKING_MAX_TRANSFER_AMOUNT_MINOR, settlement flags | CORS allowlist, sandbox allowlist/limit và thời điểm settlement; chỉ thay đổi theo cấu hình môi trường được duyệt. |
 
@@ -834,9 +839,9 @@ Chỉ ghi tên và ý nghĩa biến, không ghi bất kỳ giá trị bí mật 
 - Backend: npm run dev, npm run start, npm run start:persistent, npm run admin:dev, npm run worker:dev.
 - Backend kiểm tra/contract: npm run validate:database, npm run typecheck, npm run build, npm test, npm run test:critical, npm run validate:openapi, npm run test:assistant.
 - Backend database suites gọi script guard với PostgreSQL disposable; không chạy chỉ để “thử nhanh” khi DATABASE_URL đang trỏ tới dữ liệu persistent.
-- Mobile: npm start, npm run android, npm run ios, npm run web, npm run lint, npm run typecheck, npm test, npm run validate:openapi, npm run validate:e2e, npm run export:web.
-- Admin Web: npm run dev, npm run lint, npm run typecheck, npm test, npm run build, npm run test:e2e.
-- Compose smoke, migrations, seeding, backup/restore, worker/performance/release scripts có thể kết nối hoặc ghi dữ liệu; phải đọc script guard/runbook và xác minh disposable scope trước khi chạy.
+- Mobile: npm start, npm run android, npm run ios, npm run web, npm run lint, npm run typecheck, npm test, npm run validate:openapi, npm run export:web. E2E đã bị gỡ ngày 2026-10-11.
+- Admin Web hiện tại: npm run dev, npm run lint, npm run typecheck, npm test, npm run build, npm run audit. E2E đã bị gỡ ngày 2026-10-11.
+- Compose smoke, migrations, seeding, worker/performance/release scripts có thể kết nối hoặc ghi dữ liệu; phải đọc script guard/runbook và xác minh disposable scope trước khi chạy.
 
 ## 11. FEATURE MAP
 
@@ -849,12 +854,12 @@ Feature map dưới đây trỏ tới đường đi chính. Các route wrapper E
 | Transfer / beneficiary / recipient lookup | mobile-app/src/app/transfer.tsx, beneficiaries route; features/transfers | feature API + transfer intent/state machines + shared httpClient | transfer/beneficiary/recipient handlers → transferService.ts / beneficiaryService.ts / recipient service | transferRepository.ts, idempotency/quote/ledger/audit/outbox tables |
 | Savings | mobile-app/src/app/savings/**; features/savings | Savings API, calculators/validators | savings routes → savings service/calculation | savingsRepository.ts, deposit/product tables |
 | Card / credit / repayment | mobile-app/src/app/(tabs)/cards.tsx, cards/credit route wrappers; features/cards, credit | card/credit APIs and validators | card controls + credit statement/repayment services | creditRepository.ts, card/credit tables |
-| KYC | mobile-app/src/app/kyc.tsx; features/kyc | KYC API + payload validation | customer KYC boundary and Admin review routes | KYC case/review tables; only synthetic provider boundary |
-| QR / notifications / fraud report | mobile-app/src/app/(tabs)/qr.tsx and route wrappers; features/qr, notifications, fraud | feature APIs + QR payload/runtime validators | matching customer endpoints in http.ts / RelationalHttpBoundary | notifications/outbox, fraud report, audit tables; QR does not itself transfer |
-| Trợ lý hướng dẫn | mobile-app/src/app/assistant.tsx → features/assistant/screens/AssistantScreen.tsx | features/assistant/api/assistantApi.ts → POST /api/v1/assistant/help | backend/src/http.ts: handleAssistantHelpRoute → assistant/helpService.ts, responseCatalog/knowledgeLoader, controlled selection; optionally Ollama provider | No banking transaction/account persistence; provider call separately configured |
+| KYC | mobile-app/src/app/kyc.tsx; features/kyc | KYC API + payload validation | customer KYC boundary và Admin review routes | KYC case/review tables; only synthetic provider boundary |
+| QR / notifications | mobile-app/src/app/(tabs)/qr.tsx and route wrappers; features/qr, notifications | feature APIs + QR payload/runtime validators | matching customer endpoints in http.ts / RelationalHttpBoundary | notifications/outbox, audit tables; QR does not itself transfer; (Fraud report đã gỡ) |
+| Trợ lý hướng dẫn | mobile-app/src/app/assistant.tsx → features/assistant/screens/AssistantScreen.tsx | features/assistant/api/assistantApi.ts → POST /api/v1/assistant/help | backend/src/http.ts: handleAssistantHelpRoute → assistant/helpService.ts, responseCatalog/knowledgeLoader, controlled selection; optionally Radox provider | No banking transaction/account persistence; provider call separately configured |
 | Tư vấn tài chính | mobile-app/src/app/financial-advice.tsx → features/financial-advice/screens/FinancialAdviceScreen.tsx | features/financial-advice/api/financialAdviceApi.ts + runtime validators | POST /api/v1/assistant/financial-advice → financialAdvice/adviceService.ts, calculations.ts, options/selectionPolicy/selectorValidation | No banking account/transaction writes; advice uses user-entered values |
 | Admin authentication / customer controls | admin-web/src/main.tsx → App.tsx, router.ts, context/StaffContext.tsx | admin-web/src/api.ts; same-origin cookie + CSRF | backend/src/adminServer.ts, adminHttp.ts, auth/authorization/action workflows | admin repositories, staff/customer tables, audit/action records |
-| Admin KYC / credit / transfer / fraud / staff / audit / operations | admin-web/src/features/{applications,approvals,transfers,fraud,customers,staff,audit,operations} | Admin API request/response types and permission registry | backend/src/admin/* services/routes/repositories | PostgreSQL Admin/control-plane tables, audit and outbox |
+| Admin KYC / credit / transfer / staff / audit / operations | admin-web/src/features/{applications,approvals,transfers,customers,staff,audit,operations} | Admin API request/response types and permission registry | backend/src/admin/* services/routes/repositories | PostgreSQL Admin/control-plane tables, audit and outbox |
 | Background outbox / lifecycle | Không có customer UI trực tiếp | Worker process, ops visibility | backend/src/worker.ts → workers/outbox + lifecycle scheduler | outbox, worker lease, dead-letter, scheduled lifecycle tables |
 
 Tên thư mục biểu diễn module, không khẳng định mỗi feature đã có đầy đủ mọi hành vi trong mọi persistence mode. Public API contract / route table đầy đủ nằm ở mục 9.
@@ -863,15 +868,15 @@ Tên thư mục biểu diễn module, không khẳng định mỗi feature đã 
 
 ### Trạng thái đọc từ repository snapshot
 
-- HEAD tại thời điểm chụp: codex/staging-academic-completion / dc741f6213d0f0391f9b334e3145698e39abec84. Worktree đã có thay đổi tracked và untracked; đây là trạng thái WIP, không phải nội dung commit HEAD. Chỉ PROJECT_CONTEXT.md được cập nhật cho tài liệu này; file index cuối mô tả file có mặt lúc snapshot.
+- HEAD tại thời điểm cập nhật: codex/staging-academic-completion / a5bf4a69cef4e9f4e3b4c0a8931ce8d93bd168c3. Worktree đã có thay đổi tracked và untracked; đây là trạng thái WIP, không phải nội dung commit HEAD.
 - Customer Mobile, Public Backend, Admin Web, worker, SQL migrations, tests/evaluators, contracts và handoff docs đều có source. “Có source/test/document” không chứng minh tính năng được bật hoặc đã chạy ở environment.
 - Banking runtime được mô tả là academic/reference, virtual money, synthetic fixtures/adapters. Không có evidence đủ để gọi là hệ thống production, payment/core/KYC partner integration hoặc pilot đã phê duyệt.
-- Trợ lý hướng dẫn có Mobile route + authenticated API + service/catalog/knowledge bundle và Ollama provider. Runtime config trả disabled nếu ASSISTANT_ENABLED khác 1; Backend trả 503 cho route khi disabled. /healthz 200 chỉ chứng minh Backend health endpoint trả lời, không chứng minh Help enabled, Ollama/model sống hoặc Web đang trỏ đúng API.
+- Trợ lý hướng dẫn có Mobile route + authenticated API + service/catalog/knowledge bundle và Radox provider. Runtime config trả disabled nếu ASSISTANT_ENABLED khác 1; Backend trả 503 cho route khi disabled. /healthz 200 chỉ chứng minh Backend health endpoint trả lời, không chứng minh Help enabled, provider/model sống hoặc Web đang trỏ đúng API.
 - Financial Advice source có hai mode: SAVINGS_PLAN và BUDGET_BALANCE; số học là deterministic/rule-based, selector AI chỉ chọn một option whitelisted rồi validate. Không ghi giao dịch hay tự động thực thi khuyến nghị. Reports trong documents/06-security-ai ghi lại offline và live batch evidence; snapshot đó báo live 15/16 (Savings 8/8; Budget 7/8, có ORACLE_MISMATCH), trong khi acceptance threshold/live-preference gate còn UNRESOLVED/PROVISIONAL. Web demo và provider evaluation là bằng chứng khác loại. Một lần người dùng xác nhận kết quả nhìn hợp lý không thay thế regression/oracle/evidence gate.
 - Tài liệu root và archive có trạng thái/tuyên bố từ các mốc khác nhau. README/handoff/evidence phải đọc ngày, commit, mode và loại test trước khi coi số liệu là hiện hành.
 - OpenAPI Public/Admin được đánh dấu Draft; có các route/shape phải đọc implementation/runtime validator để xác định chính xác. Auth compatibility verifier, Admin operation coverage, policy/worker cutover và migration/runtime modes không thể suy ra chỉ từ OpenAPI.
-- Database: có 40 forward migrations và schemas/repositories, nhưng lần lập context này không kết nối database hoặc kiểm tra migration trên DB; số bảng nêu ở mục 9 là inventory tĩnh từ DDL, không phải trạng thái live.
-- Chưa có bằng chứng trong task này về Android/iOS device end-to-end, staging deployment, image digest release, live operational monitoring, core/payment partner, backup/PITR thực, hoặc compliance/legal approval.
+- Database: có 43 forward migrations và schemas/repositories, nhưng lần lập context này không kết nối database hoặc kiểm tra migration trên DB; số bảng nêu ở mục 9 là inventory tĩnh từ DDL, không phải trạng thái live.
+- Các script backup/restore local đã được gỡ ngày 2026-10-13; hiện không có backup/PITR implementation hoặc provider evidence. Cũng chưa có bằng chứng trong task này về Android/iOS device end-to-end, staging deployment, image digest release, live operational monitoring, core/payment partner, hoặc compliance/legal approval.
 - Scan marker trong source Backend/Mobile/Admin không tìm thấy TODO/FIXME/HACK/XXX ở các khu vực đã quét. Đây chỉ là kết quả tìm marker; việc không có tag không có nghĩa không còn việc phải làm.
 
 ### Việc dở / rủi ro cấu trúc cần người nhận ra trước
@@ -881,7 +886,7 @@ Tên thư mục biểu diễn module, không khẳng định mỗi feature đã 
 3. Mobile authentication/platform: Mobile customer login source hiện password-only; một số tài liệu/Maestro cũ có thể nhắc login challenge/MFA UI chưa có. Biometric prompt local không phải server attestation proof; getDeviceBoundAssertion fail-closed/empty. Native durable intent không được chứng minh bằng Web.
 4. Provider boundaries: KYC, card/core, notifications/email/push adapters phần lớn synthetic/fake/disabled. QR payload không phải lệnh thanh toán.
 5. Admin: SPA/admin API có flows thực nhưng registry/route/page/OpenAPI/docs có thể lệch nhau; permission coverage phải xác minh ở route + service, không suy từ menu.
-6. Release/operations: các tài liệu backup, DR, staging, performance và preview là harness/contract/plan; không tự hiểu là cloud được provision, monitoring connected, worker đã bật hoặc restore đã được diễn tập trong môi trường đại diện.
+6. Release/operations: tài liệu backup, DR, staging, performance và preview là contract/plan; backup scripts đã được gỡ và tài liệu rehearsal cũ là bằng chứng lịch sử. Không tự hiểu là cloud được provision, monitoring connected, worker đã bật hoặc restore đã được diễn tập trong môi trường đại diện.
 7. Repository hygiene: New folder.zip hiện có trong workspace nhưng là binary archive, không trích xuất/đưa vào source index. Không có thư mục New folder/ đã giải nén tại snapshot; chỉ dùng canonical root.
 8. Unused candidates (static-reference heuristic, không phải quyết định xóa): Mobile cardsMock/cardValidators, TransferStateMachine/SavingsOpeningStateMachine, feature barrel/types index có vẻ chỉ được test hoặc không có consumer trực tiếp; Backend snapshotRepository chủ yếu test/reference; một số Admin table/inline DTO không được UI gọi. Import động, tooling và public exports có thể làm kết luận khác, nên người nhận phải kiểm tra trước khi xóa.
 9. Database safety: destructive/integration suites chỉ trên database disposable được guard xác nhận; không reset/drop/truncate banking_preview, remote hoặc database chưa xác minh ownership.
@@ -919,7 +924,7 @@ npm install
 npm run start:persistent
 ~~~
 
-start:persistent chạy migration trước rồi khởi động server. Yêu cầu PostgreSQL local đã được xác minh, DATABASE_URL đúng sandbox, REGISTRATION_FINGERPRINT_KEY và các key/MFA runtime hợp lệ. Chỉ làm điều này khi được phép dùng database đó; không trỏ vào banking_preview để thử nghiệm. npm run start cũng mặc định là persistent theo runtime config, đừng cho rằng gọi nó sẽ dùng in-memory.
+start:persistent chạy migration trước rồi khởi động server. Yêu cầu PostgreSQL local đã được xác minh, DATABASE_URL trỏ đúng database được phép dùng, REGISTRATION_FINGERPRINT_KEY và các key/MFA runtime hợp lệ. Chỉ làm điều này khi được phép dùng database đó; không trỏ vào banking_preview. npm run start cũng mặc định là persistent theo runtime config, đừng cho rằng gọi nó sẽ dùng in-memory.
 
 ### C. Admin API + Admin Web
 
@@ -964,11 +969,11 @@ HTTP local chỉ dùng khi cấu hình EXPO_PUBLIC_SANDBOX_HTTP=1 theo mobile-ap
 
 ### E. Bật Trợ lý hướng dẫn / model AI
 
-- Kiểm tra trước Backend đang đọc đúng private .env, API URL client trỏ tới process đó, và model local Ollama đang chạy/có model tương ứng.
-- Trong private Backend environment, bật ASSISTANT_ENABLED=1; đặt ASSISTANT_PROVIDER=ollama, ASSISTANT_MODEL theo SUPPORTED_OLLAMA_MODEL/validator, và đặt ASSISTANT_OLLAMA_BASE_URL nếu default loopback không phù hợp. Timeout request phải lớn hơn provider timeout.
+- Kiểm tra trước Backend đang đọc đúng private .env (hoặc .env.compose), API URL client trỏ tới process đó, và API key Radox AI đã được cấu hình.
+- Trong private Backend environment hoặc .env.compose, bật ASSISTANT_ENABLED=1; đặt ASSISTANT_PROVIDER=radox, ASSISTANT_MODEL=gemini-3.6-flash, và ASSISTANT_RADOX_BASE_URL=https://radoxai.com/v1 cùng ASSISTANT_RADOX_API_KEY. Timeout request phải lớn hơn provider timeout.
 - Restart đúng Backend process sau đổi env; quan sát health/log đã redact. Không gửi password, session token, OTP hoặc dữ liệu tài chính thật.
-- Nếu bật AI trong container, URL 127.0.0.1 trỏ vào chính container; chỉ cấu hình địa chỉ provider mà validation/policy cho phép và mạng container truy cập. /healthz không phải health-check cho Ollama.
-- Khi flag vẫn tắt, POST /api/v1/assistant/help trả ASSISTANT_UNAVAILABLE/503; khi service enabled nhưng Ollama không phản hồi, UI hiển thị lỗi provider hoặc timeout. Xem mục “Assistant availability” mục 12.
+- Nếu bật AI trong container, đảm bảo container backend nhận được các biến cấu hình từ .env.compose.
+- Khi flag tắt, POST /api/v1/assistant/help trả ASSISTANT_UNAVAILABLE/503; khi service enabled nhưng provider không phản hồi, UI hiển thị lỗi provider hoặc timeout. Xem mục “Assistant availability” mục 12.
 
 ### F. Tư vấn tài chính
 
@@ -986,13 +991,13 @@ HTTP local chỉ dùng khi cấu hình EXPO_PUBLIC_SANDBOX_HTTP=1 theo mobile-ap
 5. backend/src/runtimeConfig.ts và backend/src/http.ts — fail-closed environment, auth/validation, API dispatcher/error handling.
 6. backend/src/bankingSystem.ts, backend/src/coreBanking.ts, backend/src/ledger.ts — in-memory/reference domain facade, money and ledger invariants.
 7. backend/src/database/relationalHttpBoundary.ts, database/unitOfWork.ts, database/repositories/ — persistent path, transaction scope and repository boundary.
-8. backend/database/README.md rồi 001–040 migration theo thứ tự — schema evolution; không chạy migration để “đọc” schema.
+8. backend/database/README.md rồi 001–043 migration theo thứ tự — schema evolution; không chạy migration để “đọc” schema.
 9. Mobile entry: mobile-app/index.ts, mobile-app/src/app/_layout.tsx, src/app/(tabs)/_layout.tsx — Expo bootstrap, providers, route tree.
 10. mobile-app/src/features/auth/ và mobile-app/src/services/api/httpClient.ts — customer session/token, request headers/retry/URL config.
 11. Đọc một flow UI ít rủi ro: mobile-app/src/features/accounts hoặc history; theo screen → API → Backend route → service → repository → tests.
 12. Đọc money flow: transfers/beneficiaries + backend transferService.ts/repositories + idempotency, step-up, journal and outbox tests.
 13. Đọc savings/credit và lifecycle worker; so sánh scheduling/settlement flags với process worker riêng.
-14. Đọc assistant-help: AssistantScreen.tsx → assistantApi.ts → http.ts:handleAssistantHelpRoute → runtimeAssistantConfig.ts → helpService/knowledgeLoader/responseCatalog/selectionPolicy → Ollama provider và assistant tests.
+14. Đọc assistant-help: AssistantScreen.tsx → assistantApi.ts → http.ts:handleAssistantHelpRoute → runtimeAssistantConfig.ts → helpService/knowledgeLoader/responseCatalog/selectionPolicy → Radox provider và assistant tests.
 15. Đọc Financial Advice: FinancialAdviceScreen.tsx → financialAdviceApi.ts/validators → financialAdvice route/config/adviceService.ts → calculations.ts → selectionPolicy/selectorValidation → test plan/evidence/runbook/reports. Phân biệt offline, RULE_BASED và live-Qwen evidence.
 16. Admin Web: admin-web/src/main.tsx, App.tsx, router.ts, context/StaffContext.tsx → một page/action → backend adminHttp/auth/authorization/action service → repository/audit tests.
 17. Cuối cùng đọc OpenAPI + test harness + staging/release/backup/security docs; xác nhận environment, commit, flags và loại bằng chứng trước khi nhận một mệnh đề PASS.
@@ -1013,9 +1018,6 @@ Phạm vi index là đường dẫn tương đối của source code, test, eval
 .github/modernize/java-upgrade/hooks/scripts/recordToolUse.ps1
 .github/modernize/java-upgrade/hooks/scripts/recordToolUse.sh
 admin-web/docker-entrypoint.d/10-validate-runtime-config.sh
-admin-web/e2e/admin-web.spec.ts
-admin-web/e2e/fixture-server.mjs
-admin-web/playwright.config.ts
 admin-web/scripts/verify-runtime-proxy.cjs
 admin-web/src/api.ts
 admin-web/src/App.tsx
@@ -1036,7 +1038,6 @@ admin-web/src/features/auth/Login.tsx
 admin-web/src/features/customers/accountLoader.ts
 admin-web/src/features/customers/actionIntent.ts
 admin-web/src/features/customers/Customers.tsx
-admin-web/src/features/fraud/FraudCases.tsx
 admin-web/src/features/operations/Operations.tsx
 admin-web/src/features/overview/Overview.tsx
 admin-web/src/features/staff/StaffView.tsx
@@ -1087,24 +1088,20 @@ backend/database/037_transfer_counterparty_snapshots.sql
 backend/database/038_customer_kyc_runtime.sql
 backend/database/039_lifecycle_suspense_and_keyset_indexes.sql
 backend/database/040_card_security_and_suspense_retry.sql
+backend/database/041_admin_two_roles.sql
+backend/database/042_admin_direct_operations_accounts.sql
+backend/database/043_retire_staff_invite_approval.sql
 backend/scripts/admin-bootstrap.ts
 backend/scripts/admin-invitation-capture.cjs
 backend/scripts/aggregate-financial-advice-evaluation.ts
 backend/scripts/apply-migration.cjs
-backend/scripts/backup-common.cjs
-backend/scripts/backup-create.cjs
-backend/scripts/backup-retention.cjs
-backend/scripts/backup-scheduler.cjs
-backend/scripts/backup-verify.cjs
 backend/scripts/bundle-assistant-knowledge.ts
 backend/scripts/container-smoke.cjs
 backend/scripts/create-release-manifest.cjs
 backend/scripts/demo-financial-advice-isolated.ts
-backend/scripts/dr-recovery-marker.cjs
-backend/scripts/encrypted-backup.cjs
 backend/scripts/evaluate-assistant-controlled.ts
 backend/scripts/evaluate-assistant-intent.ts
-backend/scripts/evaluate-assistant-ollama.ts
+backend/scripts/evaluate-assistant-radox.ts
 backend/scripts/evaluate-assistant.ts
 backend/scripts/evaluate-financial-advice.ts
 backend/scripts/migration-content.cjs
@@ -1112,23 +1109,18 @@ backend/scripts/migration-fingerprint.cjs
 backend/scripts/outbox-inspect.cjs
 backend/scripts/outbox-inventory.cjs
 backend/scripts/p0-inventory.cjs
-backend/scripts/pitr-drill.cjs
 backend/scripts/postgres-ssl.cjs
 backend/scripts/reencrypt-ciphertexts.ts
 backend/scripts/release-gate.cjs
 backend/scripts/reset-sandbox.ts
-backend/scripts/restore-rehearsal.cjs
 backend/scripts/run-core-tests.cjs
 backend/scripts/run-disposable-postgres-test.ts
 backend/scripts/run-worker-load-test.cjs
-backend/scripts/seed-e2e.ts
-backend/scripts/smoke-test-ollama.ts
 backend/scripts/snapshot-assistant-runtime.ts
 backend/scripts/test-release.cjs
 backend/scripts/validate-admin-authz.ts
 backend/scripts/validate-admin-openapi.cjs
 backend/scripts/validate-admin-schema.cjs
-backend/scripts/validate-backup-surface.cjs
 backend/scripts/validate-container-release-workflow.cjs
 backend/scripts/validate-database-schema.cjs
 backend/scripts/validate-image-surface.cjs
@@ -1156,7 +1148,7 @@ backend/src/assistant/index.ts
 backend/src/assistant/knowledgeBundle.ts
 backend/src/assistant/knowledgeLoader.ts
 backend/src/assistant/knowledgeSync.ts
-backend/src/assistant/ollamaHelpProvider.ts
+backend/src/assistant/radoxHelpProvider.ts
 backend/src/assistant/rateLimiter.ts
 backend/src/assistant/responseCatalog.ts
 backend/src/assistant/runtimeAssistantConfig.ts
@@ -1166,6 +1158,8 @@ backend/src/assistant/streamReader.ts
 backend/src/bankingSystem.ts
 backend/src/coreBanking.ts
 backend/src/credit.ts
+backend/src/secrets/GoogleSecretManagerClient.ts
+backend/src/serverBind.ts
 backend/src/database/commandErrors.ts
 backend/src/database/controlPolicyRepository.ts
 backend/src/database/creditService.ts
@@ -1252,8 +1246,6 @@ backend/src/tests/admin.database.test.ts
 backend/src/tests/adminAuth.test.ts
 backend/src/tests/adminAuthorization.test.ts
 backend/src/tests/adminBootstrap.test.ts
-backend/src/tests/adminHttp.e2e.test.ts
-backend/src/tests/adminP0.e2e.test.ts
 backend/src/tests/adminWorkflow.test.ts
 backend/src/tests/assistantControlledSelection.test.ts
 backend/src/tests/assistantDistArtifact.test.ts
@@ -1291,7 +1283,6 @@ backend/src/tests/databaseFoundation.test.ts
 backend/src/tests/databaseTls.test.ts
 backend/src/tests/disposableDatabaseGuard.test.ts
 backend/src/tests/disposableMigrationRuntime.test.ts
-backend/src/tests/encryptedBackup.test.ts
 backend/src/tests/encryptionEnvelope.test.ts
 backend/src/tests/evaluatorHardening.test.ts
 backend/src/tests/financialAdviceCalculation.test.ts
@@ -1380,9 +1371,6 @@ mobile-app/scripts/android-bundle-proxy.cjs
 mobile-app/scripts/create-release-checksum.cjs
 mobile-app/scripts/device-preflight.cjs
 mobile-app/scripts/generate-router-types.cjs
-mobile-app/scripts/run-maestro.cjs
-mobile-app/scripts/run-sandbox-e2e.cjs
-mobile-app/scripts/validate-maestro.cjs
 mobile-app/scripts/validate-openapi.cjs
 mobile-app/scripts/validate-public-env.cjs
 mobile-app/scripts/validate-release.cjs
@@ -1408,7 +1396,6 @@ mobile-app/src/app/cards/[cardId]/statements/[statementId].tsx
 mobile-app/src/app/cards/[cardId]/transactions.tsx
 mobile-app/src/app/cards/apply.tsx
 mobile-app/src/app/financial-advice.tsx
-mobile-app/src/app/fraud-report.tsx
 mobile-app/src/app/history.tsx
 mobile-app/src/app/kyc.tsx
 mobile-app/src/app/mfa.tsx
@@ -1528,16 +1515,6 @@ mobile-app/src/features/financial-advice/index.ts
 mobile-app/src/features/financial-advice/screens/FinancialAdviceScreen.tsx
 mobile-app/src/features/financial-advice/types/financialAdvice.ts
 mobile-app/src/features/financial-advice/validation/financialAdviceValidators.ts
-mobile-app/src/features/fraud/domain/__tests__/fraudReportSubmitFailure.test.ts
-mobile-app/src/features/fraud/domain/fraudReportSubmitFailure.ts
-mobile-app/src/features/fraud/screens/FraudReportScreen.tsx
-mobile-app/src/features/fraud/services/__tests__/fraudReportsApi.test.ts
-mobile-app/src/features/fraud/services/fraudReportsApi.ts
-mobile-app/src/features/fraud/storage/__tests__/fraudReportIntentStorage.test.ts
-mobile-app/src/features/fraud/storage/fraudReportIntentStorage.ts
-mobile-app/src/features/fraud/types/fraudReport.ts
-mobile-app/src/features/fraud/validation/__tests__/fraudReportValidators.test.ts
-mobile-app/src/features/fraud/validation/fraudReportValidators.ts
 mobile-app/src/features/history/presentation/__tests__/historyFilters.test.ts
 mobile-app/src/features/history/presentation/historyFilters.ts
 mobile-app/src/features/history/screens/HistoryScreen.tsx
@@ -1730,27 +1707,6 @@ mobile-app/assets/brand/nova-app-icon.svg
 mobile-app/assets/brand/nova-splash-mark.svg
 mobile-app/assets/expo.icon/Assets/expo-symbol 2.svg
 mobile-app/assets/expo.icon/icon.json
-mobile-app/e2e/maestro/critical-auth-and-logout.yaml
-mobile-app/e2e/maestro/critical-card.yaml
-mobile-app/e2e/maestro/critical-credit-overdue-notification.yaml
-mobile-app/e2e/maestro/critical-credit-pending-resume.yaml
-mobile-app/e2e/maestro/critical-credit-prepare.yaml
-mobile-app/e2e/maestro/critical-credit-submit.yaml
-mobile-app/e2e/maestro/critical-credit.yaml
-mobile-app/e2e/maestro/critical-fraud-report.yaml
-mobile-app/e2e/maestro/critical-m0-m4-m8.yaml
-mobile-app/e2e/maestro/critical-offline-retry.yaml
-mobile-app/e2e/maestro/critical-registration-prepare.yaml
-mobile-app/e2e/maestro/critical-registration-submit.yaml
-mobile-app/e2e/maestro/critical-registration.yaml
-mobile-app/e2e/maestro/critical-savings-prepare.yaml
-mobile-app/e2e/maestro/critical-savings-submit.yaml
-mobile-app/e2e/maestro/critical-savings.yaml
-mobile-app/e2e/maestro/critical-transfer-retry-prepare.yaml
-mobile-app/e2e/maestro/critical-transfer-retry-submit.yaml
-mobile-app/e2e/maestro/critical-transfer-retry.yaml
-mobile-app/e2e/maestro/financial-advice-budget.yaml
-mobile-app/e2e/maestro/financial-advice-savings.yaml
 mobile-app/eas.json
 mobile-app/example/src/components/animated-icon.module.css
 mobile-app/example/src/global.css

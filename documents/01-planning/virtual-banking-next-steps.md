@@ -1,11 +1,11 @@
-# Kế hoạch bước tiếp theo — ngân hàng mô phỏng bằng tiền ảo
+# Kế hoạch bước tiếp theo — ngân hàng sandbox dùng tiền ảo
 
 Ngày lập: 2026-08-17
-Phạm vi: chương trình ngân hàng mô phỏng như thật để demo và kiểm thử; không xử lý tiền thật.
+Phạm vi: chương trình ngân hàng sandbox có luồng nghiệp vụ như app thật để demo và kiểm thử; không xử lý tiền thật.
 
 ## 1. Mục tiêu đã chốt
 
-Chương trình phải mô phỏng được các hành vi người dùng kỳ vọng ở một ứng dụng ngân hàng:
+Chương trình phải tái hiện các hành vi người dùng kỳ vọng ở một ứng dụng ngân hàng:
 
 - đăng ký, đăng nhập, MFA/OTP, quản lý phiên và thiết bị;
 - tài khoản thanh toán, số dư khả dụng/số dư hiện tại, lịch sử giao dịch;
@@ -22,7 +22,7 @@ Tiền trong toàn bộ hệ thống là số dư ảo trong PostgreSQL local/te
 | --- | --- | --- |
 | M0 nền tảng và bàn giao | Đạt local | Git checkpoint sạch, workflow, lockfile, runbook |
 | M1 auth/MFA | Đạt reference | Đăng ký hai bước, login, refresh rotation, device binding |
-| M2 eKYC | Đạt mô phỏng | Form và vòng đời DRAFT/PENDING/APPROVED/REJECTED |
+| M2 eKYC | Đạt ở phạm vi demo | Form và vòng đời DRAFT/PENDING/APPROVED/REJECTED |
 | M3 account/history | Đạt reference | Home, account detail, số tài khoản đầy đủ qua endpoint riêng, lịch sử |
 | M4 transfer/beneficiary/QR | Đạt emulator | Quote snapshot, step-up, idempotency, pending/resume, QR manual fallback |
 | M8 notification | Đạt emulator | List/read/detail và deep-link |
@@ -89,7 +89,7 @@ Mục tiêu: xác định rõ mức persistent cần cho đồ án và không g�
 
 ### S4 — Hoàn thiện trải nghiệm Mobile
 
-Mục tiêu: giao diện giống một ứng dụng ngân hàng thật nhưng không làm người dùng hiểu nhầm dữ liệu mô phỏng là nghiệp vụ thật.
+Mục tiêu: giao diện giống một ứng dụng ngân hàng thật nhưng không làm người dùng hiểu nhầm dữ liệu thử nghiệm là nghiệp vụ thật.
 
 - Home NOVA: thẻ tổng số dư, che/mở số dư, ba chức năng nhanh, bốn tab dưới.
 - Account Detail hiển thị tên tài khoản, trạng thái, khả dụng, hiện tại, số tài khoản đã che, nút hiện/sao chép đầy đủ, chủ tài khoản, ngân hàng, tiền tệ, chuyển tiền và nhận tiền/QR.

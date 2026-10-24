@@ -2,7 +2,7 @@
 
 ## Quy tắc an toàn
 
-Đây là sandbox tiền mô phỏng. Không dùng credential provider thật trong local
+Đây là sandbox dùng tiền ảo. Không dùng credential provider thật trong local
 hoặc CI. Không bật worker trên database có HTTP legacy full-state writer; guard
 sẽ từ chối worker và adapter legacy cũng chặn ghi khi heartbeat đang hoạt động.
 
@@ -43,7 +43,7 @@ Worker không expose port host; health chỉ bind loopback trong container. Ki�
 Không xóa dead-letter. Chỉ requeue sau khi đã sửa nguyên nhân và ghi lý do:
 
 Tạo yêu cầu `POST /api/v1/admin/operations/outbox/events/{eventId}/requeue-requests`
-qua Admin API, sau đó một nhân viên CONTROL duyệt ở hàng đợi bốn mắt. Không có
+qua Admin API, sau đó một nhân viên ADMIN duyệt ở hàng đợi bốn mắt (Approval Inbox). Không có
 script/operator credential bypass cho outbox.
 
 Lệnh ghi `requeued_by`, `requeue_reason` và `OUTBOX_REQUEUED` audit event; unique
@@ -54,7 +54,7 @@ ghi nhận trong action request. `MAPPABLE_AND_FRESH` sẽ kiểm tra aggregate,
 transaction và freshness trong cùng transaction, sau đó materialize một event
 envelope canonical mới; payload legacy không bị sửa tại chỗ:
 
-Các phân loại và lý do phải nằm trong payload đã fingerprint của action; CONTROL
+Các phân loại và lý do phải nằm trong payload đã fingerprint của action; ADMIN
 duyệt hoặc từ chối, worker mới thực hiện.
 
 `AGGREGATE_MISSING`/`AMBIGUOUS_RECIPIENT` vào DEAD-letter; `ALREADY_DELIVERED`

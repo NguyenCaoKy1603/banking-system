@@ -1,12 +1,14 @@
 # Backlog và trạng thái M0–M11
 
+> **Historical planning snapshot:** các trạng thái và hạng mục bên dưới không phải backlog hiện hành. Dùng current-status.md cùng source/board được owner xác nhận trước khi chọn task.
+
 > Cập nhật hiện hành 2026-08-17: branch `codex/mini-core-banking-sandbox` đã triển khai Mini Core Sandbox G0–G9 ở mức reference. M0–M4 và M8 vẫn được giữ trong chương trình; trạng thái và quality gate mới nhất xem tại [`mini-core-sandbox-status.md`](mini-core-sandbox-status.md). Các con số trong phần lịch sử bên dưới thuộc checkpoint trước branch này.
 
 | Mã | Hạng mục | Owner | Trạng thái hiện tại | Việc còn lại / cổng |
 | --- | --- | --- | --- | --- |
 | M0 | Sẵn sàng dự án | Phối hợp | Baseline và checkpoint Git sạch `cab97e0` đã có | Owner review/push, board chính thức và evidence thiết bị thật |
 | M1 | Nền Mobile | Thành viên 2 | Đã kiểm chứng local | Chạy emulator/điện thoại thật và chốt APK toolchain |
-| M2 | Auth và eKYC mô phỏng | Phối hợp | Auth và eKYC mô phỏng đã có local | API KYC thật/test data, forgot/change password nếu được duyệt |
+| M2 | Auth và eKYC dùng dữ liệu thử nghiệm | Phối hợp | Auth và eKYC dùng dữ liệu thử nghiệm đã có local | API KYC thật/test data, forgot/change password nếu được duyệt |
 | M3 | Account, dashboard, history | Thành viên 2 | Account detail, cursor history và filter đã có ở reference local | Device/integration evidence và đối soát staging |
 | M4 | Transfer, beneficiary, QR | Phối hợp | Transfer, beneficiary list/create/rename/delete, QR payload/camera fallback và pending-resume sau restart đã có bằng chứng emulator | QR contract thật, camera trên device, concurrency và device E2E |
 | M5 | Card | Phối hợp | Card mock bonus đã có local | API thật, rule được duyệt, native E2E và quyết định ownership |
@@ -30,7 +32,7 @@ Auth/session, Account/History, Transfer/idempotency/pending, error handling, tes
 | M7 | Đã có reference sandbox | Credit card/account/statement/payment đã có backend + Mobile API draft; còn PostgreSQL relational production adapter, physical device và staging. |
 | M5 | Giữ riêng mock | `cardsMock` chỉ là fixture/test legacy; `/cards` dùng Credit sandbox M7. |
 
-## Kế hoạch các bước tiếp theo cho phạm vi ngân hàng mô phỏng — 2026-08-17
+## Kế hoạch các bước tiếp theo cho phạm vi ngân hàng sandbox — 2026-08-17
 
 | Giai đoạn | Trọng tâm | Điều kiện hoàn thành |
 | --- | --- | --- |

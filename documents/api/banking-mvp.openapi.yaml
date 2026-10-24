@@ -13,7 +13,6 @@ tags:
   - name: Auth
   - name: Control
   - name: Notifications
-  - name: Fraud
   - name: Sandbox
   - name: Recipients
   - name: Accounts
@@ -480,53 +479,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
-  /fraud-reports:
-    post:
-      tags: [Fraud]
-      operationId: submitFraudReport
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/FraudReportRequest'
-      responses:
-        '201':
-          description: Fraud report accepted for risk review, or the matching open report reused idempotently.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FraudReportResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/ValidationError'
-  /fraud-reports/{reportId}:
-    get:
-      tags: [Fraud]
-      operationId: getFraudReport
-      parameters:
-        - name: reportId
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
-      responses:
-        '200':
-          description: Current server-authoritative fraud report status.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FraudReportResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
   /accounts:
     get:
       tags: [Accounts]
@@ -925,6 +877,60 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Savings]
+      operationId: updateSavingsDepositMaturityInstruction
+      parameters:
+        - $ref: '#/components/parameters/SavingsDepositId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSavingsMaturityInstructionRequest'
+      responses:
+        '200':
+          description: Updated savings deposit record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavingsDeposit'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /savings/deposits/{depositId}/withdraw:
+    post:
+      tags: [Savings]
+      operationId: withdrawSavingsDepositEarly
+      parameters:
+        - $ref: '#/components/parameters/SavingsDepositId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitSavingsWithdrawalRequest'
+      responses:
+        '200':
+          description: Early withdrawal completed with demand deposit interest credited to source account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavingsWithdrawalReceipt'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /cards:
     get:
       tags: [Credit]
@@ -1704,7 +1710,7 @@ components:
       properties:
         challengeId: { type: string, minLength: 1 }
         expiresAt: { type: string, format: date-time }
-        purpose: { type: string, enum: [REGISTRATION_VERIFY, REGISTRATION_EMAIL_VERIFY, LOGIN, TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, CARD_REPORT_LOST, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
+        purpose: { type: string, enum: [REGISTRATION_VERIFY, REGISTRATION_EMAIL_VERIFY, LOGIN, TRANSFER, SAVINGS_OPENING, SAVINGS_WITHDRAWAL, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, CARD_REPORT_LOST, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
         methods:
           type: array
           minItems: 1
@@ -1881,7 +1887,7 @@ components:
         resourceId: quote-example
         requestFingerprint: fingerprint-example
       properties:
-        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, CARD_REPORT_LOST, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
+        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, SAVINGS_WITHDRAWAL, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, CARD_REPORT_LOST, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
         resourceId:
           oneOf:
             - { type: string }
@@ -2014,21 +2020,6 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/Notification' }
-    FraudReportRequest:
-      type: object
-      additionalProperties: false
-      required: [accountId, transactionId, reason]
-      properties:
-        accountId: { type: string, minLength: 1 }
-        transactionId: { type: string, minLength: 1 }
-        reason: { type: string, minLength: 5, maxLength: 1000 }
-    FraudReportResponse:
-      type: object
-      required: [reportId, status, createdAt]
-      properties:
-        reportId: { type: string }
-        status: { type: string, enum: [RECEIVED] }
-        createdAt: { type: string, format: date-time }
     KycApplicationRequest:
       type: object
       additionalProperties: false
@@ -2363,6 +2354,54 @@ components:
           oneOf:
             - { type: string }
             - { type: 'null' }
+        earlyWithdrawnAt:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: 'null' }
+        earlyInterest:
+          oneOf:
+            - { $ref: '#/components/schemas/Money' }
+            - { type: 'null' }
+    UpdateSavingsMaturityInstructionRequest:
+      type: object
+      required: [maturityInstruction]
+      example:
+        maturityInstruction: RENEW_PRINCIPAL
+      properties:
+        maturityInstruction:
+          type: string
+          enum: [RETURN_PRINCIPAL_AND_INTEREST, RENEW_PRINCIPAL, RENEW_PRINCIPAL_AND_INTEREST]
+    SubmitSavingsWithdrawalRequest:
+      type: object
+      required: [stepUp]
+      example:
+        stepUp:
+          method: TOTP
+          proof: '<provided-by-authenticator>'
+          challengeId: challenge-example
+      properties:
+        stepUp:
+          type: object
+          additionalProperties: false
+          required: [method, proof, challengeId]
+          properties:
+            method: { type: string, enum: [TOTP] }
+            proof: { type: string, minLength: 1, writeOnly: true }
+            challengeId: { type: string, minLength: 1, writeOnly: true }
+    SavingsWithdrawalReceipt:
+      type: object
+      required: [depositId, sourceAccountId, principal, interestDays, demandRateBasisPoints, earlyInterest, totalPayout, status, reference, withdrawnAt]
+      properties:
+        depositId: { type: string }
+        sourceAccountId: { type: string }
+        principal: { $ref: '#/components/schemas/Money' }
+        interestDays: { type: integer, minimum: 0 }
+        demandRateBasisPoints: { type: integer, minimum: 0 }
+        earlyInterest: { $ref: '#/components/schemas/Money' }
+        totalPayout: { $ref: '#/components/schemas/Money' }
+        status: { type: string, enum: [CLOSED] }
+        reference: { type: string }
+        withdrawnAt: { type: string, format: date-time }
     SavingsDepositsResponse:
       type: object
       required: [items, totalPrincipal]
@@ -2861,7 +2900,7 @@ components:
             - Mục tiêu cần thêm 10.000.000 ₫. Trong 5 tháng, mỗi tháng cần dành 2.000.000 ₫.
           fallbackReason: null
         assumptions:
-          - Thu nhập và các khoản chi khai báo giữ nguyên trong thời gian mô phỏng.
+          - Thu nhập và các khoản chi khai báo được giữ nguyên trong toàn bộ phép tính.
         warnings: []
     FinancialAdviceSavingsResponse:
       type: object

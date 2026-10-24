@@ -46,9 +46,9 @@
 
 ## Quality gates hiện có
 
-- Mobile: `npm run lint`, `npm run typecheck`, `npm test`, `npm run validate:openapi`, `npm run validate:e2e`, `npm run export:web`.
+- Mobile: `npm run lint`, `npm run typecheck`, `npm test`, `npm run validate:openapi`, `npm run export:web`.
 - Backend reference: `npm run validate:database`, `npm run typecheck`, `npm run build`, `npm test`, `npm run test:critical`; với thay đổi persistence/release còn phải dùng disposable PostgreSQL, worker/integration suite và `npm run test:release` phù hợp.
-- Admin Web: lint/type-check, unit test, Playwright/build và OpenAPI/permission validation phù hợp với thay đổi.
+- Admin Web: lint/type-check, unit test, build và OpenAPI/permission validation phù hợp với thay đổi.
 - Release/security: public-env validation, secret scan, dependency audit và release gate theo phạm vi. Không dùng một validator cú pháp thay thế cho runtime/device/staging evidence.
 - Cảnh báo dependency High/Critical hoặc test thiết bị chưa chạy phải được ghi trong milestone status, không được che giấu.
 

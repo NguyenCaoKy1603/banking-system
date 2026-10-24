@@ -19,14 +19,13 @@ production, tích hợp ngân hàng thật hoặc KYC/AML thật.
 ## 2. Mục tiêu và phạm vi academic
 
 Mục tiêu là trình bày một reference implementation ngân hàng số cá nhân có thể chạy
-local, minh họa registration, KYC synthetic, quyền maker–checker, cấp tiền ảo,
+local, minh họa registration, KYC synthetic, phân quyền RBAC quản trị trực tiếp, cấp tiền ảo,
 MFA/step-up và chuyển tiền nội bộ với đối soát relational. Ưu tiên của đồ án là
 nghiệp vụ dễ giải thích, dữ liệu đúng, kiểm thử hợp lý và demo được.
 
 Phạm vi không bao gồm tiền thật, payment rail, core banking partner, KYC/AML thật,
-cloud public, production observability hoặc cam kết compliance. Danh mục 22 use case
-trong [`USE_CASE_ROADMAP.md`](../../USE_CASE_ROADMAP.md) là bản đồ repository, không
-phải danh sách 22 chức năng bắt buộc đã nghiệm thu.
+cloud public, production observability hoặc cam kết compliance. Bản đồ hệ thống gồm **33 Use Cases** hoàn chỉnh (19 Khách hàng Mobile, 11 Quản trị Admin, 3 Tác vụ hệ thống ngầm) được đặc tả toàn diện tại [`use-cases-complete-specification.md`](../02-design/use-cases-complete-specification.md) và tổng hợp tại [`USE_CASE_ROADMAP.md`](../../USE_CASE_ROADMAP.md).
+
 
 ## 3. Yêu cầu chính
 
@@ -34,19 +33,24 @@ phải danh sách 22 chức năng bắt buộc đã nghiệm thu.
    outbox payload.
 2. Customer đăng nhập, dùng MFA và step-up trước thao tác chuyển tiền nhạy cảm.
 3. KYC chỉ lưu dữ liệu synthetic/metadata và đi qua trạng thái review rõ ràng.
-4. Staff dùng session/MFA và four-eyes policy; maker không được tự duyệt request của
-   mình.
+4. Staff dùng session/MFA và kiểm tra quyền hạn RBAC chặt chẽ; các thao tác quản trị nhạy cảm (duyệt KYC, cấp vốn, khóa tài khoản) yêu cầu step-up MFA và ghi nhận audit log đầy đủ, thực thi trực tiếp sau khi xác thực.
 5. Funding là sandbox virtual money; transfer nội bộ dùng quote, phí server tính,
    idempotency key và receipt server-authoritative.
 6. Account history và double-entry ledger có thể đối soát trong cùng đơn vị minor VND.
+7. Module AI tích hợp qua Radox AI Gateway bằng API Key (chuẩn OpenAI API, model `gemini-3.6-flash`), hỗ trợ trả lời hướng dẫn app và tư vấn tài chính cá nhân trong ranh giới an toàn.
 
 ## 4. Kiến trúc và công nghệ
 
 Mobile Expo/React Native gọi Public API. `RelationalHttpBoundary` chọn các service
 relational, `UnitOfWork` quản lý transaction và repository ghi PostgreSQL. Admin Web
-React/TypeScript/Vite gọi Admin API; action engine kiểm tra quyền, version,
-maker–checker và audit trước khi mutation. Email/invitation capture chỉ là provider
+React/TypeScript/Vite gọi Admin API; action engine kiểm tra quyền RBAC, version,
+step-up MFA và audit trước khi thực thi trực tiếp mutation. Email/invitation capture chỉ là provider
 synthetic local.
+
+Module AI Assistant và Financial Advice tại Backend kết nối dịch vụ Radox AI thông qua
+API Key (`ASSISTANT_RADOX_API_KEY`) tới endpoint `https://radoxai.com/v1`, sử dụng mô hình
+ngôn ngữ lớn `gemini-3.6-flash`. Cơ chế bảo vệ Zero-Account-Context đảm bảo không gửi dữ liệu
+tài khoản hay số dư vào context của mô hình.
 
 Sơ đồ và source anchor chi tiết:
 
@@ -57,8 +61,9 @@ Sơ đồ và source anchor chi tiết:
 - `backend/src/database/unitOfWork.ts`
 - `backend/src/database/registrationService.ts`, `kycService.ts`, `transferService.ts`
 - `backend/src/admin/actions/actionEngine.ts` và `backend/src/admin/http/adminHttp.ts`
+- `backend/src/assistant/radoxHelpProvider.ts` và `runtimeAssistantConfig.ts`
 
-Database dùng PostgreSQL 16 local theo migration chuẩn `001–040` trong reference
+Database dùng PostgreSQL 16 local theo migration chuẩn `001–043` trong reference
 runtime. Schema chính của phần demo gồm customer/account, KYC application/review,
 staff/action, transfer/transaction, ledger, audit và outbox; ERD chỉ trình bày phần
 liên quan, không phải toàn bộ schema.
@@ -70,7 +75,7 @@ với các nhóm `/auth/register`, `/auth/register/verify`, `/kyc/application`,
 `/internal-recipients/lookup`, `/transfers/quote`, `/transfers` và account history.
 Admin contract nằm ở [`documents/api/admin.openapi.yaml`](../api/admin.openapi.yaml),
 bao gồm login/MFA, customer/account masked read, KYC review, funding request,
-Approval Inbox và audit.
+thao tác quản trị trực tiếp và audit.
 
 Mobile có route guard, loading/empty/error/retry cho các màn liên quan; Admin Web
 hiển thị trạng thái request và lỗi quyền. UI chỉ hiển thị dữ liệu server trả về, không
@@ -127,7 +132,7 @@ và nếu rubric bắt buộc thì staging private. Không mở rộng hardening
 2. `tasks/DEMO/TASK_DOT_2_CORE_BANKING_DEMO.md`.
 3. `backend/README.md`, `admin-web/README.md`, `mobile-app/README.md`.
 4. `documents/api/banking-mvp.openapi.yaml` và `documents/api/admin.openapi.yaml`.
-5. Migrations `backend/database/001_banking_mvp.sql` đến `040_card_security_and_suspense_retry.sql`.
+5. Migrations `backend/database/001_banking_mvp.sql` đến `043_retire_staff_invite_approval.sql`.
 6. `documents/05-testing/` và `documents/07-release/` — đọc theo snapshot/ngày ghi trong
    evidence index, không coi report lịch sử là bằng chứng mới.
 

@@ -57,6 +57,6 @@ npm run lint
 npm run typecheck
 npm test
 npm run validate:openapi
-npm run validate:e2e
+npm run validate:release
 npm run export:web
 ```
