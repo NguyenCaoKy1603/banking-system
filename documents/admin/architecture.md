@@ -7,7 +7,7 @@
 `ADMIN_API_UPSTREAM` được cấp lúc container khởi động. Admin API mặc định chạy
 `127.0.0.1:5001` ở local, dùng realm phiên staff riêng, cookie
 HttpOnly/SameSite=Strict và CSRF token cho request thay đổi dữ liệu. Dữ liệu
-chỉ là tiền mô phỏng; không dùng cho tiền thật, core banking, payment rail
+chỉ là tiền ảo thử nghiệm; không dùng cho tiền thật, core banking, payment rail
 hoặc KYC thật.
 
 ```text
@@ -57,12 +57,27 @@ Customer search/detail trong P0 trả email/số điện thoại đã che; các 
 
 ## Data flow command
 
-`request → authenticate staff → resolve roles/scope → require permission → validate typed body + Idempotency-Key → read/lock target → snapshot version/status + fingerprint → PENDING_APPROVAL + audit → approval by an ADMIN with the action-specific permission and fresh step-up MFA (the requester may be that same ADMIN) → lock action FOR UPDATE → verify permissions/stale/fingerprint → domain mutation + ledger/history + outbox + audit → SUCCEEDED/FAILED → commit`.
+1. **Chế độ Phê duyệt 2 bước (`ADMIN_DIRECT_EXECUTION=false`)**:
+   `request → authenticate staff → resolve roles/scope → require permission → validate typed body + Idempotency-Key → read/lock target → snapshot version/status + fingerprint → PENDING_APPROVAL + audit → approval by an ADMIN with the action-specific permission and fresh step-up MFA (the requester may be that same ADMIN) → lock action FOR UPDATE → verify permissions/stale/fingerprint → domain mutation + ledger/history + outbox + audit → SUCCEEDED/FAILED → commit`.
 
-Funding dùng minor-unit `bigint`, chỉ VND, tối đa 100.000.000 minor-unit mỗi action trong reference P0. Không có đường nhập số âm để hoàn tác và không cập nhật balance thiếu account transaction/ledger/audit/outbox.
+2. **Chế độ Thực thi Trực tiếp 1 chạm (`ADMIN_DIRECT_EXECUTION=true`)**:
+   `request (directExecution: true) → authenticate staff → resolve roles/scope → require permission → validate typed body + Idempotency-Key → read/lock target → snapshot version/status + fingerprint → domain mutation + ledger/history + outbox + audit (outcome: SUCCEEDED) → commit`.
+   *Chế độ này được thiết kế phục vụ môi trường kiểm thử local, liên thông tức thì giữa Admin Web và Mobile App mà không cần chuyển tài khoản để duyệt hàng đợi.*
+
+Giao diện người dùng đã gỡ bỏ hoàn toàn việc bắt buộc nhập mã ticket tham chiếu; hệ thống tự động sinh và đính kèm mã tham chiếu ngầm chuẩn hóa (`OPS-FUNDING`, `OPS-DECISION`, v.v.) nhằm tuân thủ quy tắc dữ liệu của Action Engine.
+
+Danh mục mã lý do (`reasonCode`) được chuẩn hóa theo phân loại nghiệp vụ ngân hàng:
+- `CASH_DEPOSIT`: Nộp tiền mặt tại quầy (trừ tài khoản quỹ tiền mặt 1011).
+- `ACCOUNT_FUNDING`: Nạp tiền vào tài khoản thanh toán.
+- `PROMOTION_REWARD`: Chi thưởng khuyến mãi / mở tài khoản mới (trừ tài khoản chi phí marketing 8091).
+- `CUSTOMER_COMPENSATION`: Bồi hoàn xử lý sự cố dịch vụ / khiếu nại (trừ tài khoản chi phí xử lý tổn thất 8999).
+- `OPERATIONS_REVIEW`: Điều chỉnh vận hành kỹ thuật sau đối soát cuối ngày.
+- `ACCOUNT_SECURITY`: Kiểm soát an toàn tài khoản khi có nghi vấn bảo mật.
+
+Funding dùng minor-unit `bigint`, chỉ VND, tối đa 100.000.000 minor-unit mỗi action trong reference P0. Không có đường nhập số âm để hoàn tác và không cập nhật balance thiếu account transaction/ledger/audit/outbox. Thao tác hoàn tác được thực hiện qua nút **Hoàn tác nạp tiền** sinh giao dịch thoái thu (DEBIT) đối ứng chuẩn kế toán.
 
 ## Trạng thái adapter nghiệp vụ
 
-Migration 019–025 và action engine đã có đường persistent cho account/customer lock, simulation funding + reversal, KYC/credit case review, transfer retry/cancel/reversal, fraud claim/note/resolve, outbox requeue và background-job retry. Migration 022 căn chỉnh permission mở khóa customer; 023 tách DB principals/RLS/domain tables; 024 thêm luồng yêu cầu duyệt staff invite; 025 mở unassigned case queue cho triage nhưng vẫn giới hạn case đã phân công. Các mutation đều đi qua typed request detail, row lock và audit; fraud block/revoke/reversal vẫn chờ adapter domain riêng. KYC document chỉ lưu metadata/object key giả, không lưu bytes/PII thật.
+Migration 019–025 và action engine có đường persistent cho account/customer lock, simulation funding + reversal, KYC/credit case review, transfer retry/cancel/reversal, outbox requeue và background-job retry. Luồng báo cáo giao dịch cùng màn hình/case workflow Fraud đã được gỡ khỏi API/Admin; migration và dữ liệu lịch sử được giữ nguyên, không xóa tự động. Migration 022 căn chỉnh permission mở khóa customer; 023 tách DB principals/RLS/domain tables; 024 thêm luồng yêu cầu duyệt staff invite; 025 mở unassigned case queue cho triage nhưng vẫn giới hạn case đã phân công. Các mutation đang hoạt động đi qua typed request detail, row lock và audit. KYC document chỉ lưu metadata/object key giả, không lưu bytes/PII thật.
 
 Public reference không còn endpoint/operator key bypass; fixture seed chạy bằng DB transaction nội bộ hoặc dữ liệu pre-seeded. Tài khoản Operations do Admin tạo trực tiếp bằng mật khẩu ban đầu và TOTP; không gửi email mời và không tạo approval cho thao tác này. `invitation-capture` chỉ dùng khi bootstrap Admin đầu tiên và phải bật profile riêng; token chỉ đi qua provider tạm thời, còn PostgreSQL giữ hash. Device E2E native, provider bootstrap HTTPS/credential thật cho staging, credential provisioning cho DB role, Argon2id và eKYC object store thật vẫn là residual risk. Vì vậy milestone này là reference hardening, không phải production readiness hay kết nối tiền thật.

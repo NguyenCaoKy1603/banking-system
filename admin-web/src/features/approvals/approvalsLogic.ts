@@ -8,7 +8,6 @@ export const APPROVAL_PERMISSION_MAP: Record<string, string> = {
   KYC_DECISION: "kyc.decision.approve",
   CREDIT_DECISION: "credit-application.decision.approve",
   TRANSFER_OPERATION: "transfer.action.approve",
-  FRAUD_ACTION: "fraud.resolve.approve",
   OUTBOX_REQUEUE: "outbox.requeue.approve",
   JOB_RETRY: "job.retry.approve",
   STAFF_ROLE_CHANGE: "staff.role-change.approve",

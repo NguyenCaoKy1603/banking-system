@@ -62,7 +62,7 @@ export function AppLayout({
         },
         {
           key: "kyc",
-          label: "Hồ sơ KYC",
+          label: "Hồ sơ định danh",
           visible: hasPermission("kyc.read"),
         },
         {
@@ -72,29 +72,13 @@ export function AppLayout({
         },
         {
           key: "transfers",
-          label: "Giao dịch chờ",
+          label: "Giao dịch chuyển tiền",
           visible: hasPermission("transfer.pending.read"),
         },
-        {
-          key: "fraud",
-          label: "Fraud cases",
-          visible: hasPermission("fraud.read"),
-        },
       ],
     },
     {
-      title: "3. Phê duyệt",
-      items: [
-        {
-          key: "approvals",
-          label: "Approval Inbox",
-          badge: approvalCount,
-          visible: canReadApprovals,
-        },
-      ],
-    },
-    {
-      title: "4. Vận hành",
+      title: "3. Vận hành",
       items: [
         {
           key: "operations",
@@ -104,16 +88,16 @@ export function AppLayout({
       ],
     },
     {
-      title: "5. Quản trị",
+      title: "4. Quản trị",
       items: [
         {
           key: "staff",
-          label: "Staff / Roles",
+          label: "Nhân sự / Phân quyền (Staff / Roles)",
           visible: hasPermission("staff.read"),
         },
         {
           key: "audit",
-          label: "Audit explorer",
+          label: "Nhật ký kiểm toán (Audit Explorer)",
           visible: canReadApprovals,
         },
       ],

@@ -9,7 +9,6 @@ import { AuditView } from "./features/audit/AuditView";
 import { Activation } from "./features/auth/Activation";
 import { Login } from "./features/auth/Login";
 import { Customers } from "./features/customers/Customers";
-import { FraudCases } from "./features/fraud/FraudCases";
 import { Operations } from "./features/operations/Operations";
 import { Overview } from "./features/overview/Overview";
 import { StaffView } from "./features/staff/StaffView";
@@ -19,7 +18,6 @@ import type {
   Action,
   Application,
   AuditEvent,
-  FraudCase,
   Job,
   NavTab,
   OutboxEvent,
@@ -36,7 +34,6 @@ function AppShell() {
   const [summary, setSummary] = useState<Record<string, number>>({});
   const [applications, setApplications] = useState<Application[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
-  const [fraudCases, setFraudCases] = useState<FraudCase[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [outboxEvents, setOutboxEvents] = useState<OutboxEvent[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
@@ -77,13 +74,8 @@ function AppShell() {
         }
 
         if (target === "transfers") {
-          const result = await adminFetch<{ items: Transfer[] }>("/admin/transfers?status=PENDING");
+          const result = await adminFetch<{ items: Transfer[] }>("/admin/transfers");
           setTransfers(result.items);
-        }
-
-        if (target === "fraud") {
-          const result = await adminFetch<{ items: FraudCase[] }>("/admin/fraud-cases");
-          setFraudCases(result.items);
         }
 
         if (target === "staff") {
@@ -93,7 +85,7 @@ function AppShell() {
 
         if (target === "audit") {
           if (canReadApprovals) {
-            const result = await adminFetch<{ items: AuditEvent[] }>("/admin/audit-events?limit=100");
+            const result = await adminFetch<{ items: AuditEvent[] }>("/admin/audit-events?limit=300");
             setAuditEvents(result.items);
           } else {
             setAuditEvents([]);
@@ -147,13 +139,7 @@ function AppShell() {
         <Customers onRefresh={() => void load("overview")} />
       ) : null}
 
-      {tab === "approvals" ? (
-        <Approvals
-          actions={actions}
-          onReload={() => load("approvals")}
-          loading={loading}
-        />
-      ) : null}
+      {/* Approval Inbox đã được gỡ bỏ theo yêu cầu: các thao tác chuyển sang thực thi trực tiếp */}
 
       {tab === "kyc" || tab === "credit" ? (
         <Applications
@@ -169,14 +155,6 @@ function AppShell() {
           items={transfers}
           onReload={() => load("transfers")}
           onFilterChange={loadTransfersWithStatus}
-          loading={loading}
-        />
-      ) : null}
-
-      {tab === "fraud" ? (
-        <FraudCases
-          items={fraudCases}
-          onReload={() => load("fraud")}
           loading={loading}
         />
       ) : null}

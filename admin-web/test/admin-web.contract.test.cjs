@@ -25,14 +25,14 @@ const nginxTemplate = fs.readFileSync(path.join(__dirname, "..", "nginx.conf.tem
 const runtimeScript = fs.readFileSync(path.join(__dirname, "..", "docker-entrypoint.d", "10-validate-runtime-config.sh"), "utf8");
 
 test("Admin Web exposes the P0 control-plane areas", () => {
-  for (const label of ["Approval Inbox", "Hồ sơ KYC", "Giao dịch chờ", "Fraud cases", "Outbox / Jobs", "Staff / Roles", "Audit explorer"]) {
+  for (const label of ["Hồ sơ định danh", "Giao dịch chuyển tiền", "Outbox / Jobs", "Staff / Roles", "Audit Explorer"]) {
     assert.match(app, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   for (const marker of [
     "funding-requests",
     "access-lock-requests",
     "review-recommendations",
-    "resolution-requests",
+    "audit-export-requests",
     "requeue-requests",
     "retry-requests",
     "role-change-requests",
@@ -64,12 +64,10 @@ test("Approval submit includes the mandatory approval comment", () => {
   assert.doesNotMatch(app, /window\.prompt/);
 });
 
-test("Approval Inbox is gated by the staff approval permission", () => {
+test("Audit Explorer is gated by the staff approval permission", () => {
   assert.match(app, /canReadApprovals/);
   assert.match(app, /audit\.read/);
-  assert.match(app, /canReadApprovals \? adminFetch<[\s\S]*>\(["']\/admin\/approvals["']\)/);
   assert.match(app, /target === ["']audit["'][\s\S]*canReadApprovals/);
-  assert.match(app, /key:\s*["']approvals["'][\s\S]*visible:\s*canReadApprovals/);
   assert.match(app, /key:\s*["']audit["'][\s\S]*visible:\s*canReadApprovals/);
 });
 

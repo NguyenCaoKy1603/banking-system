@@ -40,6 +40,13 @@ export type Action = {
   expiresAt: string;
   resultResourceId: string | null;
   version: number;
+  requesterName?: string | null;
+  requesterEmail?: string | null;
+  requesterEmployeeCode?: string | null;
+  targetLabel?: string | null;
+  targetDisplayName?: string | null;
+  targetEmployeeCode?: string | null;
+  targetEmail?: string | null;
 };
 
 export type Account = {
@@ -85,6 +92,13 @@ export type Application = {
   status: "SUBMITTED" | "UNDER_REVIEW" | "APPROVED" | "REJECTED" | "NEEDS_MORE_INFO" | "PENDING_ACTIVATION";
   version: number;
   applicantLabel?: string;
+  customerName?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  fullName?: string;
+  identityNumber?: string;
+  address?: string;
+  documentUri?: string;
   requestedLimitMinor?: string;
   approvedLimitMinor?: string | null;
   assignedStaffId?: string | null;
@@ -101,11 +115,16 @@ export type Transfer = {
   amountMinor: string;
   feeMinor: string;
   currency: string;
-  status: "PENDING" | "FAILED" | "SUCCEEDED" | "CANCELLED";
+  status: "PENDING" | "FAILED" | "SUCCEEDED" | "CANCELLED" | "REVERSED";
   version: number;
   lastErrorCode: string | null;
   createdAt: string;
   updatedAt?: string;
+  senderName?: string | null;
+  sourceAccountNumber?: string | null;
+  destinationOwnerName?: string | null;
+  destinationAccountNumber?: string | null;
+  refunded?: boolean;
 };
 
 export type TransferTimelineItem = {
@@ -170,6 +189,11 @@ export type AuditEvent = {
   outcome: "SUCCEEDED" | "DENIED" | "FAILED" | "PENDING";
   reasonCode: string | null;
   actorStaffId: string | null;
+  actorCustomerId?: string | null;
+  actorType?: "STAFF" | "CUSTOMER" | "SYSTEM";
+  actorName?: string | null;
+  actorEmail?: string | null;
+  actorEmployeeCode?: string | null;
   occurredAt: string;
   metadata?: Record<string, unknown>;
 };

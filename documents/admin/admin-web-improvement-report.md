@@ -1,5 +1,7 @@
 # Báo cáo Cải tạo Admin Web (Admin Web Improvement Report)
 
+> Ghi chú cập nhật 2026-10-11: báo cáo và kết quả Playwright bên dưới là bằng chứng lịch sử tại thời điểm nghiệm thu 2026-09-27. Bộ kiểm thử trình duyệt Admin Web đã được gỡ; các kết quả này không còn là quality gate hiện hành và các lệnh E2E cũ không còn chạy được.
+
 - **Mã báo cáo**: AW-REP-03 (Nghiệm thu toàn diện đợt hoàn thiện cô lập phiên và mở rộng bằng chứng kiểm thử Admin Web)
 - **Thời điểm**: 2026-09-27
 - **Commit SHA**: `9254922a9bfe486f1b0b833d80c5fd2e508bcc3b`
@@ -233,7 +235,7 @@ npm run dev
 4. Bấm **Yêu cầu cấp tiền**: Hộp thoại mở ra xác nhận đúng số tài khoản và thông tin của khách hàng B.
 
 ### Kịch bản 3: Thử nghiệm Từ chối bằng phím Enter sau Step-up MFA (R-08)
-1. Đăng nhập vai trò Control: `browser-control@example.test`.
+1. Đăng nhập vai trò Admin: `browser-admin@example.test` (hoặc tài khoản ADMIN có quyền).
 2. Mở menu **Approval Inbox** → Chọn một yêu cầu đang chờ duyệt.
 3. Điền lý do kiểm soát: `REJECT_FOR_VERIFICATION`.
 4. Bấm **Từ chối (Reject)**: Hộp thoại step-up MFA mở ra với thông báo: *"Đang xác thực TOTP Step-up để TỪ CHỐI yêu cầu"*.
@@ -245,7 +247,7 @@ npm run dev
 2. Mở form Cấp tiền hoặc Khóa tài khoản, bấm gửi yêu cầu.
 3. Khi request đang chờ phản hồi từ mạng, bấm nút **Đăng xuất** trên Topbar.
 4. Giao diện lập tức quay về màn hình đăng nhập, `SessionScope` bị hủy, store dọn sạch.
-5. Đăng nhập bằng tài khoản Support (`browser-support@example.test`): Không có thông báo hay banner rò rỉ từ phiên trước; mở tài khoản hiển thị form sạch sẽ.
+5. Đăng nhập bằng tài khoản Operations khác: Không có thông báo hay banner rò rỉ từ phiên trước; mở tài khoản hiển thị form sạch sẽ.
 6. Khi phản hồi của request cũ hoàn thành, hệ thống chặn đứng callback tại boundary `isSessionScopeActive(capturedScope)`, bảo đảm an toàn dữ liệu 100%.
 
 ---

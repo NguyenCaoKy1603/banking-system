@@ -9,7 +9,6 @@
 | Simulation funding / reversal requests | ✓ | — |
 | KYC and credit review requests | ✓ | xem / phê duyệt |
 | Pending transfer read / action requests | ✓ | xem / phê duyệt |
-| Fraud triage / investigation / request | ✓ | xem / phê duyệt kết quả |
 | Outbox and job read / retry requests | ✓ | xem / phê duyệt |
 | Tạo trực tiếp tài khoản OPERATIONS / role / disable requests | xem staff | ✓ |
 | Approval Inbox and audit read/export | — | ✓ |

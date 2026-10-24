@@ -248,7 +248,7 @@ export function getErrorMessage(error: ApiError | null, context?: "activation" |
     return "Trạng thái tài khoản/khách hàng hiện tại xung đột với yêu cầu.";
   }
   if (error.code === "FUNDING_LIMIT_EXCEEDED") {
-    return "Số tiền cấp vượt quá hạn mức tối đa cho phép trong phiên thử nghiệm.";
+    return "Số tiền cấp vượt quá hạn mức tối đa cho phép (100.000.000 VND).";
   }
   if (error.code === "CSRF_INVALID") {
     return "CSRF token không hợp lệ hoặc đã hết hạn. Vui lòng tải lại trang.";

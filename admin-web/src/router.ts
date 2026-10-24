@@ -27,8 +27,6 @@ export function parseHash(hash: string): RouteState {
       return { tab: "kyc", subtab: parts[1] === "credit" ? "credit" : "kyc", param: parts[2] };
     case "transfers":
       return { tab: "transfers", param: parts[1] };
-    case "fraud":
-      return { tab: "fraud", param: parts[1] };
     case "operations":
       return { tab: "operations", param: parts[1] };
     case "staff":

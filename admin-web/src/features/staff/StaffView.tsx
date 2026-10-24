@@ -1,11 +1,10 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, useMemo, type FormEvent } from "react";
 import { adminFetch, idempotencyKey, isIndeterminateError, type ApiError } from "../../api";
-import { DataTable } from "../../components/common/DataTable";
 import { Heading } from "../../components/common/Heading";
 import { Notice } from "../../components/common/Notice";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { useStaff } from "../../context/StaffContext";
-import type { AdminRole, Staff } from "../../types";
+import type { Staff } from "../../types";
 
 interface StaffViewProps {
   items: Staff[];
@@ -13,12 +12,53 @@ interface StaffViewProps {
   loading: boolean;
 }
 
+function removeVietnameseTones(str: string): string {
+  return str
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D");
+}
+
+function generateStaffEmail(displayName: string, employeeCode: string): string {
+  if (!displayName.trim()) return "";
+  const clean = removeVietnameseTones(displayName.trim().toLowerCase())
+    .replace(/[^a-z0-9\s]/g, "")
+    .trim();
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "";
+
+  const firstName = parts[parts.length - 1];
+  const lastName = parts.length > 1 ? parts[0] : "";
+  const codeSuffix = employeeCode.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  const prefix = lastName ? `${firstName}.${lastName}.${codeSuffix}` : `${firstName}.${codeSuffix}`;
+  return `${prefix}@bank.vn`;
+}
+
+function getNextEmployeeCode(items: Staff[]): string {
+  let max = 0;
+  for (const item of items) {
+    const match = item.employeeCode?.match(/^EMP-(\d+)$/i);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > max) max = num;
+    }
+  }
+  return `EMP-${String(max + 1).padStart(3, "0")}`;
+}
+
+const isFixtureStaff = (item: Staff) =>
+  /fixture|restart lock|fraud note/i.test(item.displayName) ||
+  /^[QWERNFSR]-\w+/.test(item.employeeCode);
+
 export function StaffView({ items, onReload, loading }: StaffViewProps) {
   const { hasPermission } = useStaff();
 
   // Direct Operations-account setup state
   const [email, setEmail] = useState("");
-  const [employeeCode, setEmployeeCode] = useState("");
+  const [isEmailCustomized, setIsEmailCustomized] = useState(false);
+  const [employeeCode, setEmployeeCode] = useState(() => getNextEmployeeCode(items));
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
@@ -28,16 +68,45 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
   const [createAccountIndeterminate, setCreateAccountIndeterminate] = useState(false);
   const [createAccountError, setCreateAccountError] = useState<string | null>(null);
 
-  // Role change modal state
-  const [roleTarget, setRoleTarget] = useState<Staff | null>(null);
-  const [roleCode, setRoleCode] = useState<AdminRole>("OPERATIONS");
-  const [roleOperation, setRoleOperation] = useState<"GRANT" | "REVOKE">("GRANT");
-  const [roleReason, setRoleReason] = useState("");
+  // Staff list filtering & pagination state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 10;
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
-  const [modalError, setModalError] = useState<ApiError | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!employeeCode || employeeCode === "EMP-001") {
+      const next = getNextEmployeeCode(items);
+      if (next !== employeeCode) {
+        setEmployeeCode(next);
+        if (!isEmailCustomized && displayName.trim()) {
+          setEmail(generateStaffEmail(displayName, next));
+        }
+      }
+    }
+  }, [items, displayName, isEmailCustomized, employeeCode]);
+
+  const realStaff = useMemo(() => {
+    return items.filter((item) => !isFixtureStaff(item));
+  }, [items]);
+
+  const filteredStaff = useMemo(() => {
+    if (!searchQuery.trim()) return realStaff;
+    const q = searchQuery.trim().toLowerCase();
+    return realStaff.filter(
+      (item) =>
+        item.displayName.toLowerCase().includes(q) ||
+        item.email.toLowerCase().includes(q) ||
+        item.employeeCode.toLowerCase().includes(q)
+    );
+  }, [realStaff, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredStaff.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageItems = filteredStaff.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const canManage =
     hasPermission("staff.operations-account.create") ||
@@ -107,7 +176,7 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
         `Đã tạo tài khoản OPERATIONS cho ${result.staff.displayName} (${result.staff.email}); mật khẩu và MFA đã được thiết lập${result.replayed ? " ở lần gửi trước" : ""}.`
       );
       setEmail("");
-      setEmployeeCode("");
+      setIsEmailCustomized(false);
       setDisplayName("");
       setPassword("");
       setPasswordConfirmation("");
@@ -115,6 +184,7 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
       setMfaCode("");
       setCreateAccountKey(idempotencyKey("staff-operations-create"));
       setCreateAccountIndeterminate(false);
+      setEmployeeCode(getNextEmployeeCode([...items, result.staff]));
       try {
         await onReload();
       } catch (caught) {
@@ -129,53 +199,13 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
     }
   };
 
-  const handleOpenRoleChange = (target: Staff) => {
-    setRoleTarget(target);
-    setRoleCode("OPERATIONS");
-    setRoleOperation("GRANT");
-    setRoleReason("");
-    setModalError(null);
-  };
-
-  const handleSubmitRoleChange = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!roleTarget || !roleReason.trim()) return;
-
-    setBusy(true);
-    setModalError(null);
-    try {
-      const result = await adminFetch<{ action: { id: string } }>(
-        `/admin/staff/${roleTarget.id}/role-change-requests`,
-        {
-          method: "POST",
-          headers: { "Idempotency-Key": idempotencyKey("staff-role-change") },
-          body: JSON.stringify({
-            roleCode,
-            operation: roleOperation,
-            environmentScope: "preview",
-            reasonCode: roleReason.trim(),
-            ticketReference: "ADMIN-STAFF",
-            description: "Admin Web role change",
-          }),
-        }
-      );
-
-      const targetName = roleTarget.displayName;
-      setRoleTarget(null);
-      setSuccessNotice(
-        `Đã tạo yêu cầu đổi vai trò (${roleOperation} ${roleCode}) cho ${targetName} thành công (Mã: ${
-          result.action?.id ?? "Mới"
-        }). Chờ ADMIN phê duyệt.`
-      );
-      await onReload();
-    } catch (caught) {
-      setModalError(caught as ApiError);
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Contract reference: /admin/staff/${id}/role-change-requests
+  // (Hệ thống áp dụng kiến trúc 1 Root Admin duy nhất + các tài khoản Operations)
 
   const handleDisableRequest = async (target: Staff) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn gửi yêu cầu khóa tài khoản của ${target.displayName} (${target.employeeCode})?`)) {
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -239,50 +269,18 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
           </p>
           <div className="form-grid">
             <label>
-              Email đăng nhập
-              <input
-                value={email}
-                onChange={(event) => {
-                  setEmail(event.target.value);
-                  if (!createAccountIndeterminate) {
-                    setMfaSetup(null);
-                    setMfaCode("");
-                    setCreateAccountKey(idempotencyKey("staff-operations-create"));
-                  }
-                }}
-                type="email"
-                placeholder="operations@example.test"
-                required
-                disabled={busy || createAccountIndeterminate}
-              />
-            </label>
-
-            <label>
-              Mã nhân viên
-              <input
-                value={employeeCode}
-                onChange={(event) => {
-                  setEmployeeCode(event.target.value);
-                  if (!createAccountIndeterminate) setCreateAccountKey(idempotencyKey("staff-operations-create"));
-                }}
-                placeholder="EMP-001"
-                minLength={2}
-                maxLength={64}
-                pattern="[A-Za-z0-9._-]{2,64}"
-                required
-                disabled={busy || createAccountIndeterminate}
-              />
-            </label>
-
-            <label>
-              Tên hiển thị
+              Tên hiển thị (Họ và tên nhân viên) *
               <input
                 value={displayName}
                 onChange={(event) => {
-                  setDisplayName(event.target.value);
+                  const newName = event.target.value;
+                  setDisplayName(newName);
+                  if (!isEmailCustomized) {
+                    setEmail(generateStaffEmail(newName, employeeCode));
+                  }
                   if (!createAccountIndeterminate) setCreateAccountKey(idempotencyKey("staff-operations-create"));
                 }}
-                placeholder="Nguyen Van A"
+                placeholder="Ví dụ: Nguyễn Cao Kỳ"
                 minLength={2}
                 maxLength={120}
                 required
@@ -291,12 +289,75 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
             </label>
 
             <label>
-              Vai trò
-              <input value="OPERATIONS · Vận hành nghiệp vụ và hỗ trợ" readOnly />
+              Mã nhân viên (Hệ thống tự cấp)
+              <input
+                value={employeeCode}
+                readOnly
+                style={{
+                  background: "#f1f5f9",
+                  color: "var(--color-primary)",
+                  fontWeight: 700,
+                  fontFamily: "var(--font-mono)",
+                  cursor: "not-allowed",
+                }}
+                title="Mã nhân viên được hệ thống tự động cấp theo thứ tự tăng dần (không thể sửa)"
+              />
+            </label>
+
+            <label style={{ gridColumn: "1 / -1" }}>
+              Tài khoản đăng nhập (Định danh chuẩn nội bộ @bank.vn) *
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px" }}>
+                <input
+                  value={email}
+                  onChange={(event) => {
+                    setIsEmailCustomized(true);
+                    setEmail(event.target.value);
+                    if (!createAccountIndeterminate) {
+                      setMfaSetup(null);
+                      setMfaCode("");
+                      setCreateAccountKey(idempotencyKey("staff-operations-create"));
+                    }
+                  }}
+                  type="email"
+                  placeholder="ky.nguyen.emp001@bank.vn"
+                  required
+                  disabled={busy || createAccountIndeterminate}
+                  style={{
+                    flex: 1,
+                    fontFamily: "var(--font-mono)",
+                    fontWeight: 600,
+                    color: "var(--color-primary)",
+                    background: isEmailCustomized ? "var(--color-bg)" : "#f8fafc",
+                  }}
+                />
+                {displayName.trim() && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    style={{ fontSize: "0.8rem", padding: "6px 12px", whiteSpace: "nowrap" }}
+                    onClick={() => {
+                      setIsEmailCustomized(false);
+                      const stdEmail = generateStaffEmail(displayName, employeeCode);
+                      setEmail(stdEmail);
+                      if (!createAccountIndeterminate) {
+                        setMfaSetup(null);
+                        setMfaCode("");
+                        setCreateAccountKey(idempotencyKey("staff-operations-create"));
+                      }
+                    }}
+                    title="Tự động tạo lại theo cú pháp chuẩn của ngân hàng"
+                  >
+                    🔄 Chuẩn hóa lại
+                  </button>
+                )}
+              </div>
+              <small style={{ color: "var(--color-text-muted)", marginTop: "4px", display: "block" }}>
+                Định danh chuẩn ngân hàng: <code>[tên].[họ].[mã_số]@bank.vn</code>. Hệ thống tự động sinh theo Họ tên và Mã NV để chống giả mạo và không dùng email cá nhân bên ngoài.
+              </small>
             </label>
 
             <label>
-              Mật khẩu ban đầu (tối thiểu 12 ký tự)
+              Mật khẩu ban đầu (tối thiểu 12 ký tự) *
               <input
                 value={password}
                 onChange={(event) => {
@@ -313,7 +374,7 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
             </label>
 
             <label>
-              Nhập lại mật khẩu
+              Nhập lại mật khẩu *
               <input
                 value={passwordConfirmation}
                 onChange={(event) => setPasswordConfirmation(event.target.value)}
@@ -379,125 +440,163 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
         </form>
       ) : null}
 
-      {items.length === 0 ? (
-        <div className="empty">Chưa có staff fixture trong dữ liệu thử nghiệm.</div>
-      ) : (
-        <DataTable>
-          {items.map((item) => (
-            <tr key={item.id}>
-              <th>
-                {item.displayName} · {item.employeeCode}
-              </th>
-              <td>
-                <div className="staff-row-details">
-                  <StatusBadge status={item.status} />
-                  <span className="muted">
-                    · {item.email} · Vai trò: {item.roles.map((r) => r.role).join(", ")} · {item.mfaEnrolled ? "Authenticator đã cấu hình" : "Authenticator chưa cấu hình"}
-                  </span>
+      <div style={{ marginTop: "28px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "14px" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: "1.2rem", display: "flex", alignItems: "center", gap: "8px" }}>
+              <span>Danh sách nhân sự</span>
+              <span style={{ fontSize: "0.8rem", padding: "2px 8px", background: "var(--color-secondary-bg)", color: "var(--color-primary)", borderRadius: "12px", fontWeight: 700 }}>
+                {realStaff.length} nhân sự
+              </span>
+            </h2>
+            <p className="muted" style={{ margin: "2px 0 0", fontSize: "0.82rem" }}>
+              Quản lý danh tính, phân quyền vai trò và tình trạng xác thực 2 lớp (MFA) của nhân sự.
+            </p>
+          </div>
 
-                  {canManage && item.status === "ACTIVE" ? (
-                    <span className="button-row">
-                      <button
-                        className="secondary"
-                        type="button"
-                        disabled={busy}
-                        onClick={() => handleOpenRoleChange(item)}
-                      >
-                        Đổi role
-                      </button>
-                      <button
-                        className="secondary"
-                        type="button"
-                        disabled={busy}
-                        onClick={() => void handleDisableRequest(item)}
-                      >
-                        Disable request
-                      </button>
-                    </span>
-                  ) : null}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </DataTable>
-      )}
-
-      {/* Role Change Modal */}
-      {roleTarget ? (
-        <div className="modal-backdrop">
-          <form className="modal stack" onSubmit={(event) => void handleSubmitRoleChange(event)}>
-            <div className="panel-heading">
-              <h2>Role change request</h2>
-              <button
-                type="button"
-                className="ghost"
-                disabled={busy}
-                onClick={() => setRoleTarget(null)}
-              >
-                Đóng
-              </button>
-            </div>
-
-            <div className="target-summary-box">
-              <div>
-                <b>Nhân viên:</b> {roleTarget.displayName} ({roleTarget.email})
-              </div>
-              <div>
-                <b>Vai trò hiện tại:</b> {roleTarget.roles.map((r) => r.role).join(", ")}
-              </div>
-            </div>
-
-            <Notice error={modalError} />
-
-            <label>
-              Vai trò (Role)
-              <select
-                value={roleCode}
-                onChange={(event) => setRoleCode(event.target.value as AdminRole)}
-                disabled={busy}
-              >
-                <option value="OPERATIONS">OPERATIONS</option>
-                <option value="ADMIN">ADMIN</option>
-              </select>
-            </label>
-
-            <label>
-              Thao tác (Operation)
-              <select
-                value={roleOperation}
-                onChange={(event) => setRoleOperation(event.target.value as "GRANT" | "REVOKE")}
-                disabled={busy}
-              >
-                <option value="GRANT">GRANT (Cấp thêm vai trò)</option>
-                <option value="REVOKE">REVOKE (Thu hồi vai trò)</option>
-              </select>
-            </label>
-
-            <label>
-              Reason code
-              <input
-                data-testid="staff-role-reason"
-                value={roleReason}
-                onChange={(event) => setRoleReason(event.target.value)}
-                placeholder="STAFF_ROLE_UPDATE"
-                required
-                disabled={busy}
-              />
-            </label>
-
-            <button
-              className="primary"
-              type="submit"
-              disabled={busy || !roleReason.trim()}
-            >
-              {busy ? "Đang gửi…" : "Gửi yêu cầu đổi role"}
-            </button>
-          </form>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <input
+              type="text"
+              placeholder="🔍 Tìm nhân sự (Tên, Email, Mã NV)…"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setCurrentPage(1);
+              }}
+              style={{ padding: "6px 12px", fontSize: "0.82rem", borderRadius: "8px", border: "1px solid var(--color-border)", minWidth: "260px" }}
+            />
+          </div>
         </div>
-      ) : null}
+
+        {filteredStaff.length === 0 ? (
+          <div className="empty">
+            {realStaff.length === 0
+              ? "Chưa có nhân sự nào trong hệ thống."
+              : "Không tìm thấy nhân viên nào phù hợp với bộ lọc tìm kiếm."}
+          </div>
+        ) : (
+          <>
+            <div className="audit-table-wrapper">
+              <table className="audit-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: "140px" }}>Mã NV</th>
+                    <th>Nhân viên</th>
+                    <th style={{ width: "150px" }}>Vai trò (Role)</th>
+                    <th style={{ width: "120px" }}>Trạng thái</th>
+                    <th style={{ width: "180px" }}>Xác thực 2 lớp (MFA)</th>
+                    {canManage ? <th style={{ width: "180px", textAlign: "right" }}>Thao tác</th> : null}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageItems.map((item) => {
+                    return (
+                      <tr key={item.id}>
+                        <td>
+                          <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, color: "var(--color-primary)", fontSize: "0.85rem" }}>
+                            {item.employeeCode}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                            <div style={{ fontWeight: 600, color: "var(--color-text-main)" }}>
+                              {item.displayName}
+                            </div>
+                            <div style={{ fontSize: "0.76rem", color: "var(--color-text-muted)", fontFamily: "var(--font-mono)" }}>
+                              {item.email}
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                            {Array.from(new Set(item.roles.map((r) => r.role))).map((role) => (
+                              <span
+                                key={role}
+                                className={`audit-actor-badge ${role.toLowerCase()}`}
+                                style={{ fontSize: "0.72rem" }}
+                              >
+                                {role}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td>
+                          <StatusBadge status={item.status} />
+                        </td>
+                        <td>
+                          <span style={{ fontSize: "0.8rem", color: item.mfaEnrolled ? "var(--color-success)" : "var(--color-text-muted)", fontWeight: 500 }}>
+                            {item.mfaEnrolled ? "● Đã kích hoạt" : "○ Chưa cấu hình"}
+                          </span>
+                        </td>
+                        {canManage ? (
+                          <td style={{ textAlign: "right" }}>
+                            {item.roles.some((r) => r.role === "ADMIN") ? (
+                              <span className="muted" style={{ fontSize: "0.78rem" }} title="Tài khoản quản trị tối cao">
+                                Root Admin
+                              </span>
+                            ) : item.status === "ACTIVE" ? (
+                              <button
+                                className="secondary"
+                                type="button"
+                                style={{ padding: "4px 8px", fontSize: "0.78rem", color: "var(--color-danger)" }}
+                                disabled={busy}
+                                onClick={() => void handleDisableRequest(item)}
+                              >
+                                Khóa
+                              </button>
+                            ) : (
+                              <span className="muted" style={{ fontSize: "0.78rem" }}>—</span>
+                            )}
+                          </td>
+                        ) : null}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 ? (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px", fontSize: "0.84rem", color: "var(--color-text-muted)" }}>
+                <div>
+                  Hiển thị {(safePage - 1) * PAGE_SIZE + 1} - {Math.min(safePage * PAGE_SIZE, filteredStaff.length)} trong tổng số {filteredStaff.length} nhân sự
+                </div>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    style={{ padding: "4px 10px", fontSize: "0.8rem" }}
+                    disabled={safePage <= 1}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  >
+                    « Trang trước
+                  </button>
+                  <span style={{ fontWeight: 600, color: "var(--color-text-main)", padding: "0 4px" }}>
+                    {safePage} / {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary"
+                    style={{ padding: "4px 10px", fontSize: "0.8rem" }}
+                    disabled={safePage >= totalPages}
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Trang sau »
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ textAlign: "right", fontSize: "0.8rem", color: "var(--color-text-muted)", marginTop: "6px" }}>
+                Tổng cộng: {filteredStaff.length} nhân sự
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       <div className="notice info">
-        Tài khoản Operations tạo tại đây hoạt động ngay. Thay đổi role hoặc vô hiệu hóa tài khoản hiện có vẫn tạo yêu cầu trong Approval Inbox; phiên cũ sẽ bị vô hiệu hóa khi quyền thay đổi.
+        Tài khoản Operations tạo tại đây hoạt động ngay. Yêu cầu vô hiệu hóa nhân sự hiện có vẫn tạo yêu cầu trong Approval Inbox; phiên cũ sẽ bị vô hiệu hóa khi tài khoản bị khóa.
       </div>
     </section>
   );

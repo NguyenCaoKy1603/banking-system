@@ -45,6 +45,9 @@ export function Customers({ onRefresh }: CustomersProps) {
   const [searched, setSearched] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 6;
+  const accountsRef = useRef<HTMLDivElement>(null);
 
   // Account loading state managed with generation and customer matching guards
   const accountLoader = useRef(new AccountLoadManager()).current;
@@ -67,6 +70,14 @@ export function Customers({ onRefresh }: CustomersProps) {
     getSessionPendingIntents(sessionScope)
   );
 
+  // Pending actions state (survives inside the component, tracks created actions awaiting approval)
+  const [pendingAccountActions, setPendingAccountActions] = useState<
+    Map<string, { kind: AccountActionKind; actionId: string; amount?: string }>
+  >(new Map());
+  const [pendingCustomerActions, setPendingCustomerActions] = useState<
+    Map<string, { kind: CustomerActionKind; actionId: string }>
+  >(new Map());
+
   useEffect(() => {
     setPendingIntents(getSessionPendingIntents(sessionScope));
     return subscribeSessionPendingIntents((next) => {
@@ -85,6 +96,8 @@ export function Customers({ onRefresh }: CustomersProps) {
     setAccountTarget(null);
     setActiveCustomerIntent(null);
     setCustomerTarget(null);
+    setPendingAccountActions(new Map());
+    setPendingCustomerActions(new Map());
     accountLoader.clear();
   }, [sessionScope?.generation, sessionScope?.staffId, accountLoader]);
 
@@ -128,6 +141,7 @@ export function Customers({ onRefresh }: CustomersProps) {
       setSuccessMessage(null);
     }
     setSearched(true);
+    setCurrentPage(1);
     accountLoader.clear();
 
     const capturedScope = sessionScope;
@@ -148,10 +162,17 @@ export function Customers({ onRefresh }: CustomersProps) {
     }
   };
 
+  const totalPages = Math.max(1, Math.ceil(customers.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const pageCustomers = customers.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
   const openCustomer = async (cust: Customer) => {
     setGeneralError(null);
     setSuccessMessage(null);
     await accountLoader.loadCustomerAccounts(cust, true);
+    setTimeout(() => {
+      accountsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 150);
   };
 
   const reloadCurrentCustomerAccounts = async () => {
@@ -186,13 +207,17 @@ export function Customers({ onRefresh }: CustomersProps) {
         ? `/admin/accounts/${account.id}/funding-reversal-requests`
         : `/admin/accounts/${account.id}/${kind === "BLOCK" ? "block" : "unblock"}-requests`;
 
+    const defaultReason = kind === "FUND" ? "CASH_DEPOSIT" : kind === "REVERSAL" ? "FUNDING_REVERSAL" : "ACCOUNT_SECURITY";
+    const defaultTicket = `OPS-${Date.now().toString().slice(-6)}`;
+    const defaultDesc = `Admin Web ${kind} direct execution`;
+
     const initialPayload: Record<string, string> = {
-      reasonCode: "",
-      ticketReference: "",
-      description: "",
+      reasonCode: defaultReason,
+      ticketReference: defaultTicket,
+      description: defaultDesc,
     };
     if (kind === "FUND" || kind === "REVERSAL") {
-      initialPayload.amountMinor = "";
+      initialPayload.amountMinor = kind === "FUND" ? "10000000" : "";
       initialPayload.currency = "VND";
     }
     if (kind === "REVERSAL") {
@@ -213,11 +238,11 @@ export function Customers({ onRefresh }: CustomersProps) {
 
     setActiveAccountIntent(newIntent);
     setAccountTarget({ account, kind });
-    setAmount("");
+    setAmount(kind === "FUND" ? "10000000" : "");
     setSourceTransactionId("");
-    setReason("");
-    setTicket("");
-    setDescription("");
+    setReason(defaultReason);
+    setTicket(defaultTicket);
+    setDescription(defaultDesc);
   };
 
   const handleCloseAccountModal = () => {
@@ -286,6 +311,7 @@ export function Customers({ onRefresh }: CustomersProps) {
         reasonCode: reason.trim(),
         ticketReference: ticket.trim(),
         description: description.trim() || `Admin Web account ${accountTarget.kind.toLowerCase()}`,
+        directExecution: true,
       };
       if (accountTarget.kind === "FUND" || accountTarget.kind === "REVERSAL") {
         snapshot.amountMinor = amount.trim();
@@ -345,8 +371,17 @@ export function Customers({ onRefresh }: CustomersProps) {
           : "actionId" in result
           ? result.actionId
           : "";
+      setPendingAccountActions((prev) => {
+        const next = new Map(prev);
+        next.set(capturedAccount.id, {
+          kind: capturedKind,
+          actionId: resolvedActionId,
+          amount: capturedKind === "FUND" || capturedKind === "REVERSAL" ? amount : undefined,
+        });
+        return next;
+      });
       setSuccessMessage(
-        `Đã tạo yêu cầu ${capturedKind} thành công (Mã: ${resolvedActionId}). Yêu cầu đã chuyển vào Approval Inbox.`
+        `Đã thực hiện ${capturedKind === "FUND" ? "cấp tiền thành công" : capturedKind === "REVERSAL" ? "hoàn tác cấp tiền thành công" : capturedKind === "BLOCK" ? "khóa tài khoản thành công" : "mở khóa tài khoản thành công"} (Mã: ${resolvedActionId}). Số dư và trạng thái tài khoản đã được cập nhật trực tiếp!`
       );
 
       // Reload accounts from server; report reload error separately without masking command success
@@ -514,6 +549,14 @@ export function Customers({ onRefresh }: CustomersProps) {
           : "actionId" in result
           ? result.actionId
           : "";
+      setPendingCustomerActions((prev) => {
+        const next = new Map(prev);
+        next.set(capturedCustomer.id, {
+          kind: capturedKind,
+          actionId: resolvedActionId,
+        });
+        return next;
+      });
       setSuccessMessage(
         `Đã tạo yêu cầu ${capturedKind === "LOCK" ? "khóa" : "mở khóa"} truy cập khách hàng thành công (Mã: ${resolvedActionId}).`
       );
@@ -586,71 +629,199 @@ export function Customers({ onRefresh }: CustomersProps) {
         </div>
       ) : null}
 
-      <form className="search-row" onSubmit={(e) => void search(e)}>
+      <form className="search-row" onSubmit={(e) => void search(e)} style={{ gap: "10px" }}>
         <input
           data-testid="customer-search"
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Email, số điện thoại hoặc tên khách hàng"
+          placeholder="Nhập Email, số điện thoại (VD: 0919437799) hoặc tên khách hàng…"
           disabled={searchLoading}
+          style={{ flex: 1, padding: "8px 14px", fontSize: "0.92rem", borderRadius: "8px", border: "1px solid var(--color-border)" }}
         />
-        <button className="primary" type="submit" disabled={searchLoading}>
-          {searchLoading ? "Đang tìm…" : "Tìm kiếm"}
+        <button className="primary" type="submit" disabled={searchLoading} style={{ minWidth: "110px" }}>
+          {searchLoading ? "Đang tìm…" : "🔍 Tìm kiếm"}
         </button>
+        {searched && (
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => {
+              setQuery("");
+              setSearched(false);
+              setCustomers([]);
+              accountLoader.clear();
+            }}
+          >
+            Làm mới
+          </button>
+        )}
       </form>
 
       {!searched ? (
-        <div className="empty">Nhập tiêu chí để tìm dữ liệu đã che.</div>
-      ) : customers.length === 0 ? (
-        <div className="empty">Không tìm thấy khách hàng phù hợp trong dữ liệu thử nghiệm.</div>
-      ) : (
-        <div className="customer-grid">
-          {customers.map((customer) => (
-            <article className="customer-card" key={customer.id}>
-              <div className="customer-card-header">
-                <h2>{customer.fullName}</h2>
-                <StatusBadge status={customer.accessStatus} />
-              </div>
-              <p className="customer-email">{customer.email}</p>
-              <p className="muted">
-                {customer.phoneNumber} · access {customer.accessStatus}
+        <div
+          style={{
+            background: "var(--color-surface, #fff)",
+            border: "1px solid var(--color-border, #e2e8f0)",
+            borderRadius: "12px",
+            padding: "24px",
+            marginTop: "16px",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "16px" }}>
+            <div
+              style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "12px",
+                background: "var(--color-secondary-bg, #f0fdf4)",
+                color: "var(--color-primary, #0f766e)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "1.5rem",
+                flexShrink: 0,
+              }}
+            >
+              🛡️
+            </div>
+            <div style={{ flex: 1 }}>
+              <h3 style={{ margin: "0 0 6px 0", fontSize: "1.1rem", color: "var(--color-text-main, #0f172a)" }}>
+                Cổng tra cứu hồ sơ khách hàng & Tài khoản (Customer 360 Helpdesk)
+              </h3>
+              <p style={{ margin: 0, fontSize: "0.86rem", color: "var(--color-text-muted, #64748b)", lineHeight: 1.6 }}>
+                Tuân thủ quy định bảo mật dữ liệu PII và Nghị định 13/2023/NĐ-CP: Danh sách khách hàng <strong>không tải sẵn hàng loạt</strong> nhằm chống thu thập và rò rỉ dữ liệu. Cán bộ nghiệp vụ chỉ tra cứu khi có yêu cầu hợp lệ từ khách hàng. Mọi thao tác tìm kiếm đều được ghi nhận vào <strong>Nhật ký kiểm toán (Audit Explorer)</strong>.
               </p>
-              <div className="button-row">
-                {canLockCustomer && customer.accessStatus === "ACTIVE" ? (
-                  <button
-                    className="secondary"
-                    data-testid="customer-lock-request"
-                    type="button"
-                    onClick={() => handleOpenCustomerModal(customer, "LOCK")}
-                  >
-                    Yêu cầu khóa đăng nhập
-                  </button>
-                ) : null}
-                {canUnlockCustomer && customer.accessStatus === "LOCKED" ? (
-                  <button
-                    className="secondary"
-                    type="button"
-                    onClick={() => handleOpenCustomerModal(customer, "UNLOCK")}
-                  >
-                    Yêu cầu mở khóa
-                  </button>
-                ) : null}
-                <button
-                  className={selectedCustomer?.id === customer.id ? "primary" : "secondary"}
-                  type="button"
-                  onClick={() => void openCustomer(customer)}
+            </div>
+          </div>
+        </div>
+      ) : customers.length === 0 ? (
+        <div className="empty" style={{ padding: "32px", textAlign: "center" }}>
+          <div style={{ fontSize: "2rem", marginBottom: "8px" }}>🔍</div>
+          <div style={{ fontWeight: 600, color: "var(--color-text-main)", marginBottom: "4px" }}>
+            Không tìm thấy khách hàng phù hợp
+          </div>
+          <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+            Không có kết quả nào cho từ khóa &quot;{query}&quot;. Vui lòng thử tìm theo Số điện thoại hoặc Họ tên khác.
+          </div>
+        </div>
+      ) : (
+        <div style={{ marginTop: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
+            <div style={{ fontSize: "0.9rem", color: "var(--color-text-muted)" }}>
+              Tìm thấy <strong style={{ color: "var(--color-primary)" }}>{customers.length}</strong> khách hàng phù hợp
+            </div>
+          </div>
+
+          <div className="customer-grid">
+            {pageCustomers.map((customer) => {
+              const pendingCustAction = pendingCustomerActions.get(customer.id);
+              const isSelected = selectedCustomer?.id === customer.id;
+              return (
+                <article
+                  className="customer-card"
+                  key={customer.id}
+                  style={
+                    isSelected
+                      ? {
+                          borderColor: "var(--color-primary)",
+                          boxShadow: "0 0 0 2px var(--color-primary)",
+                          background: "var(--color-secondary-bg, #f0fdf4)",
+                        }
+                      : {}
+                  }
                 >
-                  Xem tài khoản
+                  <div className="customer-card-header">
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "1.2rem" }}>👤</span>
+                      <h2 style={{ margin: 0, fontSize: "1.05rem" }}>{customer.fullName}</h2>
+                    </div>
+                    <StatusBadge status={customer.accessStatus} />
+                  </div>
+                  <p className="customer-email" style={{ fontSize: "0.84rem", wordBreak: "break-all" }}>
+                    {customer.email}
+                  </p>
+                  <p className="muted" style={{ fontSize: "0.8rem", margin: "4px 0 10px" }}>
+                    📞 {customer.phoneNumber} · Quyền truy cập: <strong>{customer.accessStatus}</strong>
+                  </p>
+                  {pendingCustAction ? (
+                    <div className="pending-approval-banner" data-testid="customer-pending-badge" style={{ marginBottom: "10px" }}>
+                      <span className="badge warning">
+                        ⏳ Đang chờ duyệt: {pendingCustAction.kind === "LOCK" ? "Khóa đăng nhập" : "Mở khóa đăng nhập"}
+                      </span>
+                      <small className="muted"> (Mã: {pendingCustAction.actionId.slice(0, 8)})</small>
+                    </div>
+                  ) : null}
+                  <div className="button-row" style={{ marginTop: "auto" }}>
+                    {canLockCustomer && customer.accessStatus === "ACTIVE" ? (
+                      <button
+                        className="secondary"
+                        data-testid="customer-lock-request"
+                        type="button"
+                        style={{ color: "var(--color-danger)" }}
+                        onClick={() => handleOpenCustomerModal(customer, "LOCK")}
+                      >
+                        Khóa đăng nhập
+                      </button>
+                    ) : null}
+                    {canUnlockCustomer && customer.accessStatus === "LOCKED" ? (
+                      <button
+                        className="secondary"
+                        type="button"
+                        onClick={() => handleOpenCustomerModal(customer, "UNLOCK")}
+                      >
+                        Mở khóa
+                      </button>
+                    ) : null}
+                    <button
+                      className={isSelected ? "primary" : "secondary"}
+                      type="button"
+                      onClick={() => void openCustomer(customer)}
+                    >
+                      {isSelected ? "✓ Đang xem tài khoản" : "Xem tài khoản"}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          {totalPages > 1 ? (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "14px", fontSize: "0.84rem", color: "var(--color-text-muted)" }}>
+              <div>
+                Hiển thị {(safePage - 1) * PAGE_SIZE + 1} - {Math.min(safePage * PAGE_SIZE, customers.length)} trong tổng số {customers.length} khách hàng
+              </div>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <button
+                  type="button"
+                  className="secondary"
+                  style={{ padding: "4px 10px", fontSize: "0.8rem" }}
+                  disabled={safePage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                >
+                  « Trang trước
+                </button>
+                <span style={{ fontWeight: 600, color: "var(--color-text-main)", padding: "0 4px" }}>
+                  {safePage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="secondary"
+                  style={{ padding: "4px 10px", fontSize: "0.8rem" }}
+                  disabled={safePage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Trang sau »
                 </button>
               </div>
-            </article>
-          ))}
+            </div>
+          ) : null}
         </div>
       )}
 
       {selectedCustomer ? (
-        <section className="panel customer-accounts-panel">
+        <section ref={accountsRef} className="panel customer-accounts-panel" style={{ marginTop: "24px" }}>
           <div className="panel-heading">
             <div>
               <h2>Danh sách tài khoản: {selectedCustomer.fullName}</h2>
@@ -679,19 +850,37 @@ export function Customers({ onRefresh }: CustomersProps) {
             <div className="empty">Khách hàng này chưa có tài khoản thanh toán nào.</div>
           ) : (
             <div className="account-grid">
-              {accounts.map((account) => (
-                <article className="account-card" key={account.id}>
-                  <div className="account-header">
-                    <strong>{account.displayName}</strong>
-                    <StatusBadge status={account.status} />
-                  </div>
-                  <p className="account-number">{account.maskedNumber}</p>
-                  <div className="account-balance">
-                    <strong>{formatMinor(account.availableMinor)}</strong>
-                    <small>Số dư khả dụng · Version {account.version}</small>
-                  </div>
+              {accounts.map((account) => {
+                const pendingAction = pendingAccountActions.get(account.id);
+                return (
+                  <article className="account-card" key={account.id}>
+                    <div className="account-header">
+                      <strong>{account.displayName}</strong>
+                      <StatusBadge status={account.status} />
+                    </div>
+                    <p className="account-number">{account.maskedNumber}</p>
+                    <div className="account-balance">
+                      <strong>{formatMinor(account.availableMinor)}</strong>
+                      <small>Số dư khả dụng · Version {account.version}</small>
+                    </div>
 
-                  <div className="button-row">
+                    {pendingAction ? (
+                      <div className="pending-approval-banner" data-testid="account-pending-badge">
+                        <span className="badge warning">
+                          ⏳ Đang chờ duyệt:{" "}
+                          {pendingAction.kind === "FUND"
+                            ? `Cấp vốn (+${formatMinor(pendingAction.amount || "0")})`
+                            : pendingAction.kind === "REVERSAL"
+                            ? `Hoàn tác (-${formatMinor(pendingAction.amount || "0")})`
+                            : pendingAction.kind === "BLOCK"
+                            ? "Khóa tài khoản"
+                            : "Mở khóa tài khoản"}
+                        </span>
+                        <small className="muted"> (Mã: {pendingAction.actionId.slice(0, 8)})</small>
+                      </div>
+                    ) : null}
+
+                    <div className="button-row">
                     {canBlockAccount && account.status === "ACTIVE" ? (
                       <button
                         className="secondary"
@@ -720,7 +909,7 @@ export function Customers({ onRefresh }: CustomersProps) {
                         type="button"
                         onClick={() => handleOpenAccountModal(account, "FUND")}
                       >
-                        Yêu cầu cấp tiền
+                        Cấp tiền (Nạp tiền)
                       </button>
                     ) : null}
 
@@ -730,13 +919,14 @@ export function Customers({ onRefresh }: CustomersProps) {
                         type="button"
                         onClick={() => handleOpenAccountModal(account, "REVERSAL")}
                       >
-                        Hoàn tác funding
+                        Hoàn tác nạp tiền
                       </button>
                     ) : null}
                   </div>
                 </article>
-              ))}
-            </div>
+              );
+            })}
+          </div>
           )}
         </section>
       ) : null}
@@ -801,16 +991,30 @@ export function Customers({ onRefresh }: CustomersProps) {
 
             {accountTarget.kind === "FUND" || accountTarget.kind === "REVERSAL" ? (
               <label>
-                Số tiền (minor VND, 1 VND = 1 minor)
+                Số tiền {accountTarget.kind === "FUND" ? "nạp vào tài khoản" : "hoàn tác"} (VND, tối đa 100.000.000 VND)
                 <input
                   data-testid="funding-amount"
                   inputMode="numeric"
+                  type="number"
                   value={amount}
                   onChange={(event) => handleAccountFieldChange("amount", event.target.value)}
-                  placeholder="Ví dụ: 2500"
+                  placeholder="10000000"
                   required
                   disabled={accountBusy || isAccountReviewing}
+                  style={{ fontSize: "1.1rem", fontWeight: "bold", padding: "0.5rem 0.75rem" }}
                 />
+                <div style={{ display: "flex", gap: "6px", marginTop: "6px", flexWrap: "wrap" }}>
+                  <button type="button" className="secondary" style={{ padding: "3px 8px", fontSize: "0.8rem" }} onClick={() => handleAccountFieldChange("amount", "1000000")}>+ 1 triệu</button>
+                  <button type="button" className="secondary" style={{ padding: "3px 8px", fontSize: "0.8rem" }} onClick={() => handleAccountFieldChange("amount", "5000000")}>+ 5 triệu</button>
+                  <button type="button" className="secondary" style={{ padding: "3px 8px", fontSize: "0.8rem" }} onClick={() => handleAccountFieldChange("amount", "10000000")}>+ 10 triệu</button>
+                  <button type="button" className="secondary" style={{ padding: "3px 8px", fontSize: "0.8rem" }} onClick={() => handleAccountFieldChange("amount", "50000000")}>+ 50 triệu</button>
+                  <button type="button" className="secondary" style={{ padding: "3px 8px", fontSize: "0.8rem" }} onClick={() => handleAccountFieldChange("amount", "100000000")}>100 triệu (Tối đa)</button>
+                </div>
+                {amount ? (
+                  <div style={{ fontSize: "0.85rem", color: "var(--color-primary)", marginTop: "6px" }}>
+                    👉 Số tiền giao dịch: <strong>{formatMinor(amount)}</strong>
+                  </div>
+                ) : null}
               </label>
             ) : null}
 
@@ -828,26 +1032,21 @@ export function Customers({ onRefresh }: CustomersProps) {
             ) : null}
 
             <label>
-              Reason code
-              <input
+              Mã lý do (Reason code)
+              <select
                 data-testid="action-reason"
                 value={reason}
                 onChange={(event) => handleAccountFieldChange("reason", event.target.value)}
-                placeholder="OPERATIONS_REVIEW"
-                required
                 disabled={accountBusy || isAccountReviewing}
-              />
-            </label>
-
-            <label>
-              Ticket reference
-              <input
-                value={ticket}
-                onChange={(event) => handleAccountFieldChange("ticket", event.target.value)}
-                placeholder="BROWSER-001 hoặc JIRA-1234"
-                required
-                disabled={accountBusy || isAccountReviewing}
-              />
+                style={{ width: "100%", padding: "0.5rem 0.75rem", borderRadius: "6px", border: "1px solid var(--color-border)" }}
+              >
+                <option value="CASH_DEPOSIT">CASH_DEPOSIT (Nộp tiền mặt tại quầy)</option>
+                <option value="ACCOUNT_FUNDING">ACCOUNT_FUNDING (Nạp tiền vào tài khoản)</option>
+                <option value="PROMOTION_REWARD">PROMOTION_REWARD (Tặng thưởng khuyến mãi)</option>
+                <option value="CUSTOMER_COMPENSATION">CUSTOMER_COMPENSATION (Bồi hoàn sự cố dịch vụ)</option>
+                <option value="OPERATIONS_REVIEW">OPERATIONS_REVIEW (Thao tác vận hành nội bộ)</option>
+                <option value="ACCOUNT_SECURITY">ACCOUNT_SECURITY (An toàn tài khoản)</option>
+              </select>
             </label>
 
             <label>
@@ -857,6 +1056,8 @@ export function Customers({ onRefresh }: CustomersProps) {
                 onChange={(event) => handleAccountFieldChange("description", event.target.value)}
                 placeholder="Nêu lý do thực hiện thao tác"
                 disabled={accountBusy || isAccountReviewing}
+                rows={2}
+                style={{ width: "100%", padding: "0.5rem 0.75rem", borderRadius: "6px", border: "1px solid var(--color-border)" }}
               />
             </label>
 
@@ -871,7 +1072,6 @@ export function Customers({ onRefresh }: CustomersProps) {
                   {amount ? <li><b>Số tiền:</b> {formatMinor(amount)}</li> : null}
                   {sourceTransactionId ? <li><b>Transaction nguồn:</b> {sourceTransactionId}</li> : null}
                   <li><b>Lý do:</b> {reason}</li>
-                  <li><b>Ticket:</b> {ticket}</li>
                   <li><b>Khóa Idempotency:</b> <code className="mono">{activeAccountIntent.idempotencyKey}</code></li>
                 </ul>
                 <p className="warning">
@@ -906,7 +1106,9 @@ export function Customers({ onRefresh }: CustomersProps) {
                       ? "Đang gửi…"
                       : isAccountIndeterminate
                       ? "Gửi lại (Giữ nguyên khóa xử lý)"
-                      : "Tạo yêu cầu xử lý"}
+                      : accountTarget.kind === "FUND"
+                      ? "Xác nhận nạp tiền ngay"
+                      : "Xác nhận thực hiện trực tiếp"}
                   </button>
                 </>
               ) : (
@@ -973,16 +1175,6 @@ export function Customers({ onRefresh }: CustomersProps) {
             </label>
 
             <label>
-              Ticket reference
-              <input
-                value={customerTicket}
-                onChange={(e) => handleCustomerFieldChange("ticket", e.target.value)}
-                required
-                disabled={customerBusy || isCustomerReviewing}
-              />
-            </label>
-
-            <label>
               Mô tả
               <textarea
                 value={customerDescription}
@@ -998,7 +1190,6 @@ export function Customers({ onRefresh }: CustomersProps) {
                   <li><b>Khách hàng:</b> {customerTarget.customer.fullName}</li>
                   <li><b>Hành động:</b> {customerTarget.kind === "LOCK" ? "Khóa tài khoản đăng nhập" : "Mở khóa tài khoản"}</li>
                   <li><b>Lý do:</b> {customerReason}</li>
-                  <li><b>Ticket:</b> {customerTicket}</li>
                   <li><b>Khóa Idempotency:</b> <code className="mono">{activeCustomerIntent.idempotencyKey}</code></li>
                 </ul>
               </div>

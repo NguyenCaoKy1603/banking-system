@@ -1,5 +1,7 @@
 # Kế hoạch Cải tạo Admin Web (Admin Web Improvement Plan)
 
+> Cập nhật 2026-10-13: chức năng Fraud đã được gỡ theo quyết định của owner. Các mục Fraud bên dưới chỉ là kế hoạch/lịch sử, không phải chức năng hay API hiện hành.
+
 - **Mã kế hoạch**: AW-PLAN-01
 - **HEAD Commit**: `9254922a9bfe486f1b0b833d80c5fd2e508bcc3b`
 - **Branch**: `codex/staging-academic-completion`
@@ -105,7 +107,7 @@
 - **Chi tiết hồ sơ**:
   - Nhãn tiếng Việt rõ ràng: "Tiếp nhận hồ sơ" (thay cho Claim), "Tạo đề xuất quyết định" (thay cho Recommendation).
   - Modal tạo đề xuất: Chọn quyết định (`APPROVED`, `REJECTED`, `NEEDS_MORE_INFO` đối với KYC; `PENDING_ACTIVATION`, `REJECTED` kèm hạn mức đề xuất đối với Tín dụng), nhập Mã lý do, Mã ticket và Mô tả.
-  - Ghi chú bảo mật: Không hiển thị hình ảnh giấy tờ thật hoặc dữ liệu PII ngoài quyền; chỉ hiển thị thông tin metadata định danh mô phỏng.
+  - Ghi chú bảo mật: Không hiển thị hình ảnh giấy tờ thật hoặc dữ liệu PII ngoài quyền; chỉ hiển thị thông tin metadata định danh từ dữ liệu thử nghiệm.
 
 ### 4.3. Bố cục Approval Inbox (`#/approvals`)
 - **Sidebar badge**: Hiển thị số lượng yêu cầu đang chờ phê duyệt.

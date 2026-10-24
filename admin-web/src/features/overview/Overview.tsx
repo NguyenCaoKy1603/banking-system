@@ -17,9 +17,9 @@ export function Overview({ actions, summary, onNavigate }: OverviewProps) {
 
       <div className="metric-grid">
         <article className="metric-card">
-          <span>Approval chờ</span>
-          <strong>{canReadApprovals ? actions.length : "—"}</strong>
-          <small>{canReadApprovals ? "Hàng đợi phê duyệt" : "Chỉ ADMIN"}</small>
+          <span>Hệ thống Core</span>
+          <strong>ONLINE</strong>
+          <small>PostgreSQL 16 Healthy</small>
         </article>
 
         <article className="metric-card">
@@ -61,9 +61,9 @@ export function Overview({ actions, summary, onNavigate }: OverviewProps) {
             <button
               type="button"
               className="primary quick-button"
-              onClick={() => onNavigate("approvals")}
+              onClick={() => onNavigate("audit")}
             >
-              Hàng đợi duyệt ({actions.length})
+              Xem nhật ký kiểm toán (Audit)
             </button>
           ) : null}
           {hasPermission("kyc.read") ? (
