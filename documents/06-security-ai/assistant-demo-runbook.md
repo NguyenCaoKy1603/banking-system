@@ -41,9 +41,9 @@
       └─ Nếu câu hỏi mở ────────────────► Chuyển tiếp tới AI Provider
                                                  │
                                                  ▼
-[AI Provider: OllamaAssistantHelpProvider (backend/src/assistant/ollamaHelpProvider.ts)]
-  - Endpoint: POST http://127.0.0.1:11434/api/chat (Loopback nội bộ)
-  - Model: qwen3.5:4b (options: num_predict=530, temperature=0.1)
+[AI Provider: RadoxAssistantHelpProvider (backend/src/assistant/radoxHelpProvider.ts)]
+  - Endpoint: POST https://radoxai.com/v1/chat/completions (hoặc base URL được cấu hình)
+  - Model: gemini-3.6-flash (hoặc ASSISTANT_MODEL được cấu hình)
   - Payload gửi model: System Prompt + 20 FAQ Hints + Question
   - Nhiệm vụ của Model: CHỈ chọn 1 Selection ID (ví dụ: {"selectionId": "FAQ-04"})
                  │
@@ -72,7 +72,7 @@
 | **Backend Core** | `backend/src/assistant/helpService.ts` | `executeHelpRequest`, `executeHelpDecision` | Điều phối tri thức, lọc sensitive input, policy tất định, gọi provider, tra cứu catalog. |
 | **Response Catalog** | `backend/src/assistant/responseCatalog.ts` | `getAnswerCatalogEntry`, `validateAnswerCatalog` | Kho 25 lựa chọn: 20 câu trả lời FAQ và 5 phản hồi đặc biệt; phiên bản `nova-faq-answer-catalog-v1`. |
 | **Deterministic Policy** | `backend/src/assistant/selectionPolicy.ts` | `resolveDeterministicSelection` | Phân luồng cố định cho các câu hỏi rõ ràng (xem số dư, lịch sử, thoát...). |
-| **AI Provider** | `backend/src/assistant/ollamaHelpProvider.ts` | `OllamaAssistantHelpProvider.generateHelpResponse` | Kết nối Ollama loopback `127.0.0.1:11434`, model `qwen3.5:4b`. |
+| **AI Provider** | `backend/src/assistant/radoxHelpProvider.ts` | `RadoxAssistantHelpProvider.generateHelpResponse` | Kết nối Radox API `https://radoxai.com/v1`, model `gemini-3.6-flash`. |
 
 ---
 
@@ -81,34 +81,37 @@
 ### 2.1. Yêu cầu phần mềm
 - **Node.js**: Phiên bản 22+ hoặc 24 LTS.
 - **Trình quản lý gói**: `npm` v10+.
-- **Ollama Local**: Bản cài đặt Ollama trên máy trạm (`http://127.0.0.1:11434`), đã kéo model `qwen3.5:4b` (`ollama pull qwen3.5:4b`).
+- **Radox AI Key**: Khóa API Radox (`ASSISTANT_RADOX_API_KEY`) kết nối dịch vụ Radox AI (`https://radoxai.com/v1`, model mặc định `gemini-3.6-flash`).
 - **Nền tảng chạy Mobile**:
   - *Phương án chính*: Android Emulator (Android Studio SDK, truy cập Backend qua `10.0.2.2`).
   - *Phương án dự phòng kiểm thử nhanh*: Expo Web (`npm run web` trong `mobile-app`, truy cập Backend qua `localhost:5000`).
 
 ### 2.2. Biến môi trường Backend
-Cấu hình trong file `backend/.env` hoặc khởi chạy trực tiếp qua biến dòng lệnh:
+Cấu hình trong file `backend/.env` (khi chạy standalone `npm start`) hoặc trong `.env.compose` (khi chạy môi trường Docker preview):
 
 ```bash
 # Bật tính năng Trợ lý hướng dẫn
 ASSISTANT_ENABLED=1
 
-# Chọn nhà cung cấp AI: "ollama" cho chế độ AI local thật (sau khi Owner duyệt Pha B)
-ASSISTANT_PROVIDER=ollama
-ASSISTANT_MODEL=qwen3.5:4b
-ASSISTANT_OLLAMA_BASE_URL=http://127.0.0.1:11434
+# Chọn nhà cung cấp AI: "radox"
+ASSISTANT_PROVIDER=radox
+ASSISTANT_MODEL=gemini-3.6-flash
+ASSISTANT_RADOX_BASE_URL=https://radoxai.com/v1
+ASSISTANT_RADOX_API_KEY=<your-radox-api-key>
 
-# Cấu hình thời gian chờ (runtime đọc các biến này; đây là giá trị demo đã chọn)
-ASSISTANT_PROVIDER_TIMEOUT_MS=25000
-ASSISTANT_REQUEST_TIMEOUT_MS=30000
-
-# Giới hạn số token đầu ra Ollama là tùy chọn; runtime không đặt biến này nếu bỏ trống
-# ASSISTANT_OLLAMA_NUM_PREDICT=256
+# Cấu hình thời gian chờ (runtime đọc các biến này; yêu cầu REQUEST > PROVIDER timeout)
+ASSISTANT_PROVIDER_TIMEOUT_MS=15000
+ASSISTANT_REQUEST_TIMEOUT_MS=20000
 ```
 
-`resolveRuntimeAssistantConfig()` chỉ đọc các biến được liệt kê trong mẫu trên: `ASSISTANT_ENABLED`, `ASSISTANT_PROVIDER`, `ASSISTANT_MODEL`, `ASSISTANT_OLLAMA_BASE_URL`, `ASSISTANT_PROVIDER_TIMEOUT_MS`, `ASSISTANT_REQUEST_TIMEOUT_MS` và tùy chọn `ASSISTANT_OLLAMA_NUM_PREDICT`. Ba biến `ASSISTANT_RATE_LIMIT_PER_MINUTE`, `ASSISTANT_MAX_CONCURRENT_REQUESTS` và `ASSISTANT_MAX_CONCURRENT_PER_USER` không được runtime đọc; không dùng chúng để cấu hình.
+*Lưu ý khi chạy môi trường Docker Compose preview*: Các biến trên cần được khai báo trong `.env.compose` để Docker inject vào container `backend`. Sau khi cập nhật file `.env.compose`, khởi động lại container backend bằng lệnh:
+```bash
+docker compose --env-file .env.compose up -d backend
+```
 
-Các giới hạn request/concurrency hiện dùng mặc định trong code: 5 request/phút/người dùng, tối đa 2 request đồng thời toàn cục và 1 request đồng thời/người dùng. Ngoài ra, mỗi instance backend có trần cố định **10 lần gọi provider** cho toàn bộ vòng đời server run. Nhánh trả lời tất định không tiêu hao lượt. Khi hết trần, API trả `503 ASSISTANT_UNAVAILABLE`; khởi động lại backend tạo server run mới và đặt lại bộ đếm. Đây là ngân sách demo trong bộ nhớ, không phải quota bền vững giữa nhiều process/instance.
+`resolveRuntimeAssistantConfig()` đọc và xác thực nghiêm ngặt các biến trên: `ASSISTANT_ENABLED`, `ASSISTANT_PROVIDER` (bắt buộc là `radox`), `ASSISTANT_MODEL`, `ASSISTANT_RADOX_BASE_URL`, `ASSISTANT_RADOX_API_KEY`, `ASSISTANT_PROVIDER_TIMEOUT_MS`, và `ASSISTANT_REQUEST_TIMEOUT_MS`.
+
+Các giới hạn request/concurrency hiện dùng mặc định trong code: 5 request/phút/người dùng, tối đa 2 request đồng thời toàn cục và 1 request đồng thời/người dùng. Nhánh trả lời tất định không tiêu hao lượt gọi AI.
 
 ### 2.3. Biến môi trường Mobile
 Cấu hình trong file `mobile-app/.env`:
@@ -128,14 +131,7 @@ EXPO_PUBLIC_SANDBOX_HTTP=1
 
 Để buổi demo diễn ra trơn tru, hãy khởi động các dịch vụ theo đúng thứ tự sau:
 
-### Bước 1: Khởi động Ollama Local (chỉ khi chạy Pha B đã duyệt)
-1. Mở terminal kiểm tra Ollama daemon đang chạy:
-   ```bash
-   ollama list
-   ```
-2. Xác nhận model `qwen3.5:4b` có trong danh sách.
-
-### Bước 2: Khởi động Backend
+### Bước 1: Khởi động Backend
 Mở terminal tại thư mục `backend/`:
 ```bash
 npm run build
@@ -216,7 +212,7 @@ Sau khi hoàn thành buổi demo, thực hiện các bước sau để dọn d�
    ```powershell
    Get-NetTCPConnection -LocalPort 5000, 8081 -ErrorAction SilentlyContinue
    ```
-4. **Không tắt Ollama của người dùng** nếu người dùng đang dùng cho mục đích khác.
+4. **Bảo mật API key**: Đảm bảo khóa `ASSISTANT_RADOX_API_KEY` chỉ lưu trong file `.env` cục bộ.
 
 ---
 
@@ -225,7 +221,7 @@ Sau khi hoàn thành buổi demo, thực hiện các bước sau để dọn d�
 | Câu hỏi của Hội đồng / Giảng viên | Câu trả lời chuẩn xác theo thiết kế |
 | :--- | :--- |
 | **1. Tại sao AI không tự sinh văn bản tự do mà lại trả về câu trả lời từ Catalog?** | NOVA dùng kiến trúc **Constrained Selector**: mô hình chỉ chọn `Selection ID`, Backend kiểm tra ID rồi trả về nội dung cố định trong Catalog. Nội dung có thể đối chiếu với FAQ trong repository; hiện chưa có bằng chứng cho thấy Catalog đã được chuyên gia ngân hàng kiểm duyệt, vì vậy không trình bày là đã được chuyên gia phê duyệt. |
-| **2. Mô hình AI can thiệp vào bước nào trong toàn bộ luồng?** | Mô hình chỉ tham gia ở tầng Backend sau khi câu hỏi đã vượt qua tất cả các lớp bảo vệ: Xác thực phiên, Giới hạn kích thước, Bộ lọc dữ liệu nhạy cảm, và Bộ phân luồng tất định (Deterministic Policy). Khi câu hỏi cần suy luận ngữ nghĩa mở, Backend chuyển prompt kèm danh sách gợi ý cho model cục bộ `qwen3.5:4b`. Model trả về duy nhất chuỗi JSON `{"selectionId": "FAQ-xx"}`. |
+| **2. Mô hình AI can thiệp vào bước nào trong toàn bộ luồng?** | Mô hình chỉ tham gia ở tầng Backend sau khi câu hỏi đã vượt qua tất cả các lớp bảo vệ: Xác thực phiên, Giới hạn kích thước, Bộ lọc dữ liệu nhạy cảm, và Bộ phân luồng tất định (Deterministic Policy). Khi câu hỏi cần suy luận ngữ nghĩa mở, Backend chuyển prompt kèm danh sách gợi ý cho model AI qua Radox provider (`gemini-3.6-flash`). Model trả về duy nhất chuỗi JSON `{"selectionId": "FAQ-xx"}`. |
 | **3. Nếu mô hình AI trả về ID lạ hoặc câu trả lời không đúng định dạng thì sao?** | Backend có bộ **Output Guard** (`parseSelectionId`). Nếu phản hồi không phải JSON đúng cấu trúc một trường duy nhất, hoặc `selectionId` không nằm trong catalog 25 lựa chọn (20 FAQ và 5 phản hồi đặc biệt), hệ thống từ chối với mã `502 ASSISTANT_PROVIDER_ERROR`; nội dung tự do của model không được trả trực tiếp cho người dùng. |
 | **4. Trợ lý này có thể thực hiện giao dịch (chuyển tiền, khóa thẻ) thay người dùng không?** | Hoàn toàn không. Trợ lý NOVA được thiết kế theo nguyên tắc **Read-only Guidance** (Chỉ hướng dẫn thao tác). Trợ lý không có quyền truy cập cơ sở dữ liệu số dư, không có công cụ gọi hàm (Tool / Function Calling), và không thể thay đổi bất kỳ trạng thái tài chính nào. |
 | **5. Cơ chế bảo vệ khi người dùng vô tình gửi mật khẩu hoặc OTP là gì?** | Hệ thống bảo vệ 2 lớp: Lớp 1 là lời nhắc nhở trực quan ngay trên giao diện; Lớp 2 là bộ lọc RegEx phát hiện mẫu mật khẩu, OTP 6 số, mã PIN ngay tại tầng HTTP. Nếu phát hiện, Backend từ chối ngay với mã `422`, không gửi câu hỏi tới mô hình AI và không lưu trữ vào log. |

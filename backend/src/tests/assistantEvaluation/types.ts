@@ -62,7 +62,7 @@ export type CaseEvaluationResult = {
 export type EvaluationRunMetadata = {
   runId: string;
   timestamp: string;
-  mode: "offline-fake" | "local-ollama";
+  mode: "offline-fake" | "radox";
   gitHead: string;
   workingTreeStatus: string;
   datasetVersion: string;

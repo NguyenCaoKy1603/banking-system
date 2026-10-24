@@ -50,7 +50,7 @@ const NAVIGATION_EVIDENCE: Record<string, EvidenceGroup[]> = {
   "FAQ-04": [["trang chủ"], ["lịch sử giao dịch"]],
   "FAQ-05": [["lịch sử giao dịch"], ["tiền vào"]],
   "FAQ-06": [["lịch sử giao dịch"], ["chi tiết giao dịch"], ["thông tin giao dịch", "mã tham chiếu", "phí"]],
-  "FAQ-07": [["giao dịch"], ["báo cáo giao dịch đáng ngờ", "báo cáo nghi ngờ"]],
+  "FAQ-07": [["lịch sử giao dịch"], ["chi tiết giao dịch", "trạng thái"], ["không có chức năng báo cáo giao dịch"]],
   "FAQ-08": [["danh bạ người nhận"], ["thêm người nhận"]],
   "FAQ-09": [["danh bạ người nhận"], ["đổi tên", "xóa", "xoá"]],
   "FAQ-10": [["danh bạ người nhận"], ["tiếp tục", "chọn người nhận"]],

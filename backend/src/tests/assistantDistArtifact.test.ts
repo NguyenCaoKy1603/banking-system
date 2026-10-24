@@ -49,7 +49,7 @@ import { getAnswerCatalogEntry } from "./dist/assistant/responseCatalog.js";
 // 1. Kiểm tra nạp tri thức trực tiếp từ compiled artifact
 const knowledge = loadKnowledge();
 assert.equal(knowledge.promptVersion, "help-prompt-v0.4");
-assert.equal(knowledge.faqVersion, "help-faq-v0.2");
+assert.equal(knowledge.faqVersion, "help-faq-v0.3");
 assert.equal(knowledge.faqItemIds.length, 20);
 
 for (let i = 1; i <= 20; i++) {

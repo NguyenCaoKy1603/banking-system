@@ -223,6 +223,13 @@ export function AssistantScreen() {
     setErrorState(null);
   };
 
+  const handleClearQuestion = () => {
+    if (isSubmitting) return;
+    setQuestion("");
+    setErrorState(null);
+    setAnswer(null);
+  };
+
   const handleRelogin = useCallback(async () => {
     await logout();
   }, [logout]);
@@ -242,28 +249,6 @@ export function AssistantScreen() {
           title="Trợ lý hướng dẫn"
         />
 
-        {/* Điểm vào tính năng Tư vấn tài chính cá nhân */}
-        <Card style={styles.financialAdviceCard} testID="assistant-financial-advice-card">
-          <View style={styles.financialAdviceHeader}>
-            <View style={styles.financialAdviceIconBox}>
-              <AppIcon color={colors.primary} name="savings" size={20} />
-            </View>
-            <View style={styles.financialAdviceTextCol}>
-              <Text style={styles.financialAdviceTitle}>Tư vấn tài chính</Text>
-              <Text style={styles.financialAdviceSubtitle}>
-                Lập kế hoạch từ thu nhập, chi phí và mục tiêu bạn cung cấp.
-              </Text>
-            </View>
-          </View>
-          <Button
-            icon="chevronRight"
-            label="Lập kế hoạch tài chính"
-            onPress={() => router.push("/financial-advice")}
-            testID="assistant-navigate-financial-advice"
-            variant="outline"
-          />
-        </Card>
-
         {/* Cảnh báo an toàn thông tin bắt buộc */}
         <Card style={styles.disclaimerCard} testID="assistant-disclaimer">
           <View style={styles.disclaimerHeader}>
@@ -277,9 +262,47 @@ export function AssistantScreen() {
           </Text>
         </Card>
 
+        {/* Câu hỏi mẫu gợi ý đưa lên trước để kích thích người dùng */}
+        <View style={styles.samplesSection}>
+          <Text style={styles.samplesHeader}>Câu hỏi gợi ý phổ biến</Text>
+          <View style={styles.chipsContainer}>
+            {SAMPLE_QUESTIONS.map((sample, index) => (
+              <Pressable
+                accessibilityRole="button"
+                disabled={isSubmitting}
+                key={sample}
+                onPress={() => handleSelectSample(sample)}
+                style={({ pressed }) => [
+                  styles.chip,
+                  pressed && !isSubmitting ? styles.chipPressed : null,
+                  isSubmitting ? styles.chipDisabled : null,
+                  trimmedQuestion === sample ? styles.chipActive : null,
+                ]}
+                testID={`assistant-sample-chip-${index}`}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    trimmedQuestion === sample ? styles.chipActiveText : null,
+                  ]}
+                >
+                  {sample}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
         {/* Khung nhập câu hỏi */}
         <Card style={styles.inputCard}>
-          <Text style={styles.inputLabel}>Câu hỏi của bạn</Text>
+          <View style={styles.inputHeaderRow}>
+            <Text style={styles.inputLabel}>Câu hỏi của bạn</Text>
+            {question.length > 0 && !isSubmitting ? (
+              <Pressable onPress={handleClearQuestion} style={styles.clearBtn}>
+                <Text style={styles.clearBtnText}>Xóa nội dung</Text>
+              </Pressable>
+            ) : null}
+          </View>
           <View
             style={[
               styles.inputBox,
@@ -326,29 +349,6 @@ export function AssistantScreen() {
           </View>
         </Card>
 
-        {/* Câu hỏi mẫu gợi ý */}
-        <View style={styles.samplesSection}>
-          <Text style={styles.samplesHeader}>Câu hỏi gợi ý</Text>
-          <View style={styles.chipsContainer}>
-            {SAMPLE_QUESTIONS.map((sample, index) => (
-              <Pressable
-                accessibilityRole="button"
-                disabled={isSubmitting}
-                key={sample}
-                onPress={() => handleSelectSample(sample)}
-                style={({ pressed }) => [
-                  styles.chip,
-                  pressed && !isSubmitting ? styles.chipPressed : null,
-                  isSubmitting ? styles.chipDisabled : null,
-                ]}
-                testID={`assistant-sample-chip-${index}`}
-              >
-                <Text style={styles.chipText}>{sample}</Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
-
         {/* Trạng thái đang tải */}
         {isSubmitting ? (
           <StateCard
@@ -371,6 +371,13 @@ export function AssistantScreen() {
             <Text style={styles.answerText} testID="assistant-answer-text">
               {answer}
             </Text>
+            <View style={styles.answerFooter}>
+              <Button
+                label="Đặt câu hỏi khác"
+                onPress={handleClearQuestion}
+                variant="ghost"
+              />
+            </View>
           </Card>
         ) : null}
 
@@ -411,6 +418,31 @@ export function AssistantScreen() {
             )}
           </View>
         ) : null}
+
+        {/* Điểm vào tính năng Tư vấn tài chính cá nhân - Đặt ở cuối trang */}
+        <View style={styles.moreSection}>
+          <Text style={styles.moreSectionHeader}>Dịch vụ tài chính liên quan</Text>
+          <Card style={styles.financialAdviceCard} testID="assistant-financial-advice-card">
+            <View style={styles.financialAdviceHeader}>
+              <View style={styles.financialAdviceIconBox}>
+                <AppIcon color={colors.primary} name="savings" size={20} />
+              </View>
+              <View style={styles.financialAdviceTextCol}>
+                <Text style={styles.financialAdviceTitle}>Tư vấn tài chính NOVA</Text>
+                <Text style={styles.financialAdviceSubtitle}>
+                  Lập kế hoạch tiết kiệm & cân đối thu chi từ dữ liệu bạn cung cấp.
+                </Text>
+              </View>
+            </View>
+            <Button
+              icon="chevronRight"
+              label="Lập kế hoạch tài chính"
+              onPress={() => router.push("/financial-advice")}
+              testID="assistant-navigate-financial-advice"
+              variant="outline"
+            />
+          </Card>
+        </View>
       </ScrollView>
     </Screen>
   );
@@ -455,9 +487,22 @@ const styles = StyleSheet.create({
   inputCard: {
     gap: spacing.md,
   },
+  inputHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
   inputLabel: {
     ...typography.label,
     color: colors.text,
+  },
+  clearBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: spacing.xs,
+  },
+  clearBtnText: {
+    ...typography.caption,
+    color: colors.muted,
   },
   inputBox: {
     minHeight: 100,
@@ -518,6 +563,10 @@ const styles = StyleSheet.create({
     borderColor: colors.primarySoft,
     backgroundColor: colors.primarySoft,
   },
+  chipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
   chipPressed: {
     opacity: 0.8,
   },
@@ -528,6 +577,9 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.primary,
     fontWeight: "600",
+  },
+  chipActiveText: {
+    color: colors.onPrimary,
   },
   answerCard: {
     backgroundColor: colors.surface,
@@ -557,6 +609,10 @@ const styles = StyleSheet.create({
     color: colors.text,
     lineHeight: 24,
   },
+  answerFooter: {
+    marginTop: spacing.xs,
+    alignItems: "flex-end",
+  },
   errorContainer: {
     gap: spacing.sm,
     padding: spacing.md,
@@ -577,6 +633,16 @@ const styles = StyleSheet.create({
   errorMessage: {
     ...typography.body,
     color: colors.text,
+  },
+  moreSection: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  moreSectionHeader: {
+    ...typography.label,
+    color: colors.muted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
   },
   financialAdviceCard: {
     gap: spacing.md,

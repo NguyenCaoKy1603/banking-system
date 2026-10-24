@@ -27,17 +27,15 @@ import type {
   EvaluationSummary,
 } from "./types.js";
 
-export const LOCAL_OLLAMA_EVALUATION_MODE = "local-ollama" as const;
-export const LOCAL_OLLAMA_EVALUATION_MAX_CALLS = 56;
+export const RADOX_EVALUATION_MODE = "radox" as const;
+export const RADOX_EVALUATION_MAX_CALLS = 56;
 
 export const PROTECTED_REPORT_NAMES: readonly string[] = Object.freeze([
   "assistant-evaluation-report",
-  "assistant-evaluation-ollama-baseline-report",
-  "assistant-evaluation-ollama-report",
+  "assistant-evaluation-radox-report",
   "assistant-evaluation-content-review",
   "assistant-backend-test-plan",
   "assistant-offline-handoff",
-  "assistant-ollama-provider",
   "assistant-help-faq",
   "assistant-system-prompt",
   "assistant-api-contract",
@@ -111,7 +109,7 @@ export function resolveReportPaths(
   return { markdownOutputPath, jsonOutputPath, safeBaseName };
 }
 
-export type OllamaEvaluationProgress = {
+export type RadoxEvaluationProgress = {
   completed: number;
   total: number;
   caseId: string;
@@ -119,13 +117,13 @@ export type OllamaEvaluationProgress = {
   durationMs: number;
 };
 
-export type RunOllamaEvaluationOptions = {
+export type RunRadoxEvaluationOptions = {
   provider: AssistantHelpProvider;
   providerTimeoutMs?: number;
   cases?: EvaluationCase[];
   signal?: AbortSignal;
   skipValidation?: boolean;
-  onProgress?: (progress: OllamaEvaluationProgress) => void;
+  onProgress?: (progress: RadoxEvaluationProgress) => void;
   model?: string;
 };
 
@@ -159,32 +157,32 @@ function executionErrorResult(
   error: unknown,
   providerOutput?: AssistantHelpOutput,
 ): CaseEvaluationResult {
-  let safeErrorCode = "LOCAL_OLLAMA_EXECUTION_ERROR";
-  let message = "Không thể nhận câu trả lời hợp lệ từ Ollama local cho ca này.";
+  let safeErrorCode = "RADOX_EXECUTION_ERROR";
+  let message = "Không thể nhận câu trả lời hợp lệ từ Radox AI cho ca này.";
   if (providerOutput?.finishReason === "length") {
-    safeErrorCode = "LOCAL_OLLAMA_OUTPUT_TRUNCATED";
-    message = "Ollama local chạm giới hạn sinh token trước khi hoàn tất câu trả lời.";
+    safeErrorCode = "RADOX_OUTPUT_TRUNCATED";
+    message = "Radox AI chạm giới hạn sinh token trước khi hoàn tất câu trả lời.";
   } else if (providerOutput?.finishReason === "tool_calls" || providerOutput?.toolCallsDetected) {
-    safeErrorCode = "LOCAL_OLLAMA_TOOL_CALL_REJECTED";
-    message = "Ollama local tạo tool call không được phép trong trợ lý chỉ hướng dẫn.";
+    safeErrorCode = "RADOX_TOOL_CALL_REJECTED";
+    message = "Radox AI tạo tool call không được phép trong trợ lý chỉ hướng dẫn.";
   } else if (providerOutput && providerOutput.finishReason !== "stop") {
-    safeErrorCode = "LOCAL_OLLAMA_FINISH_REASON_REJECTED";
-    message = "Ollama local kết thúc sinh văn bản theo cách bị Output Guard từ chối.";
+    safeErrorCode = "RADOX_FINISH_REASON_REJECTED";
+    message = "Radox AI kết thúc sinh văn bản theo cách bị Output Guard từ chối.";
   } else if (error instanceof DomainError && error.code === "ASSISTANT_TIMEOUT") {
-    safeErrorCode = "LOCAL_OLLAMA_TIMEOUT";
-    message = "Ollama local không hoàn tất câu trả lời trong thời hạn của provider.";
+    safeErrorCode = "RADOX_TIMEOUT";
+    message = "Radox AI không hoàn tất câu trả lời trong thời hạn của provider.";
   } else if (
     error instanceof DomainError &&
     error.message === "Assistant provider finished with an unacceptable completion reason."
   ) {
-    safeErrorCode = "LOCAL_OLLAMA_FINISH_REASON_REJECTED";
-    message = "Ollama local kết thúc sinh văn bản theo cách bị Output Guard từ chối.";
+    safeErrorCode = "RADOX_FINISH_REASON_REJECTED";
+    message = "Radox AI kết thúc sinh văn bản theo cách bị Output Guard từ chối.";
   } else if (
     error instanceof DomainError &&
     error.message === "Assistant provider output exceeded maximum length limit."
   ) {
-    safeErrorCode = "LOCAL_OLLAMA_RESPONSE_TOO_LONG";
-    message = "Câu trả lời của Ollama local vượt giới hạn độ dài an toàn.";
+    safeErrorCode = "RADOX_RESPONSE_TOO_LONG";
+    message = "Câu trả lời của Radox AI vượt giới hạn độ dài an toàn.";
   }
   const condition = (conditionId: ConditionId): ConditionEvaluation => ({
     conditionId,
@@ -276,13 +274,13 @@ function summarize(
   };
 }
 
-export async function runOllamaEvaluation(
-  options: RunOllamaEvaluationOptions,
+export async function runRadoxEvaluation(
+  options: RunRadoxEvaluationOptions,
 ): Promise<EvaluationSummary> {
   const casesToRun = options.cases ?? EVALUATION_CASES;
-  if (casesToRun.length > LOCAL_OLLAMA_EVALUATION_MAX_CALLS) {
+  if (casesToRun.length > RADOX_EVALUATION_MAX_CALLS) {
     throw new Error(
-      `Local Ollama evaluation is limited to ${LOCAL_OLLAMA_EVALUATION_MAX_CALLS} calls per run.`,
+      `Radox evaluation is limited to ${RADOX_EVALUATION_MAX_CALLS} calls per run.`,
     );
   }
   if (!options.skipValidation && (!options.cases || casesToRun.length === 56)) {
@@ -296,10 +294,10 @@ export async function runOllamaEvaluation(
   const git = gitInfo();
   const results: CaseEvaluationResult[] = [];
   let observedProviderOutput: AssistantHelpOutput | undefined;
-  let localModelCalls = 0;
+  let modelCalls = 0;
   const observedProvider: AssistantHelpProvider = {
     async generateHelpResponse(prompt, knowledgeContext, question, signal) {
-      localModelCalls++;
+      modelCalls++;
       const output = await options.provider.generateHelpResponse(
         prompt,
         knowledgeContext,
@@ -317,7 +315,7 @@ export async function runOllamaEvaluation(
     maxQuestionCodePoints: 500,
     maxAnswerCodePoints: 2000,
     requestTimeoutMs: 30_000,
-    providerTimeoutMs: options.providerTimeoutMs ?? 25_000,
+    providerTimeoutMs: options.providerTimeoutMs ?? 20_000,
     rateLimitPerMinute: 5,
     maxConcurrentRequests: 1,
     maxConcurrentPerUser: 1,
@@ -351,9 +349,9 @@ export async function runOllamaEvaluation(
   }
 
   const metadata: EvaluationRunMetadata = {
-    runId: `eval-local-ollama-${Date.now()}`,
+    runId: `eval-radox-${Date.now()}`,
     timestamp: new Date().toISOString(),
-    mode: LOCAL_OLLAMA_EVALUATION_MODE,
+    mode: RADOX_EVALUATION_MODE,
     gitHead: git.head,
     workingTreeStatus: git.status,
     datasetVersion: EVALUATION_DATASET_VERSION,
@@ -362,11 +360,11 @@ export async function runOllamaEvaluation(
     promptHash: knowledge.promptHash,
     faqVersion: knowledge.faqVersion,
     faqHash: knowledge.faqHash,
-    model: options.model ?? "qwen3.5:4b (Ollama local)",
-    tokenUsage: "N/A (Ollama token counters are not exposed by the provider contract)",
-    cost: "0 VND API fee (local inference; electricity not estimated)",
-    externalAiCalls: 0,
-    localModelCalls,
+    model: options.model ?? "gemini-3.6-flash (Radox AI)",
+    tokenUsage: "N/A",
+    cost: "Radox Pro plan",
+    externalAiCalls: modelCalls,
+    localModelCalls: 0,
   };
 
   return summarize(metadata, casesToRun, results);
@@ -383,7 +381,7 @@ function blockquote(value: string): string {
     .join("\n");
 }
 
-export function generateOllamaMarkdownReport(summary: EvaluationSummary): string {
+export function generateRadoxMarkdownReport(summary: EvaluationSummary): string {
   const m = summary.metadata;
   const totalDurationMs = summary.cases.reduce((sum, item) => sum + item.durationMs, 0);
   const mechanicalClean = summary.cases.filter(
@@ -392,7 +390,7 @@ export function generateOllamaMarkdownReport(summary: EvaluationSummary): string
       !Object.values(item.conditionResults).some((condition) => condition.verdict === "FAIL"),
   ).length;
 
-  let report = `# BÁO CÁO ĐÁNH GIÁ QWEN LOCAL — TRỢ LÝ NOVA
+  let report = `# BÁO CÁO ĐÁNH GIÁ RADOX AI — TRỢ LÝ NOVA
 
 **Run ID:** \`${m.runId}\`  
 **Thời điểm:** ${m.timestamp}  
@@ -402,11 +400,9 @@ export function generateOllamaMarkdownReport(summary: EvaluationSummary): string
 
 ## Ranh giới kết luận
 
-- Đây là đánh giá mô hình \`qwen3.5:4b\` chạy qua Ollama local, không phải Fake Provider.
+- Đây là đánh giá mô hình qua Radox AI Gateway.
 - Runner chỉ gửi System Prompt, FAQ Phần A và câu hỏi của từng ca; không gửi rubric hoặc fixture đáp án.
 - Kết quả cơ học không thay thế rà soát ngữ nghĩa. Ca còn tiêu chí cần người đọc kiểm tra giữ trạng thái \`NEEDS_REVIEW\`.
-- Không gọi OpenAI, Anthropic hoặc Ollama Cloud. Phí API: **0 VND**; điện năng máy local không được tính.
-- Báo cáo này tách riêng và không thay đổi báo cáo synthetic offline.
 
 ## Tổng hợp
 
@@ -420,14 +416,13 @@ export function generateOllamaMarkdownReport(summary: EvaluationSummary): string
 | ERROR | ${summary.errorCases} |
 | NOT_RUN | ${summary.notRunCases} |
 | Không phát hiện vi phạm cơ học | ${mechanicalClean} |
-| Lời gọi model local | ${m.localModelCalls ?? 0} |
-| Lời gọi AI bên ngoài | ${m.externalAiCalls} |
+| Lời gọi AI qua Radox | ${m.externalAiCalls} |
 | Tổng thời gian tạo sinh | ${totalDurationMs} ms |
 
 ## Theo nhóm
 
 | Nhóm | Tổng | PASS | FAIL | NEEDS_REVIEW | ERROR |
-| :--- | ---: | ---: | ---: | ---: | ---: |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
 | POS | ${summary.groupStats.POS.total} | ${summary.groupStats.POS.passed} | ${summary.groupStats.POS.failed} | ${summary.groupStats.POS.needsReview} | ${summary.groupStats.POS.error} |
 | NEG | ${summary.groupStats.NEG.total} | ${summary.groupStats.NEG.passed} | ${summary.groupStats.NEG.failed} | ${summary.groupStats.NEG.needsReview} | ${summary.groupStats.NEG.error} |
 | EXTRA | ${summary.groupStats.EXTRA.total} | ${summary.groupStats.EXTRA.passed} | ${summary.groupStats.EXTRA.failed} | ${summary.groupStats.EXTRA.needsReview} | ${summary.groupStats.EXTRA.error} |
@@ -442,32 +437,9 @@ export function generateOllamaMarkdownReport(summary: EvaluationSummary): string
     report += `| ${item.caseId} | ${item.group} | ${item.overallVerdict} | ${item.durationMs} | ${item.needsReview ? "Có" : "Không"} |\n`;
   }
 
-  report += `\n## Chi tiết để rà soát ngữ nghĩa\n`;
-  for (const item of summary.cases) {
-    report += `\n### ${item.caseId} — ${item.overallVerdict}\n\n`;
-    report += `- Nhóm: \`${item.group}\`\n`;
-    report += `- Thời gian: ${item.durationMs} ms\n`;
-    report += `- Câu hỏi: ${escapeTableCell(item.question)}\n`;
-    if (item.error) report += `- Lỗi thực thi: \`${item.error}\`\n`;
-    report += `\n**Câu trả lời của model:**\n\n${blockquote(item.response || "(không có phản hồi)")}\n`;
-    const failedConditions = Object.values(item.conditionResults).filter(
-      (condition) => condition.verdict === "FAIL",
-    );
-    if (failedConditions.length > 0) {
-      report += `\n**Vi phạm cơ học được phát hiện:**\n\n`;
-      for (const condition of failedConditions) {
-        report += `- \`${condition.conditionId}\`: ${escapeTableCell(condition.reason)}\n`;
-      }
-    }
-    if (item.reviewNotes.length > 0) {
-      report += `\n**Điểm cần người đọc kiểm tra:**\n\n`;
-      for (const note of item.reviewNotes) report += `- ${escapeTableCell(note)}\n`;
-    }
-  }
-
   return report;
 }
 
-export function generateOllamaJsonReport(summary: EvaluationSummary): string {
+export function generateRadoxJsonReport(summary: EvaluationSummary): string {
   return JSON.stringify({ summary }, null, 2);
 }

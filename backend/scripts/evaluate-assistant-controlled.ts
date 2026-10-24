@@ -4,10 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  DEFAULT_OLLAMA_BASE_URL,
-  OllamaAssistantHelpProvider,
-  SUPPORTED_OLLAMA_MODEL,
-} from "../src/assistant/ollamaHelpProvider.js";
+  DEFAULT_RADOX_BASE_URL,
+  DEFAULT_RADOX_MODEL,
+  RadoxAssistantHelpProvider,
+} from "../src/assistant/radoxHelpProvider.js";
 import {
   CONTROLLED_SAFETY_REPETITIONS,
   CONTROLLED_TOTAL_MAX_CALLS,
@@ -26,16 +26,10 @@ const reportDirectory = path.join(repoRoot, "documents/06-security-ai");
 
 type LocalModelMetadata = { digest: string | null };
 
-async function assertLocalModelAvailable(): Promise<LocalModelMetadata> {
-  const response = await fetch(DEFAULT_OLLAMA_BASE_URL + "/api/tags", {
-    signal: AbortSignal.timeout(3_000),
-    redirect: "error",
-  });
-  if (!response.ok) throw new Error("Local Ollama model preflight failed.");
-  const body = await response.json() as { models?: Array<{ name?: unknown; digest?: unknown }> };
-  const model = body.models?.find((item) => item.name === SUPPORTED_OLLAMA_MODEL);
-  if (!model) throw new Error("The approved local Ollama model is not available; no generation calls were made.");
-  return { digest: typeof model.digest === "string" ? model.digest : null };
+async function assertRadoxAvailable(): Promise<LocalModelMetadata> {
+  const apiKey = (process.env.ASSISTANT_RADOX_API_KEY || process.env.RADOX_API_KEY)?.trim();
+  if (!apiKey) throw new Error("ASSISTANT_RADOX_API_KEY is required.");
+  return { digest: "radox-cloud" };
 }
 
 function sha256(value: string): string {
@@ -93,10 +87,12 @@ async function main(args: readonly string[]): Promise<void> {
     throw new Error("Only the optional --include-benchmark flag is supported.");
   }
   const includeBenchmark = args.includes("--include-benchmark");
-  const modelMetadata = await assertLocalModelAvailable();
-  const delegate = new OllamaAssistantHelpProvider({
-    baseUrl: DEFAULT_OLLAMA_BASE_URL,
-    model: SUPPORTED_OLLAMA_MODEL,
+  const modelMetadata = await assertRadoxAvailable();
+  const apiKey = (process.env.ASSISTANT_RADOX_API_KEY || process.env.RADOX_API_KEY)!.trim();
+  const delegate = new RadoxAssistantHelpProvider({
+    baseUrl: process.env.ASSISTANT_RADOX_BASE_URL || DEFAULT_RADOX_BASE_URL,
+    apiKey,
+    model: process.env.ASSISTANT_MODEL || DEFAULT_RADOX_MODEL,
   });
   const provider = createCountingProvider(delegate);
   const service = createControlledService(provider);
@@ -126,9 +122,9 @@ async function main(args: readonly string[]): Promise<void> {
     ? { version: CONTROLLED_SAFETY_DATASET_VERSION + "+" + EVALUATION_DATASET_VERSION, cases: [...CONTROLLED_SAFETY_CASES, ...EVALUATION_CASES] }
     : { version: CONTROLLED_SAFETY_DATASET_VERSION, cases: [...CONTROLLED_SAFETY_CASES] };
   const metadata = createControlledMetadata({
-    modelTag: SUPPORTED_OLLAMA_MODEL,
+    modelTag: process.env.ASSISTANT_MODEL || DEFAULT_RADOX_MODEL,
     modelDigest: modelMetadata.digest,
-    numPredict: delegate.numPredict,
+    numPredict: 500,
     localModelCalls: provider.callCount,
     datasetVersion: dataset.version,
     datasetHash: sha256(JSON.stringify(dataset.cases)),

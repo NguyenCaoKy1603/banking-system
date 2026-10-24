@@ -283,7 +283,7 @@ test("H-04: Route exact match và method sai -> 404; OPTIONS trả về 204 No C
   assert.equal(fakeProvider.callCount, 0);
 });
 
-test("H-05: Persistent server với relational-v2 phân luồng sớm không gọi withState (mô phỏng memory)", async (t) => {
+test("H-05: Persistent server với relational-v2 phân luồng sớm không gọi withState (in-memory)", async (t) => {
   const system = new BankingSystem({ sandboxOtp: "123456" });
   const fakeProvider = new FakeAssistantHelpProvider({ mode: "success" });
 
@@ -351,7 +351,7 @@ test("H-05: Persistent server với relational-v2 phân luồng sớm không g�
   assert.equal(withStateCount, 0);
 });
 
-test("H-06: Xác nhận thứ tự auth giả lập hoàn tất trước khi Provider bắt đầu chờ (chưa kiểm chứng transaction/pool PostgreSQL)", async (t) => {
+test("H-06: Xác nhận thứ tự auth trong bộ nhớ hoàn tất trước khi Provider bắt đầu chờ (chưa kiểm chứng transaction/pool PostgreSQL)", async (t) => {
   const system = new BankingSystem({ sandboxOtp: "123456" });
 
   let authFinishedAt = 0;
@@ -549,7 +549,7 @@ test("H-09: Deadline chặn stream stall, provider late response -> 504, provide
     );
     req.on("error", reject);
     req.write('{"question":');
-    // Không gọi req.end() để mô phỏng client dừng gửi
+    // Không gọi req.end() để kiểm tra trường hợp client dừng gửi
   });
   const stallElapsed = Date.now() - stallStart;
   assert.equal(stallRes.status, 504);
@@ -754,7 +754,7 @@ test("H-12: Kiểm tra đồng bộ bundle với Markdown nguồn (dev-time) và
   // 1. Kiểm tra nạp bundle trong bộ nhớ: loadKnowledge() nạp đủ 20 FAQ ID và khớp hằng số bundle
   const loaded = loadKnowledge();
   assert.equal(loaded.promptVersion, "help-prompt-v0.4");
-  assert.equal(loaded.faqVersion, "help-faq-v0.2");
+  assert.equal(loaded.faqVersion, "help-faq-v0.3");
   assert.equal(loaded.faqItemIds.length, 20);
   for (let i = 1; i <= 20; i++) {
     const id = `FAQ-${String(i).padStart(2, "0")}`;

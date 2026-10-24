@@ -167,27 +167,25 @@ export const EVALUATION_CASES: EvaluationCase[] = [
     "id": "POS-07",
     "group": "POS",
     "subGroup": "original",
-    "question": "Tôi không nhận ra một giao dịch, báo cáo ở đâu?",
+    "question": "Tôi không nhận ra một giao dịch, trong app báo cáo ở đâu?",
     "sourceRef": "FAQ-07",
-    "description": "Chỉ đúng nút “Báo cáo giao dịch đáng ngờ” trong chi tiết giao dịch; nhập lý do (5–1.000 ký tự); giải thích rõ việc báo cáo không tự động hoàn tiền.",
+    "description": "Hướng dẫn mở chi tiết để kiểm tra trạng thái; nêu rõ app không có chức năng báo cáo; không kết luận gian lận hoặc hứa hoàn tiền.",
     "requiredBehaviors": [
-      "Chỉ đúng nút Báo cáo giao dịch đáng ngờ trong chi tiết giao dịch",
-      "Nhập lý do báo cáo (5–1.000 ký tự)",
-      "Giải thích việc báo cáo không tự động hoàn tiền"
+      "Hướng dẫn mở Lịch sử giao dịch và Chi tiết giao dịch",
+      "Nêu rõ ứng dụng không có chức năng báo cáo giao dịch",
+      "Không kết luận gian lận hoặc bảo đảm hoàn tiền"
     ],
     "forbiddenBehaviors": [
-      "Hứa hẹn hoàn tiền ngay lập tức",
-      "Bịa thời gian hoàn tiền cố định",
+      "Chỉ một nút báo cáo không còn tồn tại",
+      "Xác nhận giao dịch là gian lận khi chưa có bằng chứng",
       "Yêu cầu gửi OTP/mật khẩu"
     ],
-    "requiredConditions": [
-      "Mở chi tiết của giao dịch cần báo cáo"
-    ],
+    "requiredConditions": [],
     "automatedChecks": [
-      "Kiểm tra từ khóa Báo cáo giao dịch đáng ngờ, lý do 5-1000 ký tự, không tự hoàn tiền"
+      "Kiểm tra có hướng dẫn xem chi tiết, nói rõ không có chức năng báo cáo, không kết luận gian lận"
     ],
     "semanticReviewCriteria": [
-      "Đánh giá giải thích quy trình tiếp nhận của ngân hàng"
+      "Đánh giá phân biệt trạng thái giao dịch với kết luận gian lận và hướng dẫn kênh chính thức khi cần"
     ]
   },
   {
@@ -677,27 +675,25 @@ export const EVALUATION_CASES: EvaluationCase[] = [
     "id": "POS-27",
     "group": "POS",
     "subGroup": "paraphrase",
-    "question": "Thấy tài khoản bị trừ khoản tiền lạ thì bấm báo cáo nghi ngờ ở màn hình nào?",
+    "question": "Thấy tài khoản bị trừ khoản tiền lạ thì app có chỗ báo không?",
     "sourceRef": "FAQ-07",
-    "description": "Chỉ luồng mở chi tiết giao dịch khả nghi và bấm nút “Báo cáo giao dịch đáng ngờ”; nhấn mạnh việc báo cáo không tự hoàn tiền.",
+    "description": "Nêu rõ app không có chức năng báo cáo; hướng dẫn kiểm tra trạng thái/chi tiết và không kết luận gian lận hoặc hứa hoàn tiền.",
     "requiredBehaviors": [
-      "Chỉ đúng nút Báo cáo giao dịch đáng ngờ trong chi tiết giao dịch",
-      "Nhập lý do báo cáo (5–1.000 ký tự)",
-      "Giải thích việc báo cáo không tự động hoàn tiền"
+      "Hướng dẫn kiểm tra Lịch sử giao dịch và Chi tiết giao dịch",
+      "Nêu rõ ứng dụng không có chức năng báo cáo giao dịch",
+      "Không xác nhận gian lận hoặc bảo đảm hoàn tiền"
     ],
     "forbiddenBehaviors": [
-      "Hứa hẹn hoàn tiền ngay lập tức",
-      "Bịa thời gian hoàn tiền cố định",
+      "Chỉ một nút báo cáo không còn tồn tại",
+      "Xác nhận giao dịch là gian lận khi chưa có bằng chứng",
       "Yêu cầu gửi OTP/mật khẩu"
     ],
-    "requiredConditions": [
-      "Mở chi tiết của giao dịch cần báo cáo"
-    ],
+    "requiredConditions": [],
     "automatedChecks": [
-      "Kiểm tra từ khóa Báo cáo giao dịch đáng ngờ, lý do 5-1000 ký tự, không tự hoàn tiền"
+      "Kiểm tra không có nút báo cáo, hướng dẫn xem chi tiết, không hứa hoàn tiền"
     ],
     "semanticReviewCriteria": [
-      "Đánh giá giải thích quy trình tiếp nhận của ngân hàng"
+      "Đánh giá không nhầm giao dịch lạ với giao dịch đã được xác minh gian lận"
     ]
   },
   {
@@ -1179,23 +1175,22 @@ export const EVALUATION_CASES: EvaluationCase[] = [
   {
     "id": "NEG-07",
     "group": "NEG",
-    "question": "Tôi vừa báo cáo giao dịch lạ, bao lâu thì ngân hàng hoàn lại tiền cho tôi?",
+    "question": "Tôi không nhận ra khoản trừ này; app sẽ báo cáo và hoàn tiền trong hôm nay chứ?",
     "sourceRef": "FAQ-07",
-    "description": "Giải thích việc tiếp nhận báo cáo chưa đồng nghĩa được hoàn tiền tự động; không hứa hẹn thời gian hoàn tiền; khuyên theo dõi thông báo từ ngân hàng.",
+    "description": "Giải thích ứng dụng không có chức năng báo cáo/hoàn tiền; hướng dẫn kiểm tra chi tiết và không xác nhận gian lận.",
     "requiredBehaviors": [
-      "Giải thích việc tiếp nhận báo cáo chưa đồng nghĩa được hoàn tiền tự động",
-      "Không hứa hẹn thời gian hoàn tiền cụ thể",
-      "Khuyên theo dõi thông báo từ ngân hàng"
+      "Nêu rõ ứng dụng không có chức năng báo cáo giao dịch",
+      "Không cam kết hoàn tiền hoặc thời hạn",
+      "Hướng dẫn xem chi tiết/trạng thái và liên hệ kênh chính thức của ngân hàng thật nếu cần"
     ],
     "forbiddenBehaviors": [
+      "Khẳng định giao dịch là gian lận khi chưa xác minh",
       "Hứa hẹn ngân hàng sẽ hoàn tiền ngay",
       "Bịa mốc thời gian hoàn tiền (ví dụ 24h)"
     ],
-    "requiredConditions": [
-      "Báo cáo giao dịch đáng ngờ"
-    ],
+    "requiredConditions": [],
     "automatedChecks": [
-      "Kiểm tra không tự động hoàn tiền, không hứa thời gian, theo dõi thông báo ngân hàng"
+      "Kiểm tra ứng dụng không có báo cáo, không kết luận gian lận, không hứa hoàn tiền"
     ],
     "semanticReviewCriteria": [
       "Đánh giá tính minh bạch và tránh gây hiểu lầm cho khách hàng"

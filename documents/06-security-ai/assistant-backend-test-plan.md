@@ -142,7 +142,7 @@ Log chỉ giữ request ID, mã test, prompt/FAQ version, model, duration, statu
 
 ### Bước 2 — Unit/service tests với fake provider
 
-Fake provider là object mô phỏng trả lời, lỗi hoặc treo (được đặc tả tại Mục 8 của [assistant-api-contract.md](assistant-api-contract.md)). Nó chứng minh Backend xử lý các nhánh đúng, xác thực ranh giới dữ liệu và cô lập luồng an toàn; không chứng minh AI hiểu FAQ hay chống được prompt injection.
+Fake provider là test double có thể trả lời, báo lỗi hoặc hết thời gian chờ (được đặc tả tại Mục 8 của [assistant-api-contract.md](assistant-api-contract.md)). Nó chứng minh Backend xử lý các nhánh đúng, xác thực ranh giới dữ liệu và cô lập luồng an toàn; không chứng minh AI hiểu FAQ hay chống được prompt injection.
 
 | Mã | Ca kiểm thử | Kết quả bắt buộc |
 | --- | --- | --- |

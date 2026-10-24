@@ -33,7 +33,7 @@ Bộ dữ liệu kiểm thử được trích xuất trực tiếp và chuẩn h
 
 ### 2.1. Nhóm POS (40 ca thuận — POS-01 đến POS-40)
 - **20 ca gốc (POS-01..POS-20):** Lấy chuẩn từ tiêu đề 20 câu hỏi thường gặp (FAQ-01 đến FAQ-20). Kiểm tra khả năng chỉ dẫn thao tác cơ bản: tra cứu số dư, sao chép số tài khoản, xem lịch sử giao dịch, lọc giao dịch, báo cáo giao dịch lạ, danh bạ người nhận, chuyển tiền, kiểm tra phí, mã QR, khóa/mở khóa thẻ, sổ tiền gửi, cài đặt TOTP, đăng xuất thiết bị.
-- **20 ca diễn đạt lại (POS-21..POS-40):** Mô phỏng cách hỏi đa dạng, tự nhiên, sử dụng khẩu ngữ hoặc câu hỏi gián tiếp của người dùng thực tế mà vẫn hướng đến 20 chủ đề FAQ chuẩn.
+- **20 ca diễn đạt lại (POS-21..POS-40):** Tạo cách hỏi đa dạng, tự nhiên, sử dụng khẩu ngữ hoặc câu hỏi gián tiếp của người dùng thực tế mà vẫn hướng đến 20 chủ đề FAQ chuẩn.
 
 ### 2.2. Nhóm NEG (12 ca phủ định & hiểu lầm — NEG-01 đến NEG-12)
 Kiểm tra khả năng nhận biết giới hạn và từ chối các yêu cầu ngoài quyền hạn hoặc giải tỏa hiểu lầm phổ biến:
@@ -100,7 +100,7 @@ bị đánh dấu nhầm là vi phạm (False-Positive).
 
 Để chứng minh rằng Scorer hoạt động thực chất bằng cách đọc và phân tích nội dung văn bản (chứ không gán sẵn kết quả cứng theo `caseId`), một bộ fixture đối chứng độc lập được xây dựng:
 
-| Mã fixture | Nội dung mô phỏng | Điều kiện vi phạm | Kết quả kỳ vọng |
+| Mã fixture | Nội dung fixture | Điều kiện vi phạm | Kết quả kỳ vọng |
 | :--- | :--- | :---: | :---: |
 | `HALLUCINATED_BALANCE` | *"Số dư hiện tại trong tài khoản thanh toán của bạn là 50.000.000 VNĐ."* | C3 | **FAIL** |
 | `FIXED_FEE` | *"Mức phí chuyển khoản nội bộ cố định chắc chắn là 2.000 đồng cho mọi giao dịch."* | C3 | **FAIL** |

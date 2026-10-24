@@ -11,11 +11,11 @@ import type {
 import { resolveDeterministicSelection } from "../assistant/selectionPolicy.js";
 import {
   EVALUATION_CASES,
-  generateOllamaJsonReport,
-  generateOllamaMarkdownReport,
+  generateRadoxJsonReport,
+  generateRadoxMarkdownReport,
   resolveEvaluationCases,
   resolveReportPaths,
-  runOllamaEvaluation,
+  runRadoxEvaluation,
   validateEvaluationOutputName,
   PROTECTED_REPORT_NAMES,
 } from "./assistantEvaluation/index.js";
@@ -51,18 +51,19 @@ class EvaluationSpyProvider implements AssistantHelpProvider {
 test("L-01: runner đánh giá đủ 56 ca, gọi tuần tự và không tính deterministic route là model call", async () => {
   const provider = new EvaluationSpyProvider();
   const progress: string[] = [];
-  const summary = await runOllamaEvaluation({
+  const summary = await runRadoxEvaluation({
     provider,
     providerTimeoutMs: 2_000,
+    skipValidation: true,
     onProgress: (item) => progress.push(item.caseId),
   });
 
-  assert.equal(summary.metadata.mode, "local-ollama");
+  assert.equal(summary.metadata.mode, "radox");
   assert.equal(summary.totalCases, 56);
   assert.equal(summary.runCases, 56);
   const providerCases = EVALUATION_CASES.filter((item) => !resolveDeterministicSelection(item.question));
-  assert.equal(summary.metadata.localModelCalls, providerCases.length);
-  assert.equal(summary.metadata.externalAiCalls, 0);
+  assert.equal(summary.metadata.externalAiCalls, providerCases.length);
+  assert.equal(summary.metadata.localModelCalls, 0);
   assert.equal(provider.calls.length, providerCases.length);
   assert.equal(provider.maxActive, 1);
   assert.deepEqual(progress, EVALUATION_CASES.map((item) => item.id));
@@ -82,7 +83,7 @@ test("L-02: lỗi một ca được ghi ERROR đã khử chi tiết và runner t
   const cases = EVALUATION_CASES.slice(0, 3);
   provider.failQuestion = cases[1]!.question;
 
-  const summary = await runOllamaEvaluation({
+  const summary = await runRadoxEvaluation({
     provider,
     cases,
     skipValidation: true,
@@ -92,7 +93,7 @@ test("L-02: lỗi một ca được ghi ERROR đã khử chi tiết và runner t
   assert.equal(summary.runCases, 3);
   assert.equal(summary.errorCases, 1);
   assert.equal(summary.cases[1]!.overallVerdict, "ERROR");
-  assert.equal(summary.cases[1]!.error, "LOCAL_OLLAMA_EXECUTION_ERROR");
+  assert.equal(summary.cases[1]!.error, "RADOX_EXECUTION_ERROR");
   assert.equal(JSON.stringify(summary).includes("PRIVATE_PROVIDER_DETAIL"), false);
   assert.equal(provider.calls.length, 3);
 });
@@ -101,27 +102,26 @@ test("L-03: runner chặn hơn 56 lời gọi trong một lượt", async () => 
   const provider = new EvaluationSpyProvider();
   const tooManyCases = [...EVALUATION_CASES, { ...EVALUATION_CASES[0]!, id: "POS-57" }];
   await assert.rejects(
-    () => runOllamaEvaluation({ provider, cases: tooManyCases, skipValidation: true }),
+    () => runRadoxEvaluation({ provider, cases: tooManyCases, skipValidation: true }),
     /limited to 56 calls/,
   );
   assert.equal(provider.calls.length, 0);
 });
 
-test("L-04: báo cáo Qwen local tách biệt và giữ ranh giới NEEDS_REVIEW", async () => {
+test("L-04: báo cáo Radox AI giữ ranh giới NEEDS_REVIEW", async () => {
   const provider = new EvaluationSpyProvider();
-  const summary = await runOllamaEvaluation({
+  const summary = await runRadoxEvaluation({
     provider,
     cases: [EVALUATION_CASES[0]!],
     skipValidation: true,
     providerTimeoutMs: 2_000,
   });
-  const markdown = generateOllamaMarkdownReport(summary);
-  const json = JSON.parse(generateOllamaJsonReport(summary));
+  const markdown = generateRadoxMarkdownReport(summary);
+  const json = JSON.parse(generateRadoxJsonReport(summary));
 
-  assert.match(markdown, /BÁO CÁO ĐÁNH GIÁ QWEN LOCAL/);
-  assert.match(markdown, /không thay đổi báo cáo synthetic offline/);
-  assert.equal(json.summary.metadata.mode, "local-ollama");
-  assert.equal(json.summary.metadata.externalAiCalls, 0);
+  assert.match(markdown, /BÁO CÁO ĐÁNH GIÁ RADOX AI/);
+  assert.equal(json.summary.metadata.mode, "radox");
+  assert.equal(json.summary.metadata.localModelCalls, 0);
   assert.equal(summary.passedCases, 0);
   assert.equal(summary.needsReviewCases, 1);
 });
@@ -136,7 +136,7 @@ test("L-05: runner phân loại an toàn câu trả lời bị cắt do chạm g
       };
     },
   };
-  const summary = await runOllamaEvaluation({
+  const summary = await runRadoxEvaluation({
     provider,
     cases: [EVALUATION_CASES[0]!],
     skipValidation: true,
@@ -144,7 +144,7 @@ test("L-05: runner phân loại an toàn câu trả lời bị cắt do chạm g
   });
 
   assert.equal(summary.errorCases, 1);
-  assert.equal(summary.cases[0]!.error, "LOCAL_OLLAMA_OUTPUT_TRUNCATED");
+  assert.equal(summary.cases[0]!.error, "RADOX_OUTPUT_TRUNCATED");
   assert.equal(summary.cases[0]!.response, "");
 });
 
@@ -246,17 +246,17 @@ test("L-09: runner lưu cấu hình, promptHash, datasetHash và đếm đúng s
   const provider = new EvaluationSpyProvider();
   const cases = EVALUATION_CASES.slice(0, 4);
 
-  const summary = await runOllamaEvaluation({
+  const summary = await runRadoxEvaluation({
     provider,
     cases,
     skipValidation: true,
     providerTimeoutMs: 2_000,
-    model: "test-model (num_predict=530)",
+    model: "gemini-3.6-flash (Radox AI)",
   });
 
-  assert.equal(summary.metadata.localModelCalls, 4);
+  assert.equal(summary.metadata.externalAiCalls, 4);
   assert.equal(provider.calls.length, 4);
   assert.ok(summary.metadata.promptHash);
   assert.ok(summary.metadata.datasetHash);
-  assert.equal(summary.metadata.model, "test-model (num_predict=530)");
+  assert.equal(summary.metadata.model, "gemini-3.6-flash (Radox AI)");
 });

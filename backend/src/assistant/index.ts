@@ -7,7 +7,7 @@ export * from "./knowledgeLoader.js";
 export * from "./rateLimiter.js";
 export * from "./streamReader.js";
 export * from "./knowledgeSync.js";
-export * from "./ollamaHelpProvider.js";
+export * from "./radoxHelpProvider.js";
 export * from "./runtimeAssistantConfig.js";
 export * from "./responseCatalog.js";
 export * from "./selectionPolicy.js";

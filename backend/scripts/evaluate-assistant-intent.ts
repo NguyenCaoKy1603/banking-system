@@ -6,10 +6,10 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 import {
-  DEFAULT_OLLAMA_BASE_URL,
-  OllamaAssistantHelpProvider,
-  SUPPORTED_OLLAMA_MODEL,
-} from "../src/assistant/ollamaHelpProvider.js";
+  DEFAULT_RADOX_BASE_URL,
+  DEFAULT_RADOX_MODEL,
+  RadoxAssistantHelpProvider,
+} from "../src/assistant/radoxHelpProvider.js";
 import {
   ANSWER_CATALOG_HASH,
   ANSWER_CATALOG_VERSION,
@@ -96,15 +96,9 @@ export {
 type LocalModelMetadata = { digest: string | null };
 
 async function assertLocalModelAvailable(): Promise<LocalModelMetadata> {
-  const response = await fetch(DEFAULT_OLLAMA_BASE_URL + "/api/tags", {
-    signal: AbortSignal.timeout(3_000),
-    redirect: "error",
-  });
-  if (!response.ok) throw new Error("Local Ollama model preflight failed.");
-  const body = (await response.json()) as { models?: Array<{ name?: unknown; digest?: unknown }> };
-  const model = body.models?.find((item) => item.name === SUPPORTED_OLLAMA_MODEL);
-  if (!model) throw new Error("The approved local Ollama model is not available; no generation calls were made.");
-  return { digest: typeof model.digest === "string" ? model.digest : null };
+  const apiKey = (process.env.ASSISTANT_RADOX_API_KEY || process.env.RADOX_API_KEY)?.trim();
+  if (!apiKey) throw new Error("ASSISTANT_RADOX_API_KEY is required for live mode.");
+  return { digest: "radox-cloud" };
 }
 
 function sha256(value: string): string {
@@ -375,7 +369,7 @@ export async function runIntentEvaluationCli(args: readonly string[]): Promise<n
       tracker.runs.push(runRecord);
       writePos23Budget(tracker, budgetFilePath);
     } else {
-      // Live Ollama Mode
+      // Live Radox Mode
       const budgetFilePath = budgetArg ? path.resolve(budgetArg) : POS23_BUDGET_FILE;
       tracker = isPos23Suite ? readPos23Budget(budgetFilePath) : { totalCalls: 0, runs: [] };
 
@@ -393,9 +387,11 @@ export async function runIntentEvaluationCli(args: readonly string[]): Promise<n
       }
 
       modelMetadata = await assertLocalModelAvailable();
-      delegate = new OllamaAssistantHelpProvider({
-        baseUrl: DEFAULT_OLLAMA_BASE_URL,
-        model: SUPPORTED_OLLAMA_MODEL,
+      const apiKey = (process.env.ASSISTANT_RADOX_API_KEY || process.env.RADOX_API_KEY)!.trim();
+      delegate = new RadoxAssistantHelpProvider({
+        baseUrl: process.env.ASSISTANT_RADOX_BASE_URL || DEFAULT_RADOX_BASE_URL,
+        apiKey,
+        model: process.env.ASSISTANT_MODEL || DEFAULT_RADOX_MODEL,
       });
     }
 
@@ -419,7 +415,7 @@ export async function runIntentEvaluationCli(args: readonly string[]): Promise<n
       gitHead,
       workingTree: (status ? "WIP" : "CLEAN") as "WIP" | "CLEAN",
       workingTreeEntryCount,
-      modelTag: isFakeMode ? "fake:synthetic" : SUPPORTED_OLLAMA_MODEL,
+      modelTag: isFakeMode ? "fake:synthetic" : (process.env.ASSISTANT_MODEL || DEFAULT_RADOX_MODEL),
       modelDigest: isFakeMode ? null : modelMetadata?.digest ?? null,
       selectorProtocolVersion: SELECTOR_PROTOCOL_VERSION,
       selectorPromptHash: ASSISTANT_SELECTOR_PROMPT_HASH,
@@ -479,7 +475,7 @@ export async function runIntentEvaluationCli(args: readonly string[]): Promise<n
       gitHead,
       workingTree: (status ? "WIP" : "CLEAN") as "WIP" | "CLEAN",
       workingTreeEntryCount,
-      modelTag: isFakeMode ? "fake:synthetic" : SUPPORTED_OLLAMA_MODEL,
+      modelTag: isFakeMode ? "fake:synthetic" : (process.env.ASSISTANT_MODEL || DEFAULT_RADOX_MODEL),
       modelDigest: isFakeMode ? null : modelMetadata?.digest ?? null,
       selectorProtocolVersion: SELECTOR_PROTOCOL_VERSION,
       selectorPromptHash: ASSISTANT_SELECTOR_PROMPT_HASH,

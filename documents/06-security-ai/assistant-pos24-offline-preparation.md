@@ -96,7 +96,7 @@ Các mã băm cấu thành nội tại từ `backend/src/assistant/responseCatal
 3. `backend/src/tests/assistantEvaluation/fixtures/pos24-reference-catalog.json`: Bản tham chiếu độc lập 25 câu trả lời chuẩn kèm hash và provenance.
 4. `backend/src/tests/assistantEvaluation/pos24Orchestrator.ts`: Module điều phối pipeline 4 giai đoạn, quản lý stop gates, đếm stage counter và cô lập workspace.
 5. `backend/src/tests/assistantEvaluation/pos24DisambiguationDataset.ts`: Định nghĩa chính xác 8 ca DEV và 8 ca DIAG cho POS-24.
-6. `backend/src/tests/assistantEvaluation/fixtures/pos24-synthetic-control.json`: Synthetic fixture cho Control DEV (mô phỏng lỗi chọn `FAQ-05` cho câu hỏi POS-24).
+6. `backend/src/tests/assistantEvaluation/fixtures/pos24-synthetic-control.json`: Synthetic fixture cho Control DEV (tái hiện lỗi chọn `FAQ-05` cho câu hỏi POS-24).
 7. `backend/src/tests/assistantEvaluation/fixtures/pos24-synthetic-candidate.json`: Synthetic fixture cho Candidate (chọn đúng 100% 8 DEV, 8 DIAG, 56 Benchmark).
 8. `backend/src/tests/assistantEvaluation/fixtures/pos24-synthetic-error.json`: Synthetic fixture tạo lỗi provider exception và JSON malformed.
 

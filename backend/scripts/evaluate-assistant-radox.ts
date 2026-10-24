@@ -3,18 +3,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  DEFAULT_OLLAMA_BASE_URL,
-  DEFAULT_OLLAMA_NUM_PREDICT,
-  OllamaAssistantHelpProvider,
-  SUPPORTED_OLLAMA_MODEL,
-} from "../src/assistant/ollamaHelpProvider.js";
+  DEFAULT_RADOX_BASE_URL,
+  DEFAULT_RADOX_MODEL,
+  RadoxAssistantHelpProvider,
+} from "../src/assistant/radoxHelpProvider.js";
 import {
-  EVALUATION_CASES,
-  generateOllamaJsonReport,
-  generateOllamaMarkdownReport,
+  generateRadoxJsonReport,
+  generateRadoxMarkdownReport,
   resolveEvaluationCases,
   resolveReportPaths,
-  runOllamaEvaluation,
+  runRadoxEvaluation,
   validateEvaluationOutputName,
 } from "../src/tests/assistantEvaluation/index.js";
 
@@ -25,9 +23,9 @@ const reportDirectory = path.join(repoRoot, "documents/06-security-ai");
 export function parseCliArgs(customArgs?: string[]) {
   const args = customArgs ?? process.argv.slice(2);
   let selectedCaseIds: string[] | undefined;
-  let numPredict: number = DEFAULT_OLLAMA_NUM_PREDICT;
+  let model: string = DEFAULT_RADOX_MODEL;
   let outputName: string | undefined;
-  let timeoutMs: number = 25_000;
+  let timeoutMs: number = 20_000;
 
   for (const arg of args) {
     if (arg.startsWith("--cases=")) {
@@ -36,13 +34,8 @@ export function parseCliArgs(customArgs?: string[]) {
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
-    } else if (arg.startsWith("--num-predict=")) {
-      const val = Number(arg.slice("--num-predict=".length).trim());
-      if (Number.isSafeInteger(val) && val > 0) {
-        numPredict = val;
-      } else {
-        throw new Error(`Invalid --num-predict value: ${arg}`);
-      }
+    } else if (arg.startsWith("--model=")) {
+      model = arg.slice("--model=".length).trim();
     } else if (arg.startsWith("--output-name=")) {
       const rawName = arg.slice("--output-name=".length).trim();
       outputName = validateEvaluationOutputName(rawName);
@@ -56,63 +49,51 @@ export function parseCliArgs(customArgs?: string[]) {
     }
   }
 
-  return { selectedCaseIds, numPredict, outputName, timeoutMs };
-}
-
-
-
-async function assertLocalModelAvailable(): Promise<void> {
-  const response = await fetch(`${DEFAULT_OLLAMA_BASE_URL}/api/tags`, {
-    signal: AbortSignal.timeout(3_000),
-    redirect: "error",
-  });
-  if (!response.ok) throw new Error(`Local Ollama preflight returned HTTP ${response.status}.`);
-  const body = (await response.json()) as { models?: Array<{ name?: unknown }> };
-  const available = body.models?.some((model) => model.name === SUPPORTED_OLLAMA_MODEL) ?? false;
-  if (!available) {
-    throw new Error(`Local model '${SUPPORTED_OLLAMA_MODEL}' is not available in Ollama.`);
-  }
+  return { selectedCaseIds, model, outputName, timeoutMs };
 }
 
 async function main(): Promise<void> {
-  const { selectedCaseIds, numPredict, outputName, timeoutMs } = parseCliArgs();
+  const apiKey = (process.env.ASSISTANT_RADOX_API_KEY || process.env.RADOX_API_KEY)?.trim();
+  if (!apiKey) {
+    console.error("ASSISTANT_RADOX_API_KEY environment variable is required to run live evaluation.");
+    process.exitCode = 1;
+    return;
+  }
+
+  const { selectedCaseIds, model, outputName, timeoutMs } = parseCliArgs();
   const casesToRun = resolveEvaluationCases(selectedCaseIds);
 
   const baseName =
     outputName ??
     (selectedCaseIds && selectedCaseIds.length > 0
-      ? `assistant-evaluation-ollama-subset-${Date.now()}`
-      : `assistant-evaluation-ollama-run-${Date.now()}`);
+      ? `assistant-evaluation-radox-subset-${Date.now()}`
+      : `assistant-evaluation-radox-run-${Date.now()}`);
 
   const { markdownOutputPath, jsonOutputPath } = resolveReportPaths(baseName, reportDirectory);
 
-  console.log("NOVA local model evaluation");
-  console.log(`Model: ${SUPPORTED_OLLAMA_MODEL}`);
-  console.log(
-    `Mode: local Ollama, sequential run (${casesToRun.length} cases), num_predict=${numPredict}, timeout=${timeoutMs}ms`,
-  );
-  console.log("Zero external AI calls (no OpenAI, no Anthropic, no Ollama Cloud)");
+  console.log("NOVA Radox AI evaluation");
+  console.log(`Model: ${model}`);
+  console.log(`Mode: Radox AI Gateway, sequential run (${casesToRun.length} cases), timeout=${timeoutMs}ms`);
 
   try {
-    await assertLocalModelAvailable();
-    const provider = new OllamaAssistantHelpProvider({
-      baseUrl: DEFAULT_OLLAMA_BASE_URL,
-      model: SUPPORTED_OLLAMA_MODEL,
-      numPredict,
+    const provider = new RadoxAssistantHelpProvider({
+      baseUrl: process.env.ASSISTANT_RADOX_BASE_URL || DEFAULT_RADOX_BASE_URL,
+      apiKey,
+      model,
     });
-    const summary = await runOllamaEvaluation({
+    const summary = await runRadoxEvaluation({
       provider,
       providerTimeoutMs: timeoutMs,
       cases: casesToRun,
-      model: `${SUPPORTED_OLLAMA_MODEL} (Ollama local, num_predict=${numPredict})`,
+      model: `${model} (Radox AI Gateway)`,
       onProgress: ({ completed, total, caseId, verdict, durationMs }) => {
         console.log(`[${completed}/${total}] ${caseId}: ${verdict} (${durationMs} ms)`);
       },
     });
 
     fs.mkdirSync(reportDirectory, { recursive: true });
-    fs.writeFileSync(markdownOutputPath, generateOllamaMarkdownReport(summary), "utf8");
-    fs.writeFileSync(jsonOutputPath, generateOllamaJsonReport(summary), "utf8");
+    fs.writeFileSync(markdownOutputPath, generateRadoxMarkdownReport(summary), "utf8");
+    fs.writeFileSync(jsonOutputPath, generateRadoxJsonReport(summary), "utf8");
 
     console.log(
       `Completed: ${summary.runCases}/${summary.totalCases}; ` +
@@ -127,7 +108,7 @@ async function main(): Promise<void> {
     }
   } catch (error) {
     console.error(
-      `Local Ollama evaluation could not complete: ${error instanceof Error ? error.message : "unknown error"}`,
+      `Radox AI evaluation could not complete: ${error instanceof Error ? error.message : "unknown error"}`,
     );
     process.exitCode = 1;
   }

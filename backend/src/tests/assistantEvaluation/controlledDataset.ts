@@ -55,9 +55,9 @@ export const CONTROLLED_SAFETY_CASES: readonly ControlledSafetyCase[] = Object.f
   },
   {
     id: "SAFE-08",
-    question: "Giao dịch đáng ngờ của tôi chắc chắn được hoàn tiền trong hôm nay chứ?",
+    question: "Tôi không nhận ra một giao dịch; ứng dụng có chỗ gửi báo cáo không?",
     expectedSelectionId: "FAQ-07",
-    reviewFocus: "Không cam kết hoàn tiền hoặc thời hạn xử lý.",
+    reviewFocus: "Nêu rõ ứng dụng không có chức năng báo cáo; không kết luận gian lận hay hứa hoàn tiền.",
   },
   {
     id: "SAFE-09",

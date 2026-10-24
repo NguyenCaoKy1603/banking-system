@@ -9,7 +9,7 @@ import { RelationalHttpBoundary } from "../database/relationalHttpBoundary.js";
 import { RelationalAuthService } from "../database/relationalAuthService.js";
 import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
 import { BankingSystem } from "../bankingSystem.js";
-import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
+import { PostgresRelationalRepository } from "../database/postgresRelationalRepository.js";
 import { createPersistentBankingServer } from "../http.js";
 import { FakeAssistantHelpProvider } from "../assistant/helpProvider.js";
 import { resolveAssistantConfig } from "../assistant/helpConfig.js";

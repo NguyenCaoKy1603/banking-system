@@ -1,13 +1,15 @@
 import { type AssistantConfig, resolveAssistantConfig } from "./helpConfig.js";
 import {
-  DEFAULT_OLLAMA_BASE_URL,
-  OllamaAssistantHelpProvider,
-  validateOllamaBaseUrl,
-  validateOllamaModel,
-} from "./ollamaHelpProvider.js";
+  DEFAULT_RADOX_BASE_URL,
+  DEFAULT_RADOX_MODEL,
+  RadoxAssistantHelpProvider,
+  validateRadoxApiKey,
+  validateRadoxBaseUrl,
+  validateRadoxModel,
+} from "./radoxHelpProvider.js";
 
-export const DEFAULT_OLLAMA_PROVIDER_TIMEOUT_MS = 25_000;
-export const DEFAULT_OLLAMA_REQUEST_TIMEOUT_MS = 30_000;
+export const DEFAULT_RADOX_PROVIDER_TIMEOUT_MS = 15_000;
+export const DEFAULT_RADOX_REQUEST_TIMEOUT_MS = 20_000;
 
 function parsePositiveInteger(value: string | undefined, name: string): number | undefined {
   if (value === undefined || value.trim() === "") {
@@ -30,10 +32,9 @@ function parsePositiveInteger(value: string | undefined, name: string): number |
  * Fail-closed behavior:
  * - If ASSISTANT_ENABLED != "1", returns disabled configuration without instantiating any provider.
  * - If ASSISTANT_ENABLED == "1", strictly validates ASSISTANT_PROVIDER, ASSISTANT_MODEL,
- *   ASSISTANT_OLLAMA_BASE_URL, ASSISTANT_PROVIDER_TIMEOUT_MS, and ASSISTANT_REQUEST_TIMEOUT_MS.
+ *   ASSISTANT_RADOX_API_KEY, ASSISTANT_RADOX_BASE_URL, ASSISTANT_PROVIDER_TIMEOUT_MS, and ASSISTANT_REQUEST_TIMEOUT_MS.
  * - Enforces that ASSISTANT_REQUEST_TIMEOUT_MS > ASSISTANT_PROVIDER_TIMEOUT_MS.
  *   Any missing or invalid configuration throws an error.
- *   Never falls back to FakeProvider or remote cloud providers.
  */
 export function resolveRuntimeAssistantConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -44,32 +45,23 @@ export function resolveRuntimeAssistantConfig(
   }
 
   const providerType = env.ASSISTANT_PROVIDER?.trim().toLowerCase();
-  if (providerType !== "ollama") {
+  if (providerType !== "radox") {
     throw new Error(
-      `ASSISTANT_PROVIDER must be 'ollama' when ASSISTANT_ENABLED=1; received '${env.ASSISTANT_PROVIDER ?? "empty"}'.`,
+      `ASSISTANT_PROVIDER must be 'radox' when ASSISTANT_ENABLED=1; received '${env.ASSISTANT_PROVIDER ?? "empty"}'.`,
     );
   }
 
-  const rawModel = env.ASSISTANT_MODEL?.trim();
-  if (!rawModel) {
-    throw new Error("ASSISTANT_MODEL is required when ASSISTANT_ENABLED=1.");
+  const rawApiKey = (env.ASSISTANT_RADOX_API_KEY || env.RADOX_API_KEY)?.trim();
+  if (!rawApiKey) {
+    throw new Error("ASSISTANT_RADOX_API_KEY is required when ASSISTANT_ENABLED=1 and ASSISTANT_PROVIDER=radox.");
   }
-  const model = validateOllamaModel(rawModel);
+  const apiKey = validateRadoxApiKey(rawApiKey);
 
-  const allowDockerHostInternal = env.ASSISTANT_ALLOW_DOCKER_HOST === "1";
-  const bankingEnvironment = env.BANKING_ENV?.trim().toLowerCase();
-  if (
-    allowDockerHostInternal &&
-    bankingEnvironment !== "development" &&
-    bankingEnvironment !== "preview"
-  ) {
-    throw new Error(
-      "ASSISTANT_ALLOW_DOCKER_HOST=1 is allowed only when BANKING_ENV is development or preview.",
-    );
-  }
+  const rawModel = env.ASSISTANT_MODEL?.trim() || DEFAULT_RADOX_MODEL;
+  const model = validateRadoxModel(rawModel);
 
-  const rawBaseUrl = env.ASSISTANT_OLLAMA_BASE_URL?.trim() || DEFAULT_OLLAMA_BASE_URL;
-  const baseUrl = validateOllamaBaseUrl(rawBaseUrl, { allowDockerHostInternal });
+  const rawBaseUrl = env.ASSISTANT_RADOX_BASE_URL?.trim() || DEFAULT_RADOX_BASE_URL;
+  const baseUrl = validateRadoxBaseUrl(rawBaseUrl);
 
   const rawProviderTimeout = parsePositiveInteger(
     env.ASSISTANT_PROVIDER_TIMEOUT_MS,
@@ -80,8 +72,8 @@ export function resolveRuntimeAssistantConfig(
     "ASSISTANT_REQUEST_TIMEOUT_MS",
   );
 
-  const providerTimeoutMs = rawProviderTimeout ?? DEFAULT_OLLAMA_PROVIDER_TIMEOUT_MS;
-  const requestTimeoutMs = rawRequestTimeout ?? DEFAULT_OLLAMA_REQUEST_TIMEOUT_MS;
+  const providerTimeoutMs = rawProviderTimeout ?? DEFAULT_RADOX_PROVIDER_TIMEOUT_MS;
+  const requestTimeoutMs = rawRequestTimeout ?? DEFAULT_RADOX_REQUEST_TIMEOUT_MS;
 
   if (requestTimeoutMs <= providerTimeoutMs) {
     throw new Error(
@@ -89,16 +81,16 @@ export function resolveRuntimeAssistantConfig(
     );
   }
 
-  const rawNumPredict = parsePositiveInteger(
-    env.ASSISTANT_OLLAMA_NUM_PREDICT,
-    "ASSISTANT_OLLAMA_NUM_PREDICT",
+  const rawMaxTokens = parsePositiveInteger(
+    env.ASSISTANT_RADOX_MAX_TOKENS,
+    "ASSISTANT_RADOX_MAX_TOKENS",
   );
 
-  const provider = new OllamaAssistantHelpProvider({
+  const provider = new RadoxAssistantHelpProvider({
     baseUrl,
-    allowDockerHostInternal,
+    apiKey,
     model,
-    ...(rawNumPredict ? { numPredict: rawNumPredict } : {}),
+    ...(rawMaxTokens ? { maxTokens: rawMaxTokens } : {}),
   });
 
   return resolveAssistantConfig({

@@ -34,15 +34,16 @@ test("CS-01: Catalog bao phủ đủ 20 FAQ, hash nguồn khớp và không ch�
   assert.equal(new Set(ANSWER_CATALOG.map((entry) => entry.id)).size, ANSWER_CATALOG.length);
   assert.ok(ANSWER_CATALOG.every((entry) => entry.sourceFaqVersion === FAQ_VERSION && entry.sourceFaqHash === FAQ_HASH));
   assert.ok(ANSWER_CATALOG.every((entry) => entry.answerHash.length === 64 && entry.answer.trim().length > 0));
-  assert.equal(ANSWER_CATALOG_VERSION, "nova-faq-answer-catalog-v1");
+  assert.equal(ANSWER_CATALOG_VERSION, "nova-faq-answer-catalog-v2");
   assert.equal(ANSWER_CATALOG_HASH.length, 64);
   assert.equal(verifyBundleSynchronization().isSynchronized, true);
 
   const feeAnswer = getAnswerCatalogEntry("FAQ-12")!.answer.toLowerCase();
   assert.equal(/khung giờ|loại tài khoản|mức phí cố định/u.test(feeAnswer), false);
-  const reportAnswer = getAnswerCatalogEntry("FAQ-07")!.answer.toLowerCase();
-  assert.equal(/hoàn tiền trong hôm nay/u.test(reportAnswer), false);
-  assert.match(reportAnswer, /không đồng nghĩa với hoàn tiền tự động/u);
+  const transactionHelpAnswer = getAnswerCatalogEntry("FAQ-07")!.answer.toLowerCase();
+  assert.match(transactionHelpAnswer, /không có chức năng báo cáo giao dịch/u);
+  assert.match(transactionHelpAnswer, /chưa nhận được tiền.*chưa chứng minh giao dịch thất bại/u);
+  assert.equal(/bấm nút.*báo cáo|chọn.*gửi báo cáo/u.test(transactionHelpAnswer), false);
   assert.match(getAnswerCatalogEntry("FAQ-13")!.answer, /nếu màn hình kết quả.*có nút/iu);
   assert.match(getAnswerCatalogEntry("FAQ-17")!.answer, /TOTP/u);
 });
