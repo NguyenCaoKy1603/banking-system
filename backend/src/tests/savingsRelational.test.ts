@@ -68,6 +68,27 @@ test("relational savings opening is atomic, idempotent and restart-readable", { 
   assert.equal((await restarted.getOpening(fixtureIds.customerId, first.openingId)).depositId, first.depositId);
   assert.equal((await restarted.listDeposits(fixtureIds.customerId)).items.length, 1);
   assert.equal((await restarted.getDeposit(fixtureIds.customerId, first.depositId!)).depositId, first.depositId);
+
+  // Test updating maturity instruction
+  const updatedDeposit = await savings.updateMaturityInstruction(fixtureIds.customerId, first.depositId!, "RENEW_PRINCIPAL");
+  assert.equal(updatedDeposit.maturityInstruction, "RENEW_PRINCIPAL");
+
+  // Test early withdrawal
+  const withdrawalReceipt = await savings.withdrawEarly({
+    customerId: fixtureIds.customerId,
+    depositId: first.depositId!,
+    idempotencyKey: "wth-relational-key-1",
+  });
+  assert.equal(withdrawalReceipt.status, "CLOSED");
+  assert.equal(withdrawalReceipt.principal.amountMinor, "2000000");
+  assert.equal(withdrawalReceipt.demandRateBasisPoints, 20);
+  assert.ok(BigInt(withdrawalReceipt.totalPayout.amountMinor) >= 2000000n);
+
+  const accountAfterWithdraw = await database.query<{ available_minor: string }>("SELECT available_minor::text FROM payment_accounts WHERE id = $1", [fixtureIds.accountId]);
+  assert.equal(accountAfterWithdraw.rows[0]?.available_minor, (8000000n + BigInt(withdrawalReceipt.totalPayout.amountMinor)).toString());
+
+  const depositAfterWithdraw = await savings.getDeposit(fixtureIds.customerId, first.depositId!);
+  assert.equal(depositAfterWithdraw.status, "CLOSED");
 });
 
 test("relational savings rollback leaves no opening, deposit or debit", { skip: !databaseUrl }, async (t) => {

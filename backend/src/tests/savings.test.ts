@@ -5,7 +5,7 @@ import { BankingSystem } from "../bankingSystem.js";
 import {
   addMonthsClamped,
   calculateSavingsInterest,
-} from "../savings.js";
+} from "../domain/savings/index.js";
 
 
 function createSystem(options: ConstructorParameters<typeof BankingSystem>[0] = {}) {

@@ -7,13 +7,16 @@ import {
 } from "@/features/banking/validation/idempotencyKey";
 import { isMoney } from "@/features/banking/validation/moneyValidators";
 import type {
+  MaturityInstruction,
   SavingsDeposit,
   SavingsDepositsResponse,
   SavingsOpening,
   SavingsProductsResponse,
   SavingsQuote,
   SavingsQuoteRequest,
+  SavingsWithdrawalReceipt,
   SubmitSavingsOpeningRequest,
+  SubmitSavingsWithdrawalRequest,
 } from "@/features/savings/types/savings";
 import {
   isSavingsDeposit,
@@ -21,6 +24,7 @@ import {
   isSavingsOpening,
   isSavingsProductsResponse,
   isSavingsQuote,
+  isSavingsWithdrawalReceipt,
 } from "@/features/savings/validation/savingsResponseValidators";
 
 function requireResourceId(value: string, fieldName: string): string {
@@ -137,6 +141,43 @@ export function getSavingsDeposit(
   );
 }
 
+export function updateSavingsDepositMaturityInstruction(
+  depositId: string,
+  maturityInstruction: MaturityInstruction,
+  auth: RequestAuth,
+): Promise<SavingsDeposit> {
+  return requestJson<SavingsDeposit>(
+    `/savings/deposits/${requireResourceId(depositId, "depositId")}`,
+    {
+      method: "PATCH",
+      body: { maturityInstruction },
+      auth,
+    },
+    isSavingsDeposit,
+  );
+}
+
+export function withdrawSavingsDeposit(
+  depositId: string,
+  request: SubmitSavingsWithdrawalRequest,
+  options: { auth: RequestAuth; idempotencyKey: string },
+): Promise<SavingsWithdrawalReceipt> {
+  const idempotencyKey = requireIdempotencyKey(
+    options.idempotencyKey,
+    COMMAND_IDEMPOTENCY_KEY_MIN_LENGTH,
+  );
+  return requestJson<SavingsWithdrawalReceipt>(
+    `/savings/deposits/${requireResourceId(depositId, "depositId")}/withdraw`,
+    {
+      method: "POST",
+      body: request,
+      auth: options.auth,
+      idempotencyKey,
+    },
+    isSavingsWithdrawalReceipt,
+  );
+}
+
 export const savingsApi = {
   listSavingsProducts,
   quoteSavings,
@@ -144,4 +185,6 @@ export const savingsApi = {
   getSavingsOpening,
   listSavingsDeposits,
   getSavingsDeposit,
+  updateSavingsDepositMaturityInstruction,
+  withdrawSavingsDeposit,
 };

@@ -104,7 +104,7 @@ export function OpenSavingsScreen() {
   const [intentPhase, setIntentPhase] = useState<ClientIntentPhase | null>(null);
   const [manualReviewCode, setManualReviewCode] =
     useState<ManualReviewCode | null>(null);
-  const [stepUpMethod, setStepUpMethod] = useState<"OTP" | "TOTP" | "BIOMETRIC">("OTP");
+  const [stepUpMethod, setStepUpMethod] = useState<"OTP" | "TOTP" | "BIOMETRIC">("TOTP");
   const [stepUpProof, setStepUpProof] = useState("");
   const [savingsChallenge, setSavingsChallenge] =
     useState<AuthChallengeResponse | null>(null);
@@ -129,12 +129,11 @@ export function OpenSavingsScreen() {
       }
       setSavingsChallenge(challenge);
       setStepUpMethod((currentMethod) =>
-        challenge.methods.includes(currentMethod)
-          ? currentMethod
-          : challenge.methods.find(
-              (method): method is "OTP" | "TOTP" | "BIOMETRIC" =>
-                method === "OTP" || method === "TOTP" || method === "BIOMETRIC",
-            ) ?? "OTP",
+        challenge.methods.includes("TOTP")
+          ? "TOTP"
+          : challenge.methods.includes(currentMethod)
+            ? currentMethod
+            : (challenge.methods[0] as "OTP" | "TOTP" | "BIOMETRIC") ?? "TOTP",
       );
       setStepUpProof("");
     },
@@ -161,9 +160,11 @@ export function OpenSavingsScreen() {
       setProductId((current) => current ?? productResponse.items[0]?.productId ?? null);
       setControlPolicy(policyResponse);
       setStepUpMethod((current) =>
-        policyResponse.savingsStepUpMethods.includes(current)
-          ? current
-          : policyResponse.savingsStepUpMethods[0] ?? "OTP",
+        policyResponse.savingsStepUpMethods.includes("TOTP")
+          ? "TOTP"
+          : policyResponse.savingsStepUpMethods.includes(current)
+            ? current
+            : policyResponse.savingsStepUpMethods[0] ?? "TOTP",
       );
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
@@ -286,6 +287,12 @@ export function OpenSavingsScreen() {
       return;
     }
     const amount = BigInt(normalizedAmount);
+    if (sourceAccount && amount > BigInt(sourceAccount.availableBalance.amountMinor)) {
+      setError(
+        `Số dư khả dụng không đủ (Hiện có: ${formatVndMinor(sourceAccount.availableBalance.amountMinor)}).`,
+      );
+      return;
+    }
     if (
       amount < BigInt(selectedProduct.minAmountMinor) ||
       amount > BigInt(selectedProduct.maxAmountMinor) ||
@@ -314,7 +321,7 @@ export function OpenSavingsScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [amountMinor, auth, controlPolicy, isAvailable, maturityInstruction, recoveryBlocked, selectedProduct, sourceAccountId]);
+  }, [amountMinor, auth, controlPolicy, isAvailable, maturityInstruction, recoveryBlocked, selectedProduct, sourceAccount, sourceAccountId]);
 
   const handleConfirmReview = useCallback(async () => {
     if (recoveryBlocked) {
@@ -688,7 +695,7 @@ export function OpenSavingsScreen() {
                 <OptionButton
                   key={account.id}
                   selected={account.id === sourceAccountId}
-                  label={`${account.displayName} · ${account.maskedNumber}`}
+                  label={`${account.displayName} · ${account.maskedNumber} (${formatVndMinor(account.availableBalance.amountMinor)})`}
                   onPress={() => setSourceAccountId(account.id)}
                   testID={`savings-source-${account.id}`}
                 />
@@ -772,13 +779,13 @@ export function OpenSavingsScreen() {
             <Text style={styles.description}>Báo giá còn hiệu lực: {formatRemainingSeconds(quoteRemainingSeconds)}</Text>
             <Text style={styles.description}>Mã xác thực còn hiệu lực: {formatRemainingSeconds(challengeRemainingSeconds)}</Text>
             {savingsChallenge?.methods.some((method) => method === "OTP" || method === "TOTP") ? (
-              <PrimaryButton disabled={isSubmitting} label={stepUpMethod === "TOTP" ? "Đang dùng TOTP" : stepUpMethod === "OTP" ? "Đang dùng mã xác thực" : "Dùng mã TOTP"} onPress={() => { setStepUpMethod(savingsChallenge.methods.includes("TOTP") ? "TOTP" : "OTP"); setStepUpProof(""); }} testID="savings-step-up-otp" />
+              <PrimaryButton disabled={isSubmitting} label={stepUpMethod === "TOTP" ? "Đang dùng mã TOTP" : "Dùng mã TOTP (Google Authenticator)"} onPress={() => { setStepUpMethod("TOTP"); setStepUpProof(""); }} testID="savings-step-up-otp" />
             ) : null}
             {savingsChallenge?.methods.includes("BIOMETRIC") ? (
               <PrimaryButton disabled={isSubmitting} label={stepUpMethod === "BIOMETRIC" ? "Xác thực lại bằng sinh trắc học" : "Dùng sinh trắc học"} onPress={handleBiometric} testID="savings-step-up-biometric" />
             ) : null}
             {stepUpMethod === "OTP" || stepUpMethod === "TOTP" ? (
-              <TextField accessibilityLabel="Mã xác thực mở tiền gửi" editable={!manualReviewCode} error={error} label={stepUpMethod === "TOTP" ? "Mã TOTP" : "Mã xác thực"} onChangeText={(value) => { setStepUpProof(value); setError(undefined); }} placeholder="Nhập mã xác thực" secureTextEntry testID="savings-step-up-code" value={stepUpProof} />
+              <TextField accessibilityLabel="Mã xác thực mở tiền gửi" editable={!manualReviewCode} error={error} label={stepUpMethod === "TOTP" ? "Mã TOTP (Google Authenticator)" : "Mã xác thực"} onChangeText={(value) => { setStepUpProof(value); setError(undefined); }} placeholder="Nhập 6 chữ số TOTP" secureTextEntry testID="savings-step-up-code" value={stepUpProof} />
             ) : (
               <Text style={styles.description}>{stepUpProof ? "Đã xác thực trên thiết bị. Có thể gửi yêu cầu." : "Chọn xác thực sinh trắc học để tiếp tục."}</Text>
             )}

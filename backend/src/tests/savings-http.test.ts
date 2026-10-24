@@ -148,8 +148,66 @@ test("HTTP savings flow exposes quote, MFA/idempotency opening and deposit detai
 
   const detailResponse = await request(`/savings/deposits/${opening.depositId}`, { headers: authHeaders });
   assert.equal(detailResponse.status, 200);
-  const detail = (await detailResponse.json()) as { principal: { amountMinor: string } };
+  const detail = (await detailResponse.json()) as { principal: { amountMinor: string }; maturityInstruction: string };
   assert.equal(detail.principal.amountMinor, "1000000");
+  assert.equal(detail.maturityInstruction, "RETURN_PRINCIPAL_AND_INTEREST");
+
+  // Phase 2 test: Change maturity instruction
+  const patchInvalid = await request(`/savings/deposits/${opening.depositId}`, {
+    method: "PATCH",
+    headers: authHeaders,
+    body: json({ maturityInstruction: "INVALID_INSTRUCTION" }),
+  });
+  assert.equal(patchInvalid.status, 422);
+
+  const patchValid = await request(`/savings/deposits/${opening.depositId}`, {
+    method: "PATCH",
+    headers: authHeaders,
+    body: json({ maturityInstruction: "RENEW_PRINCIPAL" }),
+  });
+  assert.equal(patchValid.status, 200);
+  const patched = (await patchValid.json()) as { maturityInstruction: string };
+  assert.equal(patched.maturityInstruction, "RENEW_PRINCIPAL");
+
+  // Phase 3 test: Early withdrawal
+  const withdrawResponse = await request(`/savings/deposits/${opening.depositId}/withdraw`, {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "wth-idemp-001" },
+    body: json({ stepUp: { method: "OTP", proof: "123456" } }),
+  });
+  assert.equal(withdrawResponse.status, 200);
+  const withdrawReceipt = (await withdrawResponse.json()) as {
+    status: string;
+    principal: { amountMinor: string };
+    totalPayout: { amountMinor: string };
+    demandRateBasisPoints: number;
+    earlyInterest: { amountMinor: string };
+  };
+  assert.equal(withdrawReceipt.status, "CLOSED");
+  assert.equal(withdrawReceipt.principal.amountMinor, "1000000");
+  assert.equal(withdrawReceipt.demandRateBasisPoints, 20);
+  assert.ok(BigInt(withdrawReceipt.totalPayout.amountMinor) >= 1000000n);
+
+  // Deposit detail reflects CLOSED status
+  const closedDetailResponse = await request(`/savings/deposits/${opening.depositId}`, { headers: authHeaders });
+  assert.equal(closedDetailResponse.status, 200);
+  const closedDetail = (await closedDetailResponse.json()) as { status: string };
+  assert.equal(closedDetail.status, "CLOSED");
+
+  // Cannot withdraw or update an already CLOSED deposit
+  const secondWithdraw = await request(`/savings/deposits/${opening.depositId}/withdraw`, {
+    method: "POST",
+    headers: { ...authHeaders, "Idempotency-Key": "wth-idemp-002" },
+    body: json({ stepUp: { method: "OTP", proof: "123456" } }),
+  });
+  assert.equal(secondWithdraw.status, 409);
+
+  const patchClosed = await request(`/savings/deposits/${opening.depositId}`, {
+    method: "PATCH",
+    headers: authHeaders,
+    body: json({ maturityInstruction: "RENEW_PRINCIPAL_AND_INTEREST" }),
+  });
+  assert.equal(patchClosed.status, 409);
 
   const trailingRoute = await request("/savings/products/extra", { headers: authHeaders });
   assert.equal(trailingRoute.status, 404);

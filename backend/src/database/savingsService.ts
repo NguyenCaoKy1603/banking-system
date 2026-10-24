@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import { buildSavingsQuote, toPublicSavingsDeposit, toPublicSavingsOpening, toPublicSavingsQuote, type MaturityInstruction, type SavingsDeposit, type SavingsOpening, type SavingsProduct, type SavingsQuote } from "../savings.js";
+import { buildSavingsQuote, calculateEarlyWithdrawal, toPublicSavingsDeposit, toPublicSavingsOpening, toPublicSavingsQuote, type MaturityInstruction, type SavingsDeposit, type SavingsOpening, type SavingsProduct, type SavingsQuote, type SavingsWithdrawalReceipt } from "../domain/savings/index.js";
 import type { SavingsListResult, SavingsQuoteRequest, SubmitSavingsOpeningRequest } from "../bankingSystem.js";
 import { conflict, invalidRequest, notFound } from "../errors.js";
 import { fingerprint } from "../security.js";
-import { parseMoney, toMoney } from "../money.js";
+import { parseMoney, toMoney } from "../domain/money.js";
 import { UnitOfWork } from "./unitOfWork.js";
 import { AccountRepository } from "./repositories/accountRepository.js";
 import { AuditRepository } from "./repositories/auditRepository.js";
@@ -96,6 +96,8 @@ function depositToPublic(row: SavingsDepositRow): SavingsDeposit {
     reference: row.reference,
     updatedAt: row.updatedAt,
     renewedDepositId: row.renewedDepositId,
+    earlyWithdrawnAt: row.earlyWithdrawnAt ?? null,
+    earlyInterest: row.earlyInterestMinor ? toMoney(BigInt(row.earlyInterestMinor)) : null,
     userId: row.customerId,
     sourceAccountId: row.sourceAccountId,
     openingId: row.openingId,
@@ -333,5 +335,179 @@ export class RelationalSavingsService {
       if (!row) throw notFound("Savings deposit not found.");
       return depositToPublic(row);
     });
+  }
+
+  async updateMaturityInstruction(
+    customerId: string,
+    depositId: string,
+    instruction: string,
+  ): Promise<SavingsDeposit> {
+    assertUuid(depositId, "depositId");
+    const maturityInstruction = parseInstruction(instruction);
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const savings = new SavingsRepository(client);
+      const deposit = await savings.lockDeposit(depositId);
+      if (!deposit || deposit.customerId !== customerId) throw notFound("Savings deposit not found.");
+      if (deposit.status !== "ACTIVE") throw conflict("Only ACTIVE savings deposits can update maturity instructions.");
+      const updated = await savings.updateDepositMaturityInstruction(depositId, customerId, maturityInstruction);
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "SAVINGS_INSTRUCTION_UPDATED",
+        actorCustomerId: customerId,
+        resourceId: depositId,
+        occurredAt: updated.updatedAt,
+        payload: { previousInstruction: deposit.maturityInstruction, nextInstruction: maturityInstruction },
+      });
+      return depositToPublic(updated);
+    });
+  }
+
+  async withdrawEarly(input: {
+    customerId: string;
+    depositId: string;
+    idempotencyKey: string;
+    traceId?: string;
+  }): Promise<SavingsWithdrawalReceipt> {
+    assertUuid(input.depositId, "depositId");
+    const idempotencyKey = requireIdempotencyKey(input.idempotencyKey);
+    const requestFingerprint = fingerprint({ depositId: input.depositId, action: "EARLY_WITHDRAWAL" });
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const savings = new SavingsRepository(client);
+      const reservation = await savings.reserveIdempotency({
+        id: randomUUID(),
+        customerId: input.customerId,
+        operationType: "SAVINGS_WITHDRAWAL",
+        idempotencyKey,
+        requestFingerprint,
+      });
+      if (!reservation.created) {
+        if (String(reservation.record.request_fingerprint) !== requestFingerprint) {
+          throw new IdempotencyConflictError();
+        }
+        if (reservation.record.response_payload && typeof reservation.record.response_payload === "object") {
+          return reservation.record.response_payload as SavingsWithdrawalReceipt;
+        }
+        throw new RelationalConflictError("IDEMPOTENCY_IN_PROGRESS", "The savings withdrawal is still being finalized; retry with the same key.");
+      }
+
+      const deposit = await savings.lockDeposit(input.depositId);
+      if (!deposit || deposit.customerId !== input.customerId) throw notFound("Savings deposit not found.");
+      if (deposit.status !== "ACTIVE") throw conflict("Only ACTIVE savings deposits can be withdrawn.");
+
+      const accounts = new AccountRepository(client);
+      const source = await accounts.lockById(deposit.sourceAccountId);
+      if (!source || source.customerId !== input.customerId) throw notFound("Source account not found.");
+      if (source.status !== "ACTIVE") throw conflict("The source account is not active.");
+
+      const now = new Date().toISOString();
+      const calc = calculateEarlyWithdrawal(BigInt(deposit.principalMinor), deposit.openedAt, now);
+      const payoutMinor = BigInt(calc.totalPayout.amountMinor);
+      const interestMinor = BigInt(calc.earlyInterest.amountMinor);
+      const reference = `WTH-${input.depositId.slice(-12).toUpperCase()}`;
+
+      // Cập nhật số dư tài khoản thanh toán nguồn
+      const updatedAccount = await accounts.updateBalances(source.id, {
+        availableMinor: (BigInt(source.availableMinor) + payoutMinor).toString(),
+        currentMinor: (BigInt(source.currentMinor) + payoutMinor).toString(),
+        heldMinor: source.heldMinor,
+        expectedVersion: source.version,
+      });
+
+      // Đóng sổ tiết kiệm
+      await savings.closeDepositEarly(deposit.id, input.customerId, calc.earlyInterest.amountMinor, now);
+
+      // Thêm giao dịch tài khoản
+      await accounts.appendTransaction({
+        id: randomUUID(),
+        accountId: source.id,
+        savingsOpeningId: deposit.openingId,
+        savingsDepositId: deposit.id,
+        direction: "CREDIT",
+        amountMinor: payoutMinor.toString(),
+        feeMinor: "0",
+        status: "SUCCEEDED",
+        description: `Tất toán trước hạn tiết kiệm ${deposit.productName}`,
+        reference,
+        occurredAt: now,
+        completedAt: now,
+        kind: "SAVINGS",
+      });
+
+      // Bút toán Sổ cái kép (Double-entry general ledger)
+      const journalId = randomUUID();
+      await new LedgerRepository(client).appendJournal({
+        id: journalId,
+        aggregateId: deposit.id,
+        journalType: "SAVINGS_EARLY_SETTLEMENT",
+        occurredAt: now,
+      });
+      const ledgerEntries = [
+        { lineNumber: 1, accountRef: `savings-deposit:${deposit.id}`, side: "DEBIT" as const, amountMinor: deposit.principalMinor, entryId: randomUUID(), occurredAt: now },
+        { lineNumber: 2, accountRef: `payment-account:${updatedAccount.id}`, side: "CREDIT" as const, amountMinor: payoutMinor.toString(), entryId: randomUUID(), occurredAt: now },
+      ];
+      if (interestMinor > 0n) {
+        ledgerEntries.push({
+          lineNumber: 3,
+          accountRef: "interest-expense:VND",
+          side: "DEBIT" as const,
+          amountMinor: interestMinor.toString(),
+          entryId: randomUUID(),
+          occurredAt: now,
+        });
+      }
+      await new LedgerRepository(client).appendEntries(journalId, ledgerEntries);
+
+      // Audit, notifications, outbox
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "SAVINGS_EARLY_WITHDRAWN",
+        actorCustomerId: input.customerId,
+        resourceId: deposit.id,
+        occurredAt: now,
+        payload: { traceId: input.traceId ?? null, payoutMinor: payoutMinor.toString(), earlyInterestMinor: interestMinor.toString() },
+      });
+
+      const notificationId = randomUUID();
+      await client.query(
+        `INSERT INTO notifications
+          (id, customer_id, notification_type, title, body, resource_id,
+           resource_account_id, is_read, created_at, savings_deposit_id)
+         VALUES ($1, $2, 'SAVINGS', 'Tất toán tiết kiệm thành công',
+                 'Khoản tiết kiệm đã được tất toán trước hạn về tài khoản thanh toán.', $3, $4, false, $5, $6)`,
+        [notificationId, input.customerId, deposit.id, source.id, now, deposit.id],
+      );
+
+      await new OutboxRepository(client).append({
+        id: randomUUID(),
+        eventType: "savings.early_withdrawn",
+        aggregateId: deposit.id,
+        deduplicationKey: `savings.early_withdrawn:${deposit.id}`,
+        occurredAt: now,
+        traceId: input.traceId,
+        subjectCustomerIds: [input.customerId],
+        notificationIds: [notificationId],
+        payload: { depositId: deposit.id, reference, payoutMinor: payoutMinor.toString() },
+      });
+
+      const receipt: SavingsWithdrawalReceipt = {
+        depositId: deposit.id,
+        sourceAccountId: source.id,
+        principal: toMoney(BigInt(deposit.principalMinor)),
+        interestDays: calc.interestDays,
+        demandRateBasisPoints: calc.demandRateBasisPoints,
+        earlyInterest: calc.earlyInterest,
+        totalPayout: calc.totalPayout,
+        status: "CLOSED",
+        reference,
+        withdrawnAt: now,
+      };
+
+      await savings.completeIdempotency(input.customerId, "SAVINGS_WITHDRAWAL", idempotencyKey, {
+        status: "SUCCEEDED",
+        responsePayload: receipt,
+      });
+
+      return receipt;
+    }, { traceId: input.traceId, maxRetries: 1 });
   }
 }

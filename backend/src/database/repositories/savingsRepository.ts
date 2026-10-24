@@ -76,6 +76,8 @@ export type SavingsDepositRow = {
   renewedDepositId: string | null;
   maturityOperationKey: string | null;
   renewalSequence: number;
+  earlyWithdrawnAt: string | null;
+  earlyInterestMinor: string | null;
   updatedAt: string;
 };
 
@@ -160,6 +162,8 @@ function depositFromRow(row: Record<string, unknown>): SavingsDepositRow {
     renewedDepositId: row.renewed_deposit_id === null || row.renewed_deposit_id === undefined ? null : requireUuid(row.renewed_deposit_id, "renewed_deposit_id"),
     maturityOperationKey: row.maturity_operation_key === null || row.maturity_operation_key === undefined ? null : asString(row.maturity_operation_key),
     renewalSequence: Number(row.renewal_sequence ?? 0),
+    earlyWithdrawnAt: row.early_withdrawn_at === null || row.early_withdrawn_at === undefined ? null : asNullableIso(row.early_withdrawn_at),
+    earlyInterestMinor: row.early_interest_minor === null || row.early_interest_minor === undefined ? null : asBigIntString(row.early_interest_minor, "early_interest_minor"),
     updatedAt: asIso(row.updated_at, "updated_at"),
   };
 }
@@ -338,6 +342,41 @@ export class SavingsRepository {
     const result = await this.client.query(`${this.depositSelect()} WHERE d.id = $1`, [input.id]);
     if (!result.rows[0]) throw new Error("Savings deposit update affected no row.");
     return depositFromRow(result.rows[0] as Record<string, unknown>);
+  }
+
+  async updateDepositMaturityInstruction(
+    depositId: string,
+    customerId: string,
+    maturityInstruction: string,
+  ): Promise<SavingsDepositRow> {
+    const result = await this.client.query(
+      `UPDATE savings_deposits
+       SET maturity_instruction = $3, updated_at = NOW()
+       WHERE id = $1 AND customer_id = $2 AND status = 'ACTIVE'`,
+      [requireUuid(depositId, "depositId"), requireUuid(customerId, "customerId"), maturityInstruction],
+    );
+    if ((result.rowCount ?? 0) === 0) throw new Error("Savings deposit update affected no row.");
+    const reloaded = await this.findDeposit(customerId, depositId);
+    if (!reloaded) throw new Error("Savings deposit could not be reloaded.");
+    return reloaded;
+  }
+
+  async closeDepositEarly(
+    depositId: string,
+    customerId: string,
+    earlyInterestMinor: string,
+    now: string,
+  ): Promise<SavingsDepositRow> {
+    const result = await this.client.query(
+      `UPDATE savings_deposits
+       SET status = 'CLOSED', early_withdrawn_at = $3, early_interest_minor = $4, updated_at = NOW()
+       WHERE id = $1 AND customer_id = $2 AND status = 'ACTIVE'`,
+      [requireUuid(depositId, "depositId"), requireUuid(customerId, "customerId"), now, earlyInterestMinor],
+    );
+    if ((result.rowCount ?? 0) === 0) throw new Error("Savings deposit early closure affected no row.");
+    const reloaded = await this.findDeposit(customerId, depositId);
+    if (!reloaded) throw new Error("Savings deposit could not be reloaded.");
+    return reloaded;
   }
 
   async consumeQuote(quoteId: string, _openingId: string): Promise<boolean> {
