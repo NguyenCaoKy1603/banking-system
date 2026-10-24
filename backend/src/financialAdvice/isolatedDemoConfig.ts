@@ -240,7 +240,7 @@ export function resolveIsolatedDemoConfig(
     ? resolveRuntimeAssistantConfig(env)
     : resolveAssistantConfig({ enabled: false });
   if (args.mode === "live" && !assistantConfig.enabled) {
-    throw new Error("Live demo requires the explicitly enabled local Ollama provider.");
+    throw new Error("Live demo requires the explicitly enabled Radox AI provider.");
   }
 
   return {

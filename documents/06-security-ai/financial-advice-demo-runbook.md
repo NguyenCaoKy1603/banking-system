@@ -2,7 +2,7 @@
 
 > **Trạng thái cập nhật 2026-10-04:** NFA-05 reports xác nhận 16/16 schema/semantic/metrics/candidate/public passes, 15/16 strict preferred match; B-01 là runtime-valid nhưng lệch preferred oracle. Ngưỡng 15/16 so với 95% còn chờ Owner, live gate vẫn BLOCKED. NFA-04: W01–W03 đã có Web observation trong hồ sơ trước; W03b không phải B-05 exact oracle; W04 client validation đã thấy nhưng thiếu browser network trace. Isolated launcher đã được restart để nạp cap: startup xác nhận tối đa 2 provider charges cho phiên Web này, hiện 0 đã charge. Live S-01/B-01 chưa chạy; không gọi help/warm-up và không tự reset quota. Tab vẫn ở `/login`; Owner cần tự đăng nhập bằng tài khoản synthetic local rồi mở Financial Advice. Sau restart, phiên tài khoản in-memory trước đó không còn hiệu lực. Không tắt/dừng Ollama hoặc service demo ngoài listener task-owned.
 
-> **Offline W05–W08 checks (2026-10-04):** Backend fake HTTP/service/isolated tests 41/41 PASS; Mobile screen/API/AuthProvider-protected-route tests 22/22 PASS. Đây là regression/integration evidence, không phải manual Web E2E. W06 stopped-backend recovery trên browser chưa chạy; W05 form-edit-while-pending chưa được xác nhận độc lập. S-01/B-01 vẫn chưa submit và không có Qwen charge.
+> **Offline W05–W08 checks (2026-10-04):** Backend fake HTTP/service/isolated tests 41/41 PASS; Mobile screen/API/AuthProvider-protected-route tests 22/22 PASS. Đây là regression/integration evidence, không phải manual Web E2E. W06 stopped-backend recovery trên browser chưa chạy; W05 form-edit-while-pending chưa được xác nhận độc lập. S-01/B-01 vẫn chưa submit và không có Radox model charge.
 
 Tài liệu hướng dẫn thực hành demo trực tiếp và giải trình kỹ thuật trước hội đồng bảo vệ đồ án tốt nghiệp cho Module **AI Tư Vấn Tài Chính Cá Nhân** (UC-FA01 & UC-FA02).
 
@@ -11,7 +11,7 @@ Tài liệu hướng dẫn thực hành demo trực tiếp và giải trình k�
 ## 1. Yêu Cầu Tiên Quyết Trước Khi Demo (Prerequisites)
 
 1. **Backend fixture riêng:** chạy isolated launcher bên dưới, không dùng `npm start`, `npm run dev`, `server.ts`, `.env`, PostgreSQL, Docker hoặc listener preview `5000`.
-2. **Live model (chỉ khi có task/giới hạn đã duyệt):** Ollama local phải đang hoạt động và `qwen3.5:4b` phải có sẵn; không pull model. Offline demo không cần Ollama.
+2. **Live model (chỉ khi có task/giới hạn đã duyệt):** Dịch vụ Radox AI API phải có sẵn với API key (`ASSISTANT_RADOX_API_KEY`), model mặc định `gemini-3.6-flash`; offline demo không cần gọi Radox AI.
 3. **Expo Web:** chạy trên origin `http://127.0.0.1:8082` và trỏ API process-scoped đến `http://127.0.0.1:5010/api/v1`. Đây là Web, không phải Android/device E2E.
 4. **Tài khoản synthetic:** isolated launcher đăng ký một user tổng hợp trong bộ nhớ khi khởi động. Chỉ dùng cho demo local; không dùng tài khoản ngân hàng thật và không ghi thông tin đăng nhập/token vào evidence.
 
@@ -41,7 +41,7 @@ npm run web -- --host localhost --port 8082
 
 Mở đúng origin `http://localhost:8082` để khớp CORS của launcher. Backend vẫn bind `127.0.0.1`; Web gọi API qua loopback. Xóa hai biến khỏi chính terminal demo sau khi dừng Expo; không ghi chúng vào `.env`. Dùng luồng đăng nhập UI bình thường với user synthetic do launcher tạo. HTTP chạy thật qua loopback nhưng storage vẫn chỉ là RAM: đây không phải PostgreSQL, persistence, Android/device, staging hay deployment evidence.
 
-Để chạy Assistant/Qwen live, chỉ sau khi được cấp quota riêng, khởi động chính isolated launcher ở mode `--live` trong một process mới với `ASSISTANT_ENABLED=1`, `ASSISTANT_PROVIDER=ollama`, `ASSISTANT_MODEL=qwen3.5:4b` và `ASSISTANT_OLLAMA_BASE_URL=http://127.0.0.1:11434`. Runtime mặc định dùng `ASSISTANT_PROVIDER_TIMEOUT_MS=25000` và `ASSISTANT_REQUEST_TIMEOUT_MS=30000`; chỉ các biến timeout này được runtime đọc. Launcher không cho phép database URL hoặc Banking secret environment. Không khởi động lại process để cấp lại quota.
+Để chạy Assistant live với Radox AI, chỉ sau khi được cấp quota riêng, khởi động chính isolated launcher ở mode `--live` trong một process mới với `ASSISTANT_ENABLED=1`, `ASSISTANT_PROVIDER=radox`, `ASSISTANT_RADOX_API_KEY=<your-radox-api-key>`, `ASSISTANT_MODEL=gemini-3.6-flash` và `ASSISTANT_RADOX_BASE_URL=https://radoxai.com/v1`. Runtime mặc định dùng `ASSISTANT_PROVIDER_TIMEOUT_MS=15000` và `ASSISTANT_REQUEST_TIMEOUT_MS=20000`. Launcher không cho phép database URL hoặc Banking secret environment. Không khởi động lại process để cấp lại quota.
 
 Dừng bằng Ctrl+C chỉ terminal/process do chính phiên demo khởi chạy; không dùng kill theo cổng và không dừng dịch vụ của Owner.
 
@@ -92,20 +92,20 @@ Dừng bằng Ctrl+C chỉ terminal/process do chính phiên demo khởi chạy;
    - Candidate giảm chi linh hoạt được calculator tạo nếu khả thi. Selector AI có thể chọn phương án hợp lệ khác; ghi nhận kết quả thực tế, không ép một lựa chọn vào kịch bản demo.
 
 ### Phút 6: Ca 4 — Minh họa nhánh RULE_BASED
-1. **Thao tác:** Dùng fixture/unit seam offline hoặc một Backend fixture instance cô lập đã cấu hình provider disabled. Không dừng Ollama/backend dùng chung của Owner và không tiêu quota live chỉ để ép fallback.
+1. **Thao tác:** Dùng fixture/unit seam offline hoặc một Backend fixture instance cô lập đã cấu hình provider disabled. Không tiêu quota live chỉ để ép fallback.
 2. **Kết quả:**
    - Màn hình vẫn hiển thị đầy đủ số liệu phân tích và các phương án.
    - Huy hiệu đổi thành: **"Kết quả tính toán và giải thích theo quy tắc"** (`RULE_BASED`).
    - Có dòng thông báo minh bạch: *"Phần AI hiện chưa khả dụng; bạn vẫn có thể xem kết quả tính toán."*
-   - Quan sát nhãn `RULE_BASED` và metrics/candidates giữ theo contract. Đây là bằng chứng fixture nếu dùng stub/disabled; không gọi là lỗi live Ollama đã được mô phỏng.
+   - Quan sát nhãn `RULE_BASED` và metrics/candidates giữ theo contract. Đây là bằng chứng fixture nếu dùng stub/disabled; không phải bằng chứng Radox AI live đã gặp lỗi.
 
 ## Cấu hình giới hạn hiện có
 
 - Isolated launcher đặt `financialAdviceConfig.enabled=true` trực tiếp; không cần `FINANCIAL_ADVICE_ENABLED`. Standard persistent server có cờ riêng nhưng không dùng trong runbook này.
-- Với isolated launcher, `ASSISTANT_ENABLED=1` cùng `ASSISTANT_PROVIDER=ollama`, `ASSISTANT_MODEL` và `ASSISTANT_OLLAMA_BASE_URL` bật local provider; offline mode từ chối cấu hình Assistant kế thừa đang bật.
+- Với isolated launcher, `ASSISTANT_ENABLED=1` cùng `ASSISTANT_PROVIDER=radox`, `ASSISTANT_RADOX_API_KEY`, `ASSISTANT_MODEL` (mặc định `gemini-3.6-flash`) và `ASSISTANT_RADOX_BASE_URL` (mặc định `https://radoxai.com/v1`) bật Radox provider; offline mode từ chối cấu hình Assistant kế thừa đang bật.
 - Mặc định trong `backend/src/assistant/helpConfig.ts`: 5 request/phút/người dùng, tối đa 2 request đồng thời toàn cục, 1/người dùng, request timeout 12 giây và provider timeout 10 giây. Bộ đếm provider là 10 calls/server run trong `AssistantRateLimiter`.
 - Các giá trị rate/concurrency/timeout là cấu hình code/fixture, không có biến môi trường tương ứng được runtime đọc. Không thêm biến env vào runbook để “đổi” chúng. Khi chạy demo, quota là theo process/server run; restart không cấp thêm ngân sách Owner đã duyệt cho phiên demo.
-- Backend runtime timeouts dùng `ASSISTANT_PROVIDER_TIMEOUT_MS` (mặc định 25 giây) và `ASSISTANT_REQUEST_TIMEOUT_MS` (mặc định 30 giây); fixture defaults trong `helpConfig.ts` là 10/12 giây. Không có biến runtime để thay rate-limit/concurrency: tài liệu không được đưa các biến không được đọc vào làm hướng dẫn cấu hình. `AssistantRateLimiter` có giới hạn provider 10 calls/process run; ngân sách Owner cho cả phiên vẫn áp dụng kể cả khi process restart.
+- Backend runtime timeouts dùng `ASSISTANT_PROVIDER_TIMEOUT_MS` (mặc định 15 giây cho Radox) và `ASSISTANT_REQUEST_TIMEOUT_MS` (mặc định 20 giây); fixture defaults trong `helpConfig.ts` là 10/12 giây. Không có biến runtime để thay rate-limit/concurrency: tài liệu không được đưa các biến không được đọc vào làm hướng dẫn cấu hình. `AssistantRateLimiter` có giới hạn provider 10 calls/process run; ngân sách Owner cho cả phiên vẫn áp dụng kể cả khi process restart.
 - `EXPO_PUBLIC_SANDBOX_HTTP=1` chỉ dành cho sandbox local. URL API minh họa là `http://127.0.0.1:5010/api/v1`; không dùng cho staging/production.
 
 ---
@@ -121,7 +121,7 @@ Dừng bằng Ctrl+C chỉ terminal/process do chính phiên demo khởi chạy;
 ### Câu 3: AI làm gì và Backend Code làm gì trong module này?
 > **Trả lời:** "Hệ thống áp dụng mô hình **Constrained Selector Pattern**:
 > - **Code Backend:** Thực hiện phép tính tài chính bằng `BigInt` trong luồng thiết kế này, lọc ra danh sách các phương án hợp lệ (`candidates`) và danh mục lý do hợp lệ (`allowedReasonIds`). Các test đã chạy chỉ cung cấp bằng chứng cho những ca cụ thể, không phải bảo đảm tuyệt đối cho mọi input.
-> - **AI (Qwen 3.5 4B):** Chỉ đóng vai trò người lựa chọn (`selector`), chọn ra đúng 1 `preferredOptionId` và 1–3 `reasonIds` phù hợp nhất với ưu tiên người dùng.
+> - **AI (Radox AI Provider / gemini-3.6-flash):** Chỉ đóng vai trò người lựa chọn (`selector`), chọn ra đúng 1 `preferredOptionId` và 1–3 `reasonIds` phù hợp nhất với ưu tiên người dùng.
 > - **Backend Renderer:** Đọc ID do AI chọn và render ra đoạn văn tiếng Việt từ catalog/template cố định. Phiên này chưa có bằng chứng chuyên gia ngân hàng đã kiểm duyệt catalog; validator/tests chỉ chứng minh các ràng buộc đã kiểm tra."
 
 ### Câu 4: Vì sao không để AI tính số tiền?

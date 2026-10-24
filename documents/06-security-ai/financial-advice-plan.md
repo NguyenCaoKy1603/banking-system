@@ -11,7 +11,7 @@ Module tư vấn tài chính cá nhân được thiết kế nhằm hỗ trợ n
 ### Nguyên tắc nghiệp vụ
 - **Dữ liệu do người dùng nhập (USER_ENTERED)** cho một tháng đại diện. Hệ thống không tự ý quét số dư hay toàn bộ lịch sử giao dịch để suy diễn tài chính.
 - **Tính toán tài chính xác định (Deterministic Financial Engine)**: Toàn bộ công thức tính toán, số liệu và tập hợp phương án khả thi (Candidate Options) được thực thi bằng backend code với kiểu số nguyên lớn `BigInt` (đơn vị VND). Tuyệt đối không để AI tính toán số tiền hoặc bịa đặt con số.
-- **AI có kiểm soát (Controlled AI Selection)**: Mô hình ngôn ngữ (Ollama local / LLM) chỉ đóng vai trò hỗ trợ lựa chọn phương án ưu tiên (`preferredOptionId`) và lý do giải thích (`reasonIds`) từ danh mục hợp lệ đã được Backend xác thực trước. Văn bản giải thích hiển thị cho người dùng được Backend ghép từ template và sự kiện thực tế.
+- **AI có kiểm soát (Controlled AI Selection)**: Mô hình ngôn ngữ (Radox AI / LLM) chỉ đóng vai trò hỗ trợ lựa chọn phương án ưu tiên (`preferredOptionId`) và lý do giải thích (`reasonIds`) từ danh mục hợp lệ đã được Backend xác thực trước. Văn bản giải thích hiển thị cho người dùng được Backend ghép từ template và sự kiện thực tế.
 - **Dung sai lỗi và Fallback an toàn (Rule-based Fallback)**: Khi AI không khả dụng, timeout, vượt quota hoặc trả về kết quả không hợp lệ, hệ thống chuyển sang chế độ giải thích theo quy tắc (`RULE_BASED`) với nhãn minh bạch. Các số liệu do calculator xác định; độ đúng được chứng minh trong phạm vi golden/cross-contract tests đã chạy, không phải bảo đảm tuyệt đối ngoài các ca đó.
 - **Không thực hiện giao dịch tài chính**: Module chỉ mang tính chất tham khảo, không tự động chuyển tiền, không mở sổ tiết kiệm, không sửa đổi cơ sở dữ liệu giao dịch ngân hàng.
 
@@ -27,7 +27,7 @@ flowchart TD
   A --> C["Financial Calculator (BigInt Deterministic Engine)"]
   C --> O["Sinh Candidate Options & Allowed Reason IDs"]
   O --> L{"AI bật & còn Quota?"}
-  L -->|Có| P["Ollama Local Provider (JSON Selection)"]
+  L -->|Có| P["Radox AI Provider (JSON Selection)"]
   P --> X["Backend Strict Semantic Validation"]
   X -->|Hợp lệ| R["Render Explanation (Templates + Facts) [AI_ASSISTED]"]
   X -->|Không hợp lệ / Lỗi| F["Deterministic Rule Selector [RULE_BASED]"]
@@ -48,10 +48,10 @@ flowchart TD
 - **D-06**: AI chỉ chọn option/reason ID trong whitelist; Backend render template câu văn chứa số liệu.
 - **D-07**: Endpoint riêng biệt `POST /api/v1/assistant/financial-advice`; không ảnh hưởng `/assistant/help`.
 - **D-08**: Không migration database, không lưu dữ liệu tư vấn xuống disk/database; xử lý in-memory request-scoped.
-- **D-09**: Tái sử dụng Ollama provider hiện có, chia sẻ chung quota (10 calls/run) và rate limiter.
+- **D-09**: Tái sử dụng Radox AI provider hiện có, chia sẻ chung quota (10 calls/run) và rate limiter.
 - **D-10**: Tự động fallback về `RULE_BASED` khi provider lỗi/hết quota/trả sai định dạng.
 - **D-11**: Cờ tính năng `FINANCIAL_ADVICE_ENABLED` độc lập (mặc định 0).
 - **D-12**: Quản lý vòng đời chặt chẽ trên Mobile bằng `sessionEpoch` và `requestGeneration` tránh race condition khi logout/relogin.
 - **D-13**: Không tự động tạo debit, transfer hay mở tài khoản tiết kiệm.
-- **D-14**: Phân định rõ ràng bằng chứng kiểm thử (Unit, Seam HTTP, Mock, Live Ollama local).
+- **D-14**: Phân định rõ ràng bằng chứng kiểm thử (Unit, Seam HTTP, Mock, Live Radox AI API).
 - **D-15**: Giới hạn tối đa số tiền nhập 1.000.000.000.000 VND và thời gian tối đa 120 tháng.

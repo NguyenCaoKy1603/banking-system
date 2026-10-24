@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BankingSystem } from "../src/bankingSystem.js";
-import { InMemoryCoreBanking } from "../src/coreBanking.js";
+import { InMemoryCoreBanking } from "../src/services/coreBanking.js";
 import { createBankingServer } from "../src/http.js";
 import {
   buildIsolatedDemoStartupMetadata,

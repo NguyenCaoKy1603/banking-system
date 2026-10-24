@@ -103,9 +103,10 @@ test("live isolated demo shares a hard two-charge cap across help/advice and blo
     webOrigin: DEFAULT_ISOLATED_WEB_ORIGIN,
   }, {
     ASSISTANT_ENABLED: "1",
-    ASSISTANT_PROVIDER: "ollama",
-    ASSISTANT_MODEL: "qwen3.5:4b",
-    ASSISTANT_OLLAMA_BASE_URL: "http://127.0.0.1:11434",
+    ASSISTANT_PROVIDER: "radox",
+    ASSISTANT_MODEL: "gemini-3.6-flash",
+    ASSISTANT_RADOX_API_KEY: "test-key-mock",
+    ASSISTANT_RADOX_BASE_URL: "https://radoxai.com/v1",
   });
   const usageEvents: string[] = [];
   const limiter = createIsolatedDemoAssistantRateLimiter(config, (event) => usageEvents.push(event.status));
@@ -177,24 +178,25 @@ test("isolated demo fails closed on persistence, non-local environment, inherite
   }
 });
 
-test("live demo resolves only the supported local Ollama runtime without making a request", () => {
+test("live demo resolves the supported Radox AI runtime without making a request", () => {
   const config = resolveIsolatedDemoConfig({
     mode: "live",
     port: DEFAULT_ISOLATED_DEMO_PORT,
     webOrigin: DEFAULT_ISOLATED_WEB_ORIGIN,
   }, {
     ASSISTANT_ENABLED: "1",
-    ASSISTANT_PROVIDER: "ollama",
-    ASSISTANT_MODEL: "qwen3.5:4b",
-    ASSISTANT_OLLAMA_BASE_URL: "http://127.0.0.1:11434",
+    ASSISTANT_PROVIDER: "radox",
+    ASSISTANT_MODEL: "gemini-3.6-flash",
+    ASSISTANT_RADOX_API_KEY: "test-key-mock",
+    ASSISTANT_RADOX_BASE_URL: "https://radoxai.com/v1",
   });
   assert.equal(config.assistantConfig.enabled, true);
-  assert.equal(config.assistantConfig.providerTimeoutMs, 25_000);
-  assert.equal(config.assistantConfig.requestTimeoutMs, 30_000);
+  assert.equal(config.assistantConfig.providerTimeoutMs, 15_000);
+  assert.equal(config.assistantConfig.requestTimeoutMs, 20_000);
   assert.equal(config.financialAdviceEnabled, true);
 });
 
-test("live demo rejects missing or non-local provider configuration without network access", () => {
+test("live demo rejects missing or invalid provider configuration without network access", () => {
   const args = {
     mode: "live" as const,
     port: DEFAULT_ISOLATED_DEMO_PORT,
@@ -203,8 +205,8 @@ test("live demo rejects missing or non-local provider configuration without netw
   assert.throws(() => resolveIsolatedDemoConfig(args, {}));
   assert.throws(() => resolveIsolatedDemoConfig(args, {
     ASSISTANT_ENABLED: "1",
-    ASSISTANT_PROVIDER: "ollama",
-    ASSISTANT_MODEL: "qwen3.5:4b",
-    ASSISTANT_OLLAMA_BASE_URL: "https://example.invalid",
+    ASSISTANT_PROVIDER: "radox",
+    // Missing API Key
   }));
 });
+

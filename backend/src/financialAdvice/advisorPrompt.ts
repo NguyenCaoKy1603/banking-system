@@ -5,7 +5,7 @@ import type {
 import type { SelectionPolicy } from "./selectionPolicy.js";
 
 export const ADVISOR_SYSTEM_PROMPT =
-  "Bạn chọn cách giải thích kế hoạch tài chính trong ứng dụng đồ án dùng dữ liệu giả lập.\n\n" +
+  "Bạn chọn cách giải thích kế hoạch tài chính trong ứng dụng tham chiếu dùng số liệu do người dùng tự nhập.\n\n" +
   "Dữ liệu có cấu trúc cung cấp facts, options, eligiblePreferredOptionIds, allowedReasonIdsByOption, primaryReasonIdsByOption và preference.\n" +
   "Facts là kết quả tính của hệ thống. Bạn không tính lại, sửa số tiền hoặc tạo lựa chọn mới.\n" +
   "Chọn đúng một preferredOptionId từ options.\n" +

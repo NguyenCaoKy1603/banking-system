@@ -5,10 +5,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
-  DEFAULT_OLLAMA_BASE_URL,
-  OllamaAssistantHelpProvider,
-  SUPPORTED_OLLAMA_MODEL,
-} from "../src/assistant/ollamaHelpProvider.js";
+  DEFAULT_RADOX_BASE_URL,
+  DEFAULT_RADOX_MODEL,
+  RadoxAssistantHelpProvider,
+} from "../src/assistant/radoxHelpProvider.js";
 import { resolveAssistantConfig } from "../src/assistant/helpConfig.js";
 import { ADVISOR_SYSTEM_PROMPT } from "../src/financialAdvice/advisorPrompt.js";
 import { CALCULATION_VERSION, CATALOG_VERSION } from "../src/financialAdvice/explanationCatalog.js";
@@ -55,7 +55,7 @@ const SOURCE_FILES = [
   "backend/src/financialAdvice/types.ts",
   "backend/src/financialAdvice/validation.ts",
   "backend/src/assistant/helpConfig.ts",
-  "backend/src/assistant/ollamaHelpProvider.ts",
+  "backend/src/assistant/radoxHelpProvider.ts",
   "backend/src/assistant/rateLimiter.ts",
   "backend/src/tests/financialAdviceEvaluation/dataset.ts",
   "backend/src/tests/financialAdviceEvaluation/reporting.ts",
@@ -119,18 +119,9 @@ async function mobileResponseValidator(): Promise<(value: unknown) => boolean> {
 }
 
 async function checkLocalModel(): Promise<{ available: boolean; digest: string | null }> {
-  try {
-    const response = await fetch(`${DEFAULT_OLLAMA_BASE_URL}/api/tags`, { signal: AbortSignal.timeout(3_000) });
-    if (!response.ok) return { available: false, digest: null };
-    const body = await response.json() as { models?: Array<{ name?: unknown; digest?: unknown }> };
-    const model = body.models?.find((entry) => entry.name === SUPPORTED_OLLAMA_MODEL);
-    const digest = model && typeof model.digest === "string" && /^[0-9a-f]{64}$/i.test(model.digest)
-      ? model.digest.toLowerCase()
-      : null;
-    return { available: digest !== null, digest };
-  } catch {
-    return { available: false, digest: null };
-  }
+  const apiKey = (process.env.ASSISTANT_RADOX_API_KEY || process.env.RADOX_API_KEY)?.trim();
+  if (!apiKey) return { available: false, digest: null };
+  return { available: true, digest: "radox-cloud" };
 }
 
 function uniqueWrite(filePath: string, contents: string): void {
@@ -170,16 +161,18 @@ async function main(): Promise<void> {
   const mobileValidator = await mobileResponseValidator();
   let modelDigest: string | null = null;
   let providerPrerequisiteReady = options.mode === "offline";
-  let provider: OllamaAssistantHelpProvider | undefined;
+  let provider: RadoxAssistantHelpProvider | undefined;
 
   if (options.mode === "live-service") {
     const model = await checkLocalModel();
     providerPrerequisiteReady = model.available;
     modelDigest = model.digest;
     if (providerPrerequisiteReady) {
-      provider = new OllamaAssistantHelpProvider({
-        baseUrl: DEFAULT_OLLAMA_BASE_URL,
-        model: SUPPORTED_OLLAMA_MODEL,
+      const apiKey = (process.env.ASSISTANT_RADOX_API_KEY || process.env.RADOX_API_KEY)!.trim();
+      provider = new RadoxAssistantHelpProvider({
+        baseUrl: process.env.ASSISTANT_RADOX_BASE_URL || DEFAULT_RADOX_BASE_URL,
+        apiKey,
+        model: process.env.ASSISTANT_MODEL || DEFAULT_RADOX_MODEL,
       });
     }
   }
@@ -252,7 +245,7 @@ async function main(): Promise<void> {
     promptHash,
     calculationVersion: CALCULATION_VERSION,
     catalogVersion: CATALOG_VERSION,
-    modelTag: SUPPORTED_OLLAMA_MODEL,
+    modelTag: process.env.ASSISTANT_MODEL || DEFAULT_RADOX_MODEL,
     modelDigest,
     command: "",
     batchId: options.batchId,
@@ -281,7 +274,7 @@ async function main(): Promise<void> {
     policyVersion: FINANCIAL_ADVICE_POLICY_VERSION,
     calculationVersion: CALCULATION_VERSION,
     catalogVersion: CATALOG_VERSION,
-    modelTag: SUPPORTED_OLLAMA_MODEL,
+    modelTag: process.env.ASSISTANT_MODEL || DEFAULT_RADOX_MODEL,
     modelDigest,
     providerPrerequisiteReady,
     providerAttemptedCount: run.providerAttemptedCount,

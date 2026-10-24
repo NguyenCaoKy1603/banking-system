@@ -14,7 +14,7 @@ export const CATALOG_VERSION = "fa-catalog-v2";
 export const CALCULATION_VERSION = "fa-calc-v1";
 
 export const STANDARD_ASSUMPTIONS = [
-  "Thu nhập và các khoản chi khai báo giữ nguyên trong thời gian mô phỏng.",
+  "Thu nhập và các khoản chi khai báo được giữ nguyên trong toàn bộ phép tính.",
   "Chưa tính lãi, lạm phát, phí và các khoản ngoài dữ liệu đã nhập.",
   "Kết quả là kế hoạch tham khảo trong hệ thống đồ án.",
 ];

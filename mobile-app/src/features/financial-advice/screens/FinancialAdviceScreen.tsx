@@ -51,6 +51,8 @@ const INITIAL_FORM_VALUES: FinancialAdviceFormValues = {
   monthlySavingsTargetMinor: "",
 };
 
+const DURATION_PRESETS = ["6", "12", "24", "36"];
+
 export function FinancialAdviceScreen() {
   const router = useRouter();
   const { deviceId, logout, refreshAccessToken, session } = useAuth();
@@ -351,70 +353,84 @@ export function FinancialAdviceScreen() {
             <Card elevated style={styles.metricsCard}>
               <Text style={styles.sectionHeader}>Số liệu phân tích</Text>
               {response.kind === "SAVINGS_PLAN" ? (
-                <View style={styles.metricGrid}>
-                  <View style={styles.metricItem}>
-                    <Text style={styles.metricLabel}>Cần dành mỗi tháng</Text>
+                <>
+                  <View style={styles.heroMetricBanner}>
+                    <View style={styles.heroMetricBadge}>
+                      <AppIcon color={colors.primary} name="savings" size={18} />
+                      <Text style={styles.heroMetricBadgeText}>Mục tiêu tiết kiệm</Text>
+                    </View>
+                    <Text style={styles.heroMetricLabel}>Cần dành mỗi tháng</Text>
                     <Text
-                      style={styles.metricValue}
+                      style={styles.heroMetricValue}
                       testID="fa-required-monthly"
                     >
                       {formatVnd(
                         response.metrics.requiredMonthlySavingsMinor,
                       )}
                     </Text>
-                  </View>
-                  <View style={styles.metricItem}>
-                    <Text style={styles.metricLabel}>Khả năng hiện tại</Text>
-                    <Text
-                      style={[
-                        styles.metricValue,
-                        response.metrics.capacityAfterBufferMinor.startsWith("-")
-                          ? styles.negativeValue
-                          : styles.positiveValue,
-                      ]}
-                      testID="fa-capacity"
-                    >
-                      {formatSignedVnd(
-                        response.metrics.capacityAfterBufferMinor,
-                      )}
+                    <Text style={styles.heroMetricSubtext}>
+                      Để đạt mục tiêu theo thời hạn đã lập
                     </Text>
                   </View>
-                  <View style={styles.metricItem}>
-                    <Text style={styles.metricLabel}>Khoảng thiếu / tháng</Text>
-                    <Text
-                      style={[
-                        styles.metricValue,
-                        response.metrics.monthlyGapMinor !== "0"
-                          ? styles.negativeValue
-                          : styles.neutralValue,
-                      ]}
-                      testID="fa-gap"
-                    >
-                  {formatVnd(response.metrics.monthlyGapMinor)}
-                    </Text>
-                  </View>
-                  <View style={styles.metricItem}>
-                    <Text style={styles.metricLabel}>Còn cần cho mục tiêu</Text>
-                    <Text style={styles.metricValue}>
-                      {formatVnd(response.metrics.remainingGoalMinor)}
-                    </Text>
-                  </View>
-                  {response.metrics.suggestedMonths !== null ? (
+
+                  <View style={styles.metricGrid}>
                     <View style={styles.metricItem}>
-                      <Text style={styles.metricLabel}>Số tháng ước tính</Text>
-                      <Text style={styles.metricValue}>
-                        {response.metrics.suggestedMonths} tháng
+                      <Text style={styles.metricLabel}>Khả năng hiện tại</Text>
+                      <Text
+                        style={[
+                          styles.metricValue,
+                          response.metrics.capacityAfterBufferMinor.startsWith("-")
+                            ? styles.negativeValue
+                            : styles.positiveValue,
+                        ]}
+                        testID="fa-capacity"
+                      >
+                        {formatSignedVnd(
+                          response.metrics.capacityAfterBufferMinor,
+                        )}
                       </Text>
                     </View>
-                  ) : null}
-                </View>
+                    <View style={styles.metricItem}>
+                      <Text style={styles.metricLabel}>Khoảng thiếu / tháng</Text>
+                      <Text
+                        style={[
+                          styles.metricValue,
+                          response.metrics.monthlyGapMinor !== "0"
+                            ? styles.negativeValue
+                            : styles.neutralValue,
+                        ]}
+                        testID="fa-gap"
+                      >
+                        {formatVnd(response.metrics.monthlyGapMinor)}
+                      </Text>
+                    </View>
+                    <View style={styles.metricItem}>
+                      <Text style={styles.metricLabel}>Còn cần cho mục tiêu</Text>
+                      <Text style={styles.metricValue}>
+                        {formatVnd(response.metrics.remainingGoalMinor)}
+                      </Text>
+                    </View>
+                    {response.metrics.suggestedMonths !== null ? (
+                      <View style={styles.metricItem}>
+                        <Text style={styles.metricLabel}>Số tháng ước tính</Text>
+                        <Text style={styles.metricValue}>
+                          {response.metrics.suggestedMonths} tháng
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </>
               ) : (
-                <View style={styles.metricGrid}>
-                  <View style={styles.metricItem}>
-                    <Text style={styles.metricLabel}>Khả năng sau dự phòng</Text>
+                <>
+                  <View style={styles.heroMetricBanner}>
+                    <View style={styles.heroMetricBadge}>
+                      <AppIcon color={colors.primary} name="card" size={18} />
+                      <Text style={styles.heroMetricBadgeText}>Cân đối thu chi</Text>
+                    </View>
+                    <Text style={styles.heroMetricLabel}>Khả năng sau dự phòng</Text>
                     <Text
                       style={[
-                        styles.metricValue,
+                        styles.heroMetricValue,
                         response.metrics.capacityAfterBufferMinor.startsWith("-")
                           ? styles.negativeValue
                           : styles.positiveValue,
@@ -425,43 +441,49 @@ export function FinancialAdviceScreen() {
                         response.metrics.capacityAfterBufferMinor,
                       )}
                     </Text>
-                  </View>
-                  <View style={styles.metricItem}>
-                    <Text style={styles.metricLabel}>Khoảng thiếu mục tiêu</Text>
-                    <Text
-                      style={[
-                        styles.metricValue,
-                        response.metrics.targetGapMinor !== "0"
-                          ? styles.negativeValue
-                          : styles.neutralValue,
-                      ]}
-                      testID="fa-gap"
-                    >
-                      {formatVnd(response.metrics.targetGapMinor)}
+                    <Text style={styles.heroMetricSubtext}>
+                      Khả năng tích lũy thực tế sau khi trừ dự phòng
                     </Text>
                   </View>
-                  <View style={styles.metricItem}>
-                    <Text style={styles.metricLabel}>Còn lại sau mục tiêu</Text>
-                    <Text
-                      style={[
-                        styles.metricValue,
-                        response.metrics.remainingAfterTargetMinor.startsWith("-")
-                          ? styles.negativeValue
-                          : styles.positiveValue,
-                      ]}
-                    >
-                      {formatSignedVnd(
-                        response.metrics.remainingAfterTargetMinor,
-                      )}
-                    </Text>
+
+                  <View style={styles.metricGrid}>
+                    <View style={styles.metricItem}>
+                      <Text style={styles.metricLabel}>Khoảng thiếu mục tiêu</Text>
+                      <Text
+                        style={[
+                          styles.metricValue,
+                          response.metrics.targetGapMinor !== "0"
+                            ? styles.negativeValue
+                            : styles.neutralValue,
+                        ]}
+                        testID="fa-gap"
+                      >
+                        {formatVnd(response.metrics.targetGapMinor)}
+                      </Text>
+                    </View>
+                    <View style={styles.metricItem}>
+                      <Text style={styles.metricLabel}>Còn lại sau mục tiêu</Text>
+                      <Text
+                        style={[
+                          styles.metricValue,
+                          response.metrics.remainingAfterTargetMinor.startsWith("-")
+                            ? styles.negativeValue
+                            : styles.positiveValue,
+                        ]}
+                      >
+                        {formatSignedVnd(
+                          response.metrics.remainingAfterTargetMinor,
+                        )}
+                      </Text>
+                    </View>
+                    <View style={styles.metricItem}>
+                      <Text style={styles.metricLabel}>Chi tiêu khai báo</Text>
+                      <Text style={styles.metricValue}>
+                        {formatVnd(response.metrics.declaredOutgoingsMinor)}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.metricItem}>
-                    <Text style={styles.metricLabel}>Chi tiêu khai báo</Text>
-                    <Text style={styles.metricValue}>
-                      {formatVnd(response.metrics.declaredOutgoingsMinor)}
-                    </Text>
-                  </View>
-                </View>
+                </>
               )}
             </Card>
 
@@ -543,8 +565,8 @@ export function FinancialAdviceScreen() {
                 <Text style={styles.guideTitle}>Số liệu một tháng đại diện</Text>
               </View>
               <Text style={styles.guideDescription}>
-                Dữ liệu do bạn tự nhập để mô phỏng kế hoạch tài chính. Ứng dụng
-                không tự động trích xuất lịch sử hay thay đổi số dư tài khoản của bạn.
+                Dữ liệu do bạn tự nhập để lập kế hoạch tài chính. Ứng dụng không
+                lấy số liệu từ lịch sử giao dịch hoặc thay đổi số dư tài khoản của bạn.
               </Text>
             </Card>
 
@@ -678,6 +700,37 @@ export function FinancialAdviceScreen() {
                     testID="fa-goal-months"
                     value={formValues.months}
                   />
+
+                  <View style={styles.durationPresetRow}>
+                    <Text style={styles.durationPresetLabel}>Gợi ý nhanh:</Text>
+                    <View style={styles.durationChips}>
+                      {DURATION_PRESETS.map((m) => {
+                        const isSelected = formValues.months === m;
+                        return (
+                          <Pressable
+                            key={m}
+                            accessibilityLabel={`Chọn thời hạn ${m} tháng`}
+                            accessibilityRole="button"
+                            disabled={isSubmitting}
+                            onPress={() => handleFieldChange("months", m)}
+                            style={[
+                              styles.durationChip,
+                              isSelected ? styles.durationChipActive : null,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.durationChipText,
+                                isSelected ? styles.durationChipTextActive : null,
+                              ]}
+                            >
+                              {m} tháng
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
                 </>
               ) : (
                 <TextField
@@ -814,9 +867,12 @@ export function FinancialAdviceScreen() {
                 )
               }
               style={[
-                styles.confirmRow,
+                styles.confirmCard,
+                formValues.excludeDebtFromExpensesConfirmation
+                  ? styles.confirmCardChecked
+                  : null,
                 fieldErrors["excludeDebtFromExpensesConfirmation"]
-                  ? styles.confirmRowError
+                  ? styles.confirmCardError
                   : null,
               ]}
               testID="fa-confirm-input"
@@ -833,10 +889,15 @@ export function FinancialAdviceScreen() {
                   <AppIcon color={colors.surface} name="check" size={14} />
                 ) : null}
               </View>
-              <Text style={styles.confirmText}>
-                Tôi xác nhận các khoản chi tiêu thiết yếu và linh hoạt đã nhập ở
-                trên không tính trùng khoản trả nợ.
-              </Text>
+              <View style={styles.confirmContent}>
+                <Text style={styles.confirmTitle}>
+                  Cam kết số liệu không trùng lặp
+                </Text>
+                <Text style={styles.confirmText}>
+                  Tôi xác nhận các khoản chi tiêu thiết yếu và linh hoạt đã nhập ở
+                  trên không tính trùng khoản trả nợ.
+                </Text>
+              </View>
             </Pressable>
             {fieldErrors["excludeDebtFromExpensesConfirmation"] ? (
               <Text accessibilityLiveRegion="polite" style={styles.fieldErrorText}>
@@ -1011,6 +1072,71 @@ const styles = StyleSheet.create({
     color: colors.muted,
     lineHeight: 18,
   },
+  durationPresetRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginTop: -spacing.xs,
+    flexWrap: "wrap",
+  },
+  durationPresetLabel: {
+    ...typography.caption,
+    color: colors.muted,
+  },
+  durationChips: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    flexWrap: "wrap",
+  },
+  durationChip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  durationChipActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+  },
+  durationChipText: {
+    ...typography.caption,
+    color: colors.muted,
+    fontWeight: "600",
+  },
+  durationChipTextActive: {
+    color: colors.primary,
+    fontWeight: "700",
+  },
+  confirmCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    gap: spacing.md,
+  },
+  confirmCardChecked: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+  },
+  confirmCardError: {
+    borderColor: colors.danger,
+    backgroundColor: colors.dangerSoft,
+    borderWidth: 1.5,
+  },
+  confirmContent: {
+    flex: 1,
+    gap: 2,
+  },
+  confirmTitle: {
+    ...typography.label,
+    fontSize: 14,
+    color: colors.text,
+  },
   confirmRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1114,6 +1240,46 @@ const styles = StyleSheet.create({
   },
   metricsCard: {
     gap: spacing.md,
+  },
+  heroMetricBanner: {
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    alignItems: "center",
+    gap: spacing.xs / 2,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  heroMetricBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    marginBottom: spacing.xs / 2,
+  },
+  heroMetricBadgeText: {
+    ...typography.caption,
+    fontWeight: "700",
+    color: colors.primary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  heroMetricLabel: {
+    ...typography.caption,
+    color: colors.muted,
+  },
+  heroMetricValue: {
+    ...typography.heading,
+    fontSize: 22,
+    color: colors.primary,
+    fontWeight: "800",
+    textAlign: "center",
+    marginVertical: spacing.xs / 2,
+  },
+  heroMetricSubtext: {
+    ...typography.caption,
+    color: colors.muted,
+    fontSize: 12,
+    textAlign: "center",
   },
   metricGrid: {
     flexDirection: "row",

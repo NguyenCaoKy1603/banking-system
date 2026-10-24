@@ -197,6 +197,19 @@ describe("FinancialAdviceScreen Component Tests", () => {
     expect(queryByTestId(renderer, "fa-goal-target")).toBeNull();
   });
 
+  it("2b. Bấm chip thời hạn nhanh: cập nhật giá trị trường thời hạn mục tiêu", async () => {
+    const renderer = await renderScreen();
+
+    const chip24 = renderer.root.findByProps({
+      accessibilityLabel: "Chọn thời hạn 24 tháng",
+    });
+    await act(async () => {
+      chip24.props.onPress();
+    });
+
+    expect(getTextInput(renderer, "fa-goal-months").props.value).toBe("24");
+  });
+
   it("3. Báo lỗi validation trên UI khi submit mà chưa điền trường bắt buộc", async () => {
     const renderer = await renderScreen();
 
