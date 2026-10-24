@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import type { PoolClient } from "pg";
-import { addDays, calculateAvailableCredit, calculateMinimumPayment, getStatementStatus, nextStatementCloseAt, type CardInstrument, type CardReportedLostResult, type CreditAccount, type CreditApplication, type CreditApplicationRequest, type CreditCard, type CreditPayment, type CreditPaymentQuote, type CreditPaymentQuoteRequest, type CreditStatement, type CreditTransaction } from "../credit.js";
+import { addDays, calculateAvailableCredit, calculateMinimumPayment, getStatementStatus, nextStatementCloseAt, type CardInstrument, type CardReportedLostResult, type CreditAccount, type CreditApplication, type CreditApplicationRequest, type CreditCard, type CreditPayment, type CreditPaymentQuote, type CreditPaymentQuoteRequest, type CreditStatement, type CreditTransaction } from "../domain/credit/index.js";
 import { conflict, invalidRequest, notFound } from "../errors.js";
 import { fingerprint } from "../security.js";
-import { parseMoney, toMoney } from "../money.js";
+import { parseMoney, toMoney } from "../domain/money.js";
 import { UnitOfWork } from "./unitOfWork.js";
 import { AccountRepository } from "./repositories/accountRepository.js";
 import { AuditRepository } from "./repositories/auditRepository.js";

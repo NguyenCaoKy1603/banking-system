@@ -1,5 +1,6 @@
 import type { RuntimeConfig } from "../runtimeConfig.js";
 import { LocalDevelopmentSecretProvider } from "./LocalDevelopmentSecretProvider.js";
+import { GoogleSecretManagerClient, type GoogleSecretManagerApi } from "./GoogleSecretManagerClient.js";
 import { ManagedSecretProvider, type ManagedSecretClient } from "./ManagedSecretProvider.js";
 import { MountedSecretClient } from "./MountedSecretClient.js";
 import { SecretCache } from "./secretCache.js";
@@ -19,7 +20,7 @@ export const RUNTIME_SECRET_REFERENCES = Object.freeze({
 export function createRuntimeSecretProvider(
   config: Pick<RuntimeConfig, "bankingEnvironment">,
   env: NodeJS.ProcessEnv = process.env,
-  options: { managedClient?: ManagedSecretClient } = {},
+  options: { managedClient?: ManagedSecretClient; googleSecretManagerApi?: GoogleSecretManagerApi } = {},
 ): SecretProvider {
   if (config.bankingEnvironment === "development" || config.bankingEnvironment === "test" || config.bankingEnvironment === "preview") {
     return new SecretCache(new LocalDevelopmentSecretProvider(env, config.bankingEnvironment));
@@ -28,7 +29,27 @@ export function createRuntimeSecretProvider(
     throw new Error("Staging and production-like runtimes require BANKING_SECRET_PROVIDER=managed.");
   }
   const mountedDirectory = env.BANKING_MANAGED_SECRETS_DIR?.trim();
-  const managedClient = options.managedClient ?? (mountedDirectory ? new MountedSecretClient(mountedDirectory) : undefined);
+  const managedBackend = env.BANKING_MANAGED_SECRET_BACKEND?.trim().toLowerCase();
+  let managedClient = options.managedClient;
+  if (managedBackend === "google-secret-manager") {
+    if (mountedDirectory) {
+      throw new Error("BANKING_MANAGED_SECRETS_DIR cannot be combined with the Google Secret Manager backend.");
+    }
+    const projectId = env.BANKING_SECRET_PROJECT_ID?.trim();
+    if (!projectId) {
+      throw new Error("BANKING_SECRET_PROJECT_ID is required for the Google Secret Manager backend.");
+    }
+    managedClient ??= new GoogleSecretManagerClient(projectId, options.googleSecretManagerApi);
+  } else if (managedBackend === "mounted") {
+    if (!mountedDirectory) {
+      throw new Error("BANKING_MANAGED_SECRETS_DIR is required for the mounted managed-secret backend.");
+    }
+    managedClient ??= new MountedSecretClient(mountedDirectory);
+  } else if (managedBackend) {
+    throw new Error("BANKING_MANAGED_SECRET_BACKEND must be google-secret-manager or mounted.");
+  } else {
+    managedClient ??= mountedDirectory ? new MountedSecretClient(mountedDirectory) : undefined;
+  }
   return new SecretCache(new ManagedSecretProvider(managedClient));
 }
 

@@ -1,11 +1,12 @@
 import { createBankingServer, createPersistentBankingServer } from "./http.js";
 import { BankingSystem } from "./bankingSystem.js";
-import { PostgresRelationalRepository } from "./postgresRelationalRepository.js";
+import { PostgresRelationalRepository } from "./database/postgresRelationalRepository.js";
 import { KeyEncryptionKeyringAdapter, OtpDigestKeyring } from "./mfa/crypto.js";
 import { PersistentMfaService } from "./mfa/persistentMfaService.js";
 import { createRuntimeEmailProvider } from "./mfa/runtimeEmailProvider.js";
 import { RelationalHttpBoundary } from "./database/relationalHttpBoundary.js";
 import { readRuntimeConfig } from "./runtimeConfig.js";
+import { resolveBankingBindHost } from "./serverBind.js";
 import { runtimeMetadata } from "./runtimeMetadata.js";
 import { createRuntimeSecretProvider, referenceFor } from "./secrets/runtimeSecrets.js";
 import { resolveRuntimeAssistantConfig } from "./assistant/runtimeAssistantConfig.js";
@@ -41,6 +42,7 @@ function readConfiguredMethods(): StepUpMethod[] | undefined {
 const runtimeConfig = readRuntimeConfig();
 
 const port = Number(process.env.PORT ?? 5000);
+const bindHost = resolveBankingBindHost();
 const storage = runtimeConfig.storage;
 const bankingEnvironment = runtimeConfig.bankingEnvironment;
 const buildCommitSha = runtimeConfig.commitSha;
@@ -147,7 +149,7 @@ async function start(): Promise<void> {
 
   startupReady = true;
 
-  server.listen(port, "0.0.0.0", () => {
+  server.listen(port, bindHost, () => {
     console.log(JSON.stringify({
       event: "server_started",
       startedAt: new Date().toISOString(),
@@ -155,6 +157,7 @@ async function start(): Promise<void> {
       environment: bankingEnvironment,
       storage,
       port,
+      bindHost,
       commitSha: buildCommitSha,
     }));
   });

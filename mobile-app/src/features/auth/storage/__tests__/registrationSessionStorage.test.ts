@@ -1,8 +1,10 @@
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 import {
   deleteRegistrationSession,
   loadRegistrationSession,
+  resetRegistrationSessionCacheForTests,
   saveRegistrationSession,
   type RegistrationSessionV1,
 } from "@/features/auth/storage/registrationSessionStorage";
@@ -333,6 +335,24 @@ describe("S9 – round-trip: save and load returns identical session", () => {
     expect(result.kind).toBe("VALID");
     if (result.kind === "VALID") {
       expect(result.session).toEqual(validChallengeReceived);
+    }
+  });
+
+  it("operates gracefully on web platform without calling native SecureStore", async () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(Platform, "OS");
+    Object.defineProperty(Platform, "OS", { configurable: true, value: "web" });
+    try {
+      resetRegistrationSessionCacheForTests();
+      await expect(loadRegistrationSession()).resolves.toEqual({ kind: "EMPTY" });
+      await saveRegistrationSession(validChallengeReceived);
+      const loaded = await loadRegistrationSession();
+      expect(loaded).toEqual({ kind: "VALID", session: validChallengeReceived });
+      await deleteRegistrationSession();
+      await expect(loadRegistrationSession()).resolves.toEqual({ kind: "EMPTY" });
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(Platform, "OS", originalDescriptor);
+      }
     }
   });
 });

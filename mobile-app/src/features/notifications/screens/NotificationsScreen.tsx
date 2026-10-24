@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { AppHeader } from "@/components/ui/AppHeader";
 import { AppIcon, type AppIconName } from "@/components/ui/AppIcon";
@@ -17,6 +24,17 @@ import type {
 } from "@/features/notifications/types/notification";
 import { ApiError } from "@/services/api/ApiError";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
+
+export type NotificationFilter = "ALL" | "UNREAD" | NotificationType;
+
+const notificationFilters: { value: NotificationFilter; label: string }[] = [
+  { value: "ALL", label: "Tất cả" },
+  { value: "UNREAD", label: "Chưa đọc" },
+  { value: "TRANSFER", label: "Chuyển tiền" },
+  { value: "SAVINGS", label: "Tiết kiệm" },
+  { value: "CREDIT", label: "Tín dụng" },
+  { value: "SECURITY", label: "Bảo mật" },
+];
 
 function getErrorMessage(error: unknown): string {
   return error instanceof ApiError
@@ -45,28 +63,43 @@ export function NotificationsScreen() {
     [accessToken, deviceId, refreshAccessToken],
   );
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [filter, setFilter] = useState<NotificationFilter>("ALL");
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
-  const loadNotifications = useCallback(async () => {
-    if (!accessToken) {
-      setIsLoading(false);
-      return;
-    }
-    setIsLoading(true);
-    setError(undefined);
-    try {
-      const response = await listNotifications(auth);
-      setNotifications(response.items);
-    } catch (requestError: unknown) {
-      setError(getErrorMessage(requestError));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [accessToken, auth]);
+  const loadNotifications = useCallback(
+    async (isManualRefresh = false) => {
+      if (!accessToken) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+        return;
+      }
+      if (isManualRefresh) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+      setError(undefined);
+      try {
+        const response = await listNotifications(auth);
+        setNotifications(response.items);
+      } catch (requestError: unknown) {
+        setError(getErrorMessage(requestError));
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    },
+    [accessToken, auth],
+  );
 
   useEffect(() => {
     void Promise.resolve().then(() => loadNotifications());
+  }, [loadNotifications]);
+
+  const handleRefresh = useCallback(() => {
+    void loadNotifications(true);
   }, [loadNotifications]);
 
   const handleOpen = useCallback(
@@ -93,11 +126,32 @@ export function NotificationsScreen() {
     [auth, router],
   );
 
-  const unreadCount = notifications.filter((item) => !item.read).length;
+  const unreadCount = useMemo(
+    () => notifications.filter((item) => !item.read).length,
+    [notifications],
+  );
+
+  const visibleNotifications = useMemo(() => {
+    return notifications.filter((item) => {
+      if (filter === "ALL") return true;
+      if (filter === "UNREAD") return !item.read;
+      return item.type === filter;
+    });
+  }, [filter, notifications]);
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            colors={[colors.primary]}
+            onRefresh={handleRefresh}
+            refreshing={isRefreshing}
+            tintColor={colors.primary}
+          />
+        }
+      >
         <AppHeader
           eyebrow="Trung tâm cập nhật"
           onBack={() => router.back()}
@@ -109,6 +163,47 @@ export function NotificationsScreen() {
           title="Thông báo"
         />
 
+        {notifications.length > 0 && !error ? (
+          <ScrollView
+            contentContainerStyle={styles.filterRow}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.filterScrollView}
+            testID="notification-filters"
+          >
+            {notificationFilters.map((item) => {
+              const selected = filter === item.value;
+              const badgeCount =
+                item.value === "UNREAD" ? unreadCount : undefined;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  key={item.value}
+                  onPress={() => setFilter(item.value)}
+                  style={[
+                    styles.filterChip,
+                    selected ? styles.filterChipSelected : null,
+                  ]}
+                  testID={`notification-filter-${item.value.toLowerCase()}`}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipLabel,
+                      selected ? styles.filterChipLabelSelected : null,
+                    ]}
+                  >
+                    {item.label}
+                    {badgeCount !== undefined && badgeCount > 0
+                      ? ` (${badgeCount})`
+                      : ""}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        ) : null}
+
         {isLoading ? (
           <StateCard loading message="Đang tải thông báo..." />
         ) : error ? (
@@ -116,7 +211,7 @@ export function NotificationsScreen() {
             actionLabel="Thử lại"
             icon="alert"
             message={error}
-            onAction={loadNotifications}
+            onAction={() => void loadNotifications()}
             title="Không thể tải thông báo"
           />
         ) : notifications.length === 0 ? (
@@ -125,9 +220,15 @@ export function NotificationsScreen() {
             message="Khi có cập nhật về giao dịch hoặc bảo mật, bạn sẽ thấy tại đây."
             title="Chưa có thông báo"
           />
+        ) : visibleNotifications.length === 0 ? (
+          <StateCard
+            icon="bell"
+            message="Không có thông báo nào trong danh mục đã chọn."
+            title="Không tìm thấy thông báo"
+          />
         ) : (
           <View style={styles.list}>
-            {notifications.map((notification, index) => (
+            {visibleNotifications.map((notification, index) => (
               <Pressable
                 accessibilityLabel={`Mở thông báo ${notification.title}`}
                 accessibilityRole="button"
@@ -138,9 +239,16 @@ export function NotificationsScreen() {
                   !notification.read ? styles.unreadCard : null,
                   pressed ? styles.pressed : null,
                 ]}
-                testID={index === 0 ? "notification-first" : `notification-${notification.id}`}
+                testID={
+                  index === 0 ? "notification-first" : `notification-${notification.id}`
+                }
               >
-                <View style={[styles.iconBox, !notification.read ? styles.unreadIconBox : null]}>
+                <View
+                  style={[
+                    styles.iconBox,
+                    !notification.read ? styles.unreadIconBox : null,
+                  ]}
+                >
                   <AppIcon
                     color={!notification.read ? colors.primary : colors.muted}
                     name={getNotificationIcon(notification.type)}
@@ -157,7 +265,9 @@ export function NotificationsScreen() {
                   <Text numberOfLines={2} style={styles.notificationBody}>
                     {notification.body}
                   </Text>
-                  <Text style={styles.notificationDate}>{formatDate(notification.createdAt)}</Text>
+                  <Text style={styles.notificationDate}>
+                    {formatDate(notification.createdAt)}
+                  </Text>
                 </View>
                 <AppIcon color={colors.subtle} name="chevronRight" size={19} />
               </Pressable>
@@ -177,6 +287,39 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     padding: spacing.lg,
     gap: spacing.lg,
+  },
+  filterScrollView: {
+    flexGrow: 0,
+    maxHeight: 44,
+  },
+  filterRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingVertical: 2,
+  },
+  filterChip: {
+    height: 36,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+  },
+  filterChipSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+  },
+  filterChipLabel: {
+    ...typography.caption,
+    color: colors.muted,
+    fontWeight: "600",
+  },
+  filterChipLabelSelected: {
+    color: colors.primary,
+    fontWeight: "700",
   },
   list: { gap: spacing.sm },
   notificationCard: {

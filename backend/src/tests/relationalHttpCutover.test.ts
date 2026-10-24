@@ -11,7 +11,7 @@ const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
 
 test("relational-v2 boundary requires every approved customer route group", () => {
   const unitOfWork = {} as UnitOfWork;
-  const complete = new RelationalHttpBoundary(unitOfWork, "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud,kyc");
+  const complete = new RelationalHttpBoundary(unitOfWork, "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,kyc");
   assert.doesNotThrow(() => complete.assertRelationalV2Complete());
   const incomplete = new RelationalHttpBoundary(unitOfWork, "auth,mfa,accounts,beneficiaries,transfers,savings,credit");
   assert.throws(() => incomplete.assertRelationalV2Complete(), /cutover is incomplete/);

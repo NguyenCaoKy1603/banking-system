@@ -49,6 +49,21 @@ function normalizeCertificate(value: string | undefined): string | undefined {
   return normalized ? normalized.replace(/\\n/g, "\n") : undefined;
 }
 
+function assertConnectionStringHasNoSslOverrides(connectionString: string): void {
+  const queryIndex = connectionString.indexOf("?");
+  if (queryIndex < 0) return;
+
+  const query = connectionString.slice(queryIndex + 1).split("#", 1)[0] ?? "";
+  for (const name of new URLSearchParams(query).keys()) {
+    const normalized = name.toLowerCase();
+    if (normalized.startsWith("ssl") || normalized === "uselibpqcompat") {
+      throw new Error(
+        "PostgreSQL TLS options must be configured through DATABASE_SSL_MODE and its CA/hostname settings, not DATABASE_URL query parameters.",
+      );
+    }
+  }
+}
+
 /** Resolve node-postgres TLS options without falling back to plaintext. */
 export function resolveDatabaseSslConfig(input: {
   env?: NodeJS.ProcessEnv;
@@ -97,6 +112,7 @@ function poolConfig(options: DatabasePoolOptions): PoolConfig {
   if (!connectionString?.trim()) {
     throw new Error("DATABASE_URL is required for the database pool.");
   }
+  assertConnectionStringHasNoSslOverrides(connectionString);
 
   const max = options.max ?? positiveInt(process.env.DB_POOL_MAX, 4, "DB_POOL_MAX");
   const connectionTimeoutMillis =

@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 import { isNonEmptyDateTime } from "@/services/api/responseValidators";
 
@@ -8,6 +9,64 @@ const REGISTRATION_SESSION_KEY = "banking.registration.session.v1";
 const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
+
+const inMemoryStore = new Map<string, string>();
+
+function getWebStorage(): Storage | null {
+  if (typeof window !== "undefined" && window.localStorage) {
+    return window.localStorage;
+  }
+  return null;
+}
+
+async function readStorageItem(key: string): Promise<string | null> {
+  if (Platform.OS === "web") {
+    const webStorage = getWebStorage();
+    if (webStorage) {
+      try {
+        return webStorage.getItem(key);
+      } catch {
+        return inMemoryStore.get(key) ?? null;
+      }
+    }
+    return inMemoryStore.get(key) ?? null;
+  }
+  return SecureStore.getItemAsync(key, SECURE_STORE_OPTIONS);
+}
+
+async function writeStorageItem(key: string, value: string): Promise<void> {
+  if (Platform.OS === "web") {
+    const webStorage = getWebStorage();
+    if (webStorage) {
+      try {
+        webStorage.setItem(key, value);
+        return;
+      } catch {
+        inMemoryStore.set(key, value);
+        return;
+      }
+    }
+    inMemoryStore.set(key, value);
+    return;
+  }
+  await SecureStore.setItemAsync(key, value, SECURE_STORE_OPTIONS);
+}
+
+async function deleteStorageItem(key: string): Promise<void> {
+  if (Platform.OS === "web") {
+    const webStorage = getWebStorage();
+    if (webStorage) {
+      try {
+        webStorage.removeItem(key);
+      } catch {
+        // ignore
+      }
+    }
+    inMemoryStore.delete(key);
+    return;
+  }
+  await SecureStore.deleteItemAsync(key, SECURE_STORE_OPTIONS);
+}
 
 // ─── Schema v1 discriminated union ───────────────────────────────────────────
 
@@ -158,11 +217,8 @@ function enqueueMutation<Result>(
  */
 export function loadRegistrationSession(): Promise<RegistrationSessionLoadResult> {
   return enqueueMutation(async () => {
-    // Intentionally not caught: SecureStore hardware/OS errors must propagate.
-    const raw = await SecureStore.getItemAsync(
-      REGISTRATION_SESSION_KEY,
-      SECURE_STORE_OPTIONS,
-    );
+    // Intentionally not caught: storage hardware/OS errors must propagate.
+    const raw = await readStorageItem(REGISTRATION_SESSION_KEY);
 
     if (raw === null) {
       return { kind: "EMPTY" } as RegistrationSessionLoadResult;
@@ -188,10 +244,9 @@ export function saveRegistrationSession(
   session: RegistrationSessionV1,
 ): Promise<void> {
   return enqueueMutation(async () => {
-    await SecureStore.setItemAsync(
+    await writeStorageItem(
       REGISTRATION_SESSION_KEY,
       serializeSession(session),
-      SECURE_STORE_OPTIONS,
     );
   });
 }
@@ -202,9 +257,10 @@ export function saveRegistrationSession(
  */
 export function deleteRegistrationSession(): Promise<void> {
   return enqueueMutation(async () => {
-    await SecureStore.deleteItemAsync(
-      REGISTRATION_SESSION_KEY,
-      SECURE_STORE_OPTIONS,
-    );
+    await deleteStorageItem(REGISTRATION_SESSION_KEY);
   });
+}
+
+export function resetRegistrationSessionCacheForTests(): void {
+  inMemoryStore.clear();
 }

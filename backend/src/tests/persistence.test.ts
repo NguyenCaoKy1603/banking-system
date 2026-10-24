@@ -11,7 +11,7 @@ import {
 } from "../bankingSystem.js";
 import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
 import { createPersistentBankingServer } from "../http.js";
-import { PostgresSnapshotRepository } from "../postgresSnapshotRepository.js";
+import { PostgresSnapshotRepository } from "../database/postgresSnapshotRepository.js";
 
 const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
 
@@ -320,110 +320,6 @@ test("PostgreSQL snapshot persists users and serializes concurrent transfer subm
   assert.equal(transactionCount.transactionCount, 2);
   assert.equal(transactionCount.outboxCount, 2);
   assert.equal(transactionCount.reconciliation, "0");
-});
-
-test("PostgreSQL snapshot keeps fraud reports idempotent, restartable and user-scoped", {
-  skip: !databaseUrl,
-}, async (t) => {
-  const repository = new PostgresSnapshotRepository({
-    connectionString: databaseUrl,
-    snapshotKey: `fraud-stage2-${randomUUID()}`,
-  });
-  t.after(async () => {
-    await repository.deleteSnapshot();
-    await repository.close();
-  });
-  await repository.initialize();
-
-  const seeded = await repository.withState(
-    new BankingSystem({ sandboxOtp: "123456" }).exportState(),
-    async (state) => {
-      const system = new BankingSystem({ sandboxOtp: "123456" });
-      system.importState(state as BankingSystemState);
-      const owner = system.register({
-        fullName: "Stage 2 Fraud Owner",
-        email: `stage2-fraud-${randomUUID()}@example.com`,
-        phoneNumber: uniquePhone(),
-        password: "Password1",
-      }).user;
-      const other = system.register({
-        fullName: "Stage 2 Other User",
-        email: `stage2-fraud-other-${randomUUID()}@example.com`,
-        phoneNumber: uniquePhone(),
-        password: "Password1",
-      }).user;
-      const account = system.listAccounts(owner.id)[0];
-      assert.ok(account);
-      system.seedReferenceFunding(`stage2-fraud-funding-${randomUUID()}`, {
-        recipientAccountNumber: getAccountNumber(system, owner.id),
-        amount: { currency: "VND", amountMinor: "1000000" },
-        reason: "stage2 fraud regression fixture",
-      });
-      const transaction = system.listTransactions(owner.id, account.id).items[0];
-      assert.ok(transaction);
-      return {
-        result: {
-          ownerId: owner.id,
-          otherId: other.id,
-          accountId: account.id,
-          transactionId: transaction.id,
-        },
-        nextState: system.exportState(),
-      };
-    },
-  );
-
-  const submit = (idempotencyKey: string) =>
-    repository.withState(
-      new BankingSystem({ sandboxOtp: "123456" }).exportState(),
-      async (state) => {
-        const system = new BankingSystem({ sandboxOtp: "123456" });
-        system.importState(state as BankingSystemState);
-        const report = system.reportFraud(
-          seeded.ownerId,
-          seeded.accountId,
-          seeded.transactionId,
-          "Stage 2 fraud regression fixture",
-          idempotencyKey,
-        );
-        return { result: report, nextState: system.exportState() };
-      },
-    );
-
-  const concurrent = await Promise.all([
-    submit("stage2-fraud-concurrent-a"),
-    submit("stage2-fraud-concurrent-b"),
-  ]);
-  assert.equal(concurrent[0].reportId, concurrent[1].reportId);
-
-  const replay = await submit("stage2-fraud-concurrent-c");
-  assert.equal(replay.reportId, concurrent[0].reportId);
-
-  const afterRestart = await repository.withState(
-    new BankingSystem({ sandboxOtp: "123456" }).exportState(),
-    async (state) => {
-      const system = new BankingSystem({ sandboxOtp: "123456" });
-      system.importState(state as BankingSystemState);
-      assert.throws(
-        () => system.getFraudReport(seeded.otherId, concurrent[0].reportId),
-        (error: unknown) =>
-          typeof error === "object" &&
-          error !== null &&
-          "status" in error &&
-          error.status === 404,
-      );
-      return {
-        result: {
-          report: system.getFraudReport(seeded.ownerId, concurrent[0].reportId),
-          reportCount: system.exportState().fraudReports?.length ?? 0,
-        },
-        nextState: system.exportState(),
-      };
-    },
-  );
-  assert.equal(afterRestart.report.reportId, concurrent[0].reportId);
-  assert.equal(afterRestart.report.status, "RECEIVED");
-  assert.equal(afterRestart.reportCount, 1);
 });
 
 test("PostgreSQL persistent HTTP server restores state across restart", {

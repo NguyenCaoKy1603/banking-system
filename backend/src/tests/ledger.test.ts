@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { InMemoryLedger } from "../ledger.js";
+import { InMemoryLedger } from "../domain/ledger.js";
 
 test("ledger accepts balanced double-entry journals and is idempotent", () => {
   const ledger = new InMemoryLedger();

@@ -213,12 +213,6 @@ export function LoginScreen() {
                 </Link>
               </View>
 
-              <Link href="./recover" asChild>
-                <Pressable accessibilityRole="link" hitSlop={8}>
-                  <Text style={styles.recoveryLink}>Mất Authenticator? Khôi phục bảo mật</Text>
-                </Pressable>
-              </Link>
-
               <View style={styles.notice}>
                 <View style={styles.noticeIcon}>
                   <AppIcon color={colors.success} name="shield" size={20} />
@@ -289,11 +283,6 @@ const styles = StyleSheet.create({
   link: {
     ...typography.bodyStrong,
     color: colors.primary,
-  },
-  recoveryLink: {
-    ...typography.label,
-    color: colors.primary,
-    textAlign: "center",
   },
   notice: {
     flexDirection: "row",

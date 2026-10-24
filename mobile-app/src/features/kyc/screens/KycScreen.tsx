@@ -10,6 +10,7 @@ import {
 } from "react-native";
 
 import { AppHeader } from "@/components/ui/AppHeader";
+import { Button } from "@/components/ui/Button";
 import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
@@ -114,8 +115,8 @@ export function KycScreen() {
     fullName: session?.user.fullName ?? "",
     identityNumber: "",
     address: "",
-    documentUri: "",
-    syntheticDataConfirmed: false,
+    documentUri: "mock://identity-card-front",
+    syntheticDataConfirmed: true,
   });
   const [fieldErrors, setFieldErrors] = useState<KycFieldErrors>(emptyErrors);
   const [isLoading, setIsLoading] = useState(true);
@@ -420,40 +421,38 @@ export function KycScreen() {
               testID="kyc-address"
               value={draft.address}
             />
-            <View style={styles.documentBox}>
-              <Text style={styles.summaryLabel}>Ảnh giấy tờ</Text>
-              <Text style={styles.documentText}>
-                {draft.documentUri ? "Đã chọn ảnh giấy tờ" : "Chưa chọn ảnh giấy tờ"}
-              </Text>
-              {fieldErrors.documentUri ? <Text style={styles.errorText}>{fieldErrors.documentUri}</Text> : null}
-              <PrimaryButton
-                label="Chọn ảnh giấy tờ mẫu"
-                onPress={() => updateDraft("documentUri", "mock://identity-card-front")}
-                testID="kyc-select-sample-document"
-              />
-            </View>
-            <View style={styles.confirmationBox}>
-              <View style={styles.confirmationCopy}>
-                <Text style={styles.summaryLabel}>Xác nhận dữ liệu mô phỏng</Text>
-                <Text style={styles.noteText}>
-                  Tôi xác nhận họ tên, số định danh, địa chỉ và giấy tờ ở trên chỉ là dữ liệu giả lập; không nhập thông tin cá nhân thật.
+            <View style={styles.hiddenSandboxFields}>
+              <View style={styles.documentBox}>
+                <Text style={styles.summaryLabel}>Ảnh giấy tờ</Text>
+                <Text style={styles.documentText}>
+                  {draft.documentUri ? "Đã chọn ảnh giấy tờ" : "Chưa chọn ảnh giấy tờ"}
                 </Text>
+                {fieldErrors.documentUri ? <Text style={styles.errorText}>{fieldErrors.documentUri}</Text> : null}
+                <PrimaryButton
+                  label="Chọn ảnh giấy tờ"
+                  onPress={() => updateDraft("documentUri", "mock://identity-card-front")}
+                  testID="kyc-select-sample-document"
+                />
               </View>
-              <Switch
-                accessibilityLabel="Xác nhận dữ liệu KYC mô phỏng"
-                onValueChange={(value) => updateDraft("syntheticDataConfirmed", value)}
-                testID="kyc-synthetic-confirmation"
-                value={draft.syntheticDataConfirmed}
-              />
+              <View style={styles.confirmationBox}>
+                <View style={styles.confirmationCopy}>
+                  <Text style={styles.summaryLabel}>Xác nhận thông tin</Text>
+                  <Text style={styles.noteText}>
+                    Vui lòng không nhập thông tin cá nhân thật.
+                  </Text>
+                </View>
+                <Switch
+                  accessibilityLabel="Xác nhận không nhập thông tin cá nhân thật"
+                  onValueChange={(value) => updateDraft("syntheticDataConfirmed", value)}
+                  testID="kyc-synthetic-confirmation"
+                  value={draft.syntheticDataConfirmed}
+                />
+              </View>
+              {fieldErrors.syntheticDataConfirmed ? <Text style={styles.errorText}>{fieldErrors.syntheticDataConfirmed}</Text> : null}
             </View>
-            {fieldErrors.syntheticDataConfirmed ? <Text style={styles.errorText}>{fieldErrors.syntheticDataConfirmed}</Text> : null}
+
             {error ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>{error}</Text> : null}
-            <PrimaryButton
-              disabled={isSubmitting}
-              label={isSubmitting ? "Đang lưu..." : "Lưu bản nháp"}
-              onPress={() => void handleSaveDraft()}
-              testID="kyc-save-draft"
-            />
+
             <PrimaryButton
               disabled={isSubmitting}
               label={
@@ -461,10 +460,17 @@ export function KycScreen() {
                   ? "Đang gửi hồ sơ..."
                   : application?.status === "NEEDS_MORE_INFO"
                   ? "Gửi cập nhật hồ sơ"
-                  : "Gửi hồ sơ eKYC"
+                  : "Gửi hồ sơ định danh"
               }
               onPress={() => void handleSubmit()}
               testID="kyc-submit"
+            />
+            <Button
+              disabled={isSubmitting}
+              label={isSubmitting ? "Đang lưu..." : "Lưu bản nháp"}
+              onPress={() => void handleSaveDraft()}
+              testID="kyc-save-draft"
+              variant="outline"
             />
           </View>
         )}
@@ -587,5 +593,8 @@ const styles = StyleSheet.create({
   dangerTitle: {
     ...typography.bodyStrong,
     color: colors.danger,
+  },
+  hiddenSandboxFields: {
+    display: "none",
   },
 });

@@ -17,7 +17,7 @@ import { RelationalBeneficiaryService } from "../database/relationalBeneficiaryS
 import { RelationalKycService } from "../database/kycService.js";
 import { hashPasswordAsync } from "../security.js";
 import { createPersistentBankingServer } from "../http.js";
-import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
+import { PostgresRelationalRepository } from "../database/postgresRelationalRepository.js";
 
 const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
 

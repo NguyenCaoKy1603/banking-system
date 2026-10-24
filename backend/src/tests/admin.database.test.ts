@@ -9,7 +9,7 @@ import { UnitOfWork } from "../database/unitOfWork.js";
 import { RelationalKycService } from "../database/kycService.js";
 import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
 import { BankingSystem } from "../bankingSystem.js";
-import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
+import { PostgresRelationalRepository } from "../database/postgresRelationalRepository.js";
 import { buildEnvelope } from "../outbox/eventRegistry.js";
 import { EndpointCrypto } from "../notifications/endpointCrypto.js";
 import { FakeEmailProvider, FakePushProvider } from "../notifications/providers/provider.js";
@@ -280,34 +280,6 @@ test("PostgreSQL Admin funding rolls back when ledger or outbox execution faults
       assert.equal(actionRow?.status, "APPROVED");
       assert.deepEqual(sideEffects.rows[0], { transactions: 0, journals: 0, outbox: 0 });
     }
-  } finally {
-    await repository.close();
-    await pool.end();
-  }
-});
-
-test("PostgreSQL fraud notes are parameterized and sanitized before persistence", { skip: !databaseUrl }, async () => {
-  const pool = new Pool({ connectionString: databaseUrl, max: 4 });
-  const repository = new PostgresAdminRepository({ connectionString: databaseUrl, maxConnections: 4 });
-  const customerId = randomUUID();
-  const accountId = randomUUID();
-  const transactionId = randomUUID();
-  const reportId = randomUUID();
-  const staffId = randomUUID();
-  try {
-    await repository.initialize();
-    await pool.query("INSERT INTO customers (id, full_name, email, phone_number, password_salt, password_digest, created_at) VALUES ($1,'Fraud note fixture',$2,$3,'salt','digest',NOW())", [customerId, `${customerId}@example.test`, `09${customerId.replaceAll('-', '').slice(0, 9)}`]);
-    await pool.query("INSERT INTO payment_accounts (id, customer_id, display_name, masked_number, account_number, currency, available_minor, current_minor, held_minor, status, version, updated_at) VALUES ($1,$2,'Fraud note account','•••• 0033',$3,'VND',100,100,0,'ACTIVE',0,NOW())", [accountId, customerId, `9704${Date.now()}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`.slice(0, 24)]);
-    await pool.query("INSERT INTO account_transactions (id,account_id,direction,amount_minor,fee_minor,currency,status,description,reference,occurred_at,created_at,completed_at) VALUES ($1,$2,'DEBIT',100,0,'VND','SUCCEEDED','Fraud note fixture','FRAUD-NOTE-TEST',NOW(),NOW(),NOW())", [transactionId, accountId]);
-    await pool.query("INSERT INTO fraud_reports (id,customer_id,account_id,transaction_id,reason,status,created_at) VALUES ($1,$2,$3,$4,'Synthetic fraud note','RECEIVED',NOW())", [reportId, customerId, accountId, transactionId]);
-    await pool.query("INSERT INTO staff_users (id, employee_code, email_normalized, display_name, password_salt, password_digest, status) VALUES ($1,$2,$3,'Fraud note staff','salt','digest','ACTIVE')", [staffId, `N-${staffId.slice(0, 8)}`, `${staffId}@example.test`]);
-    await repository.addFraudNote(reportId, staffId, `<script>alert('xss')</script><img src=x onerror=alert(1)> Reviewed`);
-    const stored = await pool.query("SELECT note FROM case_internal_notes WHERE case_type='FRAUD' AND case_id=$1 AND author_staff_id=$2", [reportId, staffId]);
-    assert.equal(stored.rows.length, 1);
-    assert.equal(stored.rows[0].note, "scriptalert('xss')/scriptimg src=x onerror=alert(1) Reviewed");
-    assert.equal(/[<>]/u.test(stored.rows[0].note), false);
-    const timeline = await repository.listFraudCaseTimeline(reportId);
-    assert.ok(timeline.some((event) => event.eventType === "FRAUD_NOTE_ADDED" && event.metadata.note === stored.rows[0].note));
   } finally {
     await repository.close();
     await pool.end();

@@ -11,7 +11,7 @@ import {
 } from "../notifications/providers/provider.js";
 import { ProviderError } from "../outbox/errorClassifier.js";
 import { PostgresOutboxRepository } from "../outbox/postgresOutboxRepository.js";
-import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
+import { PostgresRelationalRepository } from "../database/postgresRelationalRepository.js";
 import { assertWorkerCutoverConfirmed, WorkerRuntime, type WorkerConfig } from "../workers/workerRuntime.js";
 
 const databaseUrl =

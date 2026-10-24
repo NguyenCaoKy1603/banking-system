@@ -204,3 +204,17 @@ test("registration fingerprint key validation in runtimeConfig", () => {
     },
   );
 });
+
+test("Admin and worker runtime config do not require the API-only fingerprint key", () => {
+  const envWithoutFingerprint = productionEnv();
+  delete envWithoutFingerprint.REGISTRATION_FINGERPRINT_KEY;
+
+  const nonApiConfig = readRuntimeConfig(envWithoutFingerprint, {
+    requireRegistrationFingerprintKey: false,
+  });
+  assert.equal("registrationFingerprintKey" in nonApiConfig, false);
+  assert.throws(
+    () => readRuntimeConfig(envWithoutFingerprint),
+    /REGISTRATION_FINGERPRINT_KEY is required/,
+  );
+});

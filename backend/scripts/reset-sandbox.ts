@@ -96,7 +96,7 @@ try {
 
   const databaseName = decodeURIComponent(target.pathname.replace(/^\//, ""));
   console.log(`Reference sandbox reset completed for local database ${databaseName}.`);
-  console.log("Schema migrations were preserved; run npm run seed:e2e to create deterministic demo data.");
+  console.log("Schema migrations were preserved; this command does not seed sandbox data.");
 } catch (error) {
   await pool.query("ROLLBACK").catch(() => undefined);
   throw error;

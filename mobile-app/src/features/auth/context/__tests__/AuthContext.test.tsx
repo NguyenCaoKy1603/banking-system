@@ -25,7 +25,6 @@ import type { AuthSession } from "@/features/auth/types/session";
 import { clearTransferIntent } from "@/features/transfers/storage/transferIntentStorage";
 import { clearSavingsIntent } from "@/features/savings/storage/savingsIntentStorage";
 import { clearCardPaymentIntentsForUser } from "@/features/credit/storage/cardPaymentIntentStorage";
-import { clearFraudReportIntentsForUser } from "@/features/fraud/storage/fraudReportIntentStorage";
 import { ApiError } from "@/services/api/ApiError";
 
 jest.mock("expo-crypto", () => ({ randomUUID: () => "mock-epoch-uuid" }));
@@ -55,9 +54,6 @@ jest.mock("@/features/savings/storage/savingsIntentStorage", () => ({
 }));
 jest.mock("@/features/credit/storage/cardPaymentIntentStorage", () => ({
   clearCardPaymentIntentsForUser: jest.fn(),
-}));
-jest.mock("@/features/fraud/storage/fraudReportIntentStorage", () => ({
-  clearFraudReportIntentsForUser: jest.fn(),
 }));
 
 const storedSession: AuthSession = {
@@ -99,9 +95,6 @@ const clearTransferIntentMock = jest.mocked(clearTransferIntent);
 const clearSavingsIntentMock = jest.mocked(clearSavingsIntent);
 const clearCardPaymentIntentsForUserMock = jest.mocked(
   clearCardPaymentIntentsForUser,
-);
-const clearFraudReportIntentsForUserMock = jest.mocked(
-  clearFraudReportIntentsForUser,
 );
 
 let latestAuth: ReturnType<typeof useAuth> | null = null;
@@ -174,7 +167,6 @@ beforeEach(() => {
   clearTransferIntentMock.mockResolvedValue(undefined);
   clearSavingsIntentMock.mockResolvedValue(undefined);
   clearCardPaymentIntentsForUserMock.mockResolvedValue(undefined);
-  clearFraudReportIntentsForUserMock.mockResolvedValue(undefined);
   revokeSessionMock.mockResolvedValue(undefined);
   revokeAllSessionsMock.mockResolvedValue(undefined);
 });
@@ -186,7 +178,6 @@ afterEach(() => {
   expect(clearTransferIntentMock).not.toHaveBeenCalled();
   expect(clearSavingsIntentMock).not.toHaveBeenCalled();
   expect(clearCardPaymentIntentsForUserMock).not.toHaveBeenCalled();
-  expect(clearFraudReportIntentsForUserMock).not.toHaveBeenCalled();
   jest.restoreAllMocks();
 });
 
@@ -261,7 +252,6 @@ describe("AuthProvider logout coordination", () => {
     expect(clearTransferIntentMock).not.toHaveBeenCalled();
     expect(clearSavingsIntentMock).not.toHaveBeenCalled();
     expect(clearCardPaymentIntentsForUserMock).not.toHaveBeenCalled();
-    expect(clearFraudReportIntentsForUserMock).not.toHaveBeenCalled();
     expect(result).toEqual({
       localSessionCleared: true,
       remoteRevoked: true,
@@ -301,7 +291,6 @@ describe("AuthProvider logout coordination", () => {
     expect(clearTransferIntentMock).not.toHaveBeenCalled();
     expect(clearSavingsIntentMock).not.toHaveBeenCalled();
     expect(clearCardPaymentIntentsForUserMock).not.toHaveBeenCalled();
-    expect(clearFraudReportIntentsForUserMock).not.toHaveBeenCalled();
     expect(getAuth().status).toBe("anonymous");
     expect(getAuth().session).toBeNull();
     expect(getAuth().logoutNotice).toContain(

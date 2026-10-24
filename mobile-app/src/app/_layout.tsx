@@ -86,7 +86,6 @@ function RootNavigator() {
           <Stack.Screen name="transaction/[transactionId]" />
           <Stack.Screen name="notifications" />
           <Stack.Screen name="notifications/[notificationId]" />
-          <Stack.Screen name="fraud-report" />
           <Stack.Screen name="kyc" />
           <Stack.Screen name="qr" />
           <Stack.Screen name="mfa" />

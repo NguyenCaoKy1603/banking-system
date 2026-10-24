@@ -315,6 +315,94 @@ describe("MfaMethodsScreen — Post-revocation flow", () => {
     expect(listMfaMethodsMock).not.toHaveBeenCalled();
   });
 
+  test("revokeMfaMethod can switch to Email OTP when authenticator is lost", async () => {
+    listMfaMethodsMock.mockResolvedValueOnce({
+      items: [
+        {
+          id: "cred-active-1",
+          customerId: "customer-1",
+          status: "ACTIVE",
+          displayName: "Authenticator",
+          credentialType: "TOTP",
+          algorithm: "SHA1",
+          digits: 6,
+          periodSeconds: 30,
+          createdAt: new Date().toISOString(),
+          lastUsedAt: null,
+          revokedAt: null,
+          lastAcceptedTimeStep: null,
+          enrolledAt: new Date().toISOString(),
+          compromisedAt: null,
+        },
+      ],
+    });
+    createMfaChallengeMock.mockResolvedValueOnce({
+      challengeId: "chal-remove-totp",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      methods: ["TOTP", "EMAIL_OTP"],
+      method: "TOTP",
+      purpose: "MFA_FACTOR_REMOVAL",
+    });
+    createMfaChallengeMock.mockResolvedValueOnce({
+      challengeId: "chal-remove-email",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      methods: ["EMAIL_OTP"],
+      method: "EMAIL_OTP",
+      purpose: "MFA_FACTOR_REMOVAL",
+      maskedDestination: "v***@example.com",
+    });
+    revokeMfaMethodMock.mockResolvedValueOnce(undefined);
+
+    const renderer = await renderScreen();
+
+    const passwordInput = getTextInput(renderer, "mfa-current-password");
+    await act(async () => {
+      passwordInput.props.onChangeText("SecretPass123!");
+    });
+
+    const removeBtn = getButton(renderer, "mfa-remove-cred-active-1");
+    await act(async () => {
+      await removeBtn.props.onPress();
+    });
+
+    expect(createMfaChallengeMock).toHaveBeenCalledWith(
+      { purpose: "MFA_FACTOR_REMOVAL", method: undefined },
+      expect.anything(),
+    );
+
+    // Click switch to Email OTP
+    const switchBtn = getButton(renderer, "mfa-switch-email-otp");
+    await act(async () => {
+      await switchBtn.props.onPress();
+    });
+
+    expect(createMfaChallengeMock).toHaveBeenCalledWith(
+      { purpose: "MFA_FACTOR_REMOVAL", method: "EMAIL_OTP" },
+      expect.anything(),
+    );
+
+    const challengeInput = getTextInput(renderer, "mfa-lifecycle-code");
+    await act(async () => {
+      challengeInput.props.onChangeText("112233");
+    });
+
+    const confirmBtn = getButton(renderer, "mfa-lifecycle-confirm");
+    await act(async () => {
+      await confirmBtn.props.onPress();
+    });
+
+    expect(revokeMfaMethodMock).toHaveBeenCalledWith(
+      "cred-active-1",
+      {
+        password: "SecretPass123!",
+        challengeId: "chal-remove-email",
+        code: "112233",
+      },
+      expect.anything(),
+    );
+    expect(mockCompleteMfaRevocation).toHaveBeenCalledTimes(1);
+  });
+
   test("confirmTotpEnrollment failure displays error and does not call completeMfaRevocation", async () => {
     beginTotpEnrollmentMock.mockResolvedValueOnce({
       credentialId: "cred-fail-1",

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import * as Clipboard from "expo-clipboard";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
@@ -41,10 +42,12 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
   const requestedAccountId = typeof params.accountId === "string" ? params.accountId : undefined;
   const [permission, requestPermission] = useCameraPermissions();
   const [mode, setMode] = useState<QrMode>(params.mode === "scan" ? "scan" : "my");
+  const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [account, setAccount] = useState<PaymentAccount | null>(null);
   const [accountNumber, setAccountNumber] = useState<string | null>(null);
   const [isLoadingAccount, setIsLoadingAccount] = useState(true);
   const [accountError, setAccountError] = useState<string | undefined>();
+  const [isCopied, setIsCopied] = useState(false);
   const [manualPayload, setManualPayload] = useState("");
   const [parsedPayload, setParsedPayload] = useState<UnverifiedReceiveQrData | null>(null);
   const [scanError, setScanError] = useState<string | undefined>();
@@ -58,6 +61,7 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
 
   const loadAccount = useCallback(async () => {
     if (!accessToken) {
+      setAccounts([]);
       setAccount(null);
       setAccountNumber(null);
       setIsLoadingAccount(false);
@@ -69,6 +73,7 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
 
     try {
       const response = await listAccounts(auth);
+      setAccounts(response.accounts);
       const selectedAccount =
         response.accounts.find((item) => item.id === requestedAccountId) ??
           response.accounts[0] ??
@@ -76,6 +81,12 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
       if (!selectedAccount) {
         setAccount(null);
         setAccountNumber(null);
+        return;
+      }
+      if (selectedAccount.status !== "ACTIVE") {
+        setAccount(selectedAccount);
+        setAccountNumber(null);
+        setAccountError("Tài khoản đang bị khóa hoặc không ở trạng thái hoạt động.");
         return;
       }
       const numberResponse = await getAccountNumber(selectedAccount.id, auth);
@@ -94,15 +105,64 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
     void Promise.resolve().then(() => loadAccount());
   }, [loadAccount]);
 
+  const handleSelectAccount = useCallback(
+    async (targetAccount: PaymentAccount) => {
+      if (!accessToken || targetAccount.id === account?.id) return;
+      setIsLoadingAccount(true);
+      setAccountError(undefined);
+      try {
+        if (targetAccount.status !== "ACTIVE") {
+          setAccount(targetAccount);
+          setAccountNumber(null);
+          setAccountError("Tài khoản đang bị khóa hoặc không ở trạng thái hoạt động.");
+          return;
+        }
+        const numberResponse = await getAccountNumber(targetAccount.id, auth);
+        setAccount(targetAccount);
+        setAccountNumber(numberResponse.accountNumber);
+      } catch (error: unknown) {
+        setAccount(targetAccount);
+        setAccountNumber(null);
+        setAccountError(getErrorMessage(error));
+      } finally {
+        setIsLoadingAccount(false);
+      }
+    },
+    [accessToken, account?.id, auth],
+  );
+
+  const handleCopyAccountNumber = useCallback(async () => {
+    if (!accountNumber) return;
+    await Clipboard.setStringAsync(accountNumber);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  }, [accountNumber]);
+
+  const ownerName = session?.user.fullName?.trim() || account?.displayName || "";
+
   const qrPayload = useMemo(() => {
     if (!account || !accountNumber) return "";
     return createReceiveQrPayload({
       accountNumber,
-      displayName: account.displayName,
+      displayName: ownerName,
       maskedAccountNumber: account.maskedNumber,
       bankName: account.bankName,
     });
-  }, [account, accountNumber]);
+  }, [account, accountNumber, ownerName]);
+
+  const isSelfAccount = useMemo(() => {
+    if (!parsedPayload) return false;
+    if (accountNumber && parsedPayload.accountNumber === accountNumber) return true;
+    return accounts.some(
+      (item) => item.maskedNumber.endsWith(parsedPayload.accountNumber.slice(-4)),
+    );
+  }, [accounts, accountNumber, parsedPayload]);
+
+  const displayMaskedNumber = useMemo(() => {
+    if (!parsedPayload) return "";
+    const num = parsedPayload.accountNumber;
+    return num.length >= 4 ? `•••• ${num.slice(-4)}` : parsedPayload.maskedAccountNumber;
+  }, [parsedPayload]);
 
   const handleParsePayload = useCallback((raw: string) => {
     try {
@@ -212,10 +272,41 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
                   </View>
                 </View>
                 <View style={styles.accountSummary}>
-                  <Text style={styles.accountName}>{account.displayName}</Text>
+                  <Text style={styles.accountName}>{ownerName}</Text>
                   <Text style={styles.accountNumber}>{account.maskedNumber}</Text>
                   <Text style={styles.accountMeta}>{account.bankName} · {account.currency}</Text>
                 </View>
+                {accounts.length > 1 ? (
+                  <View style={styles.accountPicker}>
+                    <Text style={styles.pickerLabel}>Tài khoản nhận tiền:</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pickerScroll}>
+                      {accounts.map((item) => {
+                        const isSelected = item.id === account.id;
+                        return (
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityState={{ selected: isSelected }}
+                            key={item.id}
+                            onPress={() => void handleSelectAccount(item)}
+                            style={[styles.pickerPill, isSelected ? styles.pickerPillSelected : null]}
+                            testID={`qr-select-account-${item.id}`}
+                          >
+                            <Text style={[styles.pickerPillText, isSelected ? styles.pickerPillTextSelected : null]}>
+                              {item.displayName} ({item.maskedNumber})
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                ) : null}
+                <Button
+                  icon="copy"
+                  label={isCopied ? "Đã sao chép số tài khoản" : "Sao chép số tài khoản"}
+                  onPress={() => void handleCopyAccountNumber()}
+                  testID="qr-copy-account-number"
+                  variant="secondary"
+                />
                 <View style={styles.infoBox}>
                   <AppIcon color={colors.info} name="shield" size={18} />
                   <Text style={styles.infoText}>
@@ -309,19 +400,44 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
               <View style={styles.resultBox} testID="qr-valid-payload">
                 <StatusBadge label="Đã đọc mã QR" tone="success" />
                 <Text style={styles.resultTitle}>{parsedPayload.displayName}</Text>
-                <Text style={styles.summaryText}>{parsedPayload.maskedAccountNumber}</Text>
+                <Text style={styles.summaryText}>{displayMaskedNumber}</Text>
                 <Text style={styles.summaryMeta}>
                   {parsedPayload.bankName} · {parsedPayload.currency}
                 </Text>
-                <View style={styles.blockedAction} testID="qr-transfer-blocked">
-                  <AppIcon color={colors.warning} name="alert" size={20} />
-                  <View style={styles.blockedCopy}>
-                    <Text style={styles.blockedTitle}>Cần xác minh trước khi chuyển</Text>
-                    <Text style={styles.noteText}>
-                      Mã này mới được kiểm tra định dạng. Hãy chọn người nhận đã xác minh trong màn hình Chuyển tiền.
-                    </Text>
+                {isSelfAccount ? (
+                  <View style={styles.blockedAction} testID="qr-self-account-warning">
+                    <AppIcon color={colors.warning} name="alert" size={20} />
+                    <View style={styles.blockedCopy}>
+                      <Text style={styles.blockedTitle}>Tài khoản của chính bạn</Text>
+                      <Text style={styles.noteText}>
+                        Đây là tài khoản của bạn. Hệ thống không hỗ trợ tự chuyển tiền cho chính mình.
+                      </Text>
+                    </View>
                   </View>
-                </View>
+                ) : (
+                  <>
+                    <View style={styles.blockedAction} testID="qr-transfer-blocked">
+                      <AppIcon color={colors.warning} name="alert" size={20} />
+                      <View style={styles.blockedCopy}>
+                        <Text style={styles.blockedTitle}>Cần xác minh trước khi chuyển</Text>
+                        <Text style={styles.noteText}>
+                          Mã này mới được kiểm tra định dạng. Khi bấm tiếp tục, hệ thống sẽ đối soát thông tin người nhận trước khi bạn nhập số tiền và xác thực.
+                        </Text>
+                      </View>
+                    </View>
+                    <Button
+                      icon="transfer"
+                      label="Chuyển tiền tới tài khoản này"
+                      onPress={() =>
+                        router.push({
+                          pathname: "/transfer",
+                          params: { accountNumber: parsedPayload.accountNumber },
+                        })
+                      }
+                      testID="qr-continue-transfer"
+                    />
+                  </>
+                )}
                 <Button label="Quét mã khác" onPress={resetScanner} testID="qr-reset" variant="outline" />
               </View>
             ) : null}
@@ -466,4 +582,37 @@ const styles = StyleSheet.create({
   blockedCopy: { flex: 1, gap: spacing.xs },
   blockedTitle: { ...typography.label, color: colors.warning },
   noteText: { ...typography.caption, color: colors.warning },
+  accountPicker: {
+    gap: spacing.xs,
+    width: "100%",
+  },
+  pickerLabel: {
+    ...typography.caption,
+    color: colors.muted,
+  },
+  pickerScroll: {
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  pickerPill: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  pickerPillSelected: {
+    backgroundColor: colors.primarySoft,
+    borderColor: colors.primary,
+  },
+  pickerPillText: {
+    ...typography.caption,
+    color: colors.muted,
+  },
+  pickerPillTextSelected: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: "600",
+  },
 });

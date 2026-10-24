@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { BankingSystem, OUTBOX_EVENT_RETENTION_MS } from "../bankingSystem.js";
-import { InMemoryCoreBanking } from "../coreBanking.js";
+import { InMemoryCoreBanking } from "../services/coreBanking.js";
 import type { LoginResponse, LoginResult } from "../types.js";
 
 let fixtureSequence = 0;
@@ -453,100 +453,6 @@ test("transfer quote and submit are server-authoritative and idempotent", () => 
   assert.ok(transaction);
   assert.equal(notification.resourceId, transaction.id);
   assert.equal(notification.resourceAccountId, account.id);
-  const fraudReport = system.reportFraud(
-    registered.user.id,
-    account.id,
-    transaction.id,
-    "I do not recognize this transfer",
-    "fraud-report-direct-1",
-  );
-  assert.equal(fraudReport.status, "RECEIVED");
-  assert.deepEqual(
-    system.reportFraud(
-      registered.user.id,
-      account.id,
-      transaction.id,
-      "I do not recognize this transfer",
-      "fraud-report-direct-1",
-    ),
-    fraudReport,
-  );
-  assert.throws(
-    () =>
-      system.reportFraud(
-        registered.user.id,
-        account.id,
-        "transaction-does-not-exist",
-        "I do not recognize this transfer",
-        "fraud-report-direct-1",
-      ),
-    (error: unknown) =>
-      (error as { code?: string }).code === "IDEMPOTENCY_CONFLICT",
-  );
-  assert.deepEqual(
-    system.reportFraud(
-      registered.user.id,
-      account.id,
-      transaction.id,
-      "I do not recognize this transfer",
-      "fraud-report-direct-2",
-    ),
-    fraudReport,
-  );
-  assert.equal(system.exportState().fraudReports?.length, 1);
-  assert.equal(
-    system.outboxEvents.filter(
-      (event) => event.eventType === "FRAUD_REPORT_CREATED",
-    ).length,
-    1,
-  );
-  assert.throws(
-    () =>
-      system.reportFraud(
-        registered.user.id,
-        account.id,
-        transaction.id,
-        "This is a different allegation",
-        "fraud-report-direct-3",
-      ),
-    (error: unknown) =>
-      (error as { code?: string }).code === "FRAUD_REPORT_ALREADY_EXISTS",
-  );
-  assert.throws(
-    () =>
-      system.reportFraud(
-        registered.user.id,
-        account.id,
-        transaction.id,
-        "I do not recognize this transfer",
-        "short",
-      ),
-    (error: unknown) =>
-      (error as { code?: string }).code === "VALIDATION_ERROR",
-  );
-  const restored = new BankingSystem({ sandboxOtp: "123456" });
-  restored.importState(system.exportState());
-  assert.deepEqual(
-    restored.getFraudReport(registered.user.id, fraudReport.reportId),
-    fraudReport,
-  );
-  assert.deepEqual(
-    restored.reportFraud(
-      registered.user.id,
-      account.id,
-      transaction.id,
-      "I do not recognize this transfer",
-      "fraud-report-direct-4",
-    ),
-    fraudReport,
-  );
-  assert.equal(restored.exportState().fraudReports?.length, 1);
-  assert.equal(
-    restored.outboxEvents.filter(
-      (event) => event.eventType === "FRAUD_REPORT_CREATED",
-    ).length,
-    1,
-  );
 });
 
 test("direct sandbox OTP cannot bypass a one-time transaction challenge", () => {

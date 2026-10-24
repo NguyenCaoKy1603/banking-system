@@ -232,7 +232,7 @@ export function confirmTotpEnrollment(
 }
 
 export function createMfaChallenge(
-  request: { purpose: MfaLifecyclePurpose },
+  request: { purpose: MfaLifecyclePurpose; method?: "TOTP" | "EMAIL_OTP" },
   options: AuthenticatedRequestOptions,
 ): Promise<AuthChallengeResponse> {
   return requestJson<AuthChallengeResponse>(

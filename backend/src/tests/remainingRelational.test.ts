@@ -56,20 +56,11 @@ test("recipient lookup is persistent, hashed and usable by relational transfer q
   assert.equal(quote.beneficiary.accountHolderName, "Remaining Target");
 });
 
-test("notifications and fraud reports use relational ownership and idempotency", { skip: !databaseUrl }, async (t) => {
+test("notifications use relational ownership", { skip: !databaseUrl }, async (t) => {
   const database = new DatabasePool({ connectionString: databaseUrl, max: 8 });
-  const owner = await customer(database, "Remaining Fraud Owner");
-  const other = await customer(database, "Remaining Other");
+  const owner = await customer(database, "Remaining Notifications Owner");
   const transactionId = randomUUID();
   const notificationId = randomUUID();
-  await database.query(
-    `INSERT INTO account_transactions
-      (id, account_id, direction, amount_minor, fee_minor, currency, status,
-       description, counterparty_name, reference, occurred_at, created_at, completed_at, kind)
-     VALUES ($1, $2, 'DEBIT', 1000000, 0, 'VND', 'SUCCEEDED', 'Test transfer',
-             'Counterparty', 'TEST-REMAINING-1', NOW(), NOW(), NOW(), 'TRANSFER')`,
-    [transactionId, owner.accountId],
-  );
   await database.query(
     `INSERT INTO notifications
       (id, customer_id, notification_type, title, body, resource_id,
@@ -85,20 +76,4 @@ test("notifications and fraud reports use relational ownership and idempotency",
   assert.equal((await remaining.markNotificationRead(owner.customerId, notificationId)).read, true);
   assert.equal((await remaining.listNotifications(owner.customerId))[0]?.read, true);
 
-  const first = await remaining.reportFraud({ customerId: owner.customerId, accountId: owner.accountId, transactionId, reason: "I did not authorize this transfer", idempotencyKey: "fraud-report-key-1" });
-  const replay = await remaining.reportFraud({ customerId: owner.customerId, accountId: owner.accountId, transactionId, reason: "I did not authorize this transfer", idempotencyKey: "fraud-report-key-1" });
-  assert.equal(replay.reportId, first.reportId);
-  assert.equal((await remaining.getFraudReport(owner.customerId, first.reportId)).status, "RECEIVED");
-  await assert.rejects(
-    remaining.getFraudReport(other.customerId, first.reportId),
-    (error: unknown) => (error as { status?: number }).status === 404,
-  );
-  const counts = await database.query<{ reports: string; idempotency: string; outbox: string }>(
-    `SELECT
-       (SELECT COUNT(*)::text FROM fraud_reports WHERE customer_id = $1) AS reports,
-       (SELECT COUNT(*)::text FROM fraud_report_idempotency WHERE customer_id = $1) AS idempotency,
-       (SELECT COUNT(*)::text FROM outbox_events WHERE aggregate_id = $2::text AND event_type = 'fraud.report_created.v1') AS outbox`,
-    [owner.customerId, first.reportId],
-  );
-  assert.deepEqual(counts.rows[0], { reports: "1", idempotency: "1", outbox: "1" });
 });

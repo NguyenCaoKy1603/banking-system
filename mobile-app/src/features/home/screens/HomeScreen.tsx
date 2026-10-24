@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import * as Clipboard from "expo-clipboard";
 import { useFocusEffect, useRouter } from "expo-router";
-import { Alert, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 
 import { Card } from "@/components/ui/Card";
 import { ListRow } from "@/components/ui/ListRow";
@@ -16,7 +16,7 @@ import { BalanceCard } from "@/features/home/components/BalanceCard";
 import { HomeHeader } from "@/features/home/components/HomeHeader";
 import { QuickActionTile } from "@/features/home/components/QuickActionTile";
 import { ApiError } from "@/services/api/ApiError";
-import { radius, sizes, spacing } from "@/theme";
+import { colors, radius, sizes, spacing } from "@/theme";
 
 export function HomeScreen() {
   const router = useRouter();
@@ -28,6 +28,7 @@ export function HomeScreen() {
   );
   const [account, setAccount] = useState<PaymentAccount | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<unknown>();
   const [isSessionExpired, setIsSessionExpired] = useState(false);
   const [isBalanceVisible, setIsBalanceVisible] = useState(false);
@@ -37,10 +38,12 @@ export function HomeScreen() {
   const [isCopyingAccountNumber, setIsCopyingAccountNumber] = useState(false);
   const [accountNumberError, setAccountNumberError] = useState<unknown>();
 
-  const loadAccounts = useCallback(async () => {
-    setIsBalanceVisible(false);
-    setIsAccountNumberVisible(false);
-    setRevealedAccountNumber(null);
+  const loadAccounts = useCallback(async (resetVisualState = true) => {
+    if (resetVisualState) {
+      setIsBalanceVisible(false);
+      setIsAccountNumberVisible(false);
+      setRevealedAccountNumber(null);
+    }
     setAccountNumberError(undefined);
 
     if (!accessToken) {
@@ -66,6 +69,15 @@ export function HomeScreen() {
       setIsLoading(false);
     }
   }, [accessToken, auth]);
+
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await loadAccounts(false);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [loadAccounts]);
 
   const revealAccountNumber = useCallback(async (): Promise<string | null> => {
     if (!account) {
@@ -134,7 +146,17 @@ export function HomeScreen() {
 
   return (
     <Screen style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => void handleRefresh()}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }
+      >
         <HomeHeader
           fullName={fullName}
           onMenu={() => router.push("/profile")}

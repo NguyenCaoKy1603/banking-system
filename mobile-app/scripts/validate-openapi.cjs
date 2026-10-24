@@ -31,8 +31,6 @@ const requiredPaths = [
   "/mobile/control-policy",
   "/notifications",
   "/notifications/{notificationId}/read",
-  "/fraud-reports",
-  "/fraud-reports/{reportId}",
   "/accounts",
   "/accounts/{accountId}/number",
   "/accounts/{accountId}/transactions",
@@ -107,7 +105,6 @@ const implementationMarkers = [
   'segments[1] === "logout-all"',
   'segments[1] === "control-policy"',
   'segments[0] === "notifications"',
-  'segments[0] === "fraud-reports"',
   'segments[0] === "accounts"',
   'segments[0] === "beneficiaries"',
   'segments[0] === "internal-recipients"',
@@ -156,22 +153,6 @@ if (creditIdempotencyParameter?.required !== true) {
 }
 if (!submitCreditPayment?.responses?.["200"] || !submitCreditPayment?.responses?.["202"]) {
   throw new Error("POST /credit/payments must document synchronous and pending responses.");
-}
-
-const submitFraudReport = document.paths["/fraud-reports"].post;
-const fraudIdempotencyParameter = submitFraudReport?.parameters?.find(
-  (parameter) =>
-    parameter.name === "Idempotency-Key" ||
-    parameter.$ref === "#/components/parameters/IdempotencyKey",
-);
-if (
-  fraudIdempotencyParameter?.required !== true &&
-  !(
-    fraudIdempotencyParameter?.$ref === "#/components/parameters/IdempotencyKey" &&
-    document.components?.parameters?.IdempotencyKey?.required === true
-  )
-) {
-  throw new Error("POST /fraud-reports must require Idempotency-Key.");
 }
 
 const registerResponses = document.paths["/auth/register"].post?.responses;

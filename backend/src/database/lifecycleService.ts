@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 
-import { addMonthsClamped, calculateActualDays, calculateSavingsInterest } from "../savings.js";
+import { addMonthsClamped, calculateActualDays, calculateSavingsInterest } from "../domain/savings/index.js";
 import { UnitOfWork } from "./unitOfWork.js";
 import { AccountRepository } from "./repositories/accountRepository.js";
 import { AuditRepository } from "./repositories/auditRepository.js";

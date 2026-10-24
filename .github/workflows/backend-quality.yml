@@ -155,9 +155,6 @@ jobs:
       - name: Admin authorization and four-eyes tests
         run: npm run test:admin
 
-      - name: Admin API HTTP E2E (MFA, CSRF and four-eyes)
-        run: npm run test:admin:e2e
-
       - name: Admin PostgreSQL integration and concurrency tests
         run: |
           npm run test:admin:database

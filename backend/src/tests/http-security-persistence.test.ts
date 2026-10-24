@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { BankingSystem, type BankingSystemState } from "../bankingSystem.js";
 import { createPersistentBankingServer } from "../http.js";
-import type { RelationalStateOperation } from "../postgresRelationalRepository.js";
+import type { RelationalStateOperation } from "../database/postgresRelationalRepository.js";
 
 const TEST_REGISTRATION_FINGERPRINT_KEY = Buffer.alloc(32, 0x42);
 

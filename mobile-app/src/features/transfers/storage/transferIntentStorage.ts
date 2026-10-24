@@ -1,4 +1,5 @@
 import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
 
 import {
   canDiscardExpiredIntent,
@@ -20,6 +21,64 @@ const TRANSFER_INTENT_PREFIX = "banking.transfer.intent.v2";
 const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
+
+const inMemoryStore = new Map<string, string>();
+
+function getWebStorage(): Storage | null {
+  if (typeof window !== "undefined" && window.localStorage) {
+    return window.localStorage;
+  }
+  return null;
+}
+
+async function readStorageItem(key: string): Promise<string | null> {
+  if (Platform.OS === "web") {
+    const webStorage = getWebStorage();
+    if (webStorage) {
+      try {
+        return webStorage.getItem(key);
+      } catch {
+        return inMemoryStore.get(key) ?? null;
+      }
+    }
+    return inMemoryStore.get(key) ?? null;
+  }
+  return SecureStore.getItemAsync(key, SECURE_STORE_OPTIONS);
+}
+
+async function writeStorageItem(key: string, value: string): Promise<void> {
+  if (Platform.OS === "web") {
+    const webStorage = getWebStorage();
+    if (webStorage) {
+      try {
+        webStorage.setItem(key, value);
+        return;
+      } catch {
+        inMemoryStore.set(key, value);
+        return;
+      }
+    }
+    inMemoryStore.set(key, value);
+    return;
+  }
+  await SecureStore.setItemAsync(key, value, SECURE_STORE_OPTIONS);
+}
+
+async function deleteStorageItem(key: string): Promise<void> {
+  if (Platform.OS === "web") {
+    const webStorage = getWebStorage();
+    if (webStorage) {
+      try {
+        webStorage.removeItem(key);
+      } catch {
+        // ignore
+      }
+    }
+    inMemoryStore.delete(key);
+    return;
+  }
+  await SecureStore.deleteItemAsync(key, SECURE_STORE_OPTIONS);
+}
 
 export type PendingTransferIntent = ClientIntentLifecycle & {
   userId: string;
@@ -140,7 +199,7 @@ function getTransferIntentKey(userId: string): Promise<string> {
 }
 
 async function clearTransferIntentInternal(key: string): Promise<void> {
-  await SecureStore.deleteItemAsync(key, SECURE_STORE_OPTIONS);
+  await deleteStorageItem(key);
 }
 
 export function saveTransferIntent(intent: PendingTransferIntent): Promise<void> {
@@ -151,10 +210,9 @@ export function saveTransferIntent(intent: PendingTransferIntent): Promise<void>
 
   return enqueueMutation(async () => {
     const key = await getTransferIntentKey(intent.userId);
-    await SecureStore.setItemAsync(
+    await writeStorageItem(
       key,
       JSON.stringify(intent),
-      SECURE_STORE_OPTIONS,
     );
   });
 }
@@ -171,16 +229,10 @@ export function loadTransferIntent(
     let scopedValue: string | null;
     let storedValue: string | null;
     try {
-      scopedValue = await SecureStore.getItemAsync(
-        key,
-        SECURE_STORE_OPTIONS,
-      );
+      scopedValue = await readStorageItem(key);
       storedValue =
         scopedValue ??
-        (await SecureStore.getItemAsync(
-          LEGACY_TRANSFER_INTENT_KEY,
-          SECURE_STORE_OPTIONS,
-        ));
+        (await readStorageItem(LEGACY_TRANSFER_INTENT_KEY));
     } catch {
       throw new IntentRecoveryError("READ_ERROR");
     }
@@ -217,10 +269,9 @@ export function loadTransferIntent(
     }
 
     if (isLegacy || parsed.needsMigration) {
-      await SecureStore.setItemAsync(
+      await writeStorageItem(
         key,
         JSON.stringify(parsed.intent),
-        SECURE_STORE_OPTIONS,
       );
       if (isLegacy) {
         await clearTransferIntentInternal(LEGACY_TRANSFER_INTENT_KEY).catch(
@@ -241,13 +292,14 @@ export function clearTransferIntent(userId: string): Promise<void> {
   return enqueueMutation(async () => {
     const key = await getTransferIntentKey(userId);
     await clearTransferIntentInternal(key);
-    const legacyValue = await SecureStore.getItemAsync(
-      LEGACY_TRANSFER_INTENT_KEY,
-      SECURE_STORE_OPTIONS,
-    );
+    const legacyValue = await readStorageItem(LEGACY_TRANSFER_INTENT_KEY);
     const legacy = parseIntent(legacyValue);
-    if (legacyValue !== null && legacy?.intent.userId === userId) {
+    if (legacyValue !== null && (!legacy || legacy.intent.userId === userId)) {
       await clearTransferIntentInternal(LEGACY_TRANSFER_INTENT_KEY);
     }
   });
+}
+
+export function resetTransferIntentCacheForTests(): void {
+  inMemoryStore.clear();
 }

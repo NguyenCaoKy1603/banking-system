@@ -4,8 +4,16 @@ const { parse } = require("yaml");
 
 const contractPath = path.resolve(__dirname, "../../documents/api/banking-mvp.openapi.yaml");
 const backendHttpPath = path.resolve(__dirname, "../src/http.ts");
+const routesDir = path.resolve(__dirname, "../src/routes");
 const document = parse(fs.readFileSync(contractPath, "utf8"));
-const backendHttp = fs.readFileSync(backendHttpPath, "utf8");
+const routeSources = fs.existsSync(routesDir)
+  ? fs
+      .readdirSync(routesDir)
+      .filter((file) => file.endsWith(".ts"))
+      .map((file) => fs.readFileSync(path.join(routesDir, file), "utf8"))
+      .join("\n")
+  : "";
+const backendHttp = `${fs.readFileSync(backendHttpPath, "utf8")}\n${routeSources}`;
 
 if (document.openapi !== "3.1.0") {
   throw new Error("Expected an OpenAPI 3.1 contract.");
@@ -35,8 +43,6 @@ const requiredPaths = [
   "/mobile/control-policy",
   "/notifications",
   "/notifications/{notificationId}/read",
-  "/fraud-reports",
-  "/fraud-reports/{reportId}",
   "/accounts",
   "/internal-recipients/lookup",
   "/accounts/{accountId}/number",
@@ -129,8 +135,6 @@ const routeContracts = [
   ["GET", "/mobile/control-policy", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "mobile"), segmentGuard(1, "control-policy")]],
   ["GET", "/notifications", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "notifications")]],
   ["POST", "/notifications/{notificationId}/read", [methodGuard("POST"), "segments.length === 3", segmentGuard(0, "notifications"), segmentGuard(2, "read")]],
-  ["POST", "/fraud-reports", [methodGuard("POST"), "segments.length === 1", segmentGuard(0, "fraud-reports")]],
-  ["GET", "/fraud-reports/{reportId}", [methodGuard("GET"), "segments.length === 2", segmentGuard(0, "fraud-reports")]],
   ["GET", "/accounts", [methodGuard("GET"), "segments.length === 1", segmentGuard(0, "accounts")]],
   ["POST", "/internal-recipients/lookup", [methodGuard("POST"), "segments.length === 2", segmentGuard(0, "internal-recipients"), segmentGuard(1, "lookup")]],
   ["GET", "/accounts/{accountId}/number", [methodGuard("GET"), "segments.length === 3", segmentGuard(0, "accounts"), segmentGuard(2, "number")]],
@@ -216,14 +220,6 @@ if (!submitCreditPayment.parameters?.some((parameter) => parameter.name === "Ide
 }
 if (!submitCreditPayment.responses?.["200"] || !submitCreditPayment.responses?.["202"]) {
   throw new Error("POST /credit/payments must document synchronous and pending responses.");
-}
-const submitFraudReport = document.paths["/fraud-reports"].post;
-if (!submitFraudReport?.parameters?.some((parameter) =>
-  (parameter.name === "Idempotency-Key" && parameter.required === true) ||
-  (parameter.$ref === "#/components/parameters/IdempotencyKey" &&
-    document.components?.parameters?.IdempotencyKey?.required === true)
-)) {
-  throw new Error("POST /fraud-reports must require Idempotency-Key.");
 }
 const registerResponses = document.paths["/auth/register"].post?.responses;
 if (!registerResponses?.["202"] || registerResponses?.["201"] || registerResponses?.["200"]) {
@@ -452,7 +448,6 @@ for (const routePath of [
   requireIdempotencyMinimum(routePath, 16);
 }
 for (const routePath of [
-  "/fraud-reports",
   "/credit/applications",
   "/credit/applications/{applicationId}/activate",
 ]) {

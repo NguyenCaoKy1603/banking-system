@@ -40,6 +40,7 @@ export type MfaChallengePurpose =
   | "LOGIN"
   | "TRANSFER"
   | "SAVINGS_OPENING"
+  | "SAVINGS_WITHDRAWAL"
   | "CREDIT_APPLICATION"
   | "CARD_ACTIVATION"
   | "CREDIT_PAYMENT"
@@ -153,7 +154,7 @@ export class PersistentMfaService {
     });
   }
 
-  async revokeCredential(customerId: string, credentialId: string): Promise<void> {
+  async revokeCredential(customerId: string, credentialId: string, allowLastFactor = false): Promise<void> {
     return this.options.unitOfWork.transaction(async ({ client }) => {
       const repository = new MfaRepository(client);
       const credential = await repository.lockCredential(credentialId);
@@ -161,7 +162,7 @@ export class PersistentMfaService {
         throw notFound("MFA credential not found.");
       }
       const active = (await repository.listCredentials(customerId)).filter((item) => item.status === "ACTIVE");
-      if (active.length <= 1 && credential.status === "ACTIVE") {
+      if (!allowLastFactor && active.length <= 1 && credential.status === "ACTIVE") {
         throw conflictWithCode("MFA_LAST_FACTOR", "Không thể xóa phương thức MFA cuối cùng.");
       }
       await repository.revokeCredential(credentialId, "user-request");
@@ -187,6 +188,12 @@ export class PersistentMfaService {
     const encryptedSecret = this.options.encryption.encrypt(secret, this.encryptionContext("mfa-totp", credentialId, input.customerId));
     const metadata = envelopeMetadata(encryptedSecret);
     await this.options.unitOfWork.transaction(async ({ client }) => {
+      await client.query(
+        `UPDATE mfa_credentials
+         SET status = 'REVOKED', revoked_at = NOW(), updated_at = NOW()
+         WHERE customer_id = $1 AND status = 'PENDING'`,
+        [input.customerId],
+      );
       await new MfaRepository(client).createTotpCredential({
         id: credentialId,
         customerId: input.customerId,
@@ -436,8 +443,8 @@ export class PersistentMfaService {
     customerId?: string | null;
     pendingRegistrationId?: string | null;
     deviceId: string;
-    purpose: "REGISTRATION_EMAIL_VERIFY" | "EMAIL_CHANGE_VERIFY" | "RECOVERY_EMAIL_VERIFY";
-    destination: string;
+    purpose: MfaChallengePurpose;
+    destination?: string;
     resourceId?: string | null;
     requestFingerprint?: string | null;
     networkFingerprint?: string | null;
@@ -448,7 +455,14 @@ export class PersistentMfaService {
     const expiresAt = new Date(this.clock() + EMAIL_CHALLENGE_TTL_MS).toISOString();
     const sentAt = new Date(this.clock()).toISOString();
     const digest = this.options.otpDigestKeyring.digest(challengeHash, code);
+    let resolvedDestination = input.destination ?? "";
     await this.options.unitOfWork.transaction(async ({ client }) => {
+      if (!resolvedDestination && input.customerId) {
+        const custRes = await client.query(`SELECT email FROM customers WHERE id = $1`, [input.customerId]);
+        if (custRes.rows.length > 0) {
+          resolvedDestination = custRes.rows[0].email;
+        }
+      }
       await new MfaRepository(client).createChallenge({
         id: challengeHash,
         customerId: input.customerId,
@@ -481,8 +495,8 @@ export class PersistentMfaService {
           payload: {
             deliveryReference: challengeHash,
             pendingRegistrationId: input.pendingRegistrationId,
-            destinationFingerprint: fingerprint(input.destination),
-            maskedDestination: maskEmail(input.destination),
+            destinationFingerprint: fingerprint(resolvedDestination),
+            maskedDestination: maskEmail(resolvedDestination),
             expiresAt,
           },
         });
@@ -492,7 +506,7 @@ export class PersistentMfaService {
     const delivery: VerificationCodeDeliveryInput = {
       deliveryId: challengeHash,
       purpose: input.purpose,
-      destination: input.destination,
+      destination: resolvedDestination,
       code,
       expiresAt,
     };
@@ -528,7 +542,7 @@ export class PersistentMfaService {
       purpose: input.purpose,
       expiresAt,
       resendAfter: new Date(this.clock() + RESEND_COOLDOWN_MS).toISOString(),
-      maskedDestination: maskEmail(input.destination),
+      maskedDestination: maskEmail(resolvedDestination),
     };
   }
 

@@ -4,7 +4,6 @@ import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AppHeader } from "@/components/ui/AppHeader";
 import { AppIcon } from "@/components/ui/AppIcon";
-import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Screen } from "@/components/ui/Screen";
 import { StateCard } from "@/components/ui/StateCard";
@@ -174,25 +173,6 @@ export function TransactionDetailScreen() {
               </View>
             </Card>
 
-            <View style={styles.securityNote}>
-              <AppIcon color={colors.info} name="shield" size={18} />
-              <Text style={styles.securityText}>
-                Nếu bạn không nhận ra giao dịch này, hãy gửi báo cáo để được kiểm tra.
-              </Text>
-            </View>
-            <Button
-              icon="alert"
-              label="Báo cáo giao dịch đáng ngờ"
-              onPress={() => {
-                if (!accountId || !transactionId) return;
-                router.push({
-                  pathname: "/fraud-report",
-                  params: { accountId, transactionId },
-                });
-              }}
-              testID="transaction-fraud-report"
-              variant="danger"
-            />
           </>
         ) : (
           <StateCard icon="history" message="Giao dịch không còn khả dụng." title="Không có dữ liệu" />
@@ -262,13 +242,4 @@ const styles = StyleSheet.create({
   },
   detailLabel: { ...typography.body, color: colors.muted },
   detailValue: { flex: 1, ...typography.bodyStrong, color: colors.text, textAlign: "right" },
-  securityNote: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: spacing.sm,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.infoSoft,
-  },
-  securityText: { flex: 1, ...typography.body, color: colors.info },
 });

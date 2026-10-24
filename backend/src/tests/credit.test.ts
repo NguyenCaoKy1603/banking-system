@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { BankingSystem } from "../bankingSystem.js";
-import { addMonthsClamped, calculateMinimumPayment, nextStatementCloseAt } from "../credit.js";
+import { addMonthsClamped, calculateMinimumPayment, nextStatementCloseAt } from "../domain/credit/index.js";
 
 
 function createSystem(options: ConstructorParameters<typeof BankingSystem>[0] = {}) {

@@ -105,7 +105,7 @@ export function CardsScreen({ showBackButton = true }: CardsScreenProps) {
             message={
               application
                 ? "Hồ sơ thẻ của bạn đang được xử lý. Mở hồ sơ để xem trạng thái và bước tiếp theo."
-                : "Bạn chưa có thẻ tín dụng mô phỏng. Hãy gửi đăng ký để bắt đầu."
+                : "Bạn chưa có thẻ tín dụng. Hãy gửi đăng ký để bắt đầu."
             }
             onAction={() => router.push("/cards/apply")}
             testID="credit-cards-empty"

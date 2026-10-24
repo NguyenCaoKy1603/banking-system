@@ -62,6 +62,7 @@ export type AuthChallengeResponse = {
     | "LOGIN"
     | "TRANSFER"
     | "SAVINGS_OPENING"
+    | "SAVINGS_WITHDRAWAL"
     | "CREDIT_APPLICATION"
     | "CARD_ACTIVATION"
     | "CREDIT_PAYMENT"

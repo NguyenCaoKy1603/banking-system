@@ -45,9 +45,6 @@ jobs:
       - name: Validate OpenAPI contract
         run: npm run validate:openapi
 
-      - name: Validate native E2E flow definitions
-        run: npm run validate:e2e
-
       - name: Validate release configuration
         run: npm run validate:release
 

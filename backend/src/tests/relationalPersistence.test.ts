@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { BankingSystem, type BankingSystemState } from "../bankingSystem.js";
 import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
-import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
+import { PostgresRelationalRepository } from "../database/postgresRelationalRepository.js";
 
 const databaseUrl = process.env.RELATIONAL_DATABASE_URL?.trim();
 

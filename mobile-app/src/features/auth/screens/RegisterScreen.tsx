@@ -431,6 +431,9 @@ export function RegisterScreen() {
   async function handleRecoveryReset() {
     try {
       await deleteRegistrationSession();
+      if (Platform.OS === "web" && typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.removeItem("banking.registration.session.v1");
+      }
       setPhase({ kind: "FORM" });
     } catch {
       setServerError(

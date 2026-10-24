@@ -366,7 +366,7 @@ test("JOURNAL-03: Ghi journal ban đầu thất bại: fake provider callCount =
     const service = createIntentService(countingProvider);
 
     // Cố ý không tạo thư mục hoặc để init ném lỗi
-    // Ta giả lập đường dẫn không hợp lệ bằng cách tạo file cùng tên thư mục
+    // Ta tạo đường dẫn không hợp lệ bằng cách tạo file cùng tên thư mục
     const blockingFile = path.join(tmpDir, "blocking");
     fs.writeFileSync(blockingFile, "blocking", "utf8");
     const uncreatablePath = path.join(blockingFile, "run.jsonl");

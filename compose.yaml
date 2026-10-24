@@ -107,13 +107,12 @@ services:
       EMAIL_PROVIDER_MAX_ATTEMPTS: ${EMAIL_PROVIDER_MAX_ATTEMPTS:-3}
       EMAIL_PROVIDER_RETRY_DELAY_MS: ${EMAIL_PROVIDER_RETRY_DELAY_MS:-100}
       ASSISTANT_ENABLED: ${ASSISTANT_ENABLED:-0}
-      ASSISTANT_PROVIDER: ${ASSISTANT_PROVIDER:-ollama}
-      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-qwen3.5:4b}
-      ASSISTANT_OLLAMA_BASE_URL: ${ASSISTANT_OLLAMA_BASE_URL:-http://127.0.0.1:11434}
-      ASSISTANT_ALLOW_DOCKER_HOST: ${ASSISTANT_ALLOW_DOCKER_HOST:-0}
-      ASSISTANT_PROVIDER_TIMEOUT_MS: ${ASSISTANT_PROVIDER_TIMEOUT_MS:-25000}
-      ASSISTANT_REQUEST_TIMEOUT_MS: ${ASSISTANT_REQUEST_TIMEOUT_MS:-30000}
-      ASSISTANT_OLLAMA_NUM_PREDICT: ${ASSISTANT_OLLAMA_NUM_PREDICT:-530}
+      ASSISTANT_PROVIDER: ${ASSISTANT_PROVIDER:-radox}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-gemini-3.6-flash}
+      ASSISTANT_RADOX_BASE_URL: ${ASSISTANT_RADOX_BASE_URL:-https://radoxai.com/v1}
+      ASSISTANT_RADOX_API_KEY: ${ASSISTANT_RADOX_API_KEY:-}
+      ASSISTANT_PROVIDER_TIMEOUT_MS: ${ASSISTANT_PROVIDER_TIMEOUT_MS:-15000}
+      ASSISTANT_REQUEST_TIMEOUT_MS: ${ASSISTANT_REQUEST_TIMEOUT_MS:-20000}
       DB_POOL_MAX: ${DB_POOL_MAX:-4}
       DB_CONNECTION_TIMEOUT_MS: ${DB_CONNECTION_TIMEOUT_MS:-5000}
       DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-15000}
@@ -136,33 +135,6 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # Optional local capture inbox for the first Admin's bootstrap activation.
-  # It is memory-only and never sends mail to the Internet.
-  invitation-capture:
-    profiles: ["bootstrap"]
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      target: runtime
-      args:
-        COMMIT_SHA: ${COMMIT_SHA:-local}
-        RELEASE_ID: ${RELEASE_ID:-local}
-        BUILD_CREATED_AT: ${BUILD_CREATED_AT:-unknown}
-        API_CONTRACT_DIGEST: ${API_CONTRACT_DIGEST:-unknown}
-    environment:
-      INVITATION_CAPTURE_PORT: 8025
-    command: ["node", "scripts/admin-invitation-capture.cjs"]
-    ports:
-      - "127.0.0.1:${ADMIN_INVITATION_CAPTURE_PORT:-8025}:8025"
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8025/readyz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 5s
-    restart: unless-stopped
-
-
   admin-api:
     build:
       context: ./backend
@@ -178,6 +150,7 @@ services:
       NODE_ENV: ${NODE_ENV:-preview}
       BANKING_MONEY_MODE: ${BANKING_MONEY_MODE:-virtual}
       ADMIN_STORAGE: postgres
+      ADMIN_DIRECT_EXECUTION: ${ADMIN_DIRECT_EXECUTION:-true}
       BANKING_SECRET_PROVIDER: ${BANKING_SECRET_PROVIDER:-local}
       REGISTRATION_FINGERPRINT_KEY: ${REGISTRATION_FINGERPRINT_KEY:?REGISTRATION_FINGERPRINT_KEY is required}
       ADMIN_PORT: 5001

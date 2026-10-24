@@ -93,24 +93,38 @@ function escapeHtml(value: string): string {
 }
 
 function registrationMessage(input: VerificationCodeDeliveryInput, from: string): SendMailOptions {
+  let title = "Xác nhận đăng ký tài khoản Banking Sandbox";
+  let subject = "Mã xác nhận đăng ký tài khoản";
+  let actionDesc = "Nếu bạn không yêu cầu đăng ký, hãy bỏ qua email này.";
+
+  if (input.purpose === "MFA_FACTOR_REMOVAL" || input.purpose === "MFA_FACTOR_CHANGE") {
+    title = "Xác nhận thay đổi bảo mật Nova Banking";
+    subject = "Mã xác thực thay đổi bảo mật Nova Banking";
+    actionDesc = "Nếu bạn không yêu cầu thay đổi bảo mật tài khoản, hãy đổi mật khẩu ngay lập tức.";
+  } else if (input.purpose === "TRANSFER") {
+    title = "Xác nhận giao dịch chuyển tiền Nova Banking";
+    subject = "Mã xác thực chuyển tiền Nova Banking";
+    actionDesc = "Nếu bạn không thực hiện giao dịch chuyển tiền này, hãy liên hệ ngân hàng ngay.";
+  }
+
   const text = [
-    "Xác nhận đăng ký tài khoản Banking Sandbox",
+    title,
     "",
     `Mã xác nhận của bạn là: ${input.code}`,
     `Mã có hiệu lực đến: ${input.expiresAt}`,
     "",
-    "Không chia sẻ mã này với bất kỳ ai. Nếu bạn không yêu cầu đăng ký, hãy bỏ qua email này.",
+    `Không chia sẻ mã này với bất kỳ ai. ${actionDesc}`,
   ].join("\n");
   const html = [
-    "<p>Xác nhận đăng ký tài khoản Banking Sandbox</p>",
+    `<p>${escapeHtml(title)}</p>`,
     `<p>Mã xác nhận của bạn là: <strong>${escapeHtml(input.code)}</strong></p>`,
     `<p>Mã có hiệu lực đến: ${escapeHtml(input.expiresAt)}</p>`,
-    "<p>Không chia sẻ mã này với bất kỳ ai. Nếu bạn không yêu cầu đăng ký, hãy bỏ qua email này.</p>",
+    `<p>Không chia sẻ mã này với bất kỳ ai. ${escapeHtml(actionDesc)}</p>`,
   ].join("");
   return {
     from,
     to: input.destination,
-    subject: "Mã xác nhận đăng ký tài khoản",
+    subject,
     text,
     html,
   };

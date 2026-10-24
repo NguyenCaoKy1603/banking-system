@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { BankingSystem } from "../bankingSystem.js";
 import { createPersistentBankingServer } from "../http.js";
-import { PostgresRelationalRepository } from "../postgresRelationalRepository.js";
+import { PostgresRelationalRepository } from "../database/postgresRelationalRepository.js";
 import { KeyEncryptionKeyringAdapter, LocalDevelopmentKeyEncryptionAdapter, OtpDigestKeyring } from "../mfa/crypto.js";
 import { PersistentMfaService } from "../mfa/persistentMfaService.js";
 import { SmtpEmailProvider, type SmtpTransport } from "../mfa/smtpEmailProvider.js";
@@ -110,7 +110,7 @@ test("integrated relational-v2 rehearsal uses SMTP OTP delivery, two workers and
       environmentScope: "test",
       delivery: emailProvider,
     }),
-    relationalHttp: new RelationalHttpBoundary(repository.unitOfWork, "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud"),
+    relationalHttp: new RelationalHttpBoundary(repository.unitOfWork, "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications"),
     emailProviderHealth: () => emailProvider.health(),
   });
   const apiAddress = await listen(apiServer);

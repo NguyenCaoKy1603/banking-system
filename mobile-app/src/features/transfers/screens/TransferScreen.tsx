@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
+  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,7 +19,7 @@ import { useAuth } from "@/features/auth/context/AuthContext";
 import type { AuthChallengeResponse } from "@/features/auth/types/auth";
 import { listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
-import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
+import { formatVndMinor, formatVndWords } from "@/features/banking/presentation/formatMoney";
 import type { ClientIntentPhase } from "@/features/banking/domain/clientIntentLifecycle";
 import {
   requiresManualReview,
@@ -31,10 +33,6 @@ import type {
   StepUpMethod,
 } from "@/features/control/types/controlPolicy";
 import { ApiError } from "@/services/api/ApiError";
-import {
-  getDeviceBoundAssertion,
-  requestBiometricAuthentication,
-} from "@/services/security/biometricAuth";
 import {
   lookupBeneficiary,
   lookupInternalRecipient,
@@ -65,13 +63,22 @@ function getErrorMessage(error: unknown): string {
   ) {
     return "Xác thực không thành công. Vui lòng tạo mã mới và thử lại.";
   }
-  return error instanceof ApiError
-    ? error.message
-    : "Không thể thực hiện yêu cầu. Vui lòng thử lại.";
+  if (error instanceof ApiError || error instanceof Error) {
+    return error.message;
+  }
+  return "Không thể thực hiện yêu cầu. Vui lòng thử lại.";
 }
 
 const MANUAL_REVIEW_MESSAGE =
   "Yêu cầu này cần được đối soát thủ công. Không gửi lại hoặc tạo mã mới; vui lòng liên hệ hỗ trợ.";
+
+const QUICK_AMOUNTS = [
+  { label: "+50.000", value: 50_000 },
+  { label: "+100.000", value: 100_000 },
+  { label: "+500.000", value: 500_000 },
+  { label: "+1.000.000", value: 1_000_000 },
+  { label: "+5.000.000", value: 5_000_000 },
+];
 
 function getReceiptStatusLabel(status: TransferReceipt["status"]): string {
   switch (status) {
@@ -88,12 +95,17 @@ function getReceiptStatusLabel(status: TransferReceipt["status"]): string {
 
 export function TransferScreen() {
   const router = useRouter();
-  const routeParams = useLocalSearchParams<{ beneficiaryId?: string }>();
+  const routeParams = useLocalSearchParams<{
+    beneficiaryId?: string;
+    accountNumber?: string;
+  }>();
   const { deviceId, refreshAccessToken, session } = useAuth();
   const accessToken = session?.accessToken ?? null;
   const userId = session?.user.id ?? null;
   const initialBeneficiaryId =
     typeof routeParams.beneficiaryId === "string" ? routeParams.beneficiaryId : "";
+  const initialAccountNumber =
+    typeof routeParams.accountNumber === "string" ? routeParams.accountNumber : "";
   const auth = useMemo(
     () => ({ accessToken, deviceId, refreshAccessToken }),
     [accessToken, deviceId, refreshAccessToken],
@@ -101,12 +113,12 @@ export function TransferScreen() {
   const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [sourceAccountId, setSourceAccountId] = useState<string | null>(null);
   const [beneficiaryId, setBeneficiaryId] = useState(initialBeneficiaryId);
-  const [recipientAccountNumber, setRecipientAccountNumber] = useState("");
+  const [recipientAccountNumber, setRecipientAccountNumber] = useState(initialAccountNumber);
   const [recipientLookupId, setRecipientLookupId] = useState<string | null>(null);
   const [beneficiary, setBeneficiary] = useState<Beneficiary | null>(null);
   const [amountMinor, setAmountMinor] = useState("");
   const [quote, setQuote] = useState<TransferQuote | null>(null);
-  const [stepUpMethod, setStepUpMethod] = useState<StepUpMethod>("OTP");
+  const [stepUpMethod, setStepUpMethod] = useState<StepUpMethod>("TOTP");
   const [stepUpProof, setStepUpProof] = useState("");
   const [transferChallenge, setTransferChallenge] =
     useState<AuthChallengeResponse | null>(null);
@@ -138,14 +150,7 @@ export function TransferScreen() {
         throw new Error("Máy chủ trả challenge không đúng mục đích chuyển tiền.");
       }
       setTransferChallenge(challenge);
-      setStepUpMethod((currentMethod) =>
-        challenge.methods.includes(currentMethod)
-          ? currentMethod
-          : challenge.methods.find(
-              (method): method is StepUpMethod =>
-                method === "OTP" || method === "TOTP" || method === "BIOMETRIC",
-            ) ?? "OTP",
-      );
+      setStepUpMethod("TOTP");
       setStepUpProof("");
     },
     [],
@@ -188,11 +193,7 @@ export function TransferScreen() {
     try {
       const response = await getControlPolicy(auth);
       setControlPolicy(response);
-      setStepUpMethod((currentMethod) =>
-        response.stepUpMethods.includes(currentMethod)
-          ? currentMethod
-          : response.stepUpMethods[0] ?? "OTP",
-      );
+      setStepUpMethod("TOTP");
       setStepUpProof("");
     } catch (requestError: unknown) {
       setControlPolicy(null);
@@ -263,11 +264,55 @@ export function TransferScreen() {
           setError(MANUAL_REVIEW_MESSAGE);
           return;
         }
-        const challenge = await createOtpChallenge(
-          { purpose: "TRANSFER", resourceId: intent.quote.quoteId },
-          auth,
-        );
-        applyTransferChallenge(challenge);
+        if (
+          (!intent.submitAttempted || intent.phase === "DRAFT_QUOTE") &&
+          Date.parse(intent.quote.expiresAt) <= Date.now()
+        ) {
+          await clearTransferIntent(userId).catch(() => undefined);
+          setRecoveryBlocked(false);
+          setQuote(null);
+          setBeneficiary(null);
+          setBeneficiaryId("");
+          setRecipientAccountNumber("");
+          setRecipientLookupId(null);
+          setAmountMinor("");
+          setIdempotencyKey(null);
+          setIntentPhase(null);
+          setManualReviewCode(null);
+          setTransferChallenge(null);
+          setStepUpProof("");
+          setStep("beneficiary");
+          setError(undefined);
+          return;
+        }
+
+        try {
+          const challenge = await createOtpChallenge(
+            { purpose: "TRANSFER", resourceId: intent.quote.quoteId },
+            auth,
+          );
+          applyTransferChallenge(challenge);
+        } catch (challengeError: unknown) {
+          if (!intent.submitAttempted || intent.phase === "DRAFT_QUOTE") {
+            await clearTransferIntent(userId).catch(() => undefined);
+            setRecoveryBlocked(false);
+            setQuote(null);
+            setBeneficiary(null);
+            setBeneficiaryId("");
+            setRecipientAccountNumber("");
+            setRecipientLookupId(null);
+            setAmountMinor("");
+            setIdempotencyKey(null);
+            setIntentPhase(null);
+            setManualReviewCode(null);
+            setTransferChallenge(null);
+            setStepUpProof("");
+            setStep("beneficiary");
+            setError(undefined);
+            return;
+          }
+          throw challengeError;
+        }
       }
     } catch (requestError: unknown) {
       setRecoveryBlocked(true);
@@ -276,6 +321,42 @@ export function TransferScreen() {
       setIsRestoringIntent(false);
     }
   }, [applyTransferChallenge, auth, userId]);
+
+  const handleDiscardIntent = useCallback(async () => {
+    if (userId) {
+      await clearTransferIntent(userId).catch(() => undefined);
+    }
+    if (Platform.OS === "web" && typeof window !== "undefined" && window.localStorage) {
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < window.localStorage.length; i++) {
+          const k = window.localStorage.key(i);
+          if (k && k.startsWith("banking.transfer.intent")) {
+            keysToRemove.push(k);
+          }
+        }
+        keysToRemove.forEach((k) => window.localStorage.removeItem(k));
+      } catch {
+        // ignore web storage error
+      }
+    }
+    setRecoveryBlocked(false);
+    setQuote(null);
+    setBeneficiary(null);
+    setBeneficiaryId("");
+    setRecipientAccountNumber("");
+    setRecipientLookupId(null);
+    setAmountMinor("");
+    setIdempotencyKey(null);
+    setIntentPhase(null);
+    setManualReviewCode(null);
+    setReceipt(null);
+    setRecoveryTransferId(null);
+    setTransferChallenge(null);
+    setStepUpProof("");
+    setStep("beneficiary");
+    setError(undefined);
+  }, [userId]);
 
   useEffect(() => {
     void Promise.resolve().then(() => restoreTransferIntent());
@@ -433,7 +514,7 @@ export function TransferScreen() {
         createdAt: Date.now(),
       });
       const challenge = await createOtpChallenge(
-        { purpose: "TRANSFER", resourceId: quote.quoteId },
+        { purpose: "TRANSFER", resourceId: quote.quoteId, method: "TOTP" },
         auth,
       );
       applyTransferChallenge(challenge);
@@ -595,43 +676,6 @@ export function TransferScreen() {
     }
   }, [auth, clockMs, idempotencyKey, intentPhase, manualReviewCode, quote, recoveryBlocked, stepUpMethod, stepUpProof, transferChallenge, userId]);
 
-  const handleBiometricStepUp = useCallback(async () => {
-    if (recoveryBlocked) {
-      setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
-      return;
-    }
-    if (manualReviewCode) {
-      setError(MANUAL_REVIEW_MESSAGE);
-      return;
-    }
-    if (!transferChallenge?.methods.includes("BIOMETRIC")) {
-      setError("Challenge hiện tại không cho phép xác thực sinh trắc học.");
-      return;
-    }
-    if (Date.now() >= Date.parse(transferChallenge.expiresAt)) {
-      setError("Mã xác thực đã hết hạn. Vui lòng tạo mã mới.");
-      return;
-    }
-    setIsSubmitting(true);
-    setError(undefined);
-
-    try {
-      await requestBiometricAuthentication("Xác thực giao dịch");
-      const biometricProof = getDeviceBoundAssertion();
-      if (!biometricProof) {
-        setError("Thiết bị chưa cung cấp kết quả xác thực sinh trắc học.");
-        return;
-      }
-
-      setStepUpMethod("BIOMETRIC");
-      setStepUpProof(biometricProof);
-    } catch (biometricError: unknown) {
-      setError(getErrorMessage(biometricError));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [manualReviewCode, recoveryBlocked, transferChallenge]);
-
   const handleRenewTransferChallenge = useCallback(async () => {
     if (!quote || submitLockRef.current || manualReviewCode || recoveryBlocked) {
       if (manualReviewCode) setError(MANUAL_REVIEW_MESSAGE);
@@ -642,7 +686,7 @@ export function TransferScreen() {
     setError(undefined);
     try {
       const challenge = await createOtpChallenge(
-        { purpose: "TRANSFER", resourceId: quote.quoteId },
+        { purpose: "TRANSFER", resourceId: quote.quoteId, method: "TOTP" },
         auth,
       );
       applyTransferChallenge(challenge);
@@ -718,6 +762,30 @@ export function TransferScreen() {
   }, [intentPhase, isSubmitting, router, userId]);
 
   const sourceAccount = accounts.find((account) => account.id === sourceAccountId);
+
+  const handleAddAmount = useCallback((addMinor: number) => {
+    const current = BigInt(amountMinor || "0");
+    const next = current + BigInt(addMinor);
+    setAmountMinor(next.toString());
+    setError(undefined);
+  }, [amountMinor]);
+
+  const handleSetAllBalance = useCallback(() => {
+    if (sourceAccount) {
+      setAmountMinor(sourceAccount.currentBalance.amountMinor);
+      setError(undefined);
+    }
+  }, [sourceAccount]);
+
+  const isExceedingBalance = useMemo(() => {
+    if (!sourceAccount || !amountMinor || amountMinor === "0") return false;
+    try {
+      return BigInt(amountMinor) > BigInt(sourceAccount.currentBalance.amountMinor);
+    } catch {
+      return false;
+    }
+  }, [amountMinor, sourceAccount]);
+
   const isTransferChallengeUnavailable =
     !transferChallenge || clockMs >= Date.parse(transferChallenge.expiresAt);
 
@@ -749,6 +817,12 @@ export function TransferScreen() {
                 void restoreTransferIntent();
               }}
               testID="transfer-recovery-retry"
+            />
+            <Button
+              label="Hủy phiên cũ & Bắt đầu giao dịch mới"
+              onPress={() => void handleDiscardIntent()}
+              testID="transfer-recovery-discard"
+              variant="secondary"
             />
           </View>
         ) : !controlPolicy ||
@@ -802,19 +876,38 @@ export function TransferScreen() {
         ) : step === "amount" ? (
           <View style={styles.formCard}>
             <Text style={styles.stepTitle}>Nhập số tiền</Text>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Người nhận</Text>
-              <Text style={styles.summaryValue}>{beneficiary?.displayName}</Text>
+
+            {/* Thông tin người nhận trực quan */}
+            <View style={styles.beneficiaryBadge}>
+              <View style={styles.beneficiaryIconBlock}>
+                <Text style={{ fontSize: 20 }}>👤</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.beneficiaryNameLabel}>{beneficiary?.displayName}</Text>
+                <Text style={styles.beneficiarySubLabel}>
+                  {beneficiary?.maskedAccountNumber ?? ""}
+                  {beneficiary?.bankName ? ` · ${beneficiary.bankName}` : " · Ngân hàng NOVA"}
+                </Text>
+              </View>
             </View>
+
             <View style={styles.summaryRow}>
               <Text style={styles.summaryLabel}>Tài khoản nguồn</Text>
               <Text style={styles.summaryValue}>
                 {sourceAccount?.maskedNumber ?? "Chưa chọn"}
               </Text>
             </View>
+
+            <View style={styles.summaryRow}>
+              <Text style={styles.summaryLabel}>Số dư khả dụng</Text>
+              <Text style={[styles.summaryValue, { color: colors.primary, fontWeight: "700" }]}>
+                {sourceAccount ? formatVndMinor(sourceAccount.currentBalance.amountMinor) : "—"}
+              </Text>
+            </View>
+
             <TextField
               accessibilityLabel="Số tiền chuyển"
-              error={error}
+              error={error || (isExceedingBalance ? "Số tiền chuyển vượt quá số dư khả dụng." : undefined)}
               keyboardType="number-pad"
               helperText="Nhập số tiền bằng VND, không dùng dấu chấm hoặc dấu phẩy."
               label="Số tiền (VND)"
@@ -826,8 +919,43 @@ export function TransferScreen() {
               testID="transfer-amount"
               value={amountMinor}
             />
+
+            {/* Xem trước số tiền định dạng và Đọc số thành chữ */}
+            {amountMinor && amountMinor !== "0" ? (
+              <View style={styles.amountPreviewBox}>
+                <Text style={styles.amountFormattedText}>{formatVndMinor(amountMinor)}</Text>
+                {formatVndWords(amountMinor) ? (
+                  <Text style={styles.amountWordsText}>{formatVndWords(amountMinor)}</Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            {/* Nút chọn nhanh số tiền */}
+            <View style={styles.quickAmountContainer}>
+              <Text style={styles.quickAmountTitle}>Chọn nhanh số tiền:</Text>
+              <View style={styles.chipsRow}>
+                {QUICK_AMOUNTS.map((chip) => (
+                  <Pressable
+                    key={chip.label}
+                    onPress={() => handleAddAmount(chip.value)}
+                    style={({ pressed }) => [styles.chipButton, pressed && styles.chipPressed]}
+                  >
+                    <Text style={styles.chipText}>{chip.label}</Text>
+                  </Pressable>
+                ))}
+                {sourceAccount ? (
+                  <Pressable
+                    onPress={handleSetAllBalance}
+                    style={({ pressed }) => [styles.chipButton, styles.allBalanceChip, pressed && styles.chipPressed]}
+                  >
+                    <Text style={[styles.chipText, styles.allBalanceText]}>Toàn bộ số dư</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+
             <PrimaryButton
-              disabled={isSubmitting}
+              disabled={isSubmitting || isExceedingBalance || !amountMinor || amountMinor === "0"}
               label={isSubmitting ? "Đang tính phí..." : "Kiểm tra phí giao dịch"}
               onPress={handleCreateQuote}
               testID="transfer-create-quote"
@@ -842,7 +970,10 @@ export function TransferScreen() {
                 <Text style={styles.summaryValue}>{quote?.beneficiary.displayName}</Text>
               </View>
             <Text style={styles.description}>
-              {beneficiary?.accountHolderName ?? beneficiary?.maskedAccountNumber}
+              {beneficiary?.accountHolderName && beneficiary.displayName !== beneficiary.accountHolderName
+                ? `${beneficiary.accountHolderName} · `
+                : ""}
+              {beneficiary?.maskedAccountNumber ?? ""}
               {beneficiary?.bankName ? ` · ${beneficiary.bankName}` : ""}
             </Text>
               <View style={styles.summaryRow}>
@@ -876,57 +1007,23 @@ export function TransferScreen() {
           <View style={styles.formCard}>
             <Text style={styles.stepTitle}>Xác thực giao dịch</Text>
             <Text style={styles.description}>
-              Chọn một phương thức được hệ thống cho phép để bảo vệ giao dịch của bạn.
+              Mở ứng dụng Google Authenticator trên điện thoại để lấy mã TOTP gồm 6 chữ số.
             </Text>
-            {transferChallenge?.methods.some((method) => method === "OTP" || method === "TOTP") ? (
-              <Button
-                disabled={isSubmitting}
-                label={stepUpMethod === "TOTP" ? "Đang dùng TOTP" : stepUpMethod === "OTP" ? "Đang dùng mã xác thực" : "Dùng mã TOTP"}
-                onPress={() => {
-                  setStepUpMethod(transferChallenge.methods.includes("TOTP") ? "TOTP" : "OTP");
-                  setStepUpProof("");
-                  setError(undefined);
-                }}
-                testID="transfer-step-up-otp"
-                variant={stepUpMethod === "OTP" || stepUpMethod === "TOTP" ? "secondary" : "outline"}
-              />
-            ) : null}
-            {transferChallenge?.methods.includes("BIOMETRIC") ? (
-              <Button
-                disabled={isSubmitting}
-                label={
-                  stepUpMethod === "BIOMETRIC"
-                    ? "Xác thực lại bằng sinh trắc học"
-                    : "Dùng sinh trắc học"
-                }
-                onPress={handleBiometricStepUp}
-                testID="transfer-step-up-biometric"
-                variant={stepUpMethod === "BIOMETRIC" ? "secondary" : "outline"}
-              />
-            ) : null}
-            {stepUpMethod === "OTP" || stepUpMethod === "TOTP" ? (
-              <TextField
-                accessibilityLabel="Mã xác thực bước hai"
-                autoCapitalize="none"
-                editable={!manualReviewCode}
-                error={error}
-                label={stepUpMethod === "TOTP" ? "Mã TOTP" : "Mã xác thực"}
-                onChangeText={(value) => {
-                  setStepUpProof(value);
-                  setError(undefined);
-                }}
-                placeholder="Nhập mã xác thực"
-                secureTextEntry
-                testID="transfer-step-up-code"
-                value={stepUpProof}
-              />
-            ) : (
-              <Text style={styles.description}>
-                {stepUpProof
-                  ? "Đã xác thực trên thiết bị. Có thể gửi giao dịch."
-                  : "Chọn xác thực sinh trắc học để tiếp tục."}
-              </Text>
-            )}
+            <TextField
+              accessibilityLabel="Mã xác thực bước hai"
+              autoCapitalize="none"
+              editable={!manualReviewCode}
+              error={error}
+              label="Mã TOTP"
+              onChangeText={(value) => {
+                setStepUpProof(value);
+                setError(undefined);
+              }}
+              placeholder="000000"
+              secureTextEntry
+              testID="transfer-step-up-code"
+              value={stepUpProof}
+            />
             {manualReviewCode ? (
               <Text style={styles.errorText}>
                 Mã đối soát: {manualReviewCode}
@@ -1067,5 +1164,87 @@ const styles = StyleSheet.create({
   resultTitle: {
     ...typography.title,
     color: colors.text,
+  },
+  beneficiaryBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  beneficiaryIconBlock: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.background,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  beneficiaryNameLabel: {
+    ...typography.bodyStrong,
+    color: colors.text,
+  },
+  beneficiarySubLabel: {
+    ...typography.caption,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  amountPreviewBox: {
+    padding: spacing.sm,
+    backgroundColor: colors.background,
+    borderRadius: radius.sm,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  amountFormattedText: {
+    ...typography.subheading,
+    color: colors.primary,
+  },
+  amountWordsText: {
+    ...typography.caption,
+    color: colors.muted,
+    fontStyle: "italic",
+    marginTop: 2,
+  },
+  quickAmountContainer: {
+    gap: spacing.xs,
+  },
+  quickAmountTitle: {
+    ...typography.caption,
+    color: colors.muted,
+  },
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  chipButton: {
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  chipPressed: {
+    opacity: 0.7,
+    backgroundColor: colors.border,
+  },
+  chipText: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: "500",
+  },
+  allBalanceChip: {
+    borderColor: colors.primary,
+  },
+  allBalanceText: {
+    color: colors.primary,
+    fontWeight: "600",
   },
 });

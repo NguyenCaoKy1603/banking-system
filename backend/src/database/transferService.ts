@@ -8,7 +8,7 @@ import { LedgerRepository } from "./repositories/ledgerRepository.js";
 import { OutboxRepository } from "./repositories/outboxRepository.js";
 import { TransferRepository, type TransferRow } from "./repositories/transferRepository.js";
 import { fingerprint, hashOpaqueToken } from "../security.js";
-import { parseMoney, toMoney } from "../money.js";
+import { parseMoney, toMoney } from "../domain/money.js";
 import type { Beneficiary, TransferQuote, TransferReceipt } from "../types.js";
 import { conflict, invalidRequest, notFound } from "../errors.js";
 import { ControlPolicyRepository } from "./controlPolicyRepository.js";
@@ -282,6 +282,10 @@ export class RelationalTransferService {
         if (!(await transfers.consumeQuote(quote.id, transfer.id))) {
           throw new RelationalConflictError("QUOTE_ALREADY_CONSUMED", "Transfer quote was consumed concurrently.");
         }
+        await client.query(
+          "DELETE FROM recipient_lookups WHERE customer_id = $1 AND destination_account_id = $2",
+          [input.customerId, destination.id],
+        );
         await input.fault?.("after_quote_consumed");
 
         await accounts.updateBalances(source.id, {

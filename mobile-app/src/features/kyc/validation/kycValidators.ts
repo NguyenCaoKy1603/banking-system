@@ -26,7 +26,7 @@ export function validateKycDraft(
       identityNumber.includes("•") ||
       !/^\d{6,24}$/.test(identityNumber)
     ) {
-      errors.identityNumber = "Số định danh mô phỏng gồm 6–24 chữ số.";
+      errors.identityNumber = "Số định danh phải gồm 6–24 chữ số.";
     }
   } else {
     // When existing identity is unchanged, empty string is valid.
@@ -35,7 +35,7 @@ export function validateKycDraft(
       identityNumber.length > 0 &&
       (identityNumber.includes("•") || !/^\d{6,24}$/.test(identityNumber))
     ) {
-      errors.identityNumber = "Số định danh mô phỏng gồm 6–24 chữ số.";
+      errors.identityNumber = "Số định danh phải gồm 6–24 chữ số.";
     }
   }
 
@@ -44,11 +44,11 @@ export function validateKycDraft(
   }
 
   if (!/^((mock|synthetic):\/\/)/.test(draft.documentUri.trim())) {
-    errors.documentUri = "Cần chọn ảnh giấy tờ mẫu với URI mock:// hoặc synthetic://.";
+    errors.documentUri = "Cần chọn ảnh giấy tờ.";
   }
 
   if (draft.syntheticDataConfirmed !== true) {
-    errors.syntheticDataConfirmed = "Cần xác nhận chỉ sử dụng dữ liệu mô phỏng, không dùng thông tin thật.";
+    errors.syntheticDataConfirmed = "Vui lòng xác nhận không nhập thông tin cá nhân thật.";
   }
 
   return errors;

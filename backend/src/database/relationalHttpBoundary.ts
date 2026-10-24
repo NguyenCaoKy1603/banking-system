@@ -6,25 +6,25 @@ import { RelationalBeneficiaryService } from "./relationalBeneficiaryService.js"
 import { RelationalTransferService, type TransferQuoteCommandInput } from "./transferService.js";
 import { RelationalSavingsService } from "./savingsService.js";
 import type { SavingsListResult, SavingsQuoteRequest, SubmitSavingsOpeningRequest } from "../bankingSystem.js";
-import type { SavingsDeposit, SavingsOpening, SavingsProduct, SavingsQuote } from "../savings.js";
+import type { MaturityInstruction, SavingsDeposit, SavingsOpening, SavingsProduct, SavingsQuote, SavingsWithdrawalReceipt } from "../domain/savings/index.js";
 import { RelationalCreditService } from "./creditService.js";
-import type { CardReportedLostResult, CreditApplication, CreditApplicationRequest, CreditCard, CreditPayment, CreditPaymentQuote, CreditPaymentQuoteRequest, CreditStatement, CreditTransaction, CreditAccount } from "../credit.js";
+import type { CardReportedLostResult, CreditApplication, CreditApplicationRequest, CreditCard, CreditPayment, CreditPaymentQuote, CreditPaymentQuoteRequest, CreditStatement, CreditTransaction, CreditAccount } from "../domain/credit/index.js";
 import { RelationalRemainingService } from "./remainingService.js";
-import type { ControlPolicy, FraudReportResponse, InternalRecipientLookup, Notification } from "../types.js";
+import type { ControlPolicy, InternalRecipientLookup, Notification } from "../types.js";
 import type { MfaChallengeResponse, PersistentMfaService } from "../mfa/persistentMfaService.js";
 import { UnitOfWork } from "./unitOfWork.js";
 import { ControlPolicyRepository } from "./controlPolicyRepository.js";
 import { RelationalKycService, type CustomerKycApplication, type CustomerKycInput } from "./kycService.js";
 
-export type RelationalHttpRoute = "auth" | "registration" | "mfa" | "accounts" | "beneficiaries" | "transfers" | "savings" | "credit" | "recipients" | "notifications" | "fraud" | "kyc";
+export type RelationalHttpRoute = "auth" | "registration" | "mfa" | "accounts" | "beneficiaries" | "transfers" | "savings" | "credit" | "recipients" | "notifications" | "kyc";
 
-const RELATIONAL_V2_DEFAULT_ROUTES = "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,fraud,kyc";
+const RELATIONAL_V2_DEFAULT_ROUTES = "auth,registration,mfa,accounts,beneficiaries,transfers,savings,credit,recipients,notifications,kyc";
 
 function configuredRoutes(value = process.env.BANKING_RELATIONAL_HTTP_ROUTES): Set<RelationalHttpRoute> {
   const routes = new Set<RelationalHttpRoute>();
   const configured = value?.trim() || (process.env.BANKING_PERSISTENCE_MODE?.trim() === "relational-v2" ? RELATIONAL_V2_DEFAULT_ROUTES : "");
   for (const item of configured.split(",").map((part) => part.trim().toLowerCase()).filter(Boolean)) {
-    if (item === "auth" || item === "registration" || item === "mfa" || item === "accounts" || item === "beneficiaries" || item === "transfers" || item === "savings" || item === "credit" || item === "recipients" || item === "notifications" || item === "fraud" || item === "kyc") routes.add(item);
+    if (item === "auth" || item === "registration" || item === "mfa" || item === "accounts" || item === "beneficiaries" || item === "transfers" || item === "savings" || item === "credit" || item === "recipients" || item === "notifications" || item === "kyc") routes.add(item);
     else throw new Error(`BANKING_RELATIONAL_HTTP_ROUTES contains unsupported route group: ${item}.`);
   }
   return routes;
@@ -46,7 +46,7 @@ export class RelationalHttpBoundary {
   constructor(unitOfWork: UnitOfWork, routeConfig?: string) {
     this.unitOfWork = unitOfWork;
     this.routes = configuredRoutes(routeConfig);
-    if (["accounts", "beneficiaries", "transfers", "savings", "credit", "mfa", "recipients", "notifications", "fraud", "kyc"].some((route) => this.routes.has(route as RelationalHttpRoute)) && !this.routes.has("auth")) {
+    if (["accounts", "beneficiaries", "transfers", "savings", "credit", "mfa", "recipients", "notifications", "kyc"].some((route) => this.routes.has(route as RelationalHttpRoute)) && !this.routes.has("auth")) {
       throw new Error("BANKING_RELATIONAL_HTTP_ROUTES account and command groups require auth so they have a direct session boundary.");
     }
     this.auth = new RelationalAuthService(unitOfWork);
@@ -91,8 +91,6 @@ export class RelationalHttpBoundary {
       ["POST", ["internal-recipients", "lookup"]],
       ["GET", ["notifications"]],
       ["POST", ["notifications", "00000000-0000-4000-8000-000000000000", "read"]],
-      ["POST", ["fraud-reports"]],
-      ["GET", ["fraud-reports", "00000000-0000-4000-8000-000000000000"]],
       ["GET", ["mobile", "control-policy"]],
       ["GET", ["kyc", "application"]],
       ["POST", ["kyc", "application"]],
@@ -143,7 +141,9 @@ export class RelationalHttpBoundary {
       return (verb === "GET" && segments.length === 2 && segments[1] === "products") ||
         (verb === "POST" && segments.length === 2 && (segments[1] === "quotes" || segments[1] === "deposits")) ||
         (verb === "GET" && segments.length === 3 && (segments[1] === "openings" || segments[1] === "deposits")) ||
-        (verb === "GET" && segments.length === 2 && segments[1] === "deposits");
+        (verb === "GET" && segments.length === 2 && segments[1] === "deposits") ||
+        (verb === "PATCH" && segments.length === 3 && segments[1] === "deposits") ||
+        (verb === "POST" && segments.length === 4 && segments[1] === "deposits" && segments[3] === "withdraw");
     }
     if (this.routes.has("credit")) {
       if (segments[0] === "cards") {
@@ -163,10 +163,6 @@ export class RelationalHttpBoundary {
     if (this.routes.has("notifications")) {
       if (verb === "GET" && segments.length === 1 && segments[0] === "notifications") return true;
       if (verb === "POST" && segments.length === 3 && segments[0] === "notifications" && segments[2] === "read") return true;
-    }
-    if (this.routes.has("fraud")) {
-      if (verb === "POST" && segments.length === 1 && segments[0] === "fraud-reports") return true;
-      if (verb === "GET" && segments.length === 2 && segments[0] === "fraud-reports") return true;
     }
     if (this.routes.has("kyc") && segments[0] === "kyc") {
       return (verb === "GET" && segments.length === 2 && segments[1] === "application") ||
@@ -294,14 +290,6 @@ export class RelationalHttpBoundary {
     return this.remaining.markNotificationRead(customerId, notificationId);
   }
 
-  reportFraud(input: { customerId: string; accountId: string; transactionId: string; reason: string; idempotencyKey: string; traceId?: string }): Promise<FraudReportResponse> {
-    return this.remaining.reportFraud(input);
-  }
-
-  getFraudReport(customerId: string, reportId: string): Promise<FraudReportResponse> {
-    return this.remaining.getFraudReport(customerId, reportId);
-  }
-
   getKycApplication(customerId: string): Promise<CustomerKycApplication | null> { return this.kyc.get(customerId); }
   saveKycDraft(customerId: string, input: CustomerKycInput): Promise<CustomerKycApplication> { return this.kyc.saveDraft(customerId, input); }
   submitKycApplication(customerId: string, input: CustomerKycInput): Promise<CustomerKycApplication> { return this.kyc.submit(customerId, input); }
@@ -342,6 +330,21 @@ export class RelationalHttpBoundary {
   getSavingsOpening(customerId: string, openingId: string): Promise<SavingsOpening> { return this.savings.getOpening(customerId, openingId); }
   listSavingsDeposits(customerId: string): Promise<SavingsListResult> { return this.savings.listDeposits(customerId); }
   getSavingsDeposit(customerId: string, depositId: string): Promise<SavingsDeposit> { return this.savings.getDeposit(customerId, depositId); }
+  updateSavingsDepositMaturityInstruction(
+    customerId: string,
+    depositId: string,
+    maturityInstruction: MaturityInstruction,
+  ): Promise<SavingsDeposit> {
+    return this.savings.updateMaturityInstruction(customerId, depositId, maturityInstruction);
+  }
+  withdrawSavingsDepositEarly(input: {
+    customerId: string;
+    depositId: string;
+    idempotencyKey: string;
+    traceId?: string;
+  }): Promise<SavingsWithdrawalReceipt> {
+    return this.savings.withdrawEarly(input);
+  }
 
   listCards(customerId: string): Promise<{ items: CreditCard[] }> { return this.credit.listCards(customerId); }
   getCard(customerId: string, cardId: string): Promise<{ card: CreditCard; creditAccount: CreditAccount; latestStatement: CreditStatement | null }> { return this.credit.getCard(customerId, cardId); }

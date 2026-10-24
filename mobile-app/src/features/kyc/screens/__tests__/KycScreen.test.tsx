@@ -201,7 +201,7 @@ describe("KycScreen identity contract", () => {
 
     expect(submitKycApplicationMock).not.toHaveBeenCalled();
     const tree = JSON.stringify(renderer.toJSON());
-    expect(tree).toContain("Số định danh mô phỏng gồm 6–24 chữ số.");
+    expect(tree).toContain("Số định danh phải gồm 6–24 chữ số.");
     expect(tree.includes(fullIdentity)).toBe(false);
 
     act(() => renderer.unmount());
@@ -397,7 +397,7 @@ describe("KycScreen identity contract", () => {
       byTestId(rendererNew, "kyc-save-draft").props.onPress();
     });
     expect(saveKycDraftMock).not.toHaveBeenCalled();
-    expect(byTestId(rendererNew, "kyc-identity-number").props.error).toBe("Số định danh mô phỏng gồm 6–24 chữ số.");
+    expect(byTestId(rendererNew, "kyc-identity-number").props.error).toBe("Số định danh phải gồm 6–24 chữ số.");
     act(() => rendererNew.unmount());
 
     const rendererExisting = await renderScreen(existingApplication);
@@ -420,7 +420,7 @@ describe("KycScreen identity contract", () => {
       byTestId(renderer, "kyc-save-draft").props.onPress();
     });
     expect(saveKycDraftMock).not.toHaveBeenCalled();
-    expect(byTestId(renderer, "kyc-identity-number").props.error).toBe("Số định danh mô phỏng gồm 6–24 chữ số.");
+    expect(byTestId(renderer, "kyc-identity-number").props.error).toBe("Số định danh phải gồm 6–24 chữ số.");
 
     // Last4-only
     act(() => {

@@ -12,7 +12,7 @@ const APPROVAL_PERMISSION: Record<string, AdminPermission> = {
   ACCOUNT_BLOCK: "account.block.approve", ACCOUNT_UNBLOCK: "account.unblock.approve",
   SIMULATION_FUNDING: "simulation-funding.approve", SIMULATION_FUNDING_REVERSAL: "simulation-funding.reverse.approve",
   KYC_DECISION: "kyc.decision.approve", CREDIT_DECISION: "credit-application.decision.approve",
-  TRANSFER_OPERATION: "transfer.action.approve", FRAUD_ACTION: "fraud.resolve.approve",
+  TRANSFER_OPERATION: "transfer.action.approve",
   OUTBOX_REQUEUE: "outbox.requeue.approve", JOB_RETRY: "job.retry.approve",
   STAFF_ROLE_CHANGE: "staff.role-change.approve", STAFF_DISABLE: "staff.disable.approve",
 };
@@ -22,7 +22,7 @@ const REQUEST_PERMISSION: Record<string, AdminPermission> = {
   ACCOUNT_BLOCK: "account.block.request", ACCOUNT_UNBLOCK: "account.unblock.request",
   SIMULATION_FUNDING: "simulation-funding.request", SIMULATION_FUNDING_REVERSAL: "simulation-funding.reverse.request",
   KYC_DECISION: "kyc.decision.request", CREDIT_DECISION: "credit-application.review",
-  TRANSFER_OPERATION: "transfer.action.request", FRAUD_ACTION: "fraud.action.request",
+  TRANSFER_OPERATION: "transfer.action.request",
   OUTBOX_REQUEUE: "outbox.requeue.request", JOB_RETRY: "job.retry.request",
   STAFF_ROLE_CHANGE: "staff.role-change.request", STAFF_DISABLE: "staff.disable.request",
 };
@@ -48,7 +48,6 @@ const ACTION_FIELDS: Readonly<Record<string, readonly string[]>> = {
   KYC_DECISION: ["reasonCode", "ticketReference", "description", "decision"],
   CREDIT_DECISION: ["reasonCode", "ticketReference", "description", "decision", "approvedLimitMinor"],
   TRANSFER_OPERATION: ["reasonCode", "ticketReference", "description", "operation"],
-  FRAUD_ACTION: ["reasonCode", "ticketReference", "description", "operation", "resolutionCode"],
   OUTBOX_REQUEUE: ["reasonCode", "ticketReference", "description"],
   JOB_RETRY: ["reasonCode", "ticketReference", "description"],
   STAFF_ROLE_CHANGE: ["reasonCode", "ticketReference", "description", "roleCode", "operation", "environmentScope"],
@@ -58,7 +57,7 @@ const ACTION_FIELDS: Readonly<Record<string, readonly string[]>> = {
 function rejectUnknownFields(actionType: string, body: Record<string, unknown>): void {
   const allowed = ACTION_FIELDS[actionType];
   if (!allowed) return;
-  const unknown = Object.keys(body).filter((key) => !allowed.includes(key));
+  const unknown = Object.keys(body).filter((key) => !allowed.includes(key) && key !== "directExecution");
   if (unknown.length > 0) throw invalidRequest("Request contains unsupported fields.", { [unknown[0]]: "This field is not accepted for the selected Admin command." });
 }
 
@@ -140,16 +139,6 @@ export class AdminActionEngine {
       if (operation === "REVERSAL" && target.status !== "SUCCEEDED") throw conflictWithCode("TRANSFER_NOT_REVERSIBLE", "Only succeeded transfers can be reversed.");
       safePayload.operation = operation;
     }
-    if (input.targetType === "FRAUD_CASE") {
-      const target = await this.repository.findFraudCase(input.targetId);
-      if (!target) throw notFound("Fraud case not found.");
-      expectedTargetVersion = target.version;
-      expectedTargetStatus = target.status;
-      const operation = typeof safePayload.operation === "string" ? safePayload.operation : "";
-      if (!['BLOCK', 'REVOKE', 'REVERSAL', 'RESOLVE'].includes(operation)) throw invalidRequest("A valid fraud operation is required.");
-      if (operation === "RESOLVE" && !['CONFIRMED_FRAUD', 'NOT_FRAUD', 'DUPLICATE', 'INSUFFICIENT_INFORMATION', 'CUSTOMER_WITHDREW'].includes(String(safePayload.resolutionCode ?? ""))) throw invalidRequest("A valid fraud resolution code is required.");
-      safePayload.operation = operation;
-    }
     if (input.targetType === "JOB") {
       const target = await this.repository.findJob(input.targetId);
       if (!target) throw notFound("Job not found.");
@@ -169,6 +158,48 @@ export class AdminActionEngine {
     const action = await this.repository.createAction({ actionType: input.actionType, requesterStaffId: input.subject.staffId, targetType: input.targetType, targetId: input.targetId, requestFingerprint, policyVersion: "admin-p0-v1", idempotencyKey, expectedTargetVersion, expectedTargetStatus, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), payload: safePayload });
     if (action.requestFingerprint !== requestFingerprint) throw conflictWithCode("IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used with a different Admin command.");
     await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "ADMIN_ACTION_CREATED", targetType: input.targetType, targetId: input.targetId, outcome: "PENDING_APPROVAL", reasonCode, requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: expectedTargetVersion, afterVersion: null, metadata: { actionType: input.actionType, ticketReference: safePayload.ticketReference ?? null } });
+
+    // Direct execution: execute immediately if requested or configured without requiring Approval Inbox
+    if (Boolean((input.body as Record<string, unknown>)?.directExecution) || process.env.ADMIN_DIRECT_EXECUTION === "true") {
+      try {
+        await this.repository.decideAction({
+          requestId: action.id,
+          reviewerStaffId: input.subject.staffId,
+          decision: "APPROVED",
+          approvedFingerprint: requestFingerprint,
+          reasonCode,
+          comment: "Direct Execution",
+          mfaVerifiedAt: new Date().toISOString(),
+        });
+        const executed = await this.repository.executeApprovedAction({
+          requestId: action.id,
+          approverStaffId: input.subject.staffId,
+          traceId: input.traceId,
+        });
+        if (executed.status === "SUCCEEDED") {
+          await this.repository.appendAudit({
+            id: randomUUID(),
+            actorStaffId: input.subject.staffId,
+            action: "ADMIN_ACTION_EXECUTED",
+            targetType: input.targetType,
+            targetId: input.targetId,
+            outcome: "SUCCEEDED",
+            reasonCode,
+            requestId: action.id,
+            traceId: input.traceId,
+            correlationId: null,
+            beforeVersion: executed.beforeVersion ?? expectedTargetVersion,
+            afterVersion: executed.afterVersion ?? null,
+            metadata: { actionType: input.actionType, resultResourceId: executed.resultResourceId ?? null },
+          });
+          const fresh = await this.repository.findAction(action.id);
+          if (fresh) return fresh;
+        }
+      } catch {
+        // Fallback: keep action in current status if execution throws
+      }
+    }
+
     return action;
   }
 

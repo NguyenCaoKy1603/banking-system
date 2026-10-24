@@ -96,6 +96,13 @@ export type AdminActionRecord = {
   version: number;
   createdAt: string;
   updatedAt: string;
+  requesterName?: string | null;
+  requesterEmail?: string | null;
+  requesterEmployeeCode?: string | null;
+  targetLabel?: string | null;
+  targetDisplayName?: string | null;
+  targetEmployeeCode?: string | null;
+  targetEmail?: string | null;
 };
 
 export type AdminDecision = {
@@ -113,6 +120,11 @@ export type AdminDecision = {
 export type AdminAuditRecord = {
   id: string;
   actorStaffId: string | null;
+  actorCustomerId?: string | null;
+  actorType?: "STAFF" | "CUSTOMER" | "SYSTEM";
+  actorName?: string | null;
+  actorEmail?: string | null;
+  actorEmployeeCode?: string | null;
   action: string;
   targetType: string | null;
   targetId: string | null;
@@ -174,6 +186,13 @@ export type AdminApplication = {
   requestedLimitMinor?: string;
   approvedLimitMinor?: string | null;
   applicantLabel?: string;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  customerPhone?: string | null;
+  fullName?: string | null;
+  identityNumber?: string | null;
+  address?: string | null;
+  documentUri?: string | null;
   decisionReasonCode: string | null;
   createdAt: string;
   updatedAt: string;
@@ -192,6 +211,10 @@ export type AdminTransfer = {
   lastErrorCode: string | null;
   createdAt: string;
   updatedAt: string;
+  senderName?: string | null;
+  sourceAccountNumber?: string | null;
+  destinationOwnerName?: string | null;
+  destinationAccountNumber?: string | null;
 };
 
 export type AdminFraudCase = {
@@ -319,7 +342,7 @@ export interface AdminRepository {
   updateActionStatus(id: string, status: ActionStatus, result?: { resourceId?: string; failureCode?: string }): Promise<AdminActionRecord>;
   executeApprovedAction(input: { requestId: string; approverStaffId: string; traceId: string }): Promise<ExecuteActionResult>;
   appendAudit(input: Omit<AdminAuditRecord, "occurredAt"> & { occurredAt?: string }): Promise<void>;
-  listAudit(limit?: number): Promise<AdminAuditRecord[]>;
+  listAudit(limit?: number, actorType?: string): Promise<AdminAuditRecord[]>;
   findCustomers(query?: string): Promise<CustomerSummary[]>;
   findCustomer(id: string): Promise<CustomerSummary | null>;
   listCustomerAccounts(customerId: string): Promise<AdminAccount[]>;
@@ -355,6 +378,12 @@ function normalizedEmail(email: string): string { return email.trim().toLowerCas
 function asNumber(value: unknown, fallback = 0): number { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
 function asRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function mapApplication(row: Record<string, unknown>, applicationType: "KYC" | "CREDIT"): AdminApplication {
+  const syntheticPayload = row.synthetic_payload && typeof row.synthetic_payload === "object"
+    ? row.synthetic_payload as Record<string, unknown>
+    : typeof row.synthetic_payload === "string"
+      ? (() => { try { return JSON.parse(row.synthetic_payload); } catch { return {}; } })()
+      : {};
+
   return {
     id: String(row.id), applicationType, customerId: String(row.customer_id), status: String(row.status),
     version: asNumber(row.version, 1), requestFingerprint: String(row.request_fingerprint),
@@ -362,12 +391,36 @@ function mapApplication(row: Record<string, unknown>, applicationType: "KYC" | "
     requestedLimitMinor: row.requested_limit_minor === undefined ? undefined : String(row.requested_limit_minor),
     approvedLimitMinor: row.approved_limit_minor === undefined ? undefined : row.approved_limit_minor === null ? null : String(row.approved_limit_minor),
     applicantLabel: row.applicant_label === undefined ? undefined : String(row.applicant_label),
+    customerName: row.customer_name ? String(row.customer_name) : null,
+    customerEmail: row.customer_email ? String(row.customer_email) : null,
+    customerPhone: row.customer_phone ? String(row.customer_phone) : null,
     decisionReasonCode: row.decision_reason_code ? String(row.decision_reason_code) : null,
     createdAt: new Date(String(row.created_at)).toISOString(), updatedAt: new Date(String(row.updated_at)).toISOString(),
+    fullName: syntheticPayload.fullName ? String(syntheticPayload.fullName) : (row.customer_name ? String(row.customer_name) : null),
+    identityNumber: syntheticPayload.identityNumber ? String(syntheticPayload.identityNumber) : null,
+    address: syntheticPayload.address ? String(syntheticPayload.address) : null,
+    documentUri: syntheticPayload.documentUri ? String(syntheticPayload.documentUri) : null,
   };
 }
 function mapTransfer(row: Record<string, unknown>): AdminTransfer {
-  return { id: String(row.id), customerId: String(row.customer_id), sourceAccountId: String(row.source_account_id), reference: String(row.reference), amountMinor: String(row.amount_minor), feeMinor: String(row.fee_minor), currency: String(row.currency), status: String(row.status), version: asNumber(row.version, 1), lastErrorCode: row.last_error_code ? String(row.last_error_code) : null, createdAt: new Date(String(row.created_at)).toISOString(), updatedAt: new Date(String(row.updated_at)).toISOString() };
+  return {
+    id: String(row.id),
+    customerId: String(row.customer_id),
+    sourceAccountId: String(row.source_account_id),
+    reference: String(row.reference),
+    amountMinor: String(row.amount_minor),
+    feeMinor: String(row.fee_minor),
+    currency: String(row.currency),
+    status: String(row.status),
+    version: asNumber(row.version, 1),
+    lastErrorCode: row.last_error_code ? String(row.last_error_code) : null,
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    updatedAt: new Date(String(row.updated_at)).toISOString(),
+    senderName: row.sender_name ? String(row.sender_name) : null,
+    sourceAccountNumber: row.source_account_number ? maskAccountNumber(String(row.source_account_number)) : null,
+    destinationOwnerName: row.dest_owner ? String(row.dest_owner) : null,
+    destinationAccountNumber: row.dest_account ? maskAccountNumber(String(row.dest_account)) : null,
+  };
 }
 function mapFraud(row: Record<string, unknown>): AdminFraudCase {
   return { id: String(row.id), customerId: String(row.customer_id), accountId: String(row.account_id), transactionId: String(row.transaction_id), reasonPreview: String(row.reason ?? "").slice(0, 160), status: String(row.status), severity: String(row.severity ?? "MEDIUM"), assignedStaffId: row.assigned_staff_id ? String(row.assigned_staff_id) : null, resolutionCode: row.resolution_code ? String(row.resolution_code) : null, version: asNumber(row.version, 1), createdAt: new Date(String(row.created_at)).toISOString(), updatedAt: new Date(String(row.updated_at ?? row.created_at)).toISOString() };
@@ -726,7 +779,10 @@ export class InMemoryAdminRepository implements AdminRepository {
     }
   }
   appendAudit(input: Omit<AdminAuditRecord, "occurredAt"> & { occurredAt?: string }) { this.audit.push({ ...input, metadata: redactAdminMetadata(input.metadata) as Record<string, unknown>, occurredAt: input.occurredAt ?? nowIso() }); return Promise.resolve(); }
-  listAudit(limit = 100) { return Promise.resolve(this.audit.slice(-Math.min(limit, 1000)).reverse().map((row) => structuredClone(row))); }
+  listAudit(limit = 100, actorType?: string) {
+    const filtered = actorType ? this.audit.filter((row) => row.actorType === actorType) : this.audit;
+    return Promise.resolve(filtered.slice(-Math.min(limit, 1000)).reverse().map((row) => structuredClone(row)));
+  }
   findCustomers(query = "") { const term = query.trim().toLowerCase(); return Promise.resolve([...this.customers.values()].filter((row) => !term || `${row.fullName} ${row.email} ${row.phoneNumber}`.toLowerCase().includes(term)).map((row) => maskedCustomer(structuredClone(row)))); }
   findCustomer(id: string) { const row = this.customers.get(id); return Promise.resolve(row ? maskedCustomer(structuredClone(row)) : null); }
   listCustomerAccounts(customerId: string) { return Promise.resolve([...this.accounts.values()].filter((row) => row.customerId === customerId).map((row) => ({ ...structuredClone(row), maskedNumber: maskAccountNumber(row.maskedNumber) }))); }
@@ -769,7 +825,35 @@ export class InMemoryAdminRepository implements AdminRepository {
 function mapStaff(row: Record<string, unknown>, roles: StaffRecord["roles"] = []): StaffRecord {
   return { id: String(row.id), employeeCode: String(row.employee_code), emailNormalized: String(row.email_normalized), displayName: String(row.display_name), passwordSalt: row.password_salt ? String(row.password_salt) : null, passwordDigest: row.password_digest ? String(row.password_digest) : null, status: String(row.status) as StaffStatus, authorizationVersion: asNumber(row.authorization_version, 1), passwordChangedAt: row.password_changed_at ? new Date(String(row.password_changed_at)).toISOString() : null, mfaEnrolledAt: row.mfa_enrolled_at ? new Date(String(row.mfa_enrolled_at)).toISOString() : null, lastLoginAt: row.last_login_at ? new Date(String(row.last_login_at)).toISOString() : null, createdAt: new Date(String(row.created_at)).toISOString(), roles };
 }
-function mapAction(row: Record<string, unknown>): AdminActionRecord { return { id: String(row.id), actionType: String(row.action_type), requesterStaffId: String(row.requester_staff_id), targetType: String(row.target_type), targetId: String(row.target_id), requestFingerprint: String(row.request_fingerprint), policyVersion: String(row.policy_version), status: String(row.status) as ActionStatus, idempotencyKey: String(row.idempotency_key), expectedTargetVersion: row.expected_target_version === null ? null : asNumber(row.expected_target_version), expectedTargetStatus: row.expected_target_status ? String(row.expected_target_status) : null, expiresAt: new Date(String(row.expires_at)).toISOString(), payload: asRecord(row.payload), resultResourceId: row.result_resource_id ? String(row.result_resource_id) : null, failureCode: row.failure_code ? String(row.failure_code) : null, version: asNumber(row.version, 1), createdAt: new Date(String(row.created_at)).toISOString(), updatedAt: new Date(String(row.updated_at)).toISOString() }; }
+function mapAction(row: Record<string, unknown>): AdminActionRecord {
+  return {
+    id: String(row.id),
+    actionType: String(row.action_type),
+    requesterStaffId: String(row.requester_staff_id),
+    targetType: String(row.target_type),
+    targetId: String(row.target_id),
+    requestFingerprint: String(row.request_fingerprint),
+    policyVersion: String(row.policy_version),
+    status: String(row.status) as ActionStatus,
+    idempotencyKey: String(row.idempotency_key),
+    expectedTargetVersion: row.expected_target_version === null ? null : asNumber(row.expected_target_version),
+    expectedTargetStatus: row.expected_target_status ? String(row.expected_target_status) : null,
+    expiresAt: new Date(String(row.expires_at)).toISOString(),
+    payload: asRecord(row.payload),
+    resultResourceId: row.result_resource_id ? String(row.result_resource_id) : null,
+    failureCode: row.failure_code ? String(row.failure_code) : null,
+    version: asNumber(row.version, 1),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    updatedAt: new Date(String(row.updated_at)).toISOString(),
+    requesterName: row.requester_name ? String(row.requester_name) : null,
+    requesterEmail: row.requester_email ? String(row.requester_email) : null,
+    requesterEmployeeCode: row.requester_employee_code ? String(row.requester_employee_code) : null,
+    targetLabel: row.target_label ? String(row.target_label) : null,
+    targetDisplayName: row.target_display_name ? String(row.target_display_name) : null,
+    targetEmployeeCode: row.target_employee_code ? String(row.target_employee_code) : null,
+    targetEmail: row.target_email ? String(row.target_email) : null,
+  };
+}
 function mapSession(row: Record<string, unknown>): StaffSessionRecord { return { id: String(row.id), staffId: String(row.staff_id), accessTokenHash: String(row.access_token_hash), refreshTokenHash: String(row.refresh_token_hash), familyId: String(row.family_id), authorizationVersion: asNumber(row.authorization_version, 1), idleExpiresAt: new Date(String(row.idle_expires_at)).toISOString(), absoluteExpiresAt: new Date(String(row.absolute_expires_at)).toISOString(), lastSeenAt: new Date(String(row.last_seen_at)).toISOString(), csrfTokenHash: String(row.csrf_token_hash), deviceFingerprint: row.device_fingerprint ? String(row.device_fingerprint) : null, ipHash: row.ip_hash ? String(row.ip_hash) : null, stepUpVerifiedAt: row.step_up_verified_at ? new Date(String(row.step_up_verified_at)).toISOString() : null, revokedAt: row.revoked_at ? new Date(String(row.revoked_at)).toISOString() : null }; }
 
 /** PostgreSQL repository used by the separate Admin API process. */
@@ -862,8 +946,89 @@ export class PostgresAdminRepository implements AdminRepository {
       return mapAction(result.rows[0] as Record<string, unknown>);
     });
   }
-  async findAction(id: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT * FROM admin_action_requests WHERE id = $1", [id]); return result.rows[0] ? mapAction(result.rows[0] as Record<string, unknown>) : null; }); }
-  async listActions(status?: ActionStatus, scope?: AdminCaseScope) { return this.unitOfWork.transaction(async ({ client }) => { if (scope) await client.query("SELECT set_config('app.staff_id',$1,true), set_config('app.staff_scope',$2,true)", [scope.staffId, scope.scope]); const predicates: string[] = []; const values: unknown[] = []; if (status) { values.push(status); predicates.push(`status = $${values.length}`); } if (scope && !scope.canSeeAll) { values.push(scope.staffId); predicates.push(`requester_staff_id = $${values.length}`); } const where = predicates.length ? `WHERE ${predicates.join(" AND ")}` : ""; const result = await client.query(`SELECT * FROM admin_action_requests ${where} ORDER BY created_at DESC LIMIT 500`, values); return result.rows.map((row) => mapAction(row as Record<string, unknown>)); }); }
+  async findAction(id: string) {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query(`
+        SELECT a.*,
+               req.display_name AS requester_name,
+               req.email_normalized AS requester_email,
+               req.employee_code AS requester_employee_code,
+               CASE
+                 WHEN a.target_type = 'STAFF' THEN 'Nhân viên: ' || tgt_staff.display_name || ' (' || tgt_staff.employee_code || ' · ' || tgt_staff.email_normalized || ')'
+                 WHEN a.target_type = 'TRANSFER' THEN 'Chuyển tiền: ' || COALESCE(tr_sender.full_name, 'Khách hàng') || ' ➔ ' || COALESCE(tr_dest.full_name, 'Thụ hưởng') || ' (' || to_char(tr.amount_minor, 'FM999,999,999,999') || ' VND) · ' || COALESCE(a.payload->>'operation', 'Xử lý')
+                 WHEN a.target_type = 'KYC_APPLICATION' THEN 'Hồ sơ eKYC: ' || COALESCE(kyc_c.full_name, a.target_id) || ' (Mã: #' || substring(a.target_id from 1 for 8) || ')'
+                 WHEN a.target_type = 'CREDIT_APPLICATION' THEN 'Hồ sơ Tín dụng: ' || COALESCE(cr_c.full_name, a.target_id) || ' (Mã: #' || substring(a.target_id from 1 for 8) || ')'
+                 WHEN a.target_type = 'ACCOUNT' THEN 'Tài khoản thanh toán: #' || substring(a.target_id from 1 for 8)
+                 WHEN a.target_type = 'CUSTOMER' THEN 'Khách hàng: #' || substring(a.target_id from 1 for 8)
+                 ELSE a.target_type || ' #' || substring(a.target_id from 1 for 8)
+               END AS target_label,
+               tgt_staff.display_name AS target_staff_name,
+               tgt_staff.employee_code AS target_employee_code,
+               tgt_staff.email_normalized AS target_email,
+               COALESCE(tr_sender.full_name, kyc_c.full_name, cr_c.full_name, tgt_staff.display_name) AS target_display_name
+        FROM admin_action_requests a
+        LEFT JOIN staff_users req ON a.requester_staff_id = req.id
+        LEFT JOIN staff_users tgt_staff ON a.target_type = 'STAFF' AND a.target_id::text = tgt_staff.id::text
+        LEFT JOIN transfers tr ON a.target_type = 'TRANSFER' AND a.target_id::text = tr.id::text
+        LEFT JOIN customers tr_sender ON tr.customer_id = tr_sender.id
+        LEFT JOIN customers tr_dest ON tr.destination_owner_id = tr_dest.id
+        LEFT JOIN kyc_applications kyc_app ON a.target_type = 'KYC_APPLICATION' AND a.target_id::text = kyc_app.id::text
+        LEFT JOIN customers kyc_c ON kyc_app.customer_id = kyc_c.id
+        LEFT JOIN credit_applications cr_app ON a.target_type = 'CREDIT_APPLICATION' AND a.target_id::text = cr_app.id::text
+        LEFT JOIN customers cr_c ON cr_app.customer_id = cr_c.id
+        WHERE a.id = $1
+      `, [id]);
+      return result.rows[0] ? mapAction(result.rows[0] as Record<string, unknown>) : null;
+    });
+  }
+  async listActions(status?: ActionStatus, scope?: AdminCaseScope) {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      if (scope) await client.query("SELECT set_config('app.staff_id',$1,true), set_config('app.staff_scope',$2,true)", [scope.staffId, scope.scope]);
+      const predicates: string[] = [];
+      const values: unknown[] = [];
+      if (status) {
+        values.push(status);
+        predicates.push(`a.status = $${values.length}`);
+      }
+      if (scope && !scope.canSeeAll) {
+        values.push(scope.staffId);
+        predicates.push(`a.requester_staff_id = $${values.length}`);
+      }
+      const where = predicates.length ? `WHERE ${predicates.join(" AND ")}` : "";
+      const result = await client.query(`
+        SELECT a.*,
+               req.display_name AS requester_name,
+               req.email_normalized AS requester_email,
+               req.employee_code AS requester_employee_code,
+               CASE
+                 WHEN a.target_type = 'STAFF' THEN 'Nhân viên: ' || tgt_staff.display_name || ' (' || tgt_staff.employee_code || ' · ' || tgt_staff.email_normalized || ')'
+                 WHEN a.target_type = 'TRANSFER' THEN 'Chuyển tiền: ' || COALESCE(tr_sender.full_name, 'Khách hàng') || ' ➔ ' || COALESCE(tr_dest.full_name, 'Thụ hưởng') || ' (' || to_char(tr.amount_minor, 'FM999,999,999,999') || ' VND) · ' || COALESCE(a.payload->>'operation', 'Xử lý')
+                 WHEN a.target_type = 'KYC_APPLICATION' THEN 'Hồ sơ eKYC: ' || COALESCE(kyc_c.full_name, a.target_id) || ' (Mã: #' || substring(a.target_id from 1 for 8) || ')'
+                 WHEN a.target_type = 'CREDIT_APPLICATION' THEN 'Hồ sơ Tín dụng: ' || COALESCE(cr_c.full_name, a.target_id) || ' (Mã: #' || substring(a.target_id from 1 for 8) || ')'
+                 WHEN a.target_type = 'ACCOUNT' THEN 'Tài khoản thanh toán: #' || substring(a.target_id from 1 for 8)
+                 WHEN a.target_type = 'CUSTOMER' THEN 'Khách hàng: #' || substring(a.target_id from 1 for 8)
+                 ELSE a.target_type || ' #' || substring(a.target_id from 1 for 8)
+               END AS target_label,
+               tgt_staff.display_name AS target_staff_name,
+               tgt_staff.employee_code AS target_employee_code,
+               tgt_staff.email_normalized AS target_email,
+               COALESCE(tr_sender.full_name, kyc_c.full_name, cr_c.full_name, tgt_staff.display_name) AS target_display_name
+        FROM admin_action_requests a
+        LEFT JOIN staff_users req ON a.requester_staff_id = req.id
+        LEFT JOIN staff_users tgt_staff ON a.target_type = 'STAFF' AND a.target_id::text = tgt_staff.id::text
+        LEFT JOIN transfers tr ON a.target_type = 'TRANSFER' AND a.target_id::text = tr.id::text
+        LEFT JOIN customers tr_sender ON tr.customer_id = tr_sender.id
+        LEFT JOIN customers tr_dest ON tr.destination_owner_id = tr_dest.id
+        LEFT JOIN kyc_applications kyc_app ON a.target_type = 'KYC_APPLICATION' AND a.target_id::text = kyc_app.id::text
+        LEFT JOIN customers kyc_c ON kyc_app.customer_id = kyc_c.id
+        LEFT JOIN credit_applications cr_app ON a.target_type = 'CREDIT_APPLICATION' AND a.target_id::text = cr_app.id::text
+        LEFT JOIN customers cr_c ON cr_app.customer_id = cr_c.id
+        ${where}
+        ORDER BY a.created_at DESC LIMIT 500
+      `, values);
+      return result.rows.map((row) => mapAction(row as Record<string, unknown>));
+    });
+  }
   async decideAction(input: { requestId: string; reviewerStaffId: string; decision: "APPROVED" | "REJECTED"; approvedFingerprint: string; reasonCode: string; comment?: string | null; mfaVerifiedAt: string }) { return this.unitOfWork.transaction(async ({ client }) => {
     // Serialize all approval decisions on the action row before checking the
     // unique decision record. Without this lock two simultaneous approvals
@@ -1211,7 +1376,55 @@ export class PostgresAdminRepository implements AdminRepository {
     });
   }
   async appendAudit(input: Omit<AdminAuditRecord, "occurredAt"> & { occurredAt?: string }) { await this.unitOfWork.transaction(async ({ client }) => { await client.query("INSERT INTO audit_events (id,event_type,actor_type,actor_staff_id,action,target_type,target_id,outcome,reason_code,request_id,trace_id,correlation_id,before_version,after_version,payload,occurred_at) VALUES ($1,'ADMIN_AUDIT_EVENT','STAFF',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)", [input.id, input.actorStaffId, input.action, input.targetType, input.targetId, input.outcome, input.reasonCode, input.requestId, input.traceId, input.correlationId, input.beforeVersion, input.afterVersion, JSON.stringify(redactAdminMetadata(input.metadata)), input.occurredAt ?? nowIso()]); }); }
-  async listAudit(limit = 100) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT id, actor_staff_id, action, target_type, target_id, outcome, reason_code, request_id, trace_id, correlation_id, before_version, after_version, payload, occurred_at FROM audit_events WHERE actor_type='STAFF' ORDER BY occurred_at DESC LIMIT $1", [Math.min(limit, 1000)]); return result.rows.map((row) => ({ id: String(row.id), actorStaffId: row.actor_staff_id ? String(row.actor_staff_id) : null, action: String(row.action ?? row.event_type), targetType: row.target_type ? String(row.target_type) : null, targetId: row.target_id ? String(row.target_id) : null, outcome: String(row.outcome ?? "UNKNOWN"), reasonCode: row.reason_code ? String(row.reason_code) : null, requestId: row.request_id ? String(row.request_id) : null, traceId: row.trace_id ? String(row.trace_id) : null, correlationId: row.correlation_id ? String(row.correlation_id) : null, beforeVersion: row.before_version === null ? null : asNumber(row.before_version), afterVersion: row.after_version === null ? null : asNumber(row.after_version), metadata: redactAdminMetadata(asRecord(row.payload)) as Record<string, unknown>, occurredAt: new Date(String(row.occurred_at)).toISOString() })); }); }
+  async listAudit(limit = 100, actorType?: string) {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const params: unknown[] = [];
+      let whereClause = "";
+      if (actorType && ["STAFF", "CUSTOMER", "SYSTEM"].includes(actorType)) {
+        params.push(actorType);
+        whereClause = `WHERE a.actor_type = $${params.length}`;
+      }
+      params.push(Math.min(limit, 1000));
+      const limitParam = `$${params.length}`;
+      const query = `
+        SELECT a.id, a.actor_type, a.actor_staff_id, a.actor_customer_id,
+               a.action, a.event_type, a.target_type, a.target_id,
+               a.outcome, a.reason_code, a.request_id, a.trace_id, a.correlation_id,
+               a.before_version, a.after_version, a.payload, a.occurred_at,
+               COALESCE(s.display_name, c.full_name, CASE WHEN a.actor_type = 'SYSTEM' THEN 'Hệ thống' ELSE NULL END) AS actor_name,
+               COALESCE(s.email_normalized, c.email, NULL) AS actor_email,
+               s.employee_code AS actor_employee_code
+        FROM audit_events a
+        LEFT JOIN staff_users s ON a.actor_staff_id = s.id
+        LEFT JOIN customers c ON a.actor_customer_id = c.id
+        ${whereClause}
+        ORDER BY a.occurred_at DESC
+        LIMIT ${limitParam}
+      `;
+      const result = await client.query(query, params);
+      return result.rows.map((row) => ({
+        id: String(row.id),
+        actorStaffId: row.actor_staff_id ? String(row.actor_staff_id) : null,
+        actorCustomerId: row.actor_customer_id ? String(row.actor_customer_id) : null,
+        actorType: (row.actor_type as "STAFF" | "CUSTOMER" | "SYSTEM") || "STAFF",
+        actorName: row.actor_name ? String(row.actor_name) : null,
+        actorEmail: row.actor_email ? String(row.actor_email) : null,
+        actorEmployeeCode: row.actor_employee_code ? String(row.actor_employee_code) : null,
+        action: String(row.action || row.event_type || "UNKNOWN_ACTION"),
+        targetType: row.target_type ? String(row.target_type) : null,
+        targetId: row.target_id ? String(row.target_id) : null,
+        outcome: String(row.outcome ?? "UNKNOWN"),
+        reasonCode: row.reason_code ? String(row.reason_code) : null,
+        requestId: row.request_id ? String(row.request_id) : null,
+        traceId: row.trace_id ? String(row.trace_id) : null,
+        correlationId: row.correlation_id ? String(row.correlation_id) : null,
+        beforeVersion: row.before_version === null ? null : asNumber(row.before_version),
+        afterVersion: row.after_version === null ? null : asNumber(row.after_version),
+        metadata: redactAdminMetadata(asRecord(row.payload)) as Record<string, unknown>,
+        occurredAt: new Date(String(row.occurred_at)).toISOString(),
+      }));
+    });
+  }
   async findCustomers(query = "") { return this.unitOfWork.transaction(async ({ client }) => { const term = `%${query.trim().toLowerCase()}%`; const result = await client.query("SELECT id, full_name, email, phone_number, COALESCE(access_status,'ACTIVE') AS access_status, COALESCE(access_version,1) AS access_version, created_at FROM customers WHERE ($1 = '%%' OR lower(full_name) LIKE $1 OR lower(email) LIKE $1 OR phone_number LIKE $1) ORDER BY created_at DESC LIMIT 100", [term]); return result.rows.map((row) => maskedCustomer({ id: String(row.id), fullName: String(row.full_name), email: String(row.email), phoneNumber: String(row.phone_number), accessStatus: String(row.access_status) as "ACTIVE" | "LOCKED", accessVersion: asNumber(row.access_version, 1), createdAt: new Date(String(row.created_at)).toISOString() })); }); }
   async findCustomer(id: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT id, full_name, email, phone_number, COALESCE(access_status,'ACTIVE') AS access_status, COALESCE(access_version,1) AS access_version, created_at FROM customers WHERE id=$1", [id]); const row = result.rows[0]; return row ? maskedCustomer({ id: String(row.id), fullName: String(row.full_name), email: String(row.email), phoneNumber: String(row.phone_number), accessStatus: String(row.access_status) as "ACTIVE" | "LOCKED", accessVersion: asNumber(row.access_version, 1), createdAt: new Date(String(row.created_at)).toISOString() }) : null; }); }
   async listCustomerAccounts(customerId: string) { return this.unitOfWork.transaction(async ({ client }) => { const result = await client.query("SELECT id, customer_id, display_name, masked_number, bank_name, available_minor, current_minor, held_minor, status, version, updated_at FROM payment_accounts WHERE customer_id=$1 ORDER BY updated_at DESC", [customerId]); return result.rows.map((row) => ({ id: String(row.id), customerId: String(row.customer_id), displayName: String(row.display_name), maskedNumber: maskAccountNumber(String(row.masked_number)), bankName: String(row.bank_name ?? "Ngân hàng reference"), availableMinor: String(row.available_minor), currentMinor: String(row.current_minor), heldMinor: String(row.held_minor), status: String(row.status) as "ACTIVE" | "BLOCKED", version: asNumber(row.version), updatedAt: new Date(String(row.updated_at)).toISOString() })); }); }
@@ -1222,14 +1435,14 @@ export class PostgresAdminRepository implements AdminRepository {
       const rows: AdminApplication[] = [];
       if (scope) await client.query("SELECT set_config('app.staff_id',$1,true), set_config('app.staff_scope',$2,true)", [scope.staffId, scope.scope]);
       const scoped = scope && !scope.canSeeAll;
-      const scopeClause = scoped ? " WHERE assigned_staff_id=$1 OR assigned_staff_id IS NULL" : "";
+      const scopeClause = scoped ? " WHERE a.assigned_staff_id=$1 OR a.assigned_staff_id IS NULL" : "";
       const scopeValues = scoped ? [scope!.staffId] : [];
       if (!applicationType || applicationType === "KYC") {
-        const result = await client.query(`SELECT id, customer_id, status, applicant_label, request_fingerprint, assigned_staff_id, decision_reason_code, version, created_at, updated_at FROM kyc_applications${scopeClause} ORDER BY created_at DESC LIMIT 200`, scopeValues);
+        const result = await client.query(`SELECT a.id, a.customer_id, a.status, a.applicant_label, a.synthetic_payload, a.request_fingerprint, a.assigned_staff_id, a.decision_reason_code, a.version, a.created_at, a.updated_at, c.full_name AS customer_name, c.email AS customer_email, c.phone_number AS customer_phone FROM kyc_applications a LEFT JOIN customers c ON a.customer_id = c.id${scopeClause} ORDER BY a.created_at DESC LIMIT 200`, scopeValues);
         rows.push(...result.rows.map((row) => mapApplication(row as Record<string, unknown>, "KYC")));
       }
       if (!applicationType || applicationType === "CREDIT") {
-        const result = await client.query(`SELECT id, customer_id, status, requested_limit_minor, approved_limit_minor, request_fingerprint, assigned_staff_id, decision_reason_code, version, created_at, updated_at FROM credit_applications${scopeClause} ORDER BY created_at DESC LIMIT 200`, scopeValues);
+        const result = await client.query(`SELECT a.id, a.customer_id, a.status, a.requested_limit_minor, a.approved_limit_minor, a.request_fingerprint, a.assigned_staff_id, a.decision_reason_code, a.version, a.created_at, a.updated_at, c.full_name AS customer_name, c.email AS customer_email, c.phone_number AS customer_phone FROM credit_applications a LEFT JOIN customers c ON a.customer_id = c.id${scopeClause} ORDER BY a.created_at DESC LIMIT 200`, scopeValues);
         rows.push(...result.rows.map((row) => mapApplication(row as Record<string, unknown>, "CREDIT")));
       }
       return rows.sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
@@ -1239,8 +1452,8 @@ export class PostgresAdminRepository implements AdminRepository {
     return this.unitOfWork.transaction(async ({ client }) => {
       const table = applicationType === "KYC" ? "kyc_applications" : "credit_applications";
       if (scope) await client.query("SELECT set_config('app.staff_id',$1,true), set_config('app.staff_scope',$2,true)", [scope.staffId, scope.scope]);
-      const scopeClause = scope && !scope.canSeeAll ? " AND (assigned_staff_id=$2 OR assigned_staff_id IS NULL)" : "";
-      const result = await client.query(`SELECT * FROM ${table} WHERE id=$1${scopeClause}`, scope && !scope.canSeeAll ? [id, scope.staffId] : [id]);
+      const scopeClause = scope && !scope.canSeeAll ? " AND (a.assigned_staff_id=$2 OR a.assigned_staff_id IS NULL)" : "";
+      const result = await client.query(`SELECT a.*, c.full_name AS customer_name, c.email AS customer_email, c.phone_number AS customer_phone FROM ${table} a LEFT JOIN customers c ON a.customer_id = c.id WHERE a.id=$1${scopeClause}`, scope && !scope.canSeeAll ? [id, scope.staffId] : [id]);
       return result.rows[0] ? mapApplication(result.rows[0] as Record<string, unknown>, applicationType) : null;
     });
   }
@@ -1261,12 +1474,43 @@ export class PostgresAdminRepository implements AdminRepository {
   }
   async listTransfers(status?: string) {
     return this.unitOfWork.transaction(async ({ client }) => {
-      const result = await client.query(`SELECT id, customer_id, source_account_id, reference, amount_minor, fee_minor, currency, status, version, last_error_code, created_at, updated_at FROM transfers ${status ? "WHERE status=$1" : ""} ORDER BY created_at DESC LIMIT 200`, status ? [status] : []);
+      const result = await client.query(
+        `SELECT
+           t.id, t.customer_id, t.source_account_id, t.reference, t.amount_minor, t.fee_minor,
+           t.currency, t.status, t.version, t.last_error_code, t.created_at, t.updated_at,
+           c.full_name AS sender_name,
+           a.masked_number AS source_account_number,
+           dc.full_name AS dest_owner,
+           da.masked_number AS dest_account
+         FROM transfers t
+         LEFT JOIN customers c ON t.customer_id = c.id
+         LEFT JOIN payment_accounts a ON t.source_account_id = a.id
+         LEFT JOIN customers dc ON t.destination_owner_id = dc.id
+         LEFT JOIN payment_accounts da ON t.destination_account_id = da.id
+         ${status ? "WHERE t.status=$1" : ""}
+         ORDER BY t.created_at DESC LIMIT 200`,
+        status ? [status] : []
+      );
       return result.rows.map((row) => mapTransfer(row as Record<string, unknown>));
     });
   }
   async findTransfer(id: string) {
-    const result = await this.pool.query("SELECT id, customer_id, source_account_id, reference, amount_minor, fee_minor, currency, status, version, last_error_code, created_at, updated_at FROM transfers WHERE id=$1", [id]);
+    const result = await this.pool.query(
+      `SELECT
+         t.id, t.customer_id, t.source_account_id, t.reference, t.amount_minor, t.fee_minor,
+         t.currency, t.status, t.version, t.last_error_code, t.created_at, t.updated_at,
+         c.full_name AS sender_name,
+         a.masked_number AS source_account_number,
+         dc.full_name AS dest_owner,
+         da.masked_number AS dest_account
+       FROM transfers t
+       LEFT JOIN customers c ON t.customer_id = c.id
+       LEFT JOIN payment_accounts a ON t.source_account_id = a.id
+       LEFT JOIN customers dc ON t.destination_owner_id = dc.id
+       LEFT JOIN payment_accounts da ON t.destination_account_id = da.id
+       WHERE t.id=$1`,
+      [id]
+    );
     return result.rows[0] ? mapTransfer(result.rows[0] as Record<string, unknown>) : null;
   }
   async listTransferTimeline(id: string): Promise<AdminTimelineEvent[]> {
