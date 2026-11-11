@@ -8,7 +8,16 @@ const contractPath = path.resolve(
 );
 const document = parse(fs.readFileSync(contractPath, "utf8"));
 const backendHttpPath = path.resolve(__dirname, "../../backend/src/http.ts");
-const backendHttp = fs.readFileSync(backendHttpPath, "utf8");
+const backendRoutesDir = path.resolve(__dirname, "../../backend/src/routes");
+
+let backendHttp = fs.readFileSync(backendHttpPath, "utf8");
+if (fs.existsSync(backendRoutesDir)) {
+  for (const file of fs.readdirSync(backendRoutesDir)) {
+    if (file.endsWith(".ts")) {
+      backendHttp += "\n" + fs.readFileSync(path.join(backendRoutesDir, file), "utf8");
+    }
+  }
+}
 
 if (document.openapi !== "3.1.0") {
   throw new Error("Expected an OpenAPI 3.1 contract.");
