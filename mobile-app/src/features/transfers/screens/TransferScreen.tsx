@@ -41,6 +41,9 @@ import {
   getTransfer,
 } from "@/features/transfers/services/transfersApi";
 import { createOtpChallenge } from "@/features/auth/services/otpApi";
+import { listMfaMethods } from "@/features/auth/services/authApi";
+import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
+import { isTotpNotEnrolledError, TOTP_NOT_ENROLLED_MESSAGE } from "@/features/auth/utils/totpError";
 import { TransferProgress } from "@/features/transfers/components/TransferProgress";
 import type {
   Beneficiary,
@@ -62,6 +65,9 @@ function getErrorMessage(error: unknown): string {
     error.code === "STEP_UP_VERIFICATION_FAILED"
   ) {
     return "Xác thực không thành công. Vui lòng tạo mã mới và thử lại.";
+  }
+  if (isTotpNotEnrolledError(error)) {
+    return TOTP_NOT_ENROLLED_MESSAGE;
   }
   if (error instanceof ApiError || error instanceof Error) {
     return error.message;
@@ -206,6 +212,32 @@ export function TransferScreen() {
   useEffect(() => {
     void Promise.resolve().then(() => loadControlPolicy());
   }, [loadControlPolicy]);
+
+  const [hasActiveTotp, setHasActiveTotp] = useState<boolean | null>(null);
+
+  const checkMfaStatus = useCallback(async () => {
+    if (!accessToken || !deviceId) {
+      setHasActiveTotp(null);
+      return;
+    }
+    try {
+      const response = await listMfaMethods({
+        accessToken,
+        deviceId,
+        refreshAccessToken,
+      });
+      const hasActive = response.items.some(
+        (m) => m.status === "ACTIVE" && m.credentialType === "TOTP",
+      );
+      setHasActiveTotp(hasActive);
+    } catch {
+      // Non-blocking fail-safe
+    }
+  }, [accessToken, deviceId, refreshAccessToken]);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => checkMfaStatus());
+  }, [checkMfaStatus]);
 
   const restoreTransferIntent = useCallback(async () => {
     if (!userId) {
@@ -839,6 +871,14 @@ export function TransferScreen() {
           </View>
         ) : step === "beneficiary" ? (
           <View style={styles.formCard}>
+            {hasActiveTotp === false ? (
+              <TotpRequiredNotice
+                actionLabel="Thiết lập mã TOTP ngay"
+                message="Bạn cần cài đặt Google Authenticator để hoàn tất bước xác thực chuyển tiền."
+                testID="transfer-totp-notice"
+                title="Chưa kích hoạt mã TOTP"
+              />
+            ) : null}
             <Text style={styles.stepTitle}>Chọn người nhận</Text>
             <Button
               icon="users"
@@ -995,7 +1035,17 @@ export function TransferScreen() {
                 </Text>
               </View>
             </View>
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {error ? (
+              isTotpNotEnrolledError(error) ? (
+                <TotpRequiredNotice
+                  actionLabel="Thiết lập mã TOTP ngay"
+                  message={error}
+                  testID="transfer-review-totp-notice"
+                />
+              ) : (
+                <Text style={styles.errorText}>{error}</Text>
+              )
+            ) : null}
             <PrimaryButton
               disabled={isSubmitting}
               label={isSubmitting ? "Đang chuẩn bị..." : "Tiếp tục xác thực"}
@@ -1029,7 +1079,17 @@ export function TransferScreen() {
                 Mã đối soát: {manualReviewCode}
               </Text>
             ) : null}
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {error ? (
+              isTotpNotEnrolledError(error) ? (
+                <TotpRequiredNotice
+                  actionLabel="Thiết lập mã TOTP ngay"
+                  message={error}
+                  testID="transfer-stepup-totp-notice"
+                />
+              ) : (
+                <Text style={styles.errorText}>{error}</Text>
+              )
+            ) : null}
             {isTransferChallengeUnavailable ? (
               <PrimaryButton
                 disabled={isSubmitting || Boolean(manualReviewCode)}

@@ -11,7 +11,9 @@ import { SectionHeader } from "@/components/ui/SectionHeader";
 import { StateCard } from "@/components/ui/StateCard";
 import { getAccountNumber, listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
+import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import { listMfaMethods } from "@/features/auth/services/authApi";
 import { BalanceCard } from "@/features/home/components/BalanceCard";
 import { HomeHeader } from "@/features/home/components/HomeHeader";
 import { QuickActionTile } from "@/features/home/components/QuickActionTile";
@@ -37,6 +39,27 @@ export function HomeScreen() {
   const [isAccountNumberLoading, setIsAccountNumberLoading] = useState(false);
   const [isCopyingAccountNumber, setIsCopyingAccountNumber] = useState(false);
   const [accountNumberError, setAccountNumberError] = useState<unknown>();
+  const [hasActiveTotp, setHasActiveTotp] = useState<boolean | null>(null);
+
+  const checkMfaStatus = useCallback(async () => {
+    if (!accessToken || !deviceId) {
+      setHasActiveTotp(null);
+      return;
+    }
+    try {
+      const response = await listMfaMethods({
+        accessToken,
+        deviceId,
+        refreshAccessToken,
+      });
+      const hasActive = response.items.some(
+        (m) => m.status === "ACTIVE" && m.credentialType === "TOTP",
+      );
+      setHasActiveTotp(hasActive);
+    } catch {
+      // Non-blocking fail-safe: retain current state on error
+    }
+  }, [accessToken, deviceId, refreshAccessToken]);
 
   const loadAccounts = useCallback(async (resetVisualState = true) => {
     if (resetVisualState) {
@@ -73,11 +96,11 @@ export function HomeScreen() {
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      await loadAccounts(false);
+      await Promise.allSettled([loadAccounts(false), checkMfaStatus()]);
     } finally {
       setIsRefreshing(false);
     }
-  }, [loadAccounts]);
+  }, [checkMfaStatus, loadAccounts]);
 
   const revealAccountNumber = useCallback(async (): Promise<string | null> => {
     if (!account) {
@@ -139,7 +162,8 @@ export function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       void loadAccounts();
-    }, [loadAccounts]),
+      void checkMfaStatus();
+    }, [checkMfaStatus, loadAccounts]),
   );
 
   const fullName = session?.user.fullName?.trim() || "bạn";
@@ -209,6 +233,15 @@ export function HomeScreen() {
             />
           )}
         </View>
+
+        {hasActiveTotp === false ? (
+          <TotpRequiredNotice
+            title="Chưa kích hoạt mã bảo mật TOTP"
+            message="Thiết lập Google Authenticator ngay để có thể Chuyển tiền, Gửi tiết kiệm và Quản lý thẻ an toàn."
+            actionLabel="Kích hoạt TOTP ngay"
+            testID="home-totp-banner"
+          />
+        ) : null}
 
         <View style={styles.section}>
           <SectionHeader title="Dịch vụ nhanh" />

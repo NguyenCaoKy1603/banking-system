@@ -29,9 +29,15 @@ import type {
   CreditCardStatus,
 } from "@/features/credit/types/credit";
 import { ApiError } from "@/services/api/ApiError";
+import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
+import { useTotpStatus } from "@/features/auth/hooks/useTotpStatus";
+import { isTotpNotEnrolledError, TOTP_NOT_ENROLLED_MESSAGE } from "@/features/auth/utils/totpError";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getErrorMessage(error: unknown): string {
+  if (isTotpNotEnrolledError(error)) {
+    return TOTP_NOT_ENROLLED_MESSAGE;
+  }
   return error instanceof ApiError
     ? error.message
     : "Không thể tải chi tiết thẻ. Vui lòng thử lại.";
@@ -76,6 +82,7 @@ export function CardDetailScreen() {
   const params = useLocalSearchParams<{ cardId?: string }>();
   const cardId = typeof params.cardId === "string" ? params.cardId : "";
   const { deviceId, refreshAccessToken, session } = useAuth();
+  const { hasActiveTotp } = useTotpStatus();
   const accessToken = session?.accessToken ?? null;
   const auth = useMemo(
     () => ({ accessToken, deviceId, refreshAccessToken }),
@@ -339,16 +346,33 @@ export function CardDetailScreen() {
             ) : null}
 
             {error ? (
-              <View style={styles.errorBox}>
-                <AppIcon color={colors.danger} name="alert" size={18} />
-                <Text style={styles.errorText}>{error}</Text>
-              </View>
+              isTotpNotEnrolledError(error) ? (
+                <TotpRequiredNotice
+                  actionLabel="Thiết lập mã TOTP ngay"
+                  message={error}
+                  testID="card-detail-totp-notice"
+                />
+              ) : (
+                <View style={styles.errorBox}>
+                  <AppIcon color={colors.danger} name="alert" size={18} />
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              )
             ) : null}
             {notice ? (
               <View style={styles.noticeBox}>
                 <AppIcon color={colors.success} name="check" size={18} />
                 <Text style={styles.noticeText}>{notice}</Text>
               </View>
+            ) : null}
+
+            {hasActiveTotp === false && detail.card.status === "LOCKED" ? (
+              <TotpRequiredNotice
+                actionLabel="Thiết lập mã TOTP ngay"
+                message="Bạn cần thiết lập Google Authenticator để xác thực mở khóa thẻ."
+                testID="card-unlock-early-totp-notice"
+                title="Chưa kích hoạt mã TOTP"
+              />
             ) : null}
 
             <Button

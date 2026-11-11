@@ -71,7 +71,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Mobile: `mobile-app/src/features/auth/screens/RegisterScreen.tsx`
   - Backend: `backend/src/database/registrationService.ts`, `backend/src/mfa/persistentMfaService.ts`
-  - Schema / Tables: `pending_registrations`, `customers`, `accounts`, `auth_challenges`.
+  - Schema / Tables: `pending_registrations`, `registration_completions`, `customers`, `accounts`, `customer_devices`, `auth_challenges`, `rate_limit_buckets`, `customer_feature_entitlements`.
 
 #### UC-C02: Đăng nhập mật khẩu & Quản lý phiên (Authentication & Session Lifecycle)
 - **Tác nhân:** Khách hàng đã có tài khoản.
@@ -88,7 +88,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Mobile: `mobile-app/src/features/auth/context/AuthContext.tsx`, `mobile-app/src/services/api/httpClient.ts`
   - Backend: `backend/src/database/relationalAuthService.ts`
-  - Tables: `refresh_session_families`, `refresh_session_records`.
+  - Tables: `auth_sessions`, `refresh_session_families`, `refresh_session_records`, `auth_security_events`, `rate_limit_buckets`.
 
 #### UC-C03: Quản lý xác thực 2 bước MFA TOTP & Khôi phục (MFA TOTP & Recovery)
 - **Tác nhân:** Khách hàng đã đăng nhập.
@@ -105,7 +105,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Mobile: `mobile-app/src/app/mfa.tsx`, `mobile-app/src/features/auth/screens/MfaRecoveryScreen.tsx`
   - Backend: `backend/src/mfa/persistentMfaService.ts`
-  - Tables: `mfa_credentials`, `mfa_recovery_codes`, `mfa_recovery_requests`.
+  - Tables: `mfa_credentials`, `mfa_recovery_codes`, `mfa_recovery_requests`, `auth_security_events`, `rate_limit_buckets`.
 
 #### UC-C04: Khai báo & Theo dõi hồ sơ định danh (Customer KYC Profile)
 - **Tác nhân:** Khách hàng đã đăng nhập.
@@ -121,7 +121,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Mobile: `mobile-app/src/features/kyc/screens/KycScreen.tsx`
   - Backend: `backend/src/database/kycService.ts`
-  - Tables: `kyc_applications`, `kyc_application_documents`, `kyc_reviews`.
+  - Tables: `kyc_applications`, `kyc_reviews`, `case_assignments`.
 
 ---
 
@@ -421,7 +421,7 @@ graph TD
 
 #### UC-C13: Đăng ký & Kích hoạt thẻ tín dụng (Credit Card Onboarding)
 - **Tác nhân:** Khách hàng chưa có thẻ tín dụng.
-- **Tiền điều kiện:** Khách hàng đã hoàn tất đăng ký tài khoản và eKYC thành công.
+- **Tiền điều kiện:** Khách hàng đã hoàn tất đăng ký tài khoản và được duyệt hồ sơ định danh thành công.
 - **Luồng sự kiện chính:**
   1. Khách hàng vào mục Thẻ, chọn "Mở thẻ tín dụng NOVA".
   2. Điền hạn mức tín dụng mong muốn (`requestedLimit` trong giới hạn sandbox tối đa), tạo thử thách và xác thực qua TOTP step-up (`CREDIT_APPLICATION`), gửi hồ sơ kèm header `Idempotency-Key`: `POST /api/v1/credit/applications`.
@@ -513,7 +513,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Mobile: `mobile-app/src/app/notifications.tsx`, `notifications/[notificationId].tsx`
   - Backend: `backend/src/database/remainingService.ts`
-  - Tables: `notifications`.
+  - Tables: `notifications`, `notification_endpoints`, `notification_preferences`.
 
 ---
 
@@ -575,7 +575,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Admin Web: `admin-web/src/features/auth/Login.tsx`, `StaffContext.tsx`
   - Backend: `backend/src/admin/auth/staffAuthService.ts`
-  - Tables: `staff_users`, `staff_sessions`, `staff_roles`, `staff_permissions`.
+  - Tables: `staff_users`, `staff_sessions`, `staff_mfa_credentials`, `staff_auth_challenges`, `staff_roles`, `staff_permissions`, `admin_bootstrap_state`.
 
 #### UC-A02: Quản lý nhân sự & Phân quyền RBAC (Staff & Roles Management)
 - **Tác nhân:** Quản trị viên cấp cao (`ADMIN`).
@@ -587,7 +587,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Admin Web: `admin-web/src/features/staff/StaffView.tsx`
   - Backend: `backend/src/admin/auth/adminBootstrapService.ts`
-  - Tables: `staff_users`, `staff_roles`, `staff_user_roles`.
+  - Tables: `staff_users`, `staff_roles`, `staff_user_roles`, `admin_staff_account_creation_requests`, `staff_role_change_requests`, `staff_mfa_credentials`, `admin_bootstrap_state`.
 
 #### UC-A03: Tra cứu & Kiểm soát tài khoản khách hàng (Customer & Account Control)
 - **Tác nhân:** Nhân viên vận hành (`staff.read`).
@@ -601,7 +601,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Admin Web: `admin-web/src/features/customers/Customers.tsx`
   - Backend: `backend/src/admin/http/adminHttp.ts`
-  - Tables: `customer_access_status_history`, `account_status_history`.
+  - Tables: `customers`, `accounts`, `customer_access_status_history`, `account_status_history`, `customer_access_change_requests`, `account_status_change_requests`, `status_history`.
 
 #### UC-A04: Cấp vốn thử nghiệm & Đảo ngược cấp vốn (Simulation Funding & Reversal)
 - **Tác nhân:** Nhân viên vận hành được phân quyền `simulation-funding.request`.
@@ -632,7 +632,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Admin Web: `admin-web/src/features/applications/Applications.tsx`
   - Backend: `backend/src/admin/repositories/adminRepository.ts`, `backend/src/admin/actions/actionEngine.ts`
-  - Tables: `kyc_applications`, `kyc_reviews`.
+  - Tables: `kyc_applications`, `kyc_reviews`, `case_assignments`, `application_decision_requests`.
 
 #### UC-A06: Thẩm định & Phê duyệt hồ sơ tín dụng (Credit Application Processing & Decision)
 - **Tác nhân:** Nhân viên vận hành / Thẩm định tín dụng (`credit-application.read`, `credit-application.review`).
@@ -650,7 +650,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Admin Web: `admin-web/src/features/applications/Applications.tsx`
   - Backend: `backend/src/admin/actions/actionEngine.ts`
-  - Tables: `credit_applications`.
+  - Tables: `credit_applications`, `case_assignments`, `application_decision_requests`.
 
 #### UC-A07: Giám sát dòng thời gian & Xử lý giao dịch chuyển tiền (Transfer Operations)
 - **Tác nhân:** Nhân viên vận hành giao dịch (`transfer.pending.read`).
@@ -709,7 +709,7 @@ graph TD
 - **Mã nguồn liên quan:**
   - Admin Web: `admin-web/src/features/operations/Operations.tsx`
   - Backend: `backend/src/admin/http/adminHttp.ts`
-  - Tables: `background_jobs`, `background_job_attempts`, `job_retry_requests`.
+  - Tables: `background_jobs`, `job_retry_requests`, `job_retry_history`.
 
 #### UC-A11: Tra cứu nhật ký kiểm toán & Xuất báo cáo (Audit Trail & Compliance Export)
 - **Tác nhân:** Cán bộ kiểm toán & Tuân thủ (`audit.read`, `audit.export`).
@@ -775,41 +775,58 @@ graph TD
 
 ## 5. BẢNG ĐỐI CHIẾU MÃ NGUỒN VÀ OPENAPI CONTRACT
 
-| Mã Use Case | Tên Use Case | Tác nhân | Entrypoint / UI Code | API Endpoint / Route | Database Table chính |
+| Mã Use Case | Tên Use Case | Tác nhân | Entrypoint / UI Code | API Endpoint / Route | Database Table chính (Active Runtime) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **UC-C01** | Đăng ký tài khoản mới | Khách hàng | `mobile-app/src/app/(auth)/register.tsx` | `POST /auth/register`, `POST /auth/register/verify` | `customers`, `pending_registrations` |
-| **UC-C02** | Đăng nhập & Quản lý phiên | Khách hàng | `mobile-app/src/app/(auth)/login.tsx` | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout` | `refresh_session_records` |
-| **UC-C03** | Xác thực MFA TOTP & Khôi phục | Khách hàng | `mobile-app/src/app/mfa.tsx` | `POST /auth/mfa/totp/enroll`, `POST /auth/mfa/recover` | `mfa_credentials`, `mfa_recovery_codes` |
-| **UC-C04** | Khai báo & Theo dõi hồ sơ định danh | Khách hàng | `mobile-app/src/app/kyc.tsx` | `GET /kyc/application`, `POST /kyc/application/submit` | `kyc_applications`, `kyc_reviews` |
+| **UC-C01** | Đăng ký tài khoản mới | Khách hàng | `mobile-app/src/app/(auth)/register.tsx` | `POST /auth/register`, `POST /auth/register/verify` | `customers`, `pending_registrations`, `registration_completions`, `accounts`, `customer_devices`, `rate_limit_buckets` |
+| **UC-C02** | Đăng nhập & Quản lý phiên | Khách hàng | `mobile-app/src/app/(auth)/login.tsx` | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout` | `auth_sessions`, `refresh_session_families`, `refresh_session_records`, `auth_security_events`, `rate_limit_buckets` |
+| **UC-C03** | Xác thực MFA TOTP & Khôi phục | Khách hàng | `mobile-app/src/app/mfa.tsx` | `POST /auth/mfa/totp/enroll`, `POST /auth/mfa/recover` | `mfa_credentials`, `mfa_recovery_codes`, `mfa_recovery_requests`, `auth_security_events` |
+| **UC-C04** | Khai báo & Theo dõi hồ sơ định danh | Khách hàng | `mobile-app/src/app/kyc.tsx` | `GET /kyc/application`, `POST /kyc/application/submit` | `kyc_applications`, `kyc_reviews`, `case_assignments` |
 | **UC-C05** | Xem tài khoản & Số dư | Khách hàng | `mobile-app/src/app/(tabs)/index.tsx` | `GET /accounts`, `GET /accounts/{id}/number` | `accounts` |
 | **UC-C06** | Lịch sử & Chi tiết giao dịch | Khách hàng | `mobile-app/src/app/history.tsx` | `GET /accounts/{id}/transactions`, `GET .../transactions/{id}` | `transactions` |
 | **UC-C07** | Quản lý người thụ hưởng | Khách hàng | `mobile-app/src/app/beneficiaries.tsx` | `GET /beneficiaries`, `POST /beneficiaries`, `DELETE ...` | `beneficiaries` |
 | **UC-C08** | Tra cứu người nhận nội bộ | Khách hàng | `mobile-app/src/app/transfer.tsx` | `POST /internal-recipients/lookup` | `recipient_lookups` |
-| **UC-C09** | Chuyển tiền nội bộ NOVA | Khách hàng | `mobile-app/src/app/transfer.tsx` | `POST /transfers/quote`, `POST /transfers` | `transfers`, `payment_accounts`, `account_transactions`, `ledger_entries` |
-| **UC-C10** | Tạo & Quét mã QR thanh toán | Khách hàng | `mobile-app/src/app/(tabs)/qr.tsx` | Client-side QR Parser & Payload Validator | `accounts` |
-| **UC-C11** | Mở sổ tiết kiệm có kỳ hạn | Khách hàng | `mobile-app/src/app/savings/open.tsx` | `GET /savings/products`, `POST /savings/quotes`, `POST /savings/deposits` | `savings_deposits`, `savings_quotes`, `savings_idempotency` |
-| **UC-C12** | Quản lý danh mục, Đổi đáo hạn & Tất toán trước hạn | Khách hàng | `mobile-app/src/app/savings/index.tsx` | `GET /savings/deposits`, `GET /savings/deposits/{id}`, `PATCH .../deposits/{id}`, `POST .../deposits/{id}/withdraw` | `savings_deposits`, `account_transactions`, `ledger_entries`, `auth_challenges` |
-| **UC-C13** | Đăng ký & Kích hoạt thẻ tín dụng | Khách hàng | `mobile-app/src/app/cards/apply.tsx` | `POST /credit/applications`, `POST .../activate` | `credit_applications`, `credit_cards` |
+| **UC-C09** | Chuyển tiền nội bộ NOVA | Khách hàng | `mobile-app/src/app/transfer.tsx` | `POST /transfers/quote`, `POST /transfers` | `transfers`, `transfer_quotes`, `payment_accounts`, `account_transactions`, `ledger_entries`, `command_idempotency` |
+| **UC-C10** | Tạo & Quét mã QR thanh toán | Khách hàng | `mobile-app/src/app/(tabs)/qr.tsx` | Client-side QR Parser & Payload Validator | `accounts` (Client-side parser & format validator) |
+| **UC-C11** | Mở sổ tiết kiệm có kỳ hạn | Khách hàng | `mobile-app/src/app/savings/open.tsx` | `GET /savings/products`, `POST /savings/quotes`, `POST /savings/deposits` | `savings_products`, `savings_quotes`, `savings_deposits`, `savings_openings`, `savings_idempotency` |
+| **UC-C12** | Quản lý danh mục, Đổi đáo hạn & Tất toán trước hạn | Khách hàng | `mobile-app/src/app/savings/index.tsx` | `GET /savings/deposits`, `GET /savings/deposits/{id}`, `PATCH .../deposits/{id}`, `POST .../deposits/{id}/withdraw` | `savings_deposits`, `payment_accounts`, `account_transactions`, `ledger_entries`, `auth_challenges` |
+| **UC-C13** | Đăng ký & Kích hoạt thẻ tín dụng | Khách hàng | `mobile-app/src/app/cards/apply.tsx` | `POST /credit/applications`, `POST .../activate` | `credit_applications`, `credit_accounts`, `credit_cards`, `credit_idempotency` |
 | **UC-C14** | Quản lý an toàn thẻ tín dụng | Khách hàng | `mobile-app/src/app/cards.tsx` | `POST /cards/{id}/lock`, `POST /cards/{id}/unlock` | `credit_cards`, `card_security_cases` |
-| **UC-C15** | Tra cứu thẻ & Sao kê tín dụng | Khách hàng | `mobile-app/src/app/cards/[cardId]/statements.tsx` | `GET /credit/accounts/{id}/statements` | `credit_statements`, `credit_transactions` |
-| **UC-C16** | Thanh toán dư nợ thẻ tín dụng | Khách hàng | `mobile-app/src/app/cards/[cardId]/pay.tsx` | `POST /credit/payment-quotes`, `POST /credit/payments` | `credit_payments`, `credit_statements` |
-| **UC-C17** | Quản lý thông báo người dùng | Khách hàng | `mobile-app/src/app/notifications.tsx` | `GET /notifications`, `POST /notifications/{id}/read` | `notifications` |
-| **UC-C18** | Trợ lý giải đáp NOVA Help | Khách hàng | `mobile-app/src/app/assistant.tsx` | `POST /assistant/help` | Read-only / Knowledge catalog |
-| **UC-C19** | Tư vấn lập kế hoạch tài chính | Khách hàng | `mobile-app/src/app/financial-advice.tsx` | `POST /assistant/financial-advice` | Computation-only / User-entered |
-| **UC-A01** | Xác thực nhân viên & Quản lý phiên | Nhân viên | `admin-web/src/features/auth/Login.tsx` | `POST /admin/login`, `GET /admin/me`, `POST /admin/logout` | `staff_users`, `staff_sessions` |
-| **UC-A02** | Quản lý nhân sự & Phân quyền | Admin | `admin-web/src/features/staff/StaffView.tsx` | `GET /admin/staff`, `POST .../role-change-requests` | `staff_users`, `staff_roles` |
-| **UC-A03** | Kiểm soát tài khoản khách hàng | Nhân viên | `admin-web/src/features/customers/Customers.tsx` | `POST .../access-lock-requests`, `POST .../block-requests` | `customers`, `accounts`, `status_history` |
-| **UC-A04** | Cấp vốn thử nghiệm & Đảo ngược | Nhân viên | `admin-web/src/features/customers/Customers.tsx` | `POST .../funding-requests`, `POST .../funding-reversal` | `simulation_funding_requests` |
-| **UC-A05** | Thẩm định & Phê duyệt hồ sơ định danh | Nhân viên | `admin-web/src/features/applications/Applications.tsx` | `POST /admin/kyc-applications/{id}/claim`, `.../decisions` | `kyc_applications`, `kyc_reviews` |
-| **UC-A06** | Thẩm định & Phê duyệt hồ sơ tín dụng | Nhân viên | `admin-web/src/features/applications/Applications.tsx` | `POST /admin/credit-applications/{id}/claim`, `.../decisions` | `credit_applications` |
+| **UC-C15** | Tra cứu thẻ & Sao kê tín dụng | Khách hàng | `mobile-app/src/app/cards/[cardId]/statements.tsx` | `GET /credit/accounts/{id}/statements` | `credit_accounts`, `credit_statements`, `credit_transactions`, `credit_statement_items` |
+| **UC-C16** | Thanh toán dư nợ thẻ tín dụng | Khách hàng | `mobile-app/src/app/cards/[cardId]/pay.tsx` | `POST /credit/payment-quotes`, `POST /credit/payments` | `credit_statements`, `credit_payments`, `credit_payment_quotes`, `payment_accounts`, `credit_idempotency` |
+| **UC-C17** | Quản lý thông báo người dùng | Khách hàng | `mobile-app/src/app/notifications.tsx` | `GET /notifications`, `POST /notifications/{id}/read` | `notifications`, `notification_endpoints`, `notification_preferences` |
+| **UC-C18** | Trợ lý giải đáp NOVA Help | Khách hàng | `mobile-app/src/app/assistant.tsx` | `POST /assistant/help` | Knowledge Catalog (Read-only / No DB mutation) |
+| **UC-C19** | Tư vấn lập kế hoạch tài chính | Khách hàng | `mobile-app/src/app/financial-advice.tsx` | `POST /assistant/financial-advice` | Deterministic BigInt Math (No DB mutation) |
+| **UC-A01** | Xác thực nhân viên & Quản lý phiên | Nhân viên | `admin-web/src/features/auth/Login.tsx` | `POST /admin/login`, `GET /admin/me`, `POST /admin/logout` | `staff_users`, `staff_sessions`, `staff_mfa_credentials`, `staff_auth_challenges`, `admin_bootstrap_state` |
+| **UC-A02** | Quản lý nhân sự & Phân quyền | Admin | `admin-web/src/features/staff/StaffView.tsx` | `GET /admin/staff`, `POST .../role-change-requests` | `staff_users`, `staff_roles`, `admin_staff_account_creation_requests`, `staff_role_change_requests` |
+| **UC-A03** | Kiểm soát tài khoản khách hàng | Nhân viên | `admin-web/src/features/customers/Customers.tsx` | `POST .../access-lock-requests`, `POST .../block-requests` | `customers`, `accounts`, `customer_access_change_requests`, `account_status_change_requests`, `status_history` |
+| **UC-A04** | Cấp vốn thử nghiệm & Đảo ngược | Nhân viên | `admin-web/src/features/customers/Customers.tsx` | `POST .../funding-requests`, `POST .../funding-reversal` | `simulation_funding_requests`, `simulation_funding_reversals` |
+| **UC-A05** | Thẩm định & Phê duyệt hồ sơ định danh | Nhân viên | `admin-web/src/features/applications/Applications.tsx` | `POST /admin/kyc-applications/{id}/claim`, `.../decisions` | `kyc_applications`, `kyc_reviews`, `case_assignments`, `application_decision_requests` |
+| **UC-A06** | Thẩm định & Phê duyệt hồ sơ tín dụng | Nhân viên | `admin-web/src/features/applications/Applications.tsx` | `POST /admin/credit-applications/{id}/claim`, `.../decisions` | `credit_applications`, `case_assignments`, `application_decision_requests` |
 | **UC-A07** | Giám sát & Xử lý sự cố chuyển tiền | Nhân viên | `admin-web/src/features/transfers/Transfers.tsx` | `GET /admin/transfers/{id}/timeline`, `POST .../reversal` | `transfers`, `transfer_operation_requests` |
-| **UC-A08** | Hòm thư phê duyệt Maker-Checker | Checker | `admin-web/src/features/approvals/Approvals.tsx` | `GET /admin/approvals`, `POST .../{id}/approve` | `admin_action_requests`, `admin_action_decisions` |
-| **UC-A09** | Giám sát Outbox & Dead-Letter | Nhân viên | `admin-web/src/features/operations/Operations.tsx` | `GET .../outbox/dead-letters`, `POST .../requeue-requests` | `outbox_events`, `dead_letter_events` |
-| **UC-A10** | Giám sát & Thử lại Background Jobs | Nhân viên | `admin-web/src/features/operations/Operations.tsx` | `GET /admin/operations/jobs`, `POST .../retry-requests` | `background_jobs`, `background_job_attempts` |
+| **UC-A08** | Hòm thư phê duyệt Maker-Checker | Checker | `admin-web/src/features/approvals/Approvals.tsx` | `GET /admin/approvals`, `POST .../{id}/approve` | `admin_action_requests`, `admin_action_decisions`, `admin_action_execution_attempts` |
+| **UC-A09** | Giám sát Outbox & Dead-Letter | Nhân viên | `admin-web/src/features/operations/Operations.tsx` | `GET .../outbox/dead-letters`, `POST .../requeue-requests` | `outbox_events`, `dead_letter_events`, `outbox_requeue_requests` |
+| **UC-A10** | Giám sát & Thử lại Background Jobs | Nhân viên | `admin-web/src/features/operations/Operations.tsx` | `GET /admin/operations/jobs`, `POST .../retry-requests` | `background_jobs`, `job_retry_requests`, `job_retry_history` |
 | **UC-A11** | Kiểm tra nhật ký & Xuất kiểm toán | Cán bộ kiểm toán | `admin-web/src/features/audit/AuditView.tsx` | `GET /admin/audit-events`, `POST /admin/audit-export-requests` | `audit_events` (Triggers immutable) |
-| **UC-S01** | Transactional Outbox Dispatcher | Hệ thống | `backend/src/workers/workerRuntime.ts` | Daemon Polling & Exponential Backoff Dispatcher | `outbox_events`, `notification_deliveries` |
-| **UC-S02** | Đáo hạn & Tái tục Tiết kiệm | Hệ thống | `backend/src/database/lifecycleService.ts` | Scheduled Lifecycle Daemon: Maturity & Suspense | `savings_deposits`, `savings_maturity_suspense` |
-| **UC-S03** | Chốt sao kê & Quá hạn Thẻ tín dụng | Hệ thống | `backend/src/database/lifecycleService.ts` | Scheduled Lifecycle Daemon: Statement & Delinquency | `credit_statements`, `credit_accounts` |
+| **UC-S01** | Transactional Outbox Dispatcher | Hệ thống | `backend/src/workers/workerRuntime.ts` | Daemon Polling & Exponential Backoff Dispatcher | `outbox_events`, `notification_deliveries`, `worker_instances` |
+| **UC-S02** | Đáo hạn & Tái tục Tiết kiệm | Hệ thống | `backend/src/database/lifecycleService.ts` | Scheduled Lifecycle Daemon: Maturity & Suspense | `savings_deposits`, `savings_maturity_operations`, `savings_maturity_suspense` |
+| **UC-S03** | Chốt sao kê & Quá hạn Thẻ tín dụng | Hệ thống | `backend/src/database/lifecycleService.ts` | Scheduled Lifecycle Daemon: Statement & Delinquency | `credit_statements`, `credit_accounts`, `credit_cards`, `credit_lifecycle_operations` |
+
+---
+
+### 5.1 Danh mục 79 Bảng Cơ sở Dữ liệu Nghiệp vụ Đang Vận hành (Active Runtime)
+
+Hệ thống cơ sở dữ liệu PostgreSQL 16 hiện vận hành chính xác **79 bảng nghiệp vụ**, được phân bổ khoa học theo 8 miền chức năng để phục vụ toàn diện 33 Use Cases:
+
+1. *Khách hàng & Hồ sơ định danh (10 bảng):* `customers`, `customer_devices`, `pending_registrations`, `registration_completions`, `kyc_applications`, `kyc_reviews`, `case_assignments`, `application_decision_requests`, `customer_feature_entitlements`, `rate_limit_buckets`.
+2. *Xác thực & Phiên làm việc (8 bảng):* `auth_sessions`, `refresh_session_families`, `refresh_session_records`, `mfa_credentials`, `mfa_recovery_codes`, `mfa_recovery_requests`, `auth_security_events`, `auth_challenges`.
+3. *Tài khoản, Sổ cái kép & Giao dịch thanh toán (13 bảng):* `accounts`, `payment_accounts`, `account_transactions`, `transactions`, `beneficiaries`, `recipient_lookups`, `transfers`, `transfer_quotes`, `command_idempotency`, `transfer_operation_requests`, `ledger_journals`, `ledger_entries`, `balance_snapshots`.
+4. *Tiết kiệm có kỳ hạn (7 bảng):* `savings_products`, `savings_quotes`, `savings_deposits`, `savings_openings`, `savings_idempotency`, `savings_maturity_operations`, `savings_maturity_suspense`.
+5. *Thẻ & Tín dụng cá nhân (11 bảng):* `credit_applications`, `credit_accounts`, `credit_cards`, `credit_transactions`, `credit_statements`, `credit_statement_items`, `credit_payments`, `credit_payment_quotes`, `credit_idempotency`, `card_security_cases`, `credit_lifecycle_operations`.
+6. *Quản trị & Phê duyệt 4 mắt Maker-Checker (14 bảng):* `staff_users`, `staff_roles`, `staff_user_roles`, `staff_permissions`, `staff_sessions`, `staff_mfa_credentials`, `staff_auth_challenges`, `admin_bootstrap_state`, `admin_action_requests`, `admin_action_decisions`, `admin_action_execution_attempts`, `admin_staff_account_creation_requests`, `staff_role_change_requests`, `customer_access_change_requests`, `account_status_change_requests`.
+7. *Thông báo, Outbox & Tác vụ ngầm (10 bảng):* `notifications`, `notification_endpoints`, `notification_preferences`, `notification_deliveries`, `outbox_events`, `dead_letter_events`, `outbox_requeue_requests`, `background_jobs`, `job_retry_requests`, `job_retry_history`, `worker_instances`.
+8. *Kiểm toán & Mô phỏng Sandbox (6 bảng):* `audit_events`, `simulation_funding_requests`, `simulation_funding_reversals`, `customer_access_status_history`, `account_status_history`, `status_history`.
+
+> **Ghi chú kiến trúc:** Toàn bộ 79 bảng trên đều có mã nguồn truy vấn trực tiếp trong `backend/src/`. Hệ thống tuân thủ nguyên tắc Forward-Only Migration; các bảng phác thảo từ những tuần đầu được lưu giữ nguyên trạng trong lịch sử migration mà không kích hoạt tại runtime.
 
 ---
 

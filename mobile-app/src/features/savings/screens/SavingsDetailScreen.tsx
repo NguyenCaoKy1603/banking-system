@@ -32,9 +32,15 @@ import type {
   SavingsWithdrawalReceipt,
 } from "@/features/savings/types/savings";
 import { ApiError } from "@/services/api/ApiError";
+import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
+import { useTotpStatus } from "@/features/auth/hooks/useTotpStatus";
+import { isTotpNotEnrolledError, TOTP_NOT_ENROLLED_MESSAGE } from "@/features/auth/utils/totpError";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getErrorMessage(error: unknown): string {
+  if (isTotpNotEnrolledError(error)) {
+    return TOTP_NOT_ENROLLED_MESSAGE;
+  }
   return error instanceof ApiError
     ? error.message
     : "Không thể thực hiện yêu cầu. Vui lòng thử lại.";
@@ -72,6 +78,7 @@ export function SavingsDetailScreen() {
   const params = useLocalSearchParams<{ depositId?: string }>();
   const depositId = typeof params.depositId === "string" ? params.depositId : "";
   const { deviceId, refreshAccessToken, session } = useAuth();
+  const { hasActiveTotp } = useTotpStatus();
   const accessToken = session?.accessToken ?? null;
   const auth = useMemo(
     () => ({ accessToken, deviceId, refreshAccessToken }),
@@ -232,10 +239,18 @@ export function SavingsDetailScreen() {
         ) : null}
 
         {actionError ? (
-          <View style={styles.errorBanner} testID="savings-detail-error-banner">
-            <AppIcon color={colors.danger} name="alert" size={20} />
-            <Text style={styles.errorText}>{actionError}</Text>
-          </View>
+          isTotpNotEnrolledError(actionError) ? (
+            <TotpRequiredNotice
+              actionLabel="Thiết lập mã TOTP ngay"
+              message={actionError}
+              testID="savings-detail-totp-notice"
+            />
+          ) : (
+            <View style={styles.errorBanner} testID="savings-detail-error-banner">
+              <AppIcon color={colors.danger} name="alert" size={20} />
+              <Text style={styles.errorText}>{actionError}</Text>
+            </View>
+          )
         ) : null}
 
         {isLoading ? (
@@ -375,6 +390,14 @@ export function SavingsDetailScreen() {
             {/* Card form: Tất toán trước hạn */}
             {isWithdrawing && isDepositActive ? (
               <Card elevated testID="savings-withdraw-card">
+                {hasActiveTotp === false ? (
+                  <TotpRequiredNotice
+                    actionLabel="Thiết lập mã TOTP ngay"
+                    message="Bạn cần thiết lập Google Authenticator để xác thực tất toán khoản tiền gửi."
+                    testID="savings-withdraw-totp-notice"
+                    title="Chưa kích hoạt mã TOTP"
+                  />
+                ) : null}
                 <View style={styles.sectionHeader}>
                   <View style={[styles.sectionIcon, { backgroundColor: colors.dangerSoft }]}>
                     <AppIcon color={colors.danger} name="alert" size={19} />

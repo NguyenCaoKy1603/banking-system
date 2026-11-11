@@ -41,6 +41,9 @@ import type {
   SavingsQuote,
 } from "@/features/savings/types/savings";
 import { ApiError } from "@/services/api/ApiError";
+import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
+import { useTotpStatus } from "@/features/auth/hooks/useTotpStatus";
+import { isTotpNotEnrolledError, TOTP_NOT_ENROLLED_MESSAGE } from "@/features/auth/utils/totpError";
 import { getDeviceBoundAssertion, requestBiometricAuthentication } from "@/services/security/biometricAuth";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
@@ -52,6 +55,9 @@ function getErrorMessage(error: unknown): string {
     error.code === "STEP_UP_VERIFICATION_FAILED"
   ) {
     return "Xác thực không thành công. Vui lòng tạo mã mới và thử lại.";
+  }
+  if (isTotpNotEnrolledError(error)) {
+    return TOTP_NOT_ENROLLED_MESSAGE;
   }
   return error instanceof ApiError
     ? error.message
@@ -82,6 +88,7 @@ const maturityInstructions: MaturityInstruction[] = [
 export function OpenSavingsScreen() {
   const router = useRouter();
   const { deviceId, refreshAccessToken, session } = useAuth();
+  const { hasActiveTotp } = useTotpStatus();
   const accessToken = session?.accessToken ?? null;
   const userId = session?.user.id ?? null;
   const auth = useMemo(
@@ -688,6 +695,14 @@ export function OpenSavingsScreen() {
           </View>
         ) : step === "input" ? (
           <View style={styles.card}>
+            {hasActiveTotp === false ? (
+              <TotpRequiredNotice
+                actionLabel="Thiết lập mã TOTP ngay"
+                message="Bạn cần thiết lập Google Authenticator trước khi tạo sổ tiết kiệm mới."
+                testID="savings-input-totp-notice"
+                title="Chưa kích hoạt mã TOTP"
+              />
+            ) : null}
             <Text style={styles.stepTitle}>1. Chọn nguồn và kỳ hạn</Text>
             <Text style={styles.fieldLabel}>Tài khoản thanh toán</Text>
             <View style={styles.optionList}>
@@ -758,7 +773,17 @@ export function OpenSavingsScreen() {
                 value={formatRemainingSeconds(quoteRemainingSeconds)}
               />
             </View>
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {error ? (
+              isTotpNotEnrolledError(error) ? (
+                <TotpRequiredNotice
+                  actionLabel="Thiết lập mã TOTP ngay"
+                  message={error}
+                  testID="savings-review-totp-notice"
+                />
+              ) : (
+                <Text style={styles.errorText}>{error}</Text>
+              )
+            ) : null}
             <PrimaryButton
               disabled={isSubmitting || isQuoteExpired}
               label={isSubmitting ? "Đang lưu..." : isQuoteExpired ? "Báo giá đã hết hạn" : "Xác nhận và xác thực"}
@@ -790,7 +815,17 @@ export function OpenSavingsScreen() {
               <Text style={styles.description}>{stepUpProof ? "Đã xác thực trên thiết bị. Có thể gửi yêu cầu." : "Chọn xác thực sinh trắc học để tiếp tục."}</Text>
             )}
             {manualReviewCode ? <Text style={styles.errorText}>Mã đối soát: {manualReviewCode}</Text> : null}
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+            {error ? (
+              isTotpNotEnrolledError(error) ? (
+                <TotpRequiredNotice
+                  actionLabel="Thiết lập mã TOTP ngay"
+                  message={error}
+                  testID="savings-stepup-totp-notice"
+                />
+              ) : (
+                <Text style={styles.errorText}>{error}</Text>
+              )
+            ) : null}
             {isSavingsChallengeUnavailable ? <PrimaryButton disabled={isSubmitting || Boolean(manualReviewCode)} label={manualReviewCode ? "Đang chờ đối soát" : isSubmitting ? "Đang tạo lại..." : "Tạo challenge mới"} onPress={handleRenewSavingsChallenge} testID="savings-step-up-renew" /> : null}
             <PrimaryButton disabled={isSubmitting || Boolean(manualReviewCode) || isSavingsChallengeUnavailable || (isQuoteExpired && intentPhase !== "SUBMIT_UNKNOWN")} label={manualReviewCode ? "Không thể gửi lại" : isSubmitting ? "Đang mở..." : isSavingsChallengeUnavailable ? "Challenge đã hết hạn" : isQuoteExpired && intentPhase !== "SUBMIT_UNKNOWN" ? "Báo giá đã hết hạn" : "Mở khoản tiền gửi"} onPress={handleSubmit} testID="savings-submit" />
             <PrimaryButton disabled={Boolean(manualReviewCode)} label={manualReviewCode ? "Đang chờ đối soát" : "Chỉnh sửa thông tin"} onPress={handleEditInput} testID="savings-edit-input" />

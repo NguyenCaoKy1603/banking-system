@@ -20,9 +20,15 @@ import {
 import { getCreditApplicationStatusLabel } from "@/features/credit/presentation/creditPresentation";
 import type { CreditApplication } from "@/features/credit/types/credit";
 import { ApiError } from "@/services/api/ApiError";
+import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
+import { useTotpStatus } from "@/features/auth/hooks/useTotpStatus";
+import { isTotpNotEnrolledError, TOTP_NOT_ENROLLED_MESSAGE } from "@/features/auth/utils/totpError";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getErrorMessage(error: unknown): string {
+  if (isTotpNotEnrolledError(error)) {
+    return TOTP_NOT_ENROLLED_MESSAGE;
+  }
   return error instanceof ApiError ? error.message : "Không thể xử lý đăng ký thẻ.";
 }
 
@@ -36,6 +42,7 @@ async function fingerprint(value: unknown): Promise<string> {
 export function CreditApplicationScreen() {
   const router = useRouter();
   const { deviceId, refreshAccessToken, session } = useAuth();
+  const { hasActiveTotp } = useTotpStatus();
   const auth = useMemo(
     () => ({ accessToken: session?.accessToken ?? null, deviceId, refreshAccessToken }),
     [deviceId, refreshAccessToken, session?.accessToken],
@@ -199,6 +206,14 @@ export function CreditApplicationScreen() {
           title="Đăng ký thẻ tín dụng"
         />
         <EnvironmentBadge />
+        {hasActiveTotp === false ? (
+          <TotpRequiredNotice
+            actionLabel="Thiết lập mã TOTP ngay"
+            message="Bạn cần thiết lập Google Authenticator để gửi hồ sơ và kích hoạt thẻ tín dụng."
+            testID="credit-app-early-totp-notice"
+            title="Chưa kích hoạt mã TOTP"
+          />
+        ) : null}
         {application ? (
           <View style={styles.card} testID="credit-application-status">
             <Text style={styles.sectionTitle}>Trạng thái hồ sơ</Text>
@@ -257,7 +272,17 @@ export function CreditApplicationScreen() {
             />
           </View>
         ) : null}
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? (
+          isTotpNotEnrolledError(error) ? (
+            <TotpRequiredNotice
+              actionLabel="Thiết lập mã TOTP ngay"
+              message={error}
+              testID="credit-app-totp-notice"
+            />
+          ) : (
+            <Text style={styles.errorText}>{error}</Text>
+          )
+        ) : null}
       </ScrollView>
     </Screen>
   );

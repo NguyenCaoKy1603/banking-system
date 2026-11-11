@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 
 import { AppHeader } from "@/components/ui/AppHeader";
@@ -61,6 +62,21 @@ export function MfaMethodsScreen() {
   const [challengeCode, setChallengeCode] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(false);
+  const [isCopiedSecret, setIsCopiedSecret] = useState(false);
+
+  async function handleCopySecret(secret: string) {
+    try {
+      await Clipboard.setStringAsync(secret);
+      setIsCopiedSecret(true);
+      Alert.alert(
+        "Đã sao chép khóa",
+        "Khóa bí mật đã được sao chép vào bộ nhớ tạm. Hãy dán vào Google Authenticator để lấy mã 6 chữ số.",
+      );
+      setTimeout(() => setIsCopiedSecret(false), 3000);
+    } catch {
+      Alert.alert("Không thể sao chép", "Vui lòng chọn thủ công chuỗi ký tự.");
+    }
+  }
 
   const auth = useMemo(() => {
     if (!session || !deviceId) return null;
@@ -371,13 +387,19 @@ export function MfaMethodsScreen() {
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Hoàn tất đăng ký Authenticator</Text>
             <Text style={styles.description}>
-              Quét QR hoặc nhập khóa thủ công vào ứng dụng Authenticator. Không chia sẻ khóa này.
+              Quét QR hoặc sao chép khóa thiết lập để nhập vào Google Authenticator. Không chia sẻ khóa này.
             </Text>
             <View style={styles.qrFrame}>
               <QRCode value={enrollment.otpauthUri} size={210} />
             </View>
             <Text selectable style={styles.secret}>{enrollment.manualSetupKey}</Text>
-            <Text selectable style={styles.uri}>{enrollment.otpauthUri}</Text>
+            <Button
+              icon="copy"
+              label={isCopiedSecret ? "Đã sao chép khóa!" : "Sao chép khóa thiết lập"}
+              onPress={() => void handleCopySecret(enrollment.manualSetupKey)}
+              testID="mfa-copy-secret"
+              variant="outline"
+            />
             <TextField
               autoCapitalize="none"
               keyboardType="number-pad"
