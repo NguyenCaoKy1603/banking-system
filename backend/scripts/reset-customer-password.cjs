@@ -22,11 +22,26 @@ loadEnvFile();
 const email = process.argv[2] || "ncaoky160305+testlan1@gmail.com";
 const password = process.argv[3] || "Password@123";
 
+function resolveLocalDatabaseUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.hostname === "postgres") {
+      parsed.hostname = "127.0.0.1";
+      parsed.port = process.env.POSTGRES_PORT || "5433";
+    }
+    return parsed.toString();
+  } catch {
+    return urlStr;
+  }
+}
+
 async function main() {
+  const dbUrl = process.env.DATABASE_URL
+    ? resolveLocalDatabaseUrl(process.env.DATABASE_URL)
+    : "postgresql://banking:stage1-local-password@127.0.0.1:5433/banking_preview";
+
   const pool = new Pool({
-    connectionString:
-      process.env.DATABASE_URL ||
-      "postgresql://banking:stage1-local-password@127.0.0.1:5433/banking_preview",
+    connectionString: dbUrl,
   });
 
   try {

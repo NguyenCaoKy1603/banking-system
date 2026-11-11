@@ -32,11 +32,26 @@ function sha256Fingerprint(accountNumber) {
   return crypto.createHash("sha256").update(accountNumber).digest("hex");
 }
 
+function resolveLocalDatabaseUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
+    if (parsed.hostname === "postgres") {
+      parsed.hostname = "127.0.0.1";
+      parsed.port = process.env.POSTGRES_PORT || "5433";
+    }
+    return parsed.toString();
+  } catch {
+    return urlStr;
+  }
+}
+
 async function main() {
+  const dbUrl = process.env.DATABASE_URL
+    ? resolveLocalDatabaseUrl(process.env.DATABASE_URL)
+    : "postgresql://banking:stage1-local-password@127.0.0.1:5433/banking_preview";
+
   const pool = new Pool({
-    connectionString:
-      process.env.DATABASE_URL ||
-      "postgresql://banking:stage1-local-password@127.0.0.1:5433/banking_preview",
+    connectionString: dbUrl,
   });
 
   const client = await pool.connect();
@@ -537,6 +552,196 @@ async function main() {
        WHERE id = '143b8883-6123-4688-9d64-e4780fa06c0a'`
     );
     console.log(`[OK] Đã đưa 2 hồ sơ Thẻ tín dụng chờ duyệt lên đầu danh sách: Lê Thị Cẩm Tú & Trần Văn Bình`);
+
+    // 13. Cập nhật mật khẩu chuẩn Admin@123456 cho nhân viên vận hành (phat.nguyen.emp001@bank.vn)
+    console.log(`--- Cấu hình tài khoản Nhân viên Vận hành: phat.nguyen.emp001@bank.vn ---`);
+    const opsSalt = crypto.randomBytes(16);
+    const opsDigest = crypto.pbkdf2Sync("Admin@123456", opsSalt, 120_000, 32, "sha256").toString("hex");
+    await client.query(
+      `UPDATE staff_users 
+       SET password_salt = $1, password_digest = $2, status = 'ACTIVE', updated_at = NOW() 
+       WHERE email_normalized = 'phat.nguyen.emp001@bank.vn'`,
+      [opsSalt.toString("hex"), opsDigest]
+    );
+    console.log(`[OK] Đã đặt mật khẩu Admin@123456 cho Nguyễn Thành Phát (phat.nguyen.emp001@bank.vn - OPERATIONS)`);
+
+    // 14. Dọn cảnh báo Outbox Dead và tạo tiến trình nền (Background Jobs)
+    console.log(`--- Dọn cảnh báo Outbox Dead và tạo Background Jobs ---`);
+    await client.query(
+      `UPDATE outbox_events SET status = 'DISPATCHED', dead_lettered_at = NULL WHERE status = 'DEAD'`
+    );
+    console.log(`[OK] Đã đưa các Outbox dead về trạng thái DISPATCHED (Dashboard xanh sạch)`);
+
+    // Tạo các tiến trình nền mẫu cho Tab Vận hành
+    const sampleJobs = [
+      {
+        id: "d1000000-0000-4000-8000-000000000001",
+        job_type: "LEDGER_DAILY_RECONCILIATION",
+        status: "SUCCEEDED",
+        attempts: 1,
+        payload: JSON.stringify({ cycle: "DAILY", accountsAudited: 124, discrepancies: 0 }),
+      },
+      {
+        id: "d1000000-0000-4000-8000-000000000002",
+        job_type: "CREDIT_STATEMENT_CYCLE",
+        status: "SUCCEEDED",
+        attempts: 1,
+        payload: JSON.stringify({ billingCycle: "MONTHLY_25TH", statementsGenerated: 18 }),
+      },
+      {
+        id: "d1000000-0000-4000-8000-000000000003",
+        job_type: "SAVINGS_INTEREST_ACCRUAL",
+        status: "SUCCEEDED",
+        attempts: 1,
+        payload: JSON.stringify({ productsProcessed: 3, totalAccruedMinor: "45000000" }),
+      },
+    ];
+
+    for (const job of sampleJobs) {
+      await client.query(
+        `INSERT INTO background_jobs (id, job_type, status, attempts, payload, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - interval '1 hour', NOW() - interval '50 minutes')
+         ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, updated_at = NOW()`,
+        [job.id, job.job_type, job.status, job.attempts, job.payload]
+      );
+    }
+    console.log(`[OK] Đã tạo 3 tiến trình nền mẫu cho Tab Vận hành`);
+
+    // Đưa các nhân viên chính thức lên đầu danh sách Staff
+    await client.query(
+      `UPDATE staff_users 
+       SET created_at = NOW() 
+       WHERE email_normalized IN (
+         'phat.nguyen.emp001@bank.vn',
+         'admin@banking.local',
+         'operations10@example.test',
+         'admin@example.test',
+         'control@example.test'
+       )`
+    );
+    console.log(`[OK] Đã đưa danh sách nhân sự chính thức lên đầu tab Staff`);
+
+    // 15. Đồng bộ Lệnh chuyển tiền trên Web Admin (transfers)
+    console.log(`--- Đồng bộ Lệnh chuyển tiền giữa Nguyễn Cao Kỳ và bạn bè ---`);
+    const tvbAccountId = "f4c83feb-0df5-4cec-bd06-66a21bc86c63"; // Tran Van Binh
+    const tvbCustomerId = "9079688c-9b7d-44db-a49c-16ea2e00653b";
+    const ltctAccountId = "02fafb89-05d1-4556-b925-34c4d4b798c1"; // Le Thi Cam Tu
+    const ltctCustomerId = "0969fc98-62e4-4685-9414-d70abc15fcd1";
+
+    const demoTransfers = [
+      {
+        id: "f1000000-0000-4000-8000-000000000001",
+        quoteId: "f2000000-0000-4000-8000-000000000001",
+        destAccountId: tvbAccountId,
+        destCustomerId: tvbCustomerId,
+        destName: "TRAN VAN BINH",
+        beneficiaryId: "b1111111-1111-4111-8111-111111111111",
+        amountMinor: 1000000,
+        feeMinor: 0,
+        reference: "REF-DEMO-TRF-001",
+        description: "Nguyen Cao Ky chuyen tien tien sach tham khao",
+        timeAgo: "1 hour",
+      },
+      {
+        id: "f1000000-0000-4000-8000-000000000002",
+        quoteId: "f2000000-0000-4000-8000-000000000002",
+        destAccountId: ltctAccountId,
+        destCustomerId: ltctCustomerId,
+        destName: "LE THI CAM TU",
+        beneficiaryId: "b2222222-2222-4222-8222-222222222222",
+        amountMinor: 500000,
+        feeMinor: 0,
+        reference: "REF-DEMO-TRF-002",
+        description: "Nguyen Cao Ky dong quy hoc tap hoc ky 1",
+        timeAgo: "2 hours",
+      },
+    ];
+
+    for (const trf of demoTransfers) {
+      // 1. Tạo transfer_quote
+      const quoteFp = crypto.createHash("sha256").update(trf.id + trf.amountMinor).digest("hex");
+      await client.query(
+        `INSERT INTO transfer_quotes
+          (id, customer_id, source_account_id, beneficiary_id, amount_minor, fee_minor, currency,
+           expires_at, consumed_at, created_at, destination_account_id, destination_owner_id,
+           destination_owner_name, request_fingerprint, consumed_transfer_id)
+         VALUES
+          ($1, $2, $3, $4, $5, $6, 'VND',
+           NOW() + interval '10 minutes', NOW() - interval '${trf.timeAgo}', NOW() - interval '${trf.timeAgo}',
+           $7, $8, $9, $10, NULL)
+         ON CONFLICT (id) DO UPDATE SET destination_owner_name = EXCLUDED.destination_owner_name`,
+        [
+          trf.quoteId, customerId, accountId, trf.beneficiaryId, trf.amountMinor, trf.feeMinor,
+          trf.destAccountId, trf.destCustomerId, trf.destName, quoteFp,
+        ]
+      );
+
+      // 2. Tạo hoặc liên kết account_transactions cho 2 đầu
+      const srcTxId = crypto.randomUUID();
+      const destTxId = crypto.randomUUID();
+
+      await client.query(
+        `INSERT INTO account_transactions
+          (id, account_id, direction, amount_minor, fee_minor, currency, status, description,
+           counterparty_name, reference, occurred_at, created_at, completed_at, kind)
+         VALUES
+          ($1, $2, 'DEBIT', $3, $4, 'VND', 'SUCCEEDED', $5, $6, $7,
+           NOW() - interval '${trf.timeAgo}', NOW() - interval '${trf.timeAgo}', NOW() - interval '${trf.timeAgo}', 'TRANSFER_OUT'),
+          ($8, $9, 'CREDIT', $3, 0, 'VND', 'SUCCEEDED', $5, 'NGUYEN CAO KY', $7,
+           NOW() - interval '${trf.timeAgo}', NOW() - interval '${trf.timeAgo}', NOW() - interval '${trf.timeAgo}', 'TRANSFER_IN')
+         ON CONFLICT (id) DO NOTHING`,
+        [
+          srcTxId, accountId, trf.amountMinor, trf.feeMinor, trf.description, trf.destName, trf.reference,
+          destTxId, trf.destAccountId,
+        ]
+      );
+
+      // 3. Tạo transfer
+      const trfFp = crypto.createHash("sha256").update(trf.reference + trf.amountMinor).digest("hex");
+      await client.query(
+        `INSERT INTO transfers
+          (id, customer_id, source_account_id, quote_id, idempotency_key, request_fingerprint,
+           reference, amount_minor, fee_minor, currency, status, created_at, updated_at,
+           destination_account_id, destination_owner_id, source_transaction_id, destination_transaction_id, version)
+         VALUES
+          ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'VND', 'SUCCEEDED',
+           NOW() - interval '${trf.timeAgo}', NOW() - interval '${trf.timeAgo}',
+           $10, $11, $12, $13, 1)
+         ON CONFLICT (id) DO UPDATE SET
+           status = 'SUCCEEDED', updated_at = NOW() - interval '${trf.timeAgo}',
+           source_transaction_id = EXCLUDED.source_transaction_id,
+           destination_transaction_id = EXCLUDED.destination_transaction_id`,
+        [
+          trf.id, customerId, accountId, trf.quoteId, `idem-${trf.reference}`, trfFp,
+          trf.reference, trf.amountMinor, trf.feeMinor,
+          trf.destAccountId, trf.destCustomerId, srcTxId, destTxId,
+        ]
+      );
+
+      // Cập nhật quote và transactions
+      await client.query("UPDATE transfer_quotes SET consumed_transfer_id = $1 WHERE id = $2", [trf.id, trf.quoteId]);
+      await client.query("UPDATE account_transactions SET transfer_id = $1 WHERE id IN ($2, $3)", [trf.id, srcTxId, destTxId]);
+
+      // 4. Tạo audit_events cho timeline của transfer
+      await client.query(
+        `INSERT INTO audit_events
+          (id, event_type, actor_type, actor_customer_id, action, target_type, target_id,
+           outcome, reason_code, trace_id, occurred_at, payload)
+         VALUES
+          ($1, 'TRANSFER_SUBMITTED', 'CUSTOMER', $2, 'TRANSFER_CREATE', 'TRANSFER', $3,
+           'SUCCEEDED', 'CUSTOMER_SUBMITTED', 'trace-demo-trf', NOW() - interval '${trf.timeAgo}',
+           $4::jsonb),
+          ($5, 'TRANSFER_SETTLED', 'SYSTEM', NULL, 'TRANSFER_SETTLE', 'TRANSFER', $3,
+           'SUCCEEDED', 'SETTLEMENT_COMPLETE', 'trace-demo-trf', NOW() - interval '${trf.timeAgo}',
+           $4::jsonb)`,
+        [
+          crypto.randomUUID(), customerId, trf.id,
+          JSON.stringify({ amountMinor: trf.amountMinor, reference: trf.reference }),
+          crypto.randomUUID(),
+        ]
+      );
+    }
+    console.log(`[OK] Đã đồng bộ 2 lệnh chuyển tiền mẫu cho Web Admin: Kỳ ➔ Bình (1tr) & Kỳ ➔ Tú (500k)`);
 
     await client.query("COMMIT");
     console.log(`\n🎉 HOÀN TẤT NẠP DỮ LIỆU DEMO THUYẾT TRÌNH THÀNH CÔNG!`);
