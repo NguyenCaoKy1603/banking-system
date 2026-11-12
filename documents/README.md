@@ -25,7 +25,7 @@ Banking System / NOVA là reference implementation học thuật cho ứng dụn
 | --- | --- | --- |
 | Mobile NOVA | Expo / React Native app cho khách hàng; có cấu hình web export | mobile-app/src/app và mobile-app/src/features |
 | Customer API | HTTP API cho auth, account, transfer, savings, credit, KYC, notification và các tính năng hướng dẫn | backend/src/server.ts, backend/src/http.ts |
-| Relational persistence | PostgreSQL repositories và transaction boundary cho route đã cut over | backend/src/database, backend/src/postgresRelationalRepository.ts |
+| Relational persistence | PostgreSQL repositories và transaction boundary cho route đã cut over | backend/src/database, backend/src/database/postgresRelationalRepository.ts |
 | Admin API | Process riêng cho staff session, quyền, action và audit | backend/src/adminServer.ts, backend/src/admin |
 | Admin Web | Giao diện vận hành staff | admin-web/src |
 | Worker | Outbox và scheduled lifecycle; phải bật riêng, có cutover guard | backend/src/worker.ts, backend/src/workers |
@@ -99,18 +99,15 @@ Không sửa backend, schema, Mobile, Admin hoặc CI chỉ để tài liệu kh
 
 | Thư mục | Nội dung và điểm bắt đầu |
 | --- | --- |
-| 01-planning | [README](01-planning/README.md), current status, repository map, quyết định và hồ sơ milestone |
+| 01-planning | [README](01-planning/README.md), current status, repository map, quyết định và quản trị rủi ro |
 | 02-design | [README](02-design/README.md), kiến trúc, phạm vi tính năng, sequence và ERD demo |
-| 03-api | Hướng dẫn đọc contract; source contract nằm trong documents/api |
 | 04-code-process | Git, review, CI và quy trình thay đổi |
-| 05-testing | [README](05-testing/README.md), test plans, reports, device và staging-readiness evidence |
+| 05-testing | [README](05-testing/README.md), hướng dẫn seed dữ liệu E2E và sổ tay kiểm thử MFA |
 | 06-security-ai | [README](06-security-ai/README.md), assistant, financial advice, privacy, threat model và evaluation |
 | 07-architecture | ADR cho PostgreSQL relational-v2 và outbox worker |
 | 07-release | [README](07-release/README.md), environment, secret, migration, backup, rollback và preview runbooks |
-| 08-presentation | [README](08-presentation/README.md), demo, thesis draft, Q&A và evidence index |
 | admin | [README](admin/README.md), Admin architecture, RBAC, threat model và runbook |
 | api | [README](api/README.md), OpenAPI và API contracts |
-| architecture | Threat model, data classification, project scope và risk |
 
 Tên thư mục 07-architecture và 07-release cùng số do lịch sử tạo tài liệu. Không di chuyển file trong lượt tái cấu trúc này để giữ nguyên các liên kết evidence.
 

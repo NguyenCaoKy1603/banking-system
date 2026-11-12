@@ -4,11 +4,11 @@
 
 > Cập nhật 2026-10-11: các bộ E2E chạy được, flow Maestro và lệnh kiểm tra/chạy E2E đã được gỡ theo yêu cầu người dùng. Nội dung E2E bên dưới ghi lại bằng chứng và kế hoạch ở thời điểm cũ; không còn là lệnh chạy hiện hành.
 
-> Cập nhật hiện hành 2026-08-25: reference giữ M0–M4/M8 và bổ sung clean registration, Admin four-eyes funding fixture, recipient lookup, dynamic step-up và opt-in Savings/Credit. Sau khi đổi code phải restart backend và reload/rebuild Mobile trước khi test; nút `Hiện đầy đủ`/`Sao chép` lấy số đầy đủ qua endpoint riêng, không lấy từ 4 số cuối. Xem [`mini-core-sandbox-status.md`](01-planning/mini-core-sandbox-status.md).
+> Cập nhật hiện hành: reference giữ M0–M4/M8 và bổ sung clean registration, Admin four-eyes funding fixture, recipient lookup, dynamic step-up và opt-in Savings/Credit. Sau khi đổi code phải restart backend và reload/rebuild Mobile trước khi test; nút `Hiện đầy đủ`/`Sao chép` lấy số đầy đủ qua endpoint riêng, không lấy từ 4 số cuối. Xem [`current-status.md`](01-planning/current-status.md).
 
 Tài liệu này là checklist tối thiểu cho bản preview/pilot của mobile app. Nó không thay thế runbook vận hành của ngân hàng/BaaS partner.
 
-Scope, threat model và data classification tham chiếu tại [`architecture/banking-mvp-scope-and-risk.md`](architecture/banking-mvp-scope-and-risk.md).
+Scope, threat model và data classification tham chiếu tại [`02-design/architecture-and-scope.md`](02-design/architecture-and-scope.md).
 
 ## Trạng thái implementation hiện tại
 
@@ -38,24 +38,6 @@ Các màn hình đã có test ID ổn định cho automation: `login-email`, `lo
 
 Không phát hành nếu còn lỗi High/Critical, nếu API URL production chưa được kiểm tra HTTPS, hoặc nếu chưa có người phụ trách hỗ trợ pilot.
 
-## Xác nhận chạy local mới nhất — 2026-08-17
-
-- Backend local chạy ở chế độ PostgreSQL persistent; `.env` bị ignore và chỉ chứa cấu hình database giả lập local. Chạy `npm run db:migrate` trước `npm start` trên clone mới.
-- M0–M4/M8 đã pass trên Android emulator với APK release mới: login/MFA, Home, hiện và sao chép số tài khoản đầy đủ, Account Detail, KYC với dữ liệu thử nghiệm, beneficiary, QR manual fallback và notification deep-link.
-- Artifact Maestro: `C:\Users\admin\.maestro\tests\2026-08-17_121849`. Không lưu password, OTP, token hoặc số tài khoản đầy đủ vào artifact báo cáo.
-- Trước khi test sau mỗi lần đổi code: restart backend, rebuild/reload Mobile nếu có thay đổi Mobile, rồi chạy lại flow. Tiền trong toàn bộ luồng là tiền ảo phục vụ kiểm thử; không dùng cho giao dịch thật.
-
-## Xác nhận pending-resume mới nhất — 2026-08-17
-
-- Flow `critical-transfer-retry.yaml` đã pass trên Android emulator với PostgreSQL persistent: tạo quote/step-up/transfer pending, stop app, launch app và refresh trạng thái.
-- Artifact Maestro: `C:\Users\admin\.maestro\tests\2026-08-17_125314`.
-- Backend critical API test vẫn là nơi xác nhận idempotency khi submit lặp; flow thiết bị xác nhận lifecycle và khả năng đọc lại trạng thái sau restart.
-- Khi demo thủ công, chỉ dùng dữ liệu giả lập; không đưa password, OTP, access token, refresh token hoặc số tài khoản đầy đủ vào video/ảnh/báo cáo.
-
-Hiện `uuid` đã được pin ở `11.1.1` cho nhánh transitive qua xcode. Lượt audit trước từng còn cảnh báo High từ `image-size` nằm dưới Metro của Expo 57; đã xử lý bằng `npm audit fix` không dùng `--force`, cập nhật `@expo/metro` lên `56.0.2` và khóa toàn bộ Metro ở `0.84.5`. `npm audit --omit=dev --audit-level=high` local hiện trả 0 vulnerability; override `image-size` lên 2.x không được giữ vì từng làm web export lỗi. Vẫn không phát hành pilot chỉ dựa trên audit local: cần remote CI, thiết bị thật, staging và phê duyệt tương thích.
-
-CI có release gate `npm audit --omit=dev --audit-level=high`; pipeline phải xác nhận lockfile/Metro `0.84.5` và giữ gate này xanh trên remote.
-
 ## Pilot có kiểm soát
 
 1. Chỉ bật cho allowlist và hạn mức thấp.
@@ -71,12 +53,6 @@ CI có release gate `npm audit --omit=dev --audit-level=high`; pipeline phải x
 - Revoke session phải do backend thực thi; mobile gọi endpoint revoke theo draft session contract nhưng vẫn xóa session cục bộ khi mạng lỗi. Reference backend trong repo chỉ là sandbox, không phải production control plane.
 - Sau sự cố, ghi nhận nguyên nhân, phạm vi ảnh hưởng, kết quả reconciliation và điều kiện bật lại.
 
-## Kiem tra hien/sao chep so tai khoan
+## Kiểm tra hiển thị và sao chép số tài khoản
 
-Sau khi thay code, dung backend/mobile dang chay, khoi dong lai backend va Expo (co the dung clean cache), dang nhap lai, vao Home va bam `Hien day du` hoac `Sao chep` o dong tai khoan. Mat tren cung chi dieu khien so du; neu bam mat ma so tai khoan van 4 so thi do dang bam nham thao tac. Account Detail cung co hai nut tuong tu.
-
-## Xác nhận gate cuối ngày 2026-08-15
-
-- Mobile: typecheck/lint, 37 suite/170 test, OpenAPI, 10 flow syntax, web export và release config đã đạt.
-- Backend: 70/70 test đạt khi có PostgreSQL 16 tạm thời; database migration/live validator đã đạt. Mobile audit local hiện 0 vulnerability sau bản vá Metro không breaking; remote CI, thiết bị thật và risk review vẫn cần trước pilot.
-- Emulator: M0–M4/M8, M6 savings, credit payment, credit pending → stop app → launch app → resume, Credit card lock → stop/launch → OTP unlock và Credit overdue notification → card detail đều đã pass; bằng chứng mới nằm trong `C:\Users\admin\.maestro\tests\2026-08-16_014619`, `C:\Users\admin\.maestro\tests\2026-08-16_013045`, `C:\Users\admin\.maestro\tests\2026-08-16_000436`, `C:\Users\admin\.maestro\tests\2026-08-16_000714`, `C:\Users\admin\.maestro\tests\2026-08-16_003018` và `C:\Users\admin\.maestro\tests\2026-08-16_004626`.
+Sau khi đổi code, khởi động lại backend và Expo (có thể dùng cờ `--clear` nếu cần xóa cache), đăng nhập lại, vào Home và bấm `Hiện đầy đủ` hoặc `Sao chép` ở dòng tài khoản. Nút mắt trên cùng chỉ điều khiển ẩn/hiện số dư; số tài khoản được lấy qua endpoint riêng. Màn hình Chi tiết tài khoản (Account Detail) cũng có hai nút tương tự.

@@ -1,8 +1,11 @@
 # Bộ hướng dẫn chuẩn hóa cho Trợ lý sử dụng ứng dụng — 20 câu hỏi
 
 Phiên bản: help-faq-v0.3 — Ngày cập nhật: 2026-10-13.
-Đối chiếu mã nguồn tại commit HEAD: `9c585ce336ee5867557f89862bc8e07be3c0ca83`.  
-Workspace có thay đổi tài liệu chưa commit tại `PROJECT_CONTEXT.md` và `USE_CASE_ROADMAP.md`; bộ tài liệu này được đối soát trực tiếp với mã nguồn tĩnh hiện có trên đĩa.  
+
+> **Đối chiếu code hiện hành (2026-11-12):** `PROMPT_VERSION = help-prompt-v0.4`, `FAQ_VERSION = help-faq-v0.3` (`backend/src/assistant/knowledgeBundle.ts`); catalog `nova-faq-answer-catalog-v2` (`backend/src/assistant/responseCatalog.ts`); provider runtime Radox, model mặc định `gemini-3.6-flash` (`backend/src/assistant/radoxHelpProvider.ts`); endpoint `POST /api/v1/assistant/help` đã có trong `backend/src/http.ts` và `documents/api/banking-mvp.openapi.yaml`. Các mốc HEAD `9c585ce`, số liệu đánh giá và phiên bản cũ bên dưới là ghi chép lịch sử; khi mâu thuẫn, code là nguồn sự thật.
+
+Đối chiếu mã nguồn ban đầu (lịch sử) tại commit HEAD: `9c585ce336ee5867557f89862bc8e07be3c0ca83`.  
+Bộ tài liệu này được đối soát với mã nguồn tĩnh; Phần A là nguồn đầu vào của `npm run bundle:assistant` nên mọi thay đổi Phần A phải chạy lại bundle và test đồng bộ.  
 Trạng thái kiểm chứng: **ĐÃ ĐỐI CHIẾU MÃ NGUỒN TĨNH (STATIC CODE REVIEW)** qua CodeGraph cho toàn bộ đường điều hướng, nhãn giao diện, component và handler liên quan trong `mobile-app` và `backend`. Chưa kiểm tra ứng dụng trên thiết bị hoặc máy ảo trong phiên này; chưa tích hợp nhà cung cấp AI bên ngoài.
 
 > Cập nhật 2026-10-13: FAQ-07 đã được đổi để không hướng dẫn gửi báo cáo trong ứng dụng; chức năng báo cáo và xử lý Fraud đã bị gỡ. Các mục kiểm thử/tổng kết cũ bên dưới chỉ là bằng chứng lịch sử khi chức năng còn tồn tại.
@@ -422,7 +425,7 @@ Trạng thái kiểm chứng: **ĐÃ ĐỐI CHIẾU MÃ NGUỒN TĨNH (STATIC CO
 
 ### B1. Điều hướng và nhãn giao diện chuẩn hóa
 
-1. Cấu trúc tab điều hướng chính được khai báo trong [`mobile-app/src/app/(tabs)/_layout.tsx`](../../mobile-app/src/app/(tabs)/_layout.tsx) gồm đúng 4 tabs:
+1. Cấu trúc tab điều hướng chính được khai báo trong [`mobile-app/src/app/(tabs)/_layout.tsx`](../../mobile-app/src/app/%28tabs%29/_layout.tsx) gồm đúng 4 tabs:
    - `index` → nhãn **“Trang chủ”**
    - `cards` → nhãn **“Thẻ”**
    - `qr` → nhãn **“QR”**
@@ -434,7 +437,7 @@ Trạng thái kiểm chứng: **ĐÃ ĐỐI CHIẾU MÃ NGUỒN TĨNH (STATIC CO
 
 ### B2. Bảng bằng chứng đối chiếu 20 FAQ với mã nguồn
 
-> Mức độ kiểm chứng: **Đã đối chiếu mã nguồn tĩnh (Static Code Review)** tại commit HEAD `9c585ce336ee5867557f89862bc8e07be3c0ca83`. Các đường dẫn dưới đây là đường dẫn tương đối từ tài liệu tới mã nguồn của dự án.
+> Mức độ kiểm chứng: **Đã đối chiếu mã nguồn tĩnh (Static Code Review)** tại commit HEAD `9c585ce336ee5867557f89862bc8e07be3c0ca83` (mốc lịch sử). Các đường dẫn dưới đây là đường dẫn tương đối từ tài liệu tới mã nguồn của dự án.
 
 | ID | Tệp mã nguồn và Component/Hàm đối chiếu | Bằng chứng mã nguồn và Giới hạn kỹ thuật cần giữ |
 | :--- | :--- | :--- |

@@ -45,16 +45,12 @@ Dự án có một ứng dụng Mobile, Customer API, Admin API/Web và PostgreS
 | Bước | Điều kiện tối thiểu | Tài liệu |
 | --- | --- | --- |
 | Local reference | Cấu hình sandbox, database disposable khi chạy destructive test, dữ liệu tổng hợp | [Backend README](../../backend/README.md), [Testing README](../05-testing/README.md) |
-| Preview nội bộ | HTTPS/API allow-list, PostgreSQL riêng/private, secret provider, artifact digest, migration/health/smoke, rollback plan | [Preview runbook](../07-release/preview-deployment-runbook.md), [Academic readiness](../07-release/https-secrets-academic-readiness.md) |
+| Preview nội bộ | HTTPS/API allow-list, PostgreSQL riêng/private, secret provider, artifact digest, migration/health/smoke, rollback plan | [Preview runbook](../07-release/preview-deployment-runbook.md), [Secret management](../07-release/secret-management-runbook.md) |
 | Pilot/production-like | Tất cả preview gates, partner/core, legal/compliance, device matrix, signed build, monitoring/incident/restore drills và approvals | Chưa được chứng minh trong workspace hiện tại |
 
 Không bỏ gate hoặc đổi ngưỡng chỉ để làm tài liệu trông hoàn tất.
 
-## Evidence cần đọc theo thời điểm
+## Tài liệu kiến trúc và hướng dẫn liên quan
 
-- [Milestone status](milestone-status.md) — snapshot cũ, có ghi chú cập nhật sau đó; không dùng như backlog chính.
-- [Repository map](repository-map.md) — vị trí source hiện tại.
-- [Relational-v2 HTTP cutover matrix](../05-testing/staging-readiness/relational-v2-http-cutover-matrix.md) — phạm vi route cutover và evidence ngày lập.
-- [Demo acceptance của Assistant](../06-security-ai/assistant-demo-acceptance.md) — kết quả selector được lưu, không phải live release approval.
-- [HTTPS/secrets readiness](../07-release/https-secrets-academic-readiness.md) — các gate và giới hạn evidence cloud.
+- [Repository map](repository-map-current.md) — vị trí source hiện tại.
 - [Release README](../07-release/README.md) — cách đọc release artifacts và runbook.

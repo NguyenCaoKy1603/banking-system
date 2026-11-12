@@ -18,16 +18,11 @@ Các test E2E/runner/fixture đã bị gỡ khỏi source, package scripts và C
 
 Danh sách trên là cách tổ chức gate, không phải kết quả của lượt rà soát này. Đọc package scripts hiện hành và root AGENTS.md trước khi chạy.
 
-## Evidence hiện có trong hồ sơ
+## Hướng dẫn kiểm thử hiện có
 
-| Hồ sơ | Dùng để |
+| Tài liệu | Dùng để |
 | --- | --- |
-| backend-test-report.md, test-report.md | Các lượt test Backend theo snapshot cụ thể |
-| device-evidence.md | Bằng chứng device/emulator đã lưu; kiểm tra build và ngày |
-| staging-readiness/ | PostgreSQL, relational-v2, local hardening và cutover evidence |
-| stage1-* và stage2-* | Reports theo giai đoạn lịch sử; không tự động đại diện current source |
-| release-candidate/v1.0.0-thesis-rc.1/ | Release candidate snapshot cũ; không tuyên bố là artifact hiện tại |
-| backup-restore/ | Rehearsal local dated; không chứng minh cloud backup/restore đang vận hành |
+| [mfa-runbook.md](mfa-runbook.md) | Hướng dẫn kiểm thử luồng xác thực đa yếu tố (MFA / TOTP) |
 
 ## Database safety
 

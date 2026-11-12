@@ -182,7 +182,7 @@ graph TD
   6. Khách hàng bắt buộc phải dùng `lookupId` hợp lệ còn hạn để tạo báo giá chuyển tiền (Quote), ngăn chặn kẻ xấu sửa đổi tài khoản đích giữa chừng.
 - **Mã nguồn liên quan:**
   - Mobile: `mobile-app/src/features/transfers/services/transfersApi.ts`, `mobile-app/src/features/transfers/screens/TransferScreen.tsx`
-  - Backend: `backend/src/database/remainingService.ts`, `backend/src/recipientLookupRateLimiter.ts`, `backend/src/http.ts`
+  - Backend: `backend/src/database/remainingService.ts`, `backend/src/middlewares/recipientLookupRateLimiter.ts`, `backend/src/http.ts`
   - Tables: `recipient_lookups`.
 
 #### UC-C09: Chuyển tiền nội bộ trong hệ thống NOVA (Internal Funds Transfer)

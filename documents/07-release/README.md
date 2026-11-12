@@ -10,9 +10,9 @@
 
 | Chủ đề | Tài liệu | Lưu ý |
 | --- | --- | --- |
-| Environment | [environment-matrix.md](environment-matrix.md), [preview-environment-matrix.md](preview-environment-matrix.md) | Runtime fail-closed; tiền ảo; local sandbox HTTP chỉ ở local |
+| Environment | [environment-matrix.md](environment-matrix.md) | Runtime fail-closed; tiền ảo; local sandbox HTTP chỉ ở local |
 | Local preview | [preview-deployment-runbook.md](preview-deployment-runbook.md) | Compose/reference instructions, không phải cloud deployment approval |
-| HTTPS/secrets readiness | [https-secrets-academic-readiness.md](https-secrets-academic-readiness.md), [local HTTPS learning lab](local-https-secrets-learning-lab.md) | Lab local không chứng minh cloud IAM/HTTPS/managed secrets |
+| HTTPS/secrets readiness | [local HTTPS learning lab](local-https-secrets-learning-lab.md), [environment-matrix.md](environment-matrix.md) | Lab local không chứng minh cloud IAM/HTTPS/managed secrets |
 | Secret management | [secret-management-runbook.md](secret-management-runbook.md) và secret-registry.yaml | Registry chỉ mô tả metadata/reference; không lưu secret value |
 | Database migration | [migration-runbook.md](migration-runbook.md) | Forward-only; kiểm tra checksum; không down migration |
 | Backup/restore | Đã gỡ bỏ | Đồ án học thuật vận hành 1 PostgreSQL database duy nhất; các tài liệu lý thuyết backup/PITR đã được dọn sạch để khớp với mã nguồn. |

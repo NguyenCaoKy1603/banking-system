@@ -20,8 +20,8 @@ API environment: `preview` / HTTPS URL approved by owner
 | SHA-256 | `TO_BE_GENERATED` |
 | Built commit | `TO_BE_FILLED` |
 | API URL | `TO_BE_FILLED` |
-| Device report | [`../05-testing/device-evidence.md`](../05-testing/device-evidence.md) |
-| Test report | [`../05-testing/test-report.md`](../05-testing/test-report.md) |
+| Device report | [`documents/05-testing/`](../05-testing) |
+| Test report | [`documents/05-testing/`](../05-testing) |
 
 ## Release gates
 

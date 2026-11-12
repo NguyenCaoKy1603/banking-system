@@ -70,7 +70,7 @@
 | **Mobile Entry** | `mobile-app/src/features/home/screens/HomeScreen.tsx` | `HomeScreen` | Điểm truy cập duy nhất dưới mục "Quản lý" trên Trang chủ. |
 | **Backend HTTP** | `backend/src/http.ts` | `handleAssistantRoute` | Early routing, streaming body guard (8 KiB), auth check, deadline timer (30s), server-owned provider-call budget. |
 | **Backend Core** | `backend/src/assistant/helpService.ts` | `executeHelpRequest`, `executeHelpDecision` | Điều phối tri thức, lọc sensitive input, policy tất định, gọi provider, tra cứu catalog. |
-| **Response Catalog** | `backend/src/assistant/responseCatalog.ts` | `getAnswerCatalogEntry`, `validateAnswerCatalog` | Kho 25 lựa chọn: 20 câu trả lời FAQ và 5 phản hồi đặc biệt; phiên bản `nova-faq-answer-catalog-v1`. |
+| **Response Catalog** | `backend/src/assistant/responseCatalog.ts` | `getAnswerCatalogEntry`, `validateAnswerCatalog` | Kho 25 lựa chọn: 20 câu trả lời FAQ và 5 phản hồi đặc biệt; phiên bản `nova-faq-answer-catalog-v2`. |
 | **Deterministic Policy** | `backend/src/assistant/selectionPolicy.ts` | `resolveDeterministicSelection` | Phân luồng cố định cho các câu hỏi rõ ràng (xem số dư, lịch sử, thoát...). |
 | **AI Provider** | `backend/src/assistant/radoxHelpProvider.ts` | `RadoxAssistantHelpProvider.generateHelpResponse` | Kết nối Radox API `https://radoxai.com/v1`, model `gemini-3.6-flash`. |
 

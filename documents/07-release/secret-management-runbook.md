@@ -64,6 +64,6 @@ Script chỉ ghi ciphertext v2 AES-256-GCM envelope, AAD/version/key metadata v�
 
 ## Backup và sự cố
 
-Script `backend/scripts/encrypted-backup.cjs` đã được gỡ; local/CI hiện không có luồng backup mã hóa để rehearsal. Staging/Production-like cần KMS envelope/object storage versioning, access log, retention, PITR và restore approval của provider. Quy trình mục tiêu nằm ở [`backup-restore-runbook.md`](backup-restore-runbook.md).
+Script `backend/scripts/encrypted-backup.cjs` đã được gỡ; local/CI hiện không có luồng backup mã hóa để rehearsal. Staging/Production-like cần KMS envelope/object storage versioning, access log, retention, PITR và restore approval của provider; quy trình mục tiêu về backup/restore chưa có runbook riêng và cần được xây dựng theo tiêu chuẩn của hạ tầng đích.
 
 Nếu nghi ngờ lộ key: dừng promotion, giữ key cũ ở `DECRYPT_ONLY`, rotate current, revoke workload identity bị ảnh hưởng, chạy re-encryption có checkpoint, kiểm tra audit/backup và ghi incident timeline. Không xoá key cũ trước khi xác nhận mọi ciphertext đã chuyển hoặc có restore point được phê duyệt.

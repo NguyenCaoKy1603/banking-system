@@ -2,12 +2,11 @@
 
 ## Lối đọc
 
-1. [Assistant backend implementation](assistant-backend-implementation.md) — service boundaries và output guards.
-2. [Assistant API contract](assistant-api-contract.md) — Draft/reference contract.
-3. [Assistant demo acceptance](assistant-demo-acceptance.md) — UI/API evidence và lưu ý live model.
-4. [Ollama provider report](assistant-ollama-provider.md) — cấu hình local provider và lịch sử evaluation.
-5. [Intent disambiguation report](assistant-intent-disambiguation-report.md) và các controlled/intent run dated — lỗi chọn nhầm theo từng tập.
-6. [Financial Advice plan](financial-advice-plan.md), [contract](financial-advice-api-contract.md) và evidence — feature riêng với Assistant Help.
+1. [Assistant help FAQ](assistant-help-faq.md) — 20 FAQ chuẩn hóa và bộ tri thức nguồn.
+2. [Assistant system prompt](assistant-system-prompt.md) — System prompt chuẩn hóa cho trợ lý.
+3. [Assistant demo runbook](assistant-demo-runbook.md) — kịch bản demo và hướng dẫn vận hành trợ lý.
+4. [API OpenAPI Contract](../api/README.md) — Đặc tả OpenAPI chuẩn hóa cho `/assistant/help`.
+5. [Financial Advice plan](financial-advice-plan.md), [contract](financial-advice-api-contract.md) và [runbook](financial-advice-demo-runbook.md) — feature riêng với Assistant Help.
 
 ## Hệ thống AI trong source
 
@@ -27,7 +26,7 @@
 
 ## Bằng chứng và giới hạn
 
-Stored controlled run trong [demo acceptance](assistant-demo-acceptance.md) ghi 70/80 lựa chọn đúng toàn hệ thống, gồm 53/63 ở các lượt gọi Qwen; report đánh dấu chất lượng PARTIAL và yêu cầu AI_REVIEW. Đây là kết quả dated của tập kiểm thử đó, không phải accuracy production hoặc bằng chứng live deployment.
+Lượt chạy controlled run thử nghiệm ban đầu (2026-09-23) ghi nhận 70/80 lựa chọn đúng toàn hệ thống, gồm 53/63 ở các lượt gọi Qwen local (chi tiết lưu trong Git history). Báo cáo đánh dấu chất lượng PARTIAL và yêu cầu AI_REVIEW. Đây là kết quả lịch sử của tập kiểm thử đó, không phải accuracy production hoặc bằng chứng live deployment.
 
 Các báo cáo free-text generation, controlled catalog selection và intent-selection dùng protocol/dataset khác nhau. Không trộn các tỷ lệ của chúng. Một gate tự động pass không chứng minh semantic safety hoặc nghiệp vụ đã được owner duyệt.
 

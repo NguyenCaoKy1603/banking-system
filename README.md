@@ -1,9 +1,8 @@
-# Banking System — hồ sơ bàn giao Đợt 3
+# Banking System / NOVA — Academic Reference Implementation
 
-Đây là reference implementation cho đồ án học thuật, dùng dữ liệu synthetic và tiền ảo
-trong môi trường local. Repository chưa có bằng chứng staging, production, core-banking
-partner, KYC thật hoặc triển khai cloud. Các lệnh dưới đây là hướng dẫn tái hiện; chúng
-không tự khẳng định đã được chạy trên clone sạch ở snapshot hiện tại.
+Đây là reference implementation cho ứng dụng ngân hàng di động, dùng dữ liệu synthetic và tiền ảo
+trong môi trường local preview. Repository minh họa cách tổ chức các luồng Mobile, Customer API,
+Admin API, PostgreSQL relational persistence, idempotency, MFA và outbox worker.
 
 ## Bắt đầu nhanh
 
@@ -102,29 +101,12 @@ staging/production; production-like phải dùng HTTPS và biến public hợp l
 | Preview Compose local | Tái hiện stack từ `.env.compose` | Setup/rehearsal local | Remote CI, cloud, HTTPS hoặc managed DB |
 | Emulator/native build | Kiểm tra UI và flow Mobile | Evidence emulator đã ghi trong hồ sơ | Thiết bị thật, accessibility device đầy đủ |
 
-Không đưa scratch script, credential, log thô hoặc build artifact vào quy trình bàn giao.
-Khoảng trống setup còn lại và quyết định deployment được ghi tại
-[`tasks/DEMO/TASK_DOT_3_PROJECT_HANDOFF.md`](tasks/DEMO/TASK_DOT_3_PROJECT_HANDOFF.md).
+## Tài liệu hệ thống
 
-## Bản đồ hồ sơ bàn giao
-
-- Phạm vi/kiến trúc: [`documents/02-design/architecture-and-scope.md`](documents/02-design/architecture-and-scope.md),
-  [`documents/02-design/function-scope.md`](documents/02-design/function-scope.md).
-- ERD và sequence: [`documents/02-design/erd-core-demo.md`](documents/02-design/erd-core-demo.md),
-  [`documents/02-design/sequence-core-demo.md`](documents/02-design/sequence-core-demo.md).
-- Báo cáo nháp: [`documents/08-presentation/thesis-report-draft.md`](documents/08-presentation/thesis-report-draft.md).
-- Slide/run sheet/Q&A: [`documents/08-presentation/slide-outline.md`](documents/08-presentation/slide-outline.md),
-  [`documents/08-presentation/demo-run-sheet.md`](documents/08-presentation/demo-run-sheet.md),
-  [`documents/08-presentation/defense-qa.md`](documents/08-presentation/defense-qa.md).
-- Checklist/evidence: [`documents/08-presentation/pre-demo-checklist.md`](documents/08-presentation/pre-demo-checklist.md),
-  [`documents/08-presentation/evidence-index.md`](documents/08-presentation/evidence-index.md).
-- Hồ sơ tổng hợp Đợt 3: [`tasks/DEMO/TASK_DOT_3_PROJECT_HANDOFF.md`](tasks/DEMO/TASK_DOT_3_PROJECT_HANDOFF.md).
-- Evidence Đợt 2 đã nghiệm thu: [`tasks/DEMO/TASK_DOT_2_CORE_BANKING_DEMO.md`](tasks/DEMO/TASK_DOT_2_CORE_BANKING_DEMO.md).
-
-## Trạng thái bàn giao
-
-`IN PROGRESS — DRAFT DELIVERABLES`
-
-Đợt 2 đã được Owner chấp thuận trong phạm vi local/emulator/reference academic.
-Đợt 3 mới là bộ hồ sơ nháp; chưa có quyết định deployment, chưa có remote CI pass,
-chưa có signed APK/device evidence đầy đủ và chưa đánh dấu toàn bộ use case hoàn tất.
+- Hiện trạng & bản đồ code: [`documents/01-planning/current-status.md`](documents/01-planning/current-status.md), [`documents/01-planning/repository-map-current.md`](documents/01-planning/repository-map-current.md).
+- Phạm vi & kiến trúc: [`documents/02-design/architecture-and-scope.md`](documents/02-design/architecture-and-scope.md), [`documents/02-design/function-scope.md`](documents/02-design/function-scope.md).
+- ERD và sequence: [`documents/02-design/erd-core-demo.md`](documents/02-design/erd-core-demo.md), [`documents/02-design/sequence-core-demo.md`](documents/02-design/sequence-core-demo.md).
+- API Contracts & OpenAPI: [`documents/api/README.md`](documents/api/README.md), [`documents/api/banking-mvp.openapi.yaml`](documents/api/banking-mvp.openapi.yaml).
+- Admin & RBAC: [`documents/admin/README.md`](documents/admin/README.md).
+- Hướng dẫn kiểm thử & MFA: [`documents/05-testing/README.md`](documents/05-testing/README.md), [`documents/05-testing/mfa-runbook.md`](documents/05-testing/mfa-runbook.md).
+- Sổ tay Mobile: [`documents/mobile-pilot-runbook.md`](documents/mobile-pilot-runbook.md).

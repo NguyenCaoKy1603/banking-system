@@ -6,7 +6,7 @@
 
 Với một flow khách hàng, bắt đầu từ màn hình trong Mobile, lần đến feature API/shared HTTP client, route trong Customer API, validator và service/repository được route gọi. Với thao tác quản trị, bắt đầu từ Admin Web, lần qua Admin API, permission registry/action engine rồi repository. Khi mutation chạm persistence, đối chiếu UnitOfWork, migration và test của đúng route group.
 
-Trang tổng hợp về ranh giới và trạng thái nằm tại [kiến trúc](../02-design/architecture-and-scope.md), [bản đồ chức năng](../02-design/function-scope.md), [API contracts](../03-api/README.md) và [trạng thái hiện tại](current-status.md).
+Trang tổng hợp về ranh giới và trạng thái nằm tại [kiến trúc](../02-design/architecture-and-scope.md), [bản đồ chức năng](../02-design/function-scope.md), [API contracts](../api/README.md) và [trạng thái hiện tại](current-status.md).
 
 ## Thành phần và entrypoint
 
@@ -55,7 +55,7 @@ Trang tổng hợp về ranh giới và trạng thái nằm tại [kiến trúc]
 
 - Migration SQL được đánh số tại backend/database. Quy tắc migration nằm trong backend/database/README.md và [migration runbook](../07-release/migration-runbook.md); giữ nguyên thứ tự/checksum, chỉ thêm migration forward-only theo quy trình.
 - OpenAPI và narrative contracts nằm tại documents/api. Validator scripts nằm trong backend/scripts và mobile-app/scripts.
-- Migration không tự chứng minh route đã cutover; xem [relational-v2 cutover matrix](../05-testing/staging-readiness/relational-v2-http-cutover-matrix.md).
+- Migration không tự chứng minh route đã cutover; xem [OpenAPI routes và contract](../api/README.md).
 
 ## Vùng lịch sử và giới hạn
 
