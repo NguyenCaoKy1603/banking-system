@@ -27,6 +27,7 @@ Các invariant chính:
   - `041` hợp nhất role Admin từ bốn role cũ còn `OPERATIONS` và `ADMIN`, ánh xạ role assignment/invite/request hiện có, thu hồi phiên cũ và giữ nguyên fingerprint/audit của yêu cầu đã tạo.
   - `042` thêm khóa idempotency cho Admin tạo trực tiếp tài khoản OPERATIONS; bảng chỉ chứa fingerprint metadata, không lưu mật khẩu, khóa MFA hoặc OTP.
   - `043` gán permission tạo Operations trực tiếp cho ADMIN, tắt policy STAFF_INVITE cũ và bỏ permission mời khỏi role; giữ nguyên request, action, invite và audit history.
+  - `044` bổ sung purpose `SAVINGS_WITHDRAWAL` cho `auth_challenges` và các trường ghi nhận rút tiền sớm (`early_withdrawn_at`, `early_interest_minor`) cho `savings_deposits`.
 - `savings_maturity_suspense` không thay thế ledger: đây là hàng đợi vận hành có
   operation key duy nhất, để nghĩa vụ maturity không còn ở trạng thái ACTIVE khi
   tài khoản nguồn/sản phẩm không thể xử lý; worker retry/resume idempotent, backoff
@@ -34,7 +35,7 @@ Các invariant chính:
 - Các migration mới chỉ lưu metadata synthetic và khóa ngoại cần thiết; không lưu
   OTP, secret, PAN, CVV, PIN, bytes tài liệu KYC hoặc PII sản xuất.
 
-Migration runner đọc toàn bộ file `001–043` theo thứ tự số, ghi fingerprint và
+Migration runner đọc toàn bộ file `001–044` theo thứ tự số, ghi fingerprint và
 không được bỏ qua migration. Trước khi dùng schema này với hệ thống tiền thật cần
 bổ sung adapter giao dịch/locking phù hợp core banking, backup/restore rehearsal,
 secret manager, RLS/role policy, retention và observability thật.

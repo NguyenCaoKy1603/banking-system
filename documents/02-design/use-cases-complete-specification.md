@@ -203,7 +203,7 @@ graph TD
   2. **Bước 2: Chuẩn bị Intent & Xác thực tăng cường (Step-Up Challenge):**
      - Client sinh mã duy nhất `Idempotency-Key` (chuỗi ngẫu nhiên tối thiểu 16 ký tự).
      - Client lưu trạng thái ban đầu `DRAFT_QUOTE` vào `SecureStore` (phân vùng theo tài khoản: `banking.transfer.intent.v2:<userId>`).
-     - Client gọi `POST /api/v1/auth/challenges` để tạo challenge xác thực giao dịch (`purpose: "TRANSFER"`, `resourceId: quoteId`).
+     - Client gọi `POST /api/v1/auth/otp/challenges` để tạo challenge xác thực giao dịch (`purpose: "TRANSFER"`, `resourceId: quoteId`).
      - Khách hàng thực hiện xác thực bước 2 (MFA TOTP). Backend kiểm tra ràng buộc nghiêm ngặt qua `mfaService.verifyChallenge`: đối chiếu `deviceId` (header `x-device-id`), `purpose`, `resourceId` và **bắt buộc `requestFingerprint` phải khớp chính xác với fingerprint của quote đã lưu trên DB** nhằm chống giả mạo hay tráo đổi nội dung giao dịch sau khi xin mã.
   3. **Bước 3: Thực thi lệnh chuyển tiền & Cơ chế chống Crash (Intent Safety Lifecycle):**
      - **Quy tắc an toàn Client:** Client chuyển trạng thái Intent sang `SUBMIT_UNKNOWN` và lưu bền vững vào `SecureStore` **trước khi** gửi request HTTP `POST /api/v1/transfers` (kèm `quoteId`, `stepUp` proof và header `Idempotency-Key`).
@@ -309,7 +309,7 @@ graph TD
   - `RENEW_PRINCIPAL_AND_INTEREST`: Tái tục toàn bộ cả tiền gốc lẫn lãi vào sổ mới cùng kỳ hạn (lãi kép).
 - **Luồng sự kiện chính (Theo Kiến trúc Relational Core):**
   1. **Bước 1: Chọn sản phẩm & Nhập số tiền gửi:**
-     - Khách hàng vào màn hình `OpenSavingsScreen`, ứng dụng tự động gọi song song: `listAccounts` (`GET /api/v1/accounts`), `listSavingsProducts` (`GET /api/v1/savings/products`) và `getControlPolicy` (`GET /api/v1/control/policy`).
+     - Khách hàng vào màn hình `OpenSavingsScreen`, ứng dụng tự động gọi song song: `listAccounts` (`GET /api/v1/accounts`), `listSavingsProducts` (`GET /api/v1/savings/products`) và `getControlPolicy` (`GET /api/v1/mobile/control-policy`).
      - Khách hàng chọn tài khoản thanh toán nguồn, kỳ hạn tiết kiệm, nhập số tiền gửi và chọn 1 trong 3 chỉ thị khi đáo hạn.
   2. **Bước 2: Lấy báo giá mở sổ (Quote):**
      - Client gửi yêu cầu `POST /api/v1/savings/quotes` kèm `sourceAccountId`, `productId`, `principal`, `maturityInstruction`.
@@ -321,7 +321,7 @@ graph TD
   3. **Bước 3: Xem lại & Xác thực tăng cường (Step-Up TOTP):**
      - Client sinh mã duy nhất `Idempotency-Key` (chuỗi ngẫu nhiên tối thiểu 16 ký tự).
      - Client lưu trạng thái ban đầu `DRAFT_QUOTE` vào `SecureStore` (key: `banking.savings.intent.v1:<userId>`).
-     - Client gọi `POST /api/v1/auth/challenges` để tạo challenge xác thực (`purpose: "SAVINGS_OPENING"`, `resourceId: quoteId`).
+     - Client gọi `POST /api/v1/auth/otp/challenges` để tạo challenge xác thực (`purpose: "SAVINGS_OPENING"`, `resourceId: quoteId`).
      - Server chỉ hỗ trợ và trả về phương thức `TOTP` (được gắn chặt với `requestFingerprint` của quote và `deviceId`). Khách hàng nhập mã TOTP 6 số từ Google Authenticator hoặc ứng dụng xác thực.
   4. **Bước 4: Lưu Intent an toàn trên Client (Crash Recovery Lifecycle):**
      - **Quy tắc an toàn Client:** Client chuyển trạng thái Intent sang `SUBMIT_UNKNOWN` và lưu bền vững vào `SecureStore` **trước khi** gửi request HTTP `POST /api/v1/savings/deposits` (kèm `quoteId`, `stepUp` proof và header `Idempotency-Key`).
@@ -796,7 +796,7 @@ graph TD
 | **UC-C17** | Quản lý thông báo người dùng | Khách hàng | `mobile-app/src/app/notifications.tsx` | `GET /notifications`, `POST /notifications/{id}/read` | `notifications`, `notification_endpoints`, `notification_preferences` |
 | **UC-C18** | Trợ lý giải đáp NOVA Help | Khách hàng | `mobile-app/src/app/assistant.tsx` | `POST /assistant/help` | Knowledge Catalog (Read-only / No DB mutation) |
 | **UC-C19** | Tư vấn lập kế hoạch tài chính | Khách hàng | `mobile-app/src/app/financial-advice.tsx` | `POST /assistant/financial-advice` | Deterministic BigInt Math (No DB mutation) |
-| **UC-A01** | Xác thực nhân viên & Quản lý phiên | Nhân viên | `admin-web/src/features/auth/Login.tsx` | `POST /admin/login`, `GET /admin/me`, `POST /admin/logout` | `staff_users`, `staff_sessions`, `staff_mfa_credentials`, `staff_auth_challenges`, `admin_bootstrap_state` |
+| **UC-A01** | Xác thực nhân viên & Quản lý phiên | Nhân viên | `admin-web/src/features/auth/Login.tsx` | `POST /admin/auth/login`, `GET /admin/me`, `POST /admin/auth/logout` | `staff_users`, `staff_sessions`, `staff_mfa_credentials`, `staff_auth_challenges`, `admin_bootstrap_state` |
 | **UC-A02** | Quản lý nhân sự & Phân quyền | Admin | `admin-web/src/features/staff/StaffView.tsx` | `GET /admin/staff`, `POST .../role-change-requests` | `staff_users`, `staff_roles`, `admin_staff_account_creation_requests`, `staff_role_change_requests` |
 | **UC-A03** | Kiểm soát tài khoản khách hàng | Nhân viên | `admin-web/src/features/customers/Customers.tsx` | `POST .../access-lock-requests`, `POST .../block-requests` | `customers`, `accounts`, `customer_access_change_requests`, `account_status_change_requests`, `status_history` |
 | **UC-A04** | Cấp vốn thử nghiệm & Đảo ngược | Nhân viên | `admin-web/src/features/customers/Customers.tsx` | `POST .../funding-requests`, `POST .../funding-reversal` | `simulation_funding_requests`, `simulation_funding_reversals` |

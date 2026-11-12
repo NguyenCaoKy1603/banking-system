@@ -16,8 +16,8 @@
 | KYC | Khai báo/draft/submit và trạng thái; Admin review/request-more-info | Customer KYC API + relational KYC service; Admin API | Không có document identity vendor hay quyết định KYC/AML thật |
 | QR | Sinh/scan versioned receiving-information payload và manual fallback | Mobile QR feature (dùng accountsApi khi tạo, local validation khi quét) | Mã QR UNVERIFIED; không tự khởi tạo payment từ scan |
 | Notifications | Inbox, mark-read, resource deep link | Public API + outbox related persistence | Push delivery provider thật chưa được chứng minh |
-| Assistant Help | FAQ suggestions, question, sensitive-input guard, deterministic selection, Radox/bounded selector và catalog answer | POST assistant/help; Radox provider bảo mật | Read-only help; không biết balance/account data; model có thể chọn FAQ sai |
-| Financial Advice | Nhập thu/chi/mục tiêu, calculator xác định, option selection và explanation | POST assistant/financial-advice; provider có fallback/limits | Không lấy core balance; không thay tư vấn chuyên môn hoặc offer ngân hàng đã duyệt |
+| Assistant Help | FAQ suggestions, question, sensitive-input guard, deterministic selection, Radox/bounded selector và catalog answer | POST /api/v1/assistant/help; Radox provider bảo mật | Read-only help; không biết balance/account data; model có thể chọn FAQ sai |
+| Financial Advice | Nhập thu/chi/mục tiêu, calculator xác định, option selection và explanation | POST /api/v1/assistant/financial-advice; provider có fallback/limits | Không lấy core balance; không thay tư vấn chuyên môn hoặc offer ngân hàng đã duyệt |
 
 ## Admin và operations
 

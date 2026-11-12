@@ -30,7 +30,7 @@ Snapshot hiện hành ngày 2026-08-17: mobile lint/typecheck đạt, 37 suites 
 
 ## Quality gate trước khi build
 
-CI phải xanh ở các bước database boundary validation, mobile lint, typecheck, unit test, OpenAPI validation, Maestro flow syntax, web export và backend typecheck/build/HTTP integration test. Critical E2E trên thiết bị thật và contract/integration test với core-banking partner vẫn là gate bắt buộc trước pilot.
+CI phải xanh ở các bước database boundary validation, mobile lint, typecheck, unit test, OpenAPI validation, web export và backend typecheck/build/HTTP integration test. Critical E2E trên thiết bị thật và contract/integration test với core-banking partner vẫn là gate bắt buộc trước pilot.
 
 Critical E2E cần chạy trên Android/iOS thật trước pilot: MFA challenge/refresh, double-tap/retry transfer, kill app trước và sau response submit, mở lại để truy vấn trạng thái `PENDING`, dùng token sai device, logout mọi thiết bị, bật kill switch và biometric prompt. Reference backend test hiện bao phủ các invariant HTTP nhưng không thay thế E2E thiết bị thật.
 
