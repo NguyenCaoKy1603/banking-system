@@ -63,7 +63,7 @@ const VERIFIED_ANSWER_HASHES: Readonly<Record<string, string>> = Object.freeze({
   "FAQ-04": "ea3507e5b9e1f8f7e111ad1c0d22a6ea0645c151ef594a56823d5b93cce4c9e1",
   "FAQ-05": "3acda1afbbf7ee13ba4feb2b69296ef9ee13fd49c37f7fed88ba439aa1d4e51c",
   "FAQ-06": "5326b119ead91cd8f0504ffff1324ef49646f2f7c5ff04fa87c77719bb9455b2",
-  "FAQ-07": "4f7f0cfcb9d904187b80f312c4a1547f419b1c0956d3cf1b0d90bdef3724ac3e",
+  "FAQ-07": "7ae71b817e939ec8a153a2dfe735e72e268ba8d89f00ee36ec41fb2da603662c",
   "FAQ-08": "12c4261a35cf4a41c592bd9de30da74803ae5aca61e1a61bc3e3296600a99e5a",
   "FAQ-09": "4622a0c7b548e98afb917feebc1d83e8a6ed3c431336e7eab0ad40cca2ee3792",
   "FAQ-10": "285051e6c29c1a453e18aa1d43b1c8769d4b7b7ec13dad2da1896f0b0961e499",

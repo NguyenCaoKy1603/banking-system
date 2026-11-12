@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { FAQ_HASH, FAQ_ITEM_IDS, FAQ_VERSION, PROMPT_HASH, PROMPT_VERSION } from "./knowledgeBundle.js";
 
-export const ANSWER_CATALOG_VERSION = "nova-faq-answer-catalog-v1";
+export const ANSWER_CATALOG_VERSION = "nova-faq-answer-catalog-v2";
 export const SELECTOR_PROTOCOL_VERSION = "nova-help-selector-v1";
 
 type CatalogSeed = {
@@ -58,9 +58,9 @@ const CATALOG_SEED = [
   {
     id: "FAQ-07",
     sourceFaqIds: ["FAQ-07"],
-    selectionHint: "Gửi báo cáo cho giao dịch mà người dùng không nhận ra.",
-    answer: "Trong “Lịch sử giao dịch”, mở giao dịch cần báo cáo, vào “Chi tiết giao dịch” và chọn “Báo cáo giao dịch đáng ngờ”. Nhập lý do từ 5 đến 1.000 ký tự, chọn “Gửi báo cáo” và chờ kết quả. Việc tiếp nhận báo cáo không đồng nghĩa với hoàn tiền tự động hoặc cam kết thời hạn hoàn tiền.",
-    sourceNote: "FAQ-07, phần Hướng dẫn thao tác và giới hạn.",
+    selectionHint: "Kiểm tra giao dịch người dùng không nhận ra; giải thích ứng dụng không có chức năng báo cáo và không thể xác minh gian lận.",
+    answer: "Trong “Lịch sử giao dịch”, mở giao dịch để xem “Chi tiết giao dịch” và trạng thái. Ứng dụng tham chiếu này hiện không có chức năng báo cáo giao dịch và không thể kết luận giao dịch là gian lận. Việc chưa nhận được tiền hoặc trạng thái “Đang xử lý” chưa chứng minh giao dịch thất bại; xem hướng dẫn trạng thái theo FAQ-13. Nếu giao dịch thuộc ngân hàng thật và bạn nghi ngờ giao dịch trái phép, liên hệ ngân hàng qua kênh chính thức. Trợ lý không thể xác minh hoặc bảo đảm hoàn tiền.",
+    sourceNote: "FAQ-07, phần kiểm tra giao dịch và giới hạn.",
   },
   {
     id: "FAQ-08",

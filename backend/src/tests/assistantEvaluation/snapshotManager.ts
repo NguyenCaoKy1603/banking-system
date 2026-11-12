@@ -14,7 +14,7 @@ const defaultReferenceCatalogPath = path.join(currentDir, "fixtures/pos24-refere
 const defaultBaselineCatalogPath = path.join(currentDir, "fixtures/pos24-baseline-response-catalog.txt");
 const defaultBaselineSnapshotPath = path.resolve(currentDir, "../../../../documents/06-security-ai/prompt-archive/pos23-baseline-snapshot.json");
 const defaultCatalogPath = path.resolve(currentDir, "../../assistant/responseCatalog.ts");
-export const LOCKED_BASELINE_SHA256 = "d0109c9a5a5a72a8a344ad790329a1efb62701cb00cc41a36966b45c59b86d6a";
+export const LOCKED_BASELINE_SHA256 = "8f119ce37e0db97816dad987cf231115db90b492d359f6e7bef53a0c61c0c74d";
 
 export const RUNTIME_SNAPSHOT_SCHEMA_VERSION = "assistant-runtime-snapshot-v1";
 

@@ -98,7 +98,7 @@ database:
   migrationJob:
     image: release.backendImage
     command: node scripts/apply-migration.cjs
-    migrations: 001-043
+    migrations: 001-044
     idempotent: true
 
 services:
