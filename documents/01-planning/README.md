@@ -13,4 +13,4 @@
 | risk-register.md | Rủi ro được ghi trong đợt lập tài liệu | Cần rà soát lại owner, trạng thái và ngày trước khi dùng |
 | mfa-adr.md | MFA decision | Kiểm tra lại với AGENTS.md và source hiện hành |
 
-Chỉ current-status.md là trang tổng hợp trạng thái được cập nhật cho lượt rà soát này. Các báo cáo khác giữ nguyên làm hồ sơ lịch sử; trạng thái trong chúng không tự động cập nhật theo source mới.
+Chỉ `current-status.md` là trang tổng hợp trạng thái hiện hành của repository; các tài liệu quyết định hoặc rủi ro khác giữ nguyên vai trò lưu trữ căn cứ kiến trúc.

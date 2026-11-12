@@ -4,7 +4,7 @@
 
 Mỗi báo cáo chỉ chứng minh đúng commit/build, database, environment, thiết bị và test layer được ghi trong báo cáo. Unit, HTTP integration, database disposable, emulator, thiết bị thật và staging là các mức evidence khác nhau.
 
-Các test E2E/runner/fixture đã bị gỡ khỏi source, package scripts và CI ngày 2026-10-11. Reports E2E cũ được giữ làm lịch sử; không chạy lại hoặc mô tả như một gate đang có. Task tài liệu này không chạy test/build.
+Các test E2E/runner/fixture cũ đã bị gỡ khỏi source, package scripts và CI ngày 2026-10-11. Không dùng các kịch bản hoặc lệnh E2E cũ làm gate hiện hành.
 
 ## Quality gates theo thành phần
 
