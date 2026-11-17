@@ -4,7 +4,7 @@
 
 1. Root [AGENTS.md](../../AGENTS.md) — ownership, scope, security, Git và quality gates.
 2. [mobile-app/AGENTS.md](../../mobile-app/AGENTS.md) khi task chạm Mobile.
-3. [Git workflow](../01-planning/git-workflow.md) và [decision log](../01-planning/decision-log.md).
+3. [Decision log](../01-planning/decision-log.md) và [ADR architecture](../07-architecture/README.md).
 4. Workflow CI dưới .github/workflows và package scripts của thành phần liên quan.
 
 ## Quy tắc làm việc

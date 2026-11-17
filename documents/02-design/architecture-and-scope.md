@@ -56,7 +56,7 @@ Public API, Admin API và Worker là entrypoint/process riêng. Admin Web dùng 
 - Staging/production-like runtime fail closed nếu thiếu điều kiện persistence, HTTPS allow-list, secret/config metadata, TOTP, virtual-money mode hoặc release identity.
 - Migration mới phải forward-only, đúng thứ tự/checksum và được xác minh trên database rỗng cùng đường nâng cấp phù hợp. Chỉ chạy destructive test trên database disposable đã guard xác nhận.
 
-Chi tiết migration/cutover nằm trong [relational-v2 cutover matrix](../05-testing/staging-readiness/relational-v2-http-cutover-matrix.md) và [ADR PostgreSQL](../07-architecture/p0-postgres-relational-v2-adr.md).
+Chi tiết migration nằm trong [ADR PostgreSQL](../07-architecture/p0-postgres-relational-v2-adr.md) và [migration runbook](../07-release/migration-runbook.md).
 
 ## 4. Data flow: customer request
 

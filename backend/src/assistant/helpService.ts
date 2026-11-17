@@ -145,7 +145,6 @@ export class AssistantHelpService {
       timedOut = true;
       providerAbortController.abort();
     }, this.config.providerTimeoutMs);
-    timeoutTimer.unref();
 
     const onRequestAbort = () => providerAbortController.abort();
     requestSignal?.addEventListener("abort", onRequestAbort);

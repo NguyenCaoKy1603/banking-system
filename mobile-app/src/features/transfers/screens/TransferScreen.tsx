@@ -3,7 +3,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   ActivityIndicator,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,12 +13,10 @@ import { AppHeader } from "@/components/ui/AppHeader";
 import { Button } from "@/components/ui/Button";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
-import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import type { AuthChallengeResponse } from "@/features/auth/types/auth";
 import { listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
-import { formatVndMinor, formatVndWords } from "@/features/banking/presentation/formatMoney";
 import type { ClientIntentPhase } from "@/features/banking/domain/clientIntentLifecycle";
 import {
   requiresManualReview,
@@ -42,9 +39,16 @@ import {
 } from "@/features/transfers/services/transfersApi";
 import { createOtpChallenge } from "@/features/auth/services/otpApi";
 import { listMfaMethods } from "@/features/auth/services/authApi";
-import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
 import { isTotpNotEnrolledError, TOTP_NOT_ENROLLED_MESSAGE } from "@/features/auth/utils/totpError";
 import { TransferProgress } from "@/features/transfers/components/TransferProgress";
+import {
+  TransferAmountStep,
+  TransferBeneficiaryStep,
+  TransferResultStep,
+  TransferReviewStep,
+  TransferStepUpStep,
+  stepStyles,
+} from "@/features/transfers/components/TransferStepViews";
 import type {
   Beneficiary,
   TransferQuote,
@@ -55,7 +59,7 @@ import {
   loadTransferIntent,
   saveTransferIntent,
 } from "@/features/transfers/storage/transferIntentStorage";
-import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
+import { colors, sizes, spacing } from "@/theme";
 
 type TransferStep = "beneficiary" | "amount" | "review" | "stepUp" | "result";
 
@@ -77,14 +81,6 @@ function getErrorMessage(error: unknown): string {
 
 const MANUAL_REVIEW_MESSAGE =
   "Yêu cầu này cần được đối soát thủ công. Không gửi lại hoặc tạo mã mới; vui lòng liên hệ hỗ trợ.";
-
-const QUICK_AMOUNTS = [
-  { label: "+50.000", value: 50_000 },
-  { label: "+100.000", value: 100_000 },
-  { label: "+500.000", value: 500_000 },
-  { label: "+1.000.000", value: 1_000_000 },
-  { label: "+5.000.000", value: 5_000_000 },
-];
 
 function getReceiptStatusLabel(status: TransferReceipt["status"]): string {
   switch (status) {
@@ -144,6 +140,9 @@ export function TransferScreen() {
   const [error, setError] = useState<string | undefined>();
   const [clockMs, setClockMs] = useState(() => Date.now());
   const submitLockRef = useRef(false);
+  const appliedRouteTargetRef = useRef<string | null>(null);
+  const normalizedRouteAccountNumber = initialAccountNumber.replace(/\D/g, "");
+  const normalizedRouteBeneficiaryId = initialBeneficiaryId.trim();
 
   useEffect(() => {
     const timer = setInterval(() => setClockMs(Date.now()), 1000);
@@ -174,7 +173,11 @@ export function TransferScreen() {
     try {
       const response = await listAccounts(auth);
       setAccounts(response.accounts);
-      setSourceAccountId(response.accounts[0]?.id ?? null);
+      setSourceAccountId((current) =>
+        current && response.accounts.some((item) => item.id === current)
+          ? current
+          : (response.accounts[0]?.id ?? null),
+      );
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
     } finally {
@@ -394,56 +397,145 @@ export function TransferScreen() {
     void Promise.resolve().then(() => restoreTransferIntent());
   }, [restoreTransferIntent]);
 
+  const performRecipientLookup = useCallback(
+    async (target: {
+      accountNumber?: string;
+      beneficiaryId?: string;
+      isCancelled?: () => boolean;
+    }) => {
+      const accountNumber = target.accountNumber?.trim() ?? "";
+      const savedBeneficiaryId = target.beneficiaryId?.trim() ?? "";
+
+      if (!savedBeneficiaryId && !accountNumber) {
+        setError("Nhập số tài khoản người nhận hoặc chọn người nhận đã lưu.");
+        return;
+      }
+
+      setIsSubmitting(true);
+      setError(undefined);
+
+      try {
+        if (accountNumber) {
+          const response = await lookupInternalRecipient(accountNumber, auth);
+          if (target.isCancelled?.()) return;
+          if (response.recipient.status !== "ACTIVE") {
+            setError("Tài khoản người nhận hiện không khả dụng.");
+            return;
+          }
+          setRecipientLookupId(response.recipient.lookupId);
+          setBeneficiaryId("");
+          setBeneficiary({
+            id: response.recipient.lookupId,
+            displayName: response.recipient.accountHolderName,
+            accountHolderName: response.recipient.accountHolderName,
+            maskedAccountNumber: response.recipient.maskedAccountNumber,
+            bankName: response.recipient.bankName,
+            status: response.recipient.status,
+          });
+          setStep("amount");
+          return;
+        }
+
+        const response = await lookupBeneficiary(savedBeneficiaryId, auth);
+        if (target.isCancelled?.()) return;
+
+        if (response.beneficiary.status !== "ACTIVE") {
+          setError("Người nhận hiện không khả dụng.");
+          return;
+        }
+
+        setBeneficiary(response.beneficiary);
+        setRecipientLookupId(null);
+        setStep("amount");
+      } catch (requestError: unknown) {
+        if (!target.isCancelled?.()) {
+          setError(getErrorMessage(requestError));
+        }
+      } finally {
+        if (!target.isCancelled?.()) {
+          setIsSubmitting(false);
+        }
+      }
+    },
+    [auth],
+  );
+
   const handleLookupBeneficiary = useCallback(async () => {
     if (recoveryBlocked) {
       setError("Chưa xác định an toàn yêu cầu trước đó. Hãy kiểm tra lại dữ liệu khôi phục.");
       return;
     }
-    if (!beneficiaryId.trim() && !recipientAccountNumber.trim()) {
-      setError("Nhập số tài khoản người nhận hoặc chọn người nhận đã lưu.");
+    await performRecipientLookup({
+      accountNumber: recipientAccountNumber,
+      beneficiaryId,
+    });
+  }, [beneficiaryId, performRecipientLookup, recipientAccountNumber, recoveryBlocked]);
+
+  useEffect(() => {
+    const routeTargetKey = normalizedRouteAccountNumber
+      ? `account:${normalizedRouteAccountNumber}`
+      : normalizedRouteBeneficiaryId
+        ? `beneficiary:${normalizedRouteBeneficiaryId}`
+        : null;
+
+    if (!routeTargetKey) {
+      appliedRouteTargetRef.current = null;
       return;
     }
 
-    setIsSubmitting(true);
+    if (
+      !accessToken ||
+      isLoadingAccounts ||
+      isLoadingControlPolicy ||
+      isRestoringIntent ||
+      recoveryBlocked ||
+      intentPhase !== null ||
+      quote !== null ||
+      receipt !== null ||
+      !controlPolicy ||
+      controlPolicy.globalKillSwitch ||
+      !controlPolicy.transfersEnabled ||
+      !controlPolicy.allowlisted
+    ) {
+      return;
+    }
+
+    if (appliedRouteTargetRef.current === routeTargetKey) {
+      return;
+    }
+    appliedRouteTargetRef.current = routeTargetKey;
+
+    let cancelled = false;
+    setRecipientAccountNumber(normalizedRouteAccountNumber);
+    setBeneficiaryId(normalizedRouteAccountNumber ? "" : normalizedRouteBeneficiaryId);
+    setRecipientLookupId(null);
+    setBeneficiary(null);
+    setStep("beneficiary");
     setError(undefined);
 
-    try {
-      if (recipientAccountNumber.trim()) {
-        const response = await lookupInternalRecipient(recipientAccountNumber, auth);
-        if (response.recipient.status !== "ACTIVE") {
-          setError("Tài khoản người nhận hiện không khả dụng.");
-          return;
-        }
-        setRecipientLookupId(response.recipient.lookupId);
-        setBeneficiaryId("");
-        setBeneficiary({
-          id: response.recipient.lookupId,
-          displayName: response.recipient.accountHolderName,
-          accountHolderName: response.recipient.accountHolderName,
-          maskedAccountNumber: response.recipient.maskedAccountNumber,
-          bankName: response.recipient.bankName,
-          status: response.recipient.status,
-        });
-        setStep("amount");
-        return;
-      }
+    void performRecipientLookup({
+      accountNumber: normalizedRouteAccountNumber || undefined,
+      beneficiaryId: normalizedRouteAccountNumber ? undefined : normalizedRouteBeneficiaryId,
+      isCancelled: () => cancelled,
+    });
 
-      const response = await lookupBeneficiary(beneficiaryId, auth);
-
-      if (response.beneficiary.status !== "ACTIVE") {
-        setError("Người nhận hiện không khả dụng.");
-        return;
-      }
-
-      setBeneficiary(response.beneficiary);
-      setRecipientLookupId(null);
-      setStep("amount");
-    } catch (requestError: unknown) {
-      setError(getErrorMessage(requestError));
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [auth, beneficiaryId, recoveryBlocked, recipientAccountNumber]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    accessToken,
+    controlPolicy,
+    intentPhase,
+    isLoadingAccounts,
+    isLoadingControlPolicy,
+    isRestoringIntent,
+    normalizedRouteAccountNumber,
+    normalizedRouteBeneficiaryId,
+    performRecipientLookup,
+    quote,
+    receipt,
+    recoveryBlocked,
+  ]);
 
   const handleCreateQuote = useCallback(async () => {
     if (recoveryBlocked) {
@@ -870,281 +962,76 @@ export function TransferScreen() {
             <PrimaryButton label="Tải lại chính sách" onPress={loadControlPolicy} />
           </View>
         ) : step === "beneficiary" ? (
-          <View style={styles.formCard}>
-            {hasActiveTotp === false ? (
-              <TotpRequiredNotice
-                actionLabel="Thiết lập mã TOTP ngay"
-                message="Bạn cần cài đặt Google Authenticator để hoàn tất bước xác thực chuyển tiền."
-                testID="transfer-totp-notice"
-                title="Chưa kích hoạt mã TOTP"
-              />
-            ) : null}
-            <Text style={styles.stepTitle}>Chọn người nhận</Text>
-            <Button
-              icon="users"
-              label="Mở danh bạ người nhận"
-              onPress={() => router.push("/beneficiaries")}
-              testID="transfer-open-beneficiaries"
-              variant="secondary"
-            />
-            <TextField
-              accessibilityLabel="Số tài khoản người nhận"
-              autoCapitalize="none"
-              error={error}
-              keyboardType="number-pad"
-              label="Số tài khoản người nhận"
-              onChangeText={(value) => {
-                setRecipientAccountNumber(value.replace(/\D/g, ""));
-                setBeneficiaryId("");
-                setRecipientLookupId(null);
-                setError(undefined);
-              }}
-              placeholder="Nhập đủ 6–34 chữ số"
-              testID="transfer-beneficiary-id"
-              value={recipientAccountNumber}
-            />
-            {beneficiaryId ? (
-              <Text style={styles.description}>Người nhận đã lưu: {beneficiary?.displayName ?? beneficiaryId}</Text>
-            ) : null}
-            <PrimaryButton
-              disabled={isSubmitting}
-              label={isSubmitting ? "Đang tra cứu..." : "Tiếp tục"}
-              onPress={handleLookupBeneficiary}
-              testID="transfer-lookup-beneficiary"
-            />
-          </View>
+          <TransferBeneficiaryStep
+            beneficiary={beneficiary}
+            beneficiaryId={beneficiaryId}
+            error={error}
+            hasActiveTotp={hasActiveTotp}
+            isSubmitting={isSubmitting}
+            onChangeAccountNumber={(value) => {
+              setRecipientAccountNumber(value.replace(/\D/g, ""));
+              setBeneficiaryId("");
+              setRecipientLookupId(null);
+              setError(undefined);
+            }}
+            onLookup={handleLookupBeneficiary}
+            onOpenBeneficiaries={() => router.push("/beneficiaries")}
+            recipientAccountNumber={recipientAccountNumber}
+          />
         ) : step === "amount" ? (
-          <View style={styles.formCard}>
-            <Text style={styles.stepTitle}>Nhập số tiền</Text>
-
-            {/* Thông tin người nhận trực quan */}
-            <View style={styles.beneficiaryBadge}>
-              <View style={styles.beneficiaryIconBlock}>
-                <Text style={{ fontSize: 20 }}>👤</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.beneficiaryNameLabel}>{beneficiary?.displayName}</Text>
-                <Text style={styles.beneficiarySubLabel}>
-                  {beneficiary?.maskedAccountNumber ?? ""}
-                  {beneficiary?.bankName ? ` · ${beneficiary.bankName}` : " · Ngân hàng NOVA"}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Tài khoản nguồn</Text>
-              <Text style={styles.summaryValue}>
-                {sourceAccount?.maskedNumber ?? "Chưa chọn"}
-              </Text>
-            </View>
-
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Số dư khả dụng</Text>
-              <Text style={[styles.summaryValue, { color: colors.primary, fontWeight: "700" }]}>
-                {sourceAccount ? formatVndMinor(sourceAccount.currentBalance.amountMinor) : "—"}
-              </Text>
-            </View>
-
-            <TextField
-              accessibilityLabel="Số tiền chuyển"
-              error={error || (isExceedingBalance ? "Số tiền chuyển vượt quá số dư khả dụng." : undefined)}
-              keyboardType="number-pad"
-              helperText="Nhập số tiền bằng VND, không dùng dấu chấm hoặc dấu phẩy."
-              label="Số tiền (VND)"
-              onChangeText={(value) => {
-                setAmountMinor(value.replace(/\D/g, ""));
-                setError(undefined);
-              }}
-              placeholder="Ví dụ: 100000"
-              testID="transfer-amount"
-              value={amountMinor}
-            />
-
-            {/* Xem trước số tiền định dạng và Đọc số thành chữ */}
-            {amountMinor && amountMinor !== "0" ? (
-              <View style={styles.amountPreviewBox}>
-                <Text style={styles.amountFormattedText}>{formatVndMinor(amountMinor)}</Text>
-                {formatVndWords(amountMinor) ? (
-                  <Text style={styles.amountWordsText}>{formatVndWords(amountMinor)}</Text>
-                ) : null}
-              </View>
-            ) : null}
-
-            {/* Nút chọn nhanh số tiền */}
-            <View style={styles.quickAmountContainer}>
-              <Text style={styles.quickAmountTitle}>Chọn nhanh số tiền:</Text>
-              <View style={styles.chipsRow}>
-                {QUICK_AMOUNTS.map((chip) => (
-                  <Pressable
-                    key={chip.label}
-                    onPress={() => handleAddAmount(chip.value)}
-                    style={({ pressed }) => [styles.chipButton, pressed && styles.chipPressed]}
-                  >
-                    <Text style={styles.chipText}>{chip.label}</Text>
-                  </Pressable>
-                ))}
-                {sourceAccount ? (
-                  <Pressable
-                    onPress={handleSetAllBalance}
-                    style={({ pressed }) => [styles.chipButton, styles.allBalanceChip, pressed && styles.chipPressed]}
-                  >
-                    <Text style={[styles.chipText, styles.allBalanceText]}>Toàn bộ số dư</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            </View>
-
-            <PrimaryButton
-              disabled={isSubmitting || isExceedingBalance || !amountMinor || amountMinor === "0"}
-              label={isSubmitting ? "Đang tính phí..." : "Kiểm tra phí giao dịch"}
-              onPress={handleCreateQuote}
-              testID="transfer-create-quote"
-            />
-          </View>
+          <TransferAmountStep
+            accounts={accounts}
+            amountMinor={amountMinor}
+            beneficiary={beneficiary}
+            error={error}
+            isExceedingBalance={isExceedingBalance}
+            isSubmitting={isSubmitting}
+            onAddAmount={handleAddAmount}
+            onChangeAmount={(value) => {
+              setAmountMinor(value.replace(/\D/g, ""));
+              setError(undefined);
+            }}
+            onCreateQuote={handleCreateQuote}
+            onSelectSourceAccount={(nextId) => {
+              setSourceAccountId(nextId);
+              setError(undefined);
+            }}
+            onSetAllBalance={handleSetAllBalance}
+            sourceAccount={sourceAccount}
+          />
         ) : step === "review" ? (
-          <View style={styles.formCard}>
-            <Text style={styles.stepTitle}>Kiểm tra giao dịch</Text>
-            <View style={styles.reviewCard}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Người nhận</Text>
-                <Text style={styles.summaryValue}>{quote?.beneficiary.displayName}</Text>
-              </View>
-            <Text style={styles.description}>
-              {beneficiary?.accountHolderName && beneficiary.displayName !== beneficiary.accountHolderName
-                ? `${beneficiary.accountHolderName} · `
-                : ""}
-              {beneficiary?.maskedAccountNumber ?? ""}
-              {beneficiary?.bankName ? ` · ${beneficiary.bankName}` : ""}
-            </Text>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Số tiền</Text>
-                <Text style={styles.summaryValue}>
-                  {quote ? formatVndMinor(quote.amount.amountMinor) : "—"}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Phí</Text>
-                <Text style={styles.summaryValue}>
-                  {quote ? formatVndMinor(quote.fee.amountMinor) : "—"}
-                </Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.totalLabel}>Tổng ghi nợ</Text>
-                <Text style={styles.totalValue}>
-                  {quote ? formatVndMinor(quote.totalDebit.amountMinor) : "—"}
-                </Text>
-              </View>
-            </View>
-            {error ? (
-              isTotpNotEnrolledError(error) ? (
-                <TotpRequiredNotice
-                  actionLabel="Thiết lập mã TOTP ngay"
-                  message={error}
-                  testID="transfer-review-totp-notice"
-                />
-              ) : (
-                <Text style={styles.errorText}>{error}</Text>
-              )
-            ) : null}
-            <PrimaryButton
-              disabled={isSubmitting}
-              label={isSubmitting ? "Đang chuẩn bị..." : "Tiếp tục xác thực"}
-              onPress={handleContinueToStepUp}
-              testID="transfer-review-confirm"
-            />
-          </View>
+          <TransferReviewStep
+            beneficiary={beneficiary}
+            error={error}
+            isSubmitting={isSubmitting}
+            isTotpError={Boolean(error && isTotpNotEnrolledError(error))}
+            onContinueToStepUp={handleContinueToStepUp}
+            quote={quote}
+          />
         ) : step === "stepUp" ? (
-          <View style={styles.formCard}>
-            <Text style={styles.stepTitle}>Xác thực giao dịch</Text>
-            <Text style={styles.description}>
-              Mở ứng dụng Google Authenticator trên điện thoại để lấy mã TOTP gồm 6 chữ số.
-            </Text>
-            <TextField
-              accessibilityLabel="Mã xác thực bước hai"
-              autoCapitalize="none"
-              editable={!manualReviewCode}
-              error={error}
-              label="Mã TOTP"
-              onChangeText={(value) => {
-                setStepUpProof(value);
-                setError(undefined);
-              }}
-              placeholder="000000"
-              secureTextEntry
-              testID="transfer-step-up-code"
-              value={stepUpProof}
-            />
-            {manualReviewCode ? (
-              <Text style={styles.errorText}>
-                Mã đối soát: {manualReviewCode}
-              </Text>
-            ) : null}
-            {error ? (
-              isTotpNotEnrolledError(error) ? (
-                <TotpRequiredNotice
-                  actionLabel="Thiết lập mã TOTP ngay"
-                  message={error}
-                  testID="transfer-stepup-totp-notice"
-                />
-              ) : (
-                <Text style={styles.errorText}>{error}</Text>
-              )
-            ) : null}
-            {isTransferChallengeUnavailable ? (
-              <PrimaryButton
-                disabled={isSubmitting || Boolean(manualReviewCode)}
-                label={
-                  manualReviewCode
-                    ? "Đang chờ đối soát"
-                    : isSubmitting
-                      ? "Đang tạo lại..."
-                      : "Tạo mã xác thực mới"
-                }
-                onPress={handleRenewTransferChallenge}
-                testID="transfer-step-up-renew"
-              />
-            ) : null}
-            <PrimaryButton
-              disabled={
-                isSubmitting ||
-                isTransferChallengeUnavailable ||
-                Boolean(manualReviewCode)
-              }
-              label={
-                manualReviewCode
-                  ? "Không thể gửi lại"
-                  : isSubmitting
-                    ? "Đang gửi..."
-                    : isTransferChallengeUnavailable
-                      ? "Mã xác thực đã hết hạn"
-                      : "Gửi giao dịch"
-              }
-              onPress={handleSubmitTransfer}
-              testID="transfer-submit"
-            />
-          </View>
+          <TransferStepUpStep
+            error={error}
+            isSubmitting={isSubmitting}
+            isTotpError={Boolean(error && isTotpNotEnrolledError(error))}
+            isTransferChallengeUnavailable={isTransferChallengeUnavailable}
+            manualReviewCode={manualReviewCode}
+            onChangeProof={(value) => {
+              setStepUpProof(value);
+              setError(undefined);
+            }}
+            onRenewChallenge={handleRenewTransferChallenge}
+            onSubmitTransfer={handleSubmitTransfer}
+            stepUpProof={stepUpProof}
+          />
         ) : (
-          <View style={styles.formCard}>
-            <Text style={styles.stepTitle}>Kết quả giao dịch</Text>
-            <Text style={styles.resultTitle} testID="transfer-result-status">
-              {receipt ? getReceiptStatusLabel(receipt.status) : "Chưa có kết quả"}
-            </Text>
-            <Text style={styles.description}>
-              Mã tham chiếu: {receipt?.reference ?? "—"}
-            </Text>
-            <Text style={styles.description}>
-              Nếu giao dịch đang xử lý, bạn có thể cập nhật tại đây hoặc kiểm tra lại trong lịch sử.
-            </Text>
-            {receipt?.status === "PENDING" || (!receipt && recoveryTransferId) ? (
-              <PrimaryButton
-                disabled={isSubmitting}
-                label={isSubmitting ? "Đang cập nhật..." : "Cập nhật trạng thái"}
-                onPress={handleRefreshTransferStatus}
-                testID="transfer-status-refresh"
-              />
-            ) : null}
-            <PrimaryButton disabled={isSubmitting} label="Về trang chủ" onPress={handleGoHome} />
-          </View>
+          <TransferResultStep
+            isSubmitting={isSubmitting}
+            onGoHome={handleGoHome}
+            onRefreshStatus={handleRefreshTransferStatus}
+            receipt={receipt}
+            recoveryTransferId={recoveryTransferId}
+            statusLabel={receipt ? getReceiptStatusLabel(receipt.status) : "Chưa có kết quả"}
+          />
         )}
       </ScrollView>
     </Screen>
@@ -1160,151 +1047,12 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.lg,
   },
-  description: {
-    ...typography.body,
-    color: colors.muted,
-  },
   centerState: {
     minHeight: 160,
     alignItems: "center",
     justifyContent: "center",
   },
-  formCard: {
-    gap: spacing.md,
-    padding: spacing.mlg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    backgroundColor: colors.surface,
-    ...shadows.card,
-  },
-  stepTitle: {
-    ...typography.heading,
-    color: colors.text,
-  },
-  summaryRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: spacing.md,
-  },
-  summaryLabel: {
-    ...typography.body,
-    color: colors.muted,
-  },
-  summaryValue: {
-    flex: 1,
-    ...typography.bodyStrong,
-    color: colors.text,
-    textAlign: "right",
-  },
-  reviewCard: {
-    gap: spacing.md,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.background,
-  },
-  totalLabel: {
-    ...typography.bodyStrong,
-    color: colors.text,
-  },
-  totalValue: {
-    flex: 1,
-    ...typography.subheading,
-    color: colors.primary,
-    textAlign: "right",
-  },
-  errorText: {
-    ...typography.body,
-    padding: spacing.smd,
-    borderRadius: radius.sm,
-    color: colors.danger,
-    backgroundColor: colors.dangerSoft,
-  },
-  resultTitle: {
-    ...typography.title,
-    color: colors.text,
-  },
-  beneficiaryBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
-    padding: spacing.md,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  beneficiaryIconBlock: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.background,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  beneficiaryNameLabel: {
-    ...typography.bodyStrong,
-    color: colors.text,
-  },
-  beneficiarySubLabel: {
-    ...typography.caption,
-    color: colors.muted,
-    marginTop: 2,
-  },
-  amountPreviewBox: {
-    padding: spacing.sm,
-    backgroundColor: colors.background,
-    borderRadius: radius.sm,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
-  },
-  amountFormattedText: {
-    ...typography.subheading,
-    color: colors.primary,
-  },
-  amountWordsText: {
-    ...typography.caption,
-    color: colors.muted,
-    fontStyle: "italic",
-    marginTop: 2,
-  },
-  quickAmountContainer: {
-    gap: spacing.xs,
-  },
-  quickAmountTitle: {
-    ...typography.caption,
-    color: colors.muted,
-  },
-  chipsRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs,
-  },
-  chipButton: {
-    paddingVertical: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  chipPressed: {
-    opacity: 0.7,
-    backgroundColor: colors.border,
-  },
-  chipText: {
-    ...typography.caption,
-    color: colors.text,
-    fontWeight: "500",
-  },
-  allBalanceChip: {
-    borderColor: colors.primary,
-  },
-  allBalanceText: {
-    color: colors.primary,
-    fontWeight: "600",
-  },
+  formCard: stepStyles.formCard,
+  stepTitle: stepStyles.stepTitle,
+  errorText: stepStyles.errorText,
 });

@@ -16,7 +16,7 @@ Checklist kiểm thử thủ công và hướng dẫn nghiệm thu thực tế c
   - **OPERATIONS**: Có thể tra cứu khách hàng, xem giao dịch/outbox/jobs, tạo yêu cầu nghiệp vụ và tiếp nhận hồ sơ KYC/Credit. Không có quyền `audit.read` hoặc quyền duyệt nên không thấy *Approval Inbox* và *Audit*.
   - **ADMIN**: Tạo trực tiếp tài khoản OPERATIONS ở *Staff / Roles* bằng mật khẩu ban đầu và khóa Authenticator đã xác minh một lần; tài khoản được tạo ở trạng thái `ACTIVE`, không cần email mời hoặc bước *Approval Inbox*. Operations đăng nhập sau đó chỉ cần mật khẩu. Thay đổi role và vô hiệu hóa staff vẫn theo luồng yêu cầu/phê duyệt; ADMIN mở *Approval Inbox*, xem/xuất audit và duyệt yêu cầu đủ permission sau step-up MFA.
   - ADMIN có thể tự duyệt yêu cầu do mình tạo nếu có đủ quyền và đã xác thực Step-up MFA; không cần tài khoản ADMIN thứ hai.
-- [x] **Kích hoạt Nhân viên (`/admin/activate`)**: Nhập token mời từ URL, đặt mật khẩu mới, nạp khóa TOTP bí mật; token mời được dọn sạch khỏi thanh địa chỉ trình duyệt bằng `history.replaceState` ngay sau khi nạp.
+- [x] **Kích hoạt Nhân viên (URL `/admin/activate`, gọi API `POST /admin/auth/activate`)**: Nhập token mời từ URL, đặt mật khẩu mới, nạp khóa TOTP bí mật; token mời được dọn sạch khỏi thanh địa chỉ trình duyệt bằng `history.replaceState` ngay sau khi nạp.
 
 ---
 

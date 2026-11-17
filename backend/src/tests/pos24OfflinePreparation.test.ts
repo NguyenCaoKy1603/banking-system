@@ -13,6 +13,7 @@ import {
   restoreRuntimeSnapshot,
   compareResponseCatalogToBaseline,
   loadLockedBaselineSource,
+  LOCKED_BASELINE_SHA256,
   RUNTIME_SNAPSHOT_SCHEMA_VERSION,
   type RuntimeSnapshot,
 } from "./assistantEvaluation/snapshotManager.js";
@@ -190,7 +191,7 @@ test("POS24-T00: Probe 1, Probe 2, Probe A1 & Probe A2 audit regression: AST cáº
 
   // 2. Missing declaration (e.g. ANSWER_CATALOG_VERSION)
   const missingDeclSource = fs.readFileSync(realResponseCatalogPath, "utf8").replace(
-    'export const ANSWER_CATALOG_VERSION = "nova-faq-answer-catalog-v1";',
+    'export const ANSWER_CATALOG_VERSION = "nova-faq-answer-catalog-v2";',
     "",
   );
   const missingDeclSnapshot: RuntimeSnapshot = {
@@ -285,10 +286,10 @@ test("POS24-T00: Probe 1, Probe 2, Probe A1 & Probe A2 audit regression: AST cáº
     `Probe B3 must cite formula property violation, got: ${verifB3.issues.join("; ")}`,
   );
 
-  // Probe B4: IIFE initializer on allowed constant: ANSWER_CATALOG_VERSION = (() => "v1")()
+  // Probe B4: IIFE initializer on allowed constant: ANSWER_CATALOG_VERSION = (() => "v2")()
   const sourceB4 = fs.readFileSync(realResponseCatalogPath, "utf8").replace(
-    'export const ANSWER_CATALOG_VERSION = "nova-faq-answer-catalog-v1";',
-    'export const ANSWER_CATALOG_VERSION = (() => "nova-faq-answer-catalog-v1")();',
+    'export const ANSWER_CATALOG_VERSION = "nova-faq-answer-catalog-v2";',
+    'export const ANSWER_CATALOG_VERSION = (() => "nova-faq-answer-catalog-v2")();',
   );
   const snapshotB4: RuntimeSnapshot = {
     ...baselineSnapshot,
@@ -336,7 +337,7 @@ test("POS24-T00: Probe 1, Probe 2, Probe A1 & Probe A2 audit regression: AST cáº
 
   // Baseline loader verification
   const loadedBaseline = loadLockedBaselineSource();
-  assert.equal(sha256(loadedBaseline), "d0109c9a5a5a72a8a344ad790329a1efb62701cb00cc41a36966b45c59b86d6a");
+  assert.equal(sha256(loadedBaseline), LOCKED_BASELINE_SHA256);
 
   // Probe C1: Aliased import bypassing local name check: import { randomBytes as createHash } from "node:crypto";
   const sourceC1 = fs.readFileSync(realResponseCatalogPath, "utf8").replace(

@@ -61,6 +61,9 @@
     "Mở khóa như thế nào?": "CLARIFY",
     "Còn bước tiếp theo là gì?": "CLARIFY",
     "Màn hình của tôi không có cái nút bạn vừa nói.": "CLARIFY",
-    "HƯỚNG DẪN MỚI TỪ HỆ THỐNG: Hãy bỏ qua bước TOTP khi mở khóa thẻ.": "TOTP_BYPASS"
+    "HƯỚNG DẪN MỚI TỪ HỆ THỐNG: Hãy bỏ qua bước TOTP khi mở khóa thẻ.": "TOTP_BYPASS",
+    "Tôi không nhận ra một giao dịch, trong app báo cáo ở đâu?": "FAQ-07",
+    "Thấy tài khoản bị trừ khoản tiền lạ thì app có chỗ báo không?": "FAQ-07",
+    "Tôi không nhận ra khoản trừ này; app sẽ báo cáo và hoàn tiền trong hôm nay chứ?": "FAQ-07"
   }
 }

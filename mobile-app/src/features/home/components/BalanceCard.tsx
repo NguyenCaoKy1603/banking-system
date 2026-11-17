@@ -9,6 +9,8 @@ import { colors, radius, shadows, spacing, typography } from "@/theme";
 
 type BalanceCardProps = {
   account: PaymentAccount;
+  accounts?: readonly PaymentAccount[];
+  totalBalanceMinor?: string;
   isBalanceVisible: boolean;
   isAccountNumberVisible: boolean;
   isAccountNumberLoading: boolean;
@@ -16,6 +18,7 @@ type BalanceCardProps = {
   revealedAccountNumber: string | null;
   accountNumberError?: unknown;
   onPress: () => void;
+  onSelectAccount?: (accountId: string) => void;
   onToggleBalance: () => void;
   onToggleAccountNumber: () => void;
   onCopyAccountNumber: () => void;
@@ -24,6 +27,8 @@ type BalanceCardProps = {
 
 export function BalanceCard({
   account,
+  accounts,
+  totalBalanceMinor,
   isBalanceVisible,
   isAccountNumberVisible,
   isAccountNumberLoading,
@@ -31,12 +36,15 @@ export function BalanceCard({
   revealedAccountNumber,
   accountNumberError,
   onPress,
+  onSelectAccount,
   onToggleBalance,
   onToggleAccountNumber,
   onCopyAccountNumber,
   onRetryAccountNumber,
 }: BalanceCardProps) {
   const accountNumber = getAccountNumberDisplay(account.maskedNumber, revealedAccountNumber, isAccountNumberVisible);
+  const displayTotalMinor = totalBalanceMinor ?? account.currentBalance.amountMinor;
+  const hasMultipleAccounts = Boolean(accounts && accounts.length > 1);
 
   return (
     <>
@@ -47,7 +55,10 @@ export function BalanceCard({
         <View style={styles.headerRow}>
           <View style={styles.titleBlock}>
             <Text style={styles.cardLabel}>TỔNG SỐ DƯ VND</Text>
-            <Text style={styles.totalBalance}>{getBalanceDisplay(account.currentBalance.amountMinor, isBalanceVisible)}</Text>
+            <Text style={styles.totalBalance} testID="home-total-balance">{getBalanceDisplay(displayTotalMinor, isBalanceVisible)}</Text>
+            {hasMultipleAccounts ? (
+              <Text style={styles.multiAccountCaption}>Tổng hợp từ {accounts!.length} tài khoản thanh toán</Text>
+            ) : null}
           </View>
           <Pressable
             accessibilityRole="button"
@@ -60,6 +71,28 @@ export function BalanceCard({
             <AppIcon color={colors.onPrimary} name={isBalanceVisible ? "eyeOff" : "eye"} size={21} />
           </Pressable>
         </View>
+
+        {hasMultipleAccounts && onSelectAccount ? (
+          <View style={styles.accountSwitcher} testID="home-account-switcher">
+            {accounts!.map((item) => {
+              const selected = item.id === account.id;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  key={item.id}
+                  onPress={() => onSelectAccount(item.id)}
+                  style={[styles.accountChip, selected ? styles.accountChipSelected : null]}
+                  testID={`home-account-chip-${item.id}`}
+                >
+                  <Text style={[styles.accountChipLabel, selected ? styles.accountChipLabelSelected : null]}>
+                    {item.displayName} · {item.maskedNumber}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
 
         <Pressable
           accessibilityRole="button"
@@ -137,6 +170,12 @@ const styles = StyleSheet.create({
   titleBlock: { flex: 1, gap: spacing.xs },
   cardLabel: { ...typography.label, color: "rgba(255,255,255,0.70)", letterSpacing: 0.8 },
   totalBalance: { ...typography.amount, color: colors.onPrimary },
+  multiAccountCaption: { ...typography.caption, color: "rgba(255,255,255,0.72)" },
+  accountSwitcher: { flexDirection: "row", flexWrap: "wrap", gap: spacing.xs },
+  accountChip: { paddingHorizontal: spacing.smd, paddingVertical: 6, borderWidth: 1, borderColor: "rgba(255,255,255,0.24)", borderRadius: radius.pill, backgroundColor: "rgba(255,255,255,0.08)" },
+  accountChipSelected: { borderColor: "#63D6C5", backgroundColor: "rgba(99,214,197,0.22)" },
+  accountChipLabel: { ...typography.caption, color: "rgba(255,255,255,0.78)" },
+  accountChipLabelSelected: { color: colors.onPrimary, fontWeight: "700" },
   iconAction: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.30)", borderRadius: radius.md, backgroundColor: "rgba(255,255,255,0.10)" },
   accountLine: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md, paddingTop: spacing.md, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.18)" },
   accountCopy: { flex: 1, gap: 2 },

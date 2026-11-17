@@ -25,13 +25,19 @@ import type {
   TotpEnrollmentResponse,
 } from "@/features/auth/types/auth";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import {
+  clearPendingMfaChallenge,
+  clearPendingTotpEnrollment,
+  loadPendingMfaChallenge,
+  loadPendingTotpEnrollment,
+  type PendingMfaLifecycleAction,
+  savePendingMfaChallenge,
+  savePendingTotpEnrollment,
+} from "@/features/auth/storage/mfaEnrollmentMemoryCache";
 import { ApiError } from "@/services/api/ApiError";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
-type PendingAction =
-  | { kind: "remove"; credential: MfaCredentialSummary }
-  | { kind: "rotate" }
-  | { kind: "enroll" };
+type PendingAction = PendingMfaLifecycleAction;
 
 function authenticatedOptions(
   accessToken: string,
@@ -55,10 +61,16 @@ export function MfaMethodsScreen() {
   const { completeMfaRevocation, deviceId, refreshAccessToken, session } = useAuth();
   const [credentials, setCredentials] = useState<MfaCredentialSummary[]>([]);
   const [password, setPassword] = useState("");
-  const [enrollment, setEnrollment] = useState<TotpEnrollmentResponse | null>(null);
+  const [enrollment, setEnrollment] = useState<TotpEnrollmentResponse | null>(() =>
+    loadPendingTotpEnrollment(session),
+  );
   const [confirmationCode, setConfirmationCode] = useState("");
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
-  const [challenge, setChallenge] = useState<AuthChallengeResponse | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
+    () => loadPendingMfaChallenge(session)?.action ?? null,
+  );
+  const [challenge, setChallenge] = useState<AuthChallengeResponse | null>(
+    () => loadPendingMfaChallenge(session)?.challenge ?? null,
+  );
   const [challengeCode, setChallengeCode] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(false);
@@ -120,6 +132,7 @@ export function MfaMethodsScreen() {
     setError(undefined);
     try {
       const response = await beginTotpEnrollment({ password }, auth);
+      savePendingTotpEnrollment(session, response);
       setEnrollment(response);
       setConfirmationCode("");
     } catch (enrollError: unknown) {
@@ -141,6 +154,7 @@ export function MfaMethodsScreen() {
         credentialId: enrollment.credentialId,
         code: confirmationCode,
       }, auth);
+      clearPendingTotpEnrollment();
       setEnrollment(null);
       setConfirmationCode("");
       setPassword("");
@@ -167,6 +181,7 @@ export function MfaMethodsScreen() {
     setError(undefined);
     try {
       const response = await createMfaChallenge({ purpose, method }, auth);
+      savePendingMfaChallenge(session, action, response);
       setPendingAction(action);
       setChallenge(response);
       setChallengeCode("");
@@ -184,6 +199,7 @@ export function MfaMethodsScreen() {
     try {
       const purpose = pendingAction.kind === "remove" ? "MFA_FACTOR_REMOVAL" : "MFA_FACTOR_CHANGE";
       const response = await createMfaChallenge({ purpose, method: "EMAIL_OTP" }, auth);
+      savePendingMfaChallenge(session, pendingAction, response);
       setChallenge(response);
       setChallengeCode("");
     } catch (switchError: unknown) {
@@ -194,6 +210,7 @@ export function MfaMethodsScreen() {
   }
 
   function handleCancelLifecycleAction() {
+    clearPendingMfaChallenge();
     setPendingAction(null);
     setChallenge(null);
     setChallengeCode("");
@@ -218,9 +235,11 @@ export function MfaMethodsScreen() {
           challengeId: challenge.challengeId,
           code: challengeCode,
         }, auth);
+        clearPendingMfaChallenge();
         setPendingAction(null);
         setChallenge(null);
         setChallengeCode("");
+        savePendingTotpEnrollment(session, response);
         setEnrollment(response);
         setConfirmationCode("");
       } else if (pendingAction.kind === "remove") {
@@ -229,6 +248,7 @@ export function MfaMethodsScreen() {
           challengeId: challenge.challengeId,
           code: challengeCode,
         }, auth);
+        clearPendingMfaChallenge();
         setPendingAction(null);
         setChallenge(null);
         setChallengeCode("");
@@ -242,6 +262,7 @@ export function MfaMethodsScreen() {
           challengeId: challenge.challengeId,
           code: challengeCode,
         }, auth);
+        clearPendingMfaChallenge();
         setPendingAction(null);
         setChallenge(null);
         setChallengeCode("");
@@ -253,6 +274,7 @@ export function MfaMethodsScreen() {
     } catch (actionError: unknown) {
       setError(getMessage(actionError, "Không thể hoàn tất thay đổi MFA."));
       if (isTerminalChallengeError(actionError)) {
+        clearPendingMfaChallenge();
         setPendingAction(null);
         setChallenge(null);
         setChallengeCode("");
@@ -415,6 +437,18 @@ export function MfaMethodsScreen() {
               label="Kích hoạt Authenticator"
               onPress={() => void handleConfirmEnrollment()}
               testID="mfa-enroll-confirm"
+            />
+            <Button
+              disabled={isLoading}
+              label="Hủy thiết lập"
+              onPress={() => {
+                clearPendingTotpEnrollment();
+                setEnrollment(null);
+                setConfirmationCode("");
+                setError(undefined);
+              }}
+              testID="mfa-enroll-cancel"
+              variant="ghost"
             />
           </View>
         ) : null}

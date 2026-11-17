@@ -2,15 +2,15 @@
   "$schema": "assistant-pos24-reference-catalog-v1",
   "description": "Locked reference catalog for POS-24 offline evaluator. Immutable answers and answerHashes against which all candidate snapshots are verified.",
   "provenance": {
-    "sourceFileSha256": "d0109c9a5a5a72a8a344ad790329a1efb62701cb00cc41a36966b45c59b86d6a",
+    "sourceFileSha256": "8f119ce37e0db97816dad987cf231115db90b492d359f6e7bef53a0c61c0c74d",
     "pos23BaselineSnapshotSha256": "df5fd88ccbbf84624b83fd03e0f07bd2c83121ab8cda010efb8a44abdfb7c156",
     "selectorPromptHash": "32d40a43d5e67de9f1c126be46d6e8ec88091e0c6d3dcb61e62f67cef95b5418",
-    "answerCatalogHash": "7a5560870f47c2dd7da685869a97391604a100d1063813e5b22ba82c792ab85d",
-    "catalogVersion": "nova-faq-answer-catalog-v1",
-    "faqVersion": "help-faq-v0.2",
-    "faqHash": "b8e82a449770e6b02147be522411d2117efbf4b4c8fabe80f9aabbaacc779525",
+    "answerCatalogHash": "26d9ceda93cad1fdb6466c8e9beaad3eda6acaa37f2baa7ee7f07efe9d245246",
+    "catalogVersion": "nova-faq-answer-catalog-v2",
+    "faqVersion": "help-faq-v0.3",
+    "faqHash": "1b58a2677e497ec5f17c924bb08ac6a650fe0bf3d93f0653a3ee19e35af0a42f",
     "promptVersion": "help-prompt-v0.4",
-    "promptHash": "c27aa7b1e95a9ee98106f2fe43ba761c195b1b89a190c41f59c45ed3deb2bcb3",
+    "promptHash": "3c2be0964cb47919d04534efab31767e60d1946b2d8926502049dc5314f08e0a",
     "extractedAt": "2026-09-24T03:50:00.000Z"
   },
   "entriesCount": 25,
@@ -80,10 +80,10 @@
       "sourceFaqIds": [
         "FAQ-07"
       ],
-      "selectionHint": "Gửi báo cáo cho giao dịch mà người dùng không nhận ra.",
-      "answer": "Trong “Lịch sử giao dịch”, mở giao dịch cần báo cáo, vào “Chi tiết giao dịch” và chọn “Báo cáo giao dịch đáng ngờ”. Nhập lý do từ 5 đến 1.000 ký tự, chọn “Gửi báo cáo” và chờ kết quả. Việc tiếp nhận báo cáo không đồng nghĩa với hoàn tiền tự động hoặc cam kết thời hạn hoàn tiền.",
-      "answerHash": "4f7f0cfcb9d904187b80f312c4a1547f419b1c0956d3cf1b0d90bdef3724ac3e",
-      "sourceNote": "FAQ-07, phần Hướng dẫn thao tác và giới hạn."
+      "selectionHint": "Kiểm tra giao dịch người dùng không nhận ra; giải thích ứng dụng không có chức năng báo cáo và không thể xác minh gian lận.",
+      "answer": "Trong “Lịch sử giao dịch”, mở giao dịch để xem “Chi tiết giao dịch” và trạng thái. Ứng dụng tham chiếu này hiện không có chức năng báo cáo giao dịch và không thể kết luận giao dịch là gian lận. Việc chưa nhận được tiền hoặc trạng thái “Đang xử lý” chưa chứng minh giao dịch thất bại; xem hướng dẫn trạng thái theo FAQ-13. Nếu giao dịch thuộc ngân hàng thật và bạn nghi ngờ giao dịch trái phép, liên hệ ngân hàng qua kênh chính thức. Trợ lý không thể xác minh hoặc bảo đảm hoàn tiền.",
+      "answerHash": "7ae71b817e939ec8a153a2dfe735e72e268ba8d89f00ee36ec41fb2da603662c",
+      "sourceNote": "FAQ-07, phần kiểm tra giao dịch và giới hạn."
     },
     {
       "id": "FAQ-08",

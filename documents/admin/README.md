@@ -12,10 +12,6 @@ Admin Web và Admin API là một control plane riêng với staff session, cook
 | [threat-model.md](threat-model.md) | Threats và controls của Admin |
 | [runbook.md](runbook.md) | Local setup và thao tác vận hành reference |
 | [manual-test.md](manual-test.md) | Manual checks và scope của test report |
-| [p0-status.md](p0-status.md) | Snapshot tiến độ P0 |
-| [admin-web-improvement-plan.md](admin-web-improvement-plan.md) | Kế hoạch theo thời điểm |
-| [admin-web-improvement-report.md](admin-web-improvement-report.md) | Báo cáo cải thiện theo thời điểm |
-| [e2e-evidence.md](e2e-evidence.md) | Evidence lịch sử; các E2E runner đã gỡ khỏi source ngày 2026-10-11 |
 
 ## Source anchors
 

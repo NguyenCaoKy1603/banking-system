@@ -4,7 +4,7 @@
 
 Mỗi báo cáo chỉ chứng minh đúng commit/build, database, environment, thiết bị và test layer được ghi trong báo cáo. Unit, HTTP integration, database disposable, emulator, thiết bị thật và staging là các mức evidence khác nhau.
 
-Các test E2E/runner/fixture đã bị gỡ khỏi source, package scripts và CI ngày 2026-10-11. Reports E2E cũ được giữ làm lịch sử; không chạy lại hoặc mô tả như một gate đang có. Task tài liệu này không chạy test/build.
+Các test E2E/runner/fixture cũ đã bị gỡ khỏi source, package scripts và CI ngày 2026-10-11. Không dùng các kịch bản hoặc lệnh E2E cũ làm gate hiện hành.
 
 ## Quality gates theo thành phần
 
@@ -18,16 +18,11 @@ Các test E2E/runner/fixture đã bị gỡ khỏi source, package scripts và C
 
 Danh sách trên là cách tổ chức gate, không phải kết quả của lượt rà soát này. Đọc package scripts hiện hành và root AGENTS.md trước khi chạy.
 
-## Evidence hiện có trong hồ sơ
+## Hướng dẫn kiểm thử hiện có
 
-| Hồ sơ | Dùng để |
+| Tài liệu | Dùng để |
 | --- | --- |
-| backend-test-report.md, test-report.md | Các lượt test Backend theo snapshot cụ thể |
-| device-evidence.md | Bằng chứng device/emulator đã lưu; kiểm tra build và ngày |
-| staging-readiness/ | PostgreSQL, relational-v2, local hardening và cutover evidence |
-| stage1-* và stage2-* | Reports theo giai đoạn lịch sử; không tự động đại diện current source |
-| release-candidate/v1.0.0-thesis-rc.1/ | Release candidate snapshot cũ; không tuyên bố là artifact hiện tại |
-| backup-restore/ | Rehearsal local dated; không chứng minh cloud backup/restore đang vận hành |
+| [mfa-runbook.md](mfa-runbook.md) | Hướng dẫn kiểm thử luồng xác thực đa yếu tố (MFA / TOTP) |
 
 ## Database safety
 

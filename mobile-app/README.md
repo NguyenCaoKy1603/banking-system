@@ -105,7 +105,7 @@ local với biến URL staging. Có thể thay EAS bằng
 Android release build local miễn là APK được ký, có SHA-256 và kết nối đúng
 staging URL. Checklist pilot nằm trong [`documents/mobile-pilot-runbook.md`](../documents/mobile-pilot-runbook.md).
 Theo yêu cầu ngày 2026-10-11, các flow Maestro và lệnh chạy/kiểm tra E2E của Mobile đã được gỡ. Báo cáo chạy trước đây trong `documents/05-testing` chỉ là bằng chứng lịch sử; các lệnh E2E cũ không còn dùng được.
-Scope/threat model/data classification nằm trong [`documents/architecture/banking-mvp-scope-and-risk.md`](../documents/architecture/banking-mvp-scope-and-risk.md).
+Scope/threat model/data classification nằm trong [`documents/02-design/architecture-and-scope.md`](../documents/02-design/architecture-and-scope.md).
 
 ## Kiến trúc dự kiến
 

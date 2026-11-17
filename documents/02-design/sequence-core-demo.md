@@ -79,7 +79,7 @@ sequenceDiagram
   participant CAT as Verified answer catalog
 
   C->>M: Nhập câu hỏi
-  M->>API: POST assistant/help
+  M->>API: POST /api/v1/assistant/help
   API->>H: Auth/device/body/deadline checks
   H->>H: Sensitive-input filter
   alt deterministic match

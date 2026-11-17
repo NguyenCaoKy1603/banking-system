@@ -1,6 +1,6 @@
 # ERD phần schema phục vụ demo cốt lõi
 
-Đây là ERD rút gọn, không phải toàn bộ schema 001–040. Quan hệ và tên bảng được
+Đây là ERD rút gọn, không phải toàn bộ schema 001–044. Quan hệ và tên bảng được
 đối chiếu với các migration `001_banking_mvp.sql`, `006_relational_v2_foundation.sql`,
 `008_transfer_relational_v2.sql`, `011_registration_recovery.sql`,
 `019_admin_control_plane.sql`, `020_admin_case_operations.sql` và

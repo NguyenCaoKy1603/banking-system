@@ -2,10 +2,9 @@
 
 Phiên bản: **help-prompt-v0.4** — Ngày cập nhật: **2026-09-23**.  
 Trạng thái: **Đã rà soát tĩnh; chưa đánh giá bằng model thật**.  
-Đối chiếu mã nguồn tại commit HEAD: `9c585ce336ee5867557f89862bc8e07be3c0ca83`.  
-Tài liệu tri thức nguồn: [`assistant-help-faq.md`](assistant-help-faq.md) (phiên bản `help-faq-v0.2`).  
-Kế hoạch đánh giá kỹ thuật: [`assistant-backend-test-plan.md`](assistant-backend-test-plan.md).  
-Biên bản đối soát rà soát: [`assistant-prompt-review.md`](assistant-prompt-review.md).
+Đối chiếu mã nguồn ban đầu (lịch sử) tại commit HEAD: `9c585ce336ee5867557f89862bc8e07be3c0ca83`.  
+Tài liệu tri thức nguồn: [`assistant-help-faq.md`](assistant-help-faq.md) (phiên bản hiện hành `help-faq-v0.3`).  
+Tài liệu liên quan: [`assistant-demo-runbook.md`](assistant-demo-runbook.md).
 
 ---
 
@@ -116,7 +115,7 @@ Toàn bộ nội dung prompt help-prompt-v0.4 tại Mục 2.
 ================================================================================
 2. NGỮ CẢNH TRI THỨC CHUẨN HÓA (APPLICATION CONTEXT / GROUND TRUTH)
 --------------------------------------------------------------------------------
-Phiên bản tri thức: help-faq-v0.2
+Phiên bản tri thức: help-faq-v0.3
 [Toàn bộ văn bản Phần A của assistant-help-faq.md, bao gồm FAQ-01 đến FAQ-20]
 (Cung cấp sự thật chuẩn hóa về các luồng nghiệp vụ và điều kiện hệ thống).
 

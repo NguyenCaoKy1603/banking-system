@@ -1,9 +1,10 @@
 import * as Crypto from "expo-crypto";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "expo-router";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AppHeader } from "@/components/ui/AppHeader";
+import { Button } from "@/components/ui/Button";
 import { EnvironmentBadge } from "@/components/ui/EnvironmentBadge";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
 import { Screen } from "@/components/ui/Screen";
@@ -19,11 +20,55 @@ import {
 } from "@/features/credit/services/creditApi";
 import { getCreditApplicationStatusLabel } from "@/features/credit/presentation/creditPresentation";
 import type { CreditApplication } from "@/features/credit/types/credit";
+import { getKycApplication } from "@/features/kyc/services/kycApi";
+import type { KycStatus } from "@/features/kyc/types/kyc";
 import { ApiError } from "@/services/api/ApiError";
 import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
 import { useTotpStatus } from "@/features/auth/hooks/useTotpStatus";
 import { isTotpNotEnrolledError, TOTP_NOT_ENROLLED_MESSAGE } from "@/features/auth/utils/totpError";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
+
+type KycGateState = "LOADING" | "NOT_SUBMITTED" | "ERROR" | KycStatus;
+
+function getKycNoticeContent(status: Exclude<KycGateState, "LOADING" | "APPROVED">): {
+  title: string;
+  message: string;
+  actionLabel: string;
+} {
+  switch (status) {
+    case "SUBMITTED":
+    case "UNDER_REVIEW":
+      return {
+        title: "Hồ sơ KYC đang chờ phê duyệt",
+        message:
+          "Hồ sơ định danh (KYC) của bạn đang được nhân viên thẩm định. Bạn sẽ có thể đăng ký thẻ tín dụng ngay sau khi KYC được chấp thuận.",
+        actionLabel: "Xem hồ sơ KYC",
+      };
+    case "NEEDS_MORE_INFO":
+    case "REJECTED":
+      return {
+        title: "Cần cập nhật định danh (KYC)",
+        message:
+          "Hồ sơ định danh (KYC) hiện chưa đạt điều kiện. Vui lòng cập nhật và nộp lại trước khi đăng ký thẻ tín dụng.",
+        actionLabel: "Cập nhật hồ sơ KYC",
+      };
+    case "ERROR":
+      return {
+        title: "Chưa kiểm tra được trạng thái KYC",
+        message:
+          "Không thể xác minh trạng thái định danh (KYC) từ máy chủ. Vui lòng tải lại trước khi đăng ký thẻ tín dụng.",
+        actionLabel: "Tải lại trạng thái KYC",
+      };
+    case "DRAFT":
+    case "NOT_SUBMITTED":
+      return {
+        title: "Yêu cầu hoàn tất định danh (KYC)",
+        message:
+          "Để mở thẻ tín dụng, bạn cần nộp và được phê duyệt hồ sơ định danh khách hàng (KYC) trước.",
+        actionLabel: "Hoàn tất định danh (KYC)",
+      };
+  }
+}
 
 function getErrorMessage(error: unknown): string {
   if (isTotpNotEnrolledError(error)) {
@@ -48,6 +93,7 @@ export function CreditApplicationScreen() {
     [deviceId, refreshAccessToken, session?.accessToken],
   );
   const [application, setApplication] = useState<CreditApplication | null>(null);
+  const [kycStatus, setKycStatus] = useState<KycGateState>("LOADING");
   const [requestedLimit, setRequestedLimit] = useState("20000000");
   const [otp, setOtp] = useState("");
   const [challengeId, setChallengeId] = useState<string | null>(null);
@@ -55,21 +101,38 @@ export function CreditApplicationScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const idempotencyKeyRef = useRef<string | null>(null);
+  const isKycApproved = kycStatus === "APPROVED";
 
   const load = useCallback(async () => {
-    try {
-      const response = await listCreditApplications(auth);
-      setApplication(response.items[0] ?? null);
-    } catch (requestError: unknown) {
-      setError(getErrorMessage(requestError));
+    const [applicationsResult, kycResult] = await Promise.allSettled([
+      listCreditApplications(auth),
+      getKycApplication(auth),
+    ]);
+
+    if (applicationsResult.status === "fulfilled") {
+      setApplication(applicationsResult.value.items[0] ?? null);
+    } else {
+      setError(getErrorMessage(applicationsResult.reason));
+    }
+
+    if (kycResult.status === "fulfilled") {
+      setKycStatus(kycResult.value ? kycResult.value.status : "NOT_SUBMITTED");
+    } else {
+      setKycStatus("ERROR");
     }
   }, [auth]);
 
-  useEffect(() => {
-    void Promise.resolve().then(() => load());
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      void Promise.resolve().then(() => load());
+    }, [load]),
+  );
 
   const requestApplicationOtp = useCallback(async () => {
+    if (!isKycApproved) {
+      setError("Bạn cần hoàn tất và được phê duyệt định danh (KYC) trước khi đăng ký thẻ tín dụng.");
+      return;
+    }
     const normalized = requestedLimit.replace(/\D/g, "");
     if (!/^[1-9]\d*$/.test(normalized)) {
       setError("Hạn mức đề nghị phải là số nguyên dương.");
@@ -95,7 +158,7 @@ export function CreditApplicationScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [auth, requestedLimit]);
+  }, [auth, isKycApproved, requestedLimit]);
 
   const requestActivationOtp = useCallback(async () => {
     if (!application) return;
@@ -196,6 +259,11 @@ export function CreditApplicationScreen() {
     router.back();
   }, [isSubmitting, router]);
 
+  const kycNotice =
+    !application && kycStatus !== "LOADING" && kycStatus !== "APPROVED"
+      ? getKycNoticeContent(kycStatus)
+      : null;
+
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.content}>
@@ -235,23 +303,43 @@ export function CreditApplicationScreen() {
             ) : null}
           </View>
         ) : (
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Hạn mức đề nghị</Text>
-            <TextField
-              keyboardType="number-pad"
-              editable={mode === "idle"}
-              label="Hạn mức VND"
-              onChangeText={(value) => setRequestedLimit(value.replace(/\D/g, ""))}
-              testID="credit-application-limit"
-              value={requestedLimit}
-            />
-            <PrimaryButton
-              disabled={isSubmitting || mode !== "idle"}
-              label={isSubmitting ? "Đang chuẩn bị xác thực..." : "Gửi hồ sơ đăng ký"}
-              onPress={() => void requestApplicationOtp()}
-              testID="credit-application-submit"
-            />
-          </View>
+          <>
+            {kycNotice ? (
+              <View style={[styles.card, styles.kycNoticeCard]} testID="credit-app-kyc-notice">
+                <Text style={styles.sectionTitle}>{kycNotice.title}</Text>
+                <Text style={styles.description}>{kycNotice.message}</Text>
+                <Button
+                  label={kycNotice.actionLabel}
+                  onPress={() => {
+                    if (kycStatus === "ERROR") {
+                      void load();
+                    } else {
+                      router.push("/kyc");
+                    }
+                  }}
+                  testID="credit-app-kyc-action"
+                  variant="secondary"
+                />
+              </View>
+            ) : null}
+            <View style={styles.card}>
+              <Text style={styles.sectionTitle}>Hạn mức đề nghị</Text>
+              <TextField
+                keyboardType="number-pad"
+                editable={mode === "idle" && isKycApproved}
+                label="Hạn mức VND"
+                onChangeText={(value) => setRequestedLimit(value.replace(/\D/g, ""))}
+                testID="credit-application-limit"
+                value={requestedLimit}
+              />
+              <PrimaryButton
+                disabled={isSubmitting || mode !== "idle" || !isKycApproved}
+                label={isSubmitting ? "Đang chuẩn bị xác thực..." : "Gửi hồ sơ đăng ký"}
+                onPress={() => void requestApplicationOtp()}
+                testID="credit-application-submit"
+              />
+            </View>
+          </>
         )}
         {mode !== "idle" ? (
           <View style={styles.card}>
@@ -292,6 +380,7 @@ const styles = StyleSheet.create({
   content: { flexGrow: 1, width: "100%", maxWidth: sizes.contentMaxWidth, alignSelf: "center", padding: spacing.lg, gap: spacing.lg },
   description: { ...typography.body, color: colors.muted },
   card: { gap: spacing.md, padding: spacing.mlg, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, ...shadows.card },
+  kycNoticeCard: { borderColor: colors.warning, backgroundColor: colors.warningSoft },
   sectionTitle: { ...typography.subheading, color: colors.text },
   value: { ...typography.bodyStrong, color: colors.primary },
   errorText: { ...typography.body, padding: spacing.md, borderRadius: radius.md, color: colors.danger, backgroundColor: colors.dangerSoft },
