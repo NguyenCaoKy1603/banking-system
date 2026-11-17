@@ -71,6 +71,15 @@ export const APPROVED_TEST_PATHS = [
   "src/tests/assistantHelpHttp.test.ts",
   "src/tests/assistantHelpRelational.database.test.ts",
   "src/tests/integratedDisposable.test.ts",
+  "src/tests/workerOutbox.test.ts",
+  "src/tests/admin.database.test.ts",
+  "src/tests/relationalPersistence.test.ts",
+  "src/tests/persistence.test.ts",
+  "src/tests/savingsRelational.test.ts",
+  "src/tests/creditRelational.test.ts",
+  "src/tests/remainingRelational.test.ts",
+  "src/tests/lifecycleRelational.test.ts",
+  "src/tests/lifecycleScheduler.test.ts",
 ] as const;
 
 export type ApprovedTestPath = (typeof APPROVED_TEST_PATHS)[number];
