@@ -392,7 +392,7 @@ test("PostgreSQL persistent HTTP server restores state across restart", {
   const verifyRegistrationResponse = await request(first.baseUrl, "/auth/register/verify", {
     method: "POST",
     headers: { "X-Device-ID": deviceId },
-    body: json({ challengeId: registration.challengeId, proof: "123456" }),
+    body: json({ challengeId: registration.challengeId, method: "EMAIL_OTP", proof: "123456" }),
   });
   assert.equal(verifyRegistrationResponse.status, 201);
   const registered = (await verifyRegistrationResponse.json()) as { user: { id: string } };
