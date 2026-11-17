@@ -280,6 +280,21 @@ test("relational credit application activation creates account and card without 
   const sourceAccountId = randomUUID();
   await createSource(database, customerId, sourceAccountId);
   t.after(() => database.close());
+  await assert.rejects(
+    credit.submitApplication({
+      customerId,
+      idempotencyKey: "credit-application-unverified-kyc",
+      request: { requestedLimit: { currency: "VND", amountMinor: "4000000" }, stepUp: { method: "TOTP", proof: "not-used" } },
+    }),
+    /KYC_REQUIRED|KYC application must be approved/i,
+  );
+  await database.query(
+    `INSERT INTO kyc_applications
+       (id, customer_id, status, applicant_label, request_fingerprint, synthetic_payload, decision_reason_code, decision_at, version, created_at, updated_at, submitted_at)
+     VALUES
+       ($1, $2, 'APPROVED', 'Credit Test Applicant', $3, '{}'::jsonb, 'KYC_VERIFIED', NOW(), 1, NOW(), NOW(), NOW())`,
+    [randomUUID(), customerId, `fp-kyc-${customerId}`],
+  );
   const application = await credit.submitApplication({
     customerId,
     idempotencyKey: "credit-application-key-1",

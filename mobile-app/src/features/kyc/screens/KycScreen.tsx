@@ -450,6 +450,9 @@ export function KycScreen() {
               </View>
               {fieldErrors.syntheticDataConfirmed ? <Text style={styles.errorText}>{fieldErrors.syntheticDataConfirmed}</Text> : null}
             </View>
+            <Text style={styles.noteText} testID="kyc-sandbox-note">
+              Môi trường thử nghiệm: hồ sơ tự động đính kèm tài liệu mẫu (mock://identity-card-front) để bảo vệ dữ liệu cá nhân; vui lòng không nhập thông tin CCCD thật.
+            </Text>
 
             {error ? <Text accessibilityLiveRegion="polite" style={styles.errorText}>{error}</Text> : null}
 

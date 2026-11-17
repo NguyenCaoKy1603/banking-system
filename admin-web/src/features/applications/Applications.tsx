@@ -553,10 +553,35 @@ export function Applications({ items, onReload, loading, tabType }: Applications
                 </h3>
                 <div className="biometric-audit-box">
                   <div className="audit-checklist">
-                    <div className="check-item success">✔ Số định danh / CCCD: {inspectItem.identityNumber ? "ĐÚNG ĐỊNH DẠNG (9 - 12 chữ số)" : "CHỜ BỔ SUNG"}</div>
-                    <div className="check-item success">✔ Thông tin cá nhân: {inspectItem.fullName ? "ĐÃ KHAI BÁO HỌ TÊN" : "THIẾU HỌ TÊN"}</div>
-                    <div className="check-item success">✔ Địa chỉ thường trú: {inspectItem.address ? "ĐÃ KHAI BÁO ĐỊA CHỈ" : "CHƯA KHAI BÁO"}</div>
-                    <div className="check-item info">ℹ <b>Lưu ý thẩm định:</b> Hệ thống tự động kiểm tra định dạng cú pháp (Format validation). Cán bộ vận hành chịu trách nhiệm đối soát thực tế trước khi đề xuất phê duyệt.</div>
+                    {(() => {
+                      const rawId = inspectItem.identityNumber?.trim() ?? "";
+                      const validId = /^\d{6,24}$/.test(rawId);
+                      const hasName = Boolean(inspectItem.fullName?.trim());
+                      const hasAddress = Boolean(inspectItem.address?.trim());
+                      return (
+                        <>
+                          <div className={`check-item ${validId ? "success" : "info"}`}>
+                            {validId ? "✔" : "ℹ"} Số định danh / CCCD:{" "}
+                            {!rawId
+                              ? "CHỜ BỔ SUNG"
+                              : validId
+                                ? "ĐÚNG ĐỊNH DẠNG (6 - 24 chữ số)"
+                                : "CHƯA ĐÚNG ĐỊNH DẠNG (cần 6 - 24 chữ số)"}
+                          </div>
+                          <div className={`check-item ${hasName ? "success" : "info"}`}>
+                            {hasName ? "✔" : "ℹ"} Thông tin cá nhân:{" "}
+                            {hasName ? "ĐÃ KHAI BÁO HỌ TÊN" : "THIẾU HỌ TÊN"}
+                          </div>
+                          <div className={`check-item ${hasAddress ? "success" : "info"}`}>
+                            {hasAddress ? "✔" : "ℹ"} Địa chỉ thường trú:{" "}
+                            {hasAddress ? "ĐÃ KHAI BÁO ĐỊA CHỈ" : "CHƯA KHAI BÁO"}
+                          </div>
+                          <div className="check-item info">
+                            ℹ <b>Lưu ý thẩm định:</b> Hệ thống tự động kiểm tra định dạng cú pháp (Format validation). Cán bộ vận hành chịu trách nhiệm đối soát thực tế trước khi đề xuất phê duyệt.
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>

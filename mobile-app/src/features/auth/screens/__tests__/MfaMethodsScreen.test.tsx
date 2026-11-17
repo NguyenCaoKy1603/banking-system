@@ -4,6 +4,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { MfaMethodsScreen } from "@/features/auth/screens/MfaMethodsScreen";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import * as authApi from "@/features/auth/services/authApi";
+import { clearPendingTotpEnrollment } from "@/features/auth/storage/mfaEnrollmentMemoryCache";
 import type { TotpEnrollmentResponse } from "@/features/auth/types/auth";
 import { ApiError } from "@/services/api/ApiError";
 
@@ -99,6 +100,7 @@ async function renderScreen() {
 describe("MfaMethodsScreen — Post-revocation flow", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    clearPendingTotpEnrollment();
     useAuthMock.mockReturnValue({
       deviceId: "device-test-uuid",
       session: mockSession,
@@ -121,6 +123,7 @@ describe("MfaMethodsScreen — Post-revocation flow", () => {
   });
 
   afterEach(() => {
+    clearPendingTotpEnrollment();
     if (currentRenderer) {
       act(() => {
         currentRenderer?.unmount();
@@ -825,5 +828,82 @@ describe("MfaMethodsScreen — Post-revocation flow", () => {
     });
 
     expect(hasTextInput(renderer, "mfa-enroll-code")).toBe(true);
+  });
+
+  test("preserves in-progress TOTP enrollment across unmount/remount in the same session epoch and clears on cancel or epoch change", async () => {
+    beginTotpEnrollmentMock.mockResolvedValueOnce({
+      credentialId: "cred-restore-1",
+      manualSetupKey: "RESTOREKEY999",
+      otpauthUri: "otpauth://totp/NOVA:user?secret=RESTOREKEY999",
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    });
+
+    const firstMount = await renderScreen();
+    await act(async () => {
+      getTextInput(firstMount, "mfa-current-password").props.onChangeText("SecretPass123!");
+    });
+    await act(async () => {
+      await getButton(firstMount, "mfa-enroll-start").props.onPress();
+    });
+    expect(hasTextInput(firstMount, "mfa-enroll-code")).toBe(true);
+
+    // Simulates >30s background lock/refresh unmounting the route stack, then returning in the same sessionEpoch
+    act(() => {
+      firstMount.unmount();
+    });
+    currentRenderer = null;
+
+    const remounted = await renderScreen();
+    expect(hasTextInput(remounted, "mfa-enroll-code")).toBe(true);
+    expect(remounted.root.findAllByProps({ children: "RESTOREKEY999" }).length).toBeGreaterThan(0);
+
+    // Cancelling enrollment clears the volatile draft
+    await act(async () => {
+      getButton(remounted, "mfa-enroll-cancel").props.onPress();
+    });
+    expect(hasTextInput(remounted, "mfa-enroll-code")).toBe(false);
+
+    // Begin again, then switch sessionEpoch -> another login session must not see prior enrollment
+    beginTotpEnrollmentMock.mockResolvedValueOnce({
+      credentialId: "cred-restore-2",
+      manualSetupKey: "EPOCHTWOKEY",
+      otpauthUri: "otpauth://totp/NOVA:user?secret=EPOCHTWOKEY",
+      status: "PENDING",
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    });
+    await act(async () => {
+      getTextInput(remounted, "mfa-current-password").props.onChangeText("SecretPass123!");
+    });
+    await act(async () => {
+      await getButton(remounted, "mfa-enroll-start").props.onPress();
+    });
+    expect(hasTextInput(remounted, "mfa-enroll-code")).toBe(true);
+
+    act(() => {
+      remounted.unmount();
+    });
+    currentRenderer = null;
+
+    useAuthMock.mockReturnValue({
+      deviceId: "device-test-uuid",
+      session: { ...mockSession, sessionEpoch: "epoch-2" },
+      status: "authenticated",
+      isAuthenticated: true,
+      logoutNotice: null,
+      pendingRecoveryCodes: null,
+      refreshAccessToken: jest.fn(),
+      login: jest.fn(),
+      register: jest.fn(),
+      verifyRegistrationChallenge: jest.fn(),
+      resendRegistrationChallenge: jest.fn(),
+      completeMfaRevocation: mockCompleteMfaRevocation,
+      clearPendingRecoveryCodes: jest.fn(),
+      logout: jest.fn(),
+      logoutAll: jest.fn(),
+    });
+
+    const newEpochMount = await renderScreen();
+    expect(hasTextInput(newEpochMount, "mfa-enroll-code")).toBe(false);
   });
 });

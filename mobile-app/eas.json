@@ -28,7 +28,8 @@
       "environment": "staging",
       "env": {
         "APP_VARIANT": "staging",
-        "EXPO_PUBLIC_SANDBOX_HTTP": "0"
+        "EXPO_PUBLIC_SANDBOX_HTTP": "0",
+        "EXPO_PUBLIC_API_URL": "https://nova-api-kyduong.duckdns.org/api/v1"
       },
       "android": {
         "buildType": "apk"

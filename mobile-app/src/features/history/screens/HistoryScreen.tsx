@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
@@ -14,13 +14,17 @@ import {
   listAccounts,
   listTransactions,
 } from "@/features/accounts/services/accountsApi";
-import type { Transaction } from "@/features/accounts/types/account";
+import type { PaymentAccount, Transaction } from "@/features/accounts/types/account";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
 import {
   filterTransactions,
   type HistoryDirectionFilter,
   type HistoryStatusFilter,
 } from "@/features/history/presentation/historyFilters";
+import {
+  formatSignedVndMinor,
+  summarizeMonthlyCashFlow,
+} from "@/features/history/presentation/historySummary";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 function getTransactionAmount(transaction: Transaction): string {
@@ -84,7 +88,9 @@ export function HistoryScreen() {
     () => ({ accessToken, deviceId, refreshAccessToken }),
     [accessToken, deviceId, refreshAccessToken],
   );
+  const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const selectedAccountIdRef = useRef<string | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -92,6 +98,25 @@ export function HistoryScreen() {
   const [error, setError] = useState<unknown>();
   const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>("ALL");
   const [directionFilter, setDirectionFilter] = useState<HistoryDirectionFilter>("ALL");
+
+  const loadAccountTransactions = useCallback(
+    async (accountId: string) => {
+      setIsLoading(true);
+      setError(undefined);
+      setTransactions([]);
+      setNextCursor(null);
+      try {
+        const page = await listTransactions(accountId, { auth, limit: 20 });
+        setTransactions(page.items);
+        setNextCursor(page.nextCursor);
+      } catch (requestError: unknown) {
+        setError(requestError);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [auth],
+  );
 
   const loadInitial = useCallback(async () => {
     if (!accessToken) {
@@ -106,15 +131,22 @@ export function HistoryScreen() {
 
     try {
       const accountsResponse = await listAccounts(auth);
-      const account = accountsResponse.accounts[0];
+      setAccounts(accountsResponse.accounts);
+      const preferredId = selectedAccountIdRef.current;
+      const activeAccount =
+        accountsResponse.accounts.find((item) => item.id === preferredId) ??
+        accountsResponse.accounts[0];
 
-      if (!account) {
+      if (!activeAccount) {
+        selectedAccountIdRef.current = null;
         setSelectedAccountId(null);
+        setIsLoading(false);
         return;
       }
 
-      setSelectedAccountId(account.id);
-      const page = await listTransactions(account.id, { auth, limit: 20 });
+      selectedAccountIdRef.current = activeAccount.id;
+      setSelectedAccountId(activeAccount.id);
+      const page = await listTransactions(activeAccount.id, { auth, limit: 20 });
       setTransactions(page.items);
       setNextCursor(page.nextCursor);
     } catch (requestError: unknown) {
@@ -123,6 +155,16 @@ export function HistoryScreen() {
       setIsLoading(false);
     }
   }, [accessToken, auth]);
+
+  const handleSelectAccount = useCallback(
+    (accountId: string) => {
+      if (accountId === selectedAccountIdRef.current) return;
+      selectedAccountIdRef.current = accountId;
+      setSelectedAccountId(accountId);
+      void loadAccountTransactions(accountId);
+    },
+    [loadAccountTransactions],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -150,6 +192,7 @@ export function HistoryScreen() {
   }, [auth, isLoadingMore, nextCursor, selectedAccountId]);
 
   const visibleTransactions = filterTransactions(transactions, statusFilter, directionFilter);
+  const monthlySummary = useMemo(() => summarizeMonthlyCashFlow(transactions), [transactions]);
 
   return (
     <Screen>
@@ -160,6 +203,71 @@ export function HistoryScreen() {
           subtitle="Tra cứu các khoản tiền vào, tiền ra và trạng thái xử lý."
           title="Lịch sử giao dịch"
         />
+
+        {accounts.length > 1 ? (
+          <View style={styles.filterCard} testID="history-account-switcher">
+            <Text style={styles.filterLabel}>Tài khoản thanh toán</Text>
+            <View style={styles.filterRow}>
+              {accounts.map((account) => {
+                const selected = account.id === selectedAccountId;
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    key={account.id}
+                    onPress={() => handleSelectAccount(account.id)}
+                    style={[styles.filterChip, selected ? styles.filterChipSelected : null]}
+                    testID={`history-account-${account.id}`}
+                  >
+                    <Text style={[styles.filterChipLabel, selected ? styles.filterChipLabelSelected : null]}>
+                      {account.displayName} · {account.maskedNumber}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
+        {!isLoading && !error && selectedAccountId ? (
+          <View style={styles.summaryCard} testID="history-summary">
+            <View style={styles.summaryHeader}>
+              <Text style={styles.summaryTitle}>Thống kê tháng {monthlySummary.monthLabel}</Text>
+              <Text style={styles.summaryCount}>{monthlySummary.succeededCount} giao dịch thành công</Text>
+            </View>
+            <View style={styles.summaryGrid}>
+              <View style={styles.summaryCell}>
+                <Text style={styles.summaryCellLabel}>Tiền vào (Thu)</Text>
+                <Text style={[styles.summaryCellValue, styles.creditAmount]} testID="history-summary-income">
+                  +{formatVndMinor(monthlySummary.totalIncomeMinor)}
+                </Text>
+              </View>
+              <View style={styles.summaryCell}>
+                <Text style={styles.summaryCellLabel}>Tiền ra (Chi)</Text>
+                <Text style={styles.summaryCellValue} testID="history-summary-expense">
+                  −{formatVndMinor(monthlySummary.totalExpenseMinor)}
+                </Text>
+              </View>
+              <View style={styles.summaryCell}>
+                <Text style={styles.summaryCellLabel}>Chênh lệch ròng</Text>
+                <Text
+                  style={[
+                    styles.summaryCellValue,
+                    monthlySummary.netMinor.startsWith("-") ? styles.debitAmount : styles.creditAmount,
+                  ]}
+                  testID="history-summary-net"
+                >
+                  {formatSignedVndMinor(monthlySummary.netMinor)}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.summaryHint}>
+              {nextCursor
+                ? `Đang tổng hợp trên ${transactions.length} giao dịch mới nhất đã tải. Bấm "Tải thêm giao dịch" để tính thêm các trang cũ hơn.`
+                : `Tổng hợp trên toàn bộ ${transactions.length} giao dịch đã tải.`}
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.filterCard} testID="history-filters">
           <View style={styles.filterHeader}>
@@ -227,7 +335,9 @@ export function HistoryScreen() {
             message={
               transactions.length === 0
                 ? "Các giao dịch mới sẽ xuất hiện tại đây."
-                : "Hãy thay đổi bộ lọc để xem các giao dịch khác."
+                : nextCursor
+                  ? `Không thấy giao dịch khớp bộ lọc trong ${transactions.length} giao dịch đã tải. Hãy đổi bộ lọc hoặc bấm "Tải thêm giao dịch" bên dưới.`
+                  : "Hãy thay đổi bộ lọc để xem các giao dịch khác."
             }
             title={transactions.length === 0 ? "Chưa có giao dịch" : "Không tìm thấy kết quả"}
           />
@@ -293,6 +403,7 @@ export function HistoryScreen() {
             loading={isLoadingMore}
             label="Tải thêm giao dịch"
             onPress={loadMore}
+            testID="history-load-more"
             variant="outline"
           />
         ) : null}
@@ -310,6 +421,39 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.lg,
   },
+  summaryCard: {
+    gap: spacing.md,
+    padding: spacing.mlg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    backgroundColor: colors.surface,
+    ...shadows.card,
+  },
+  summaryHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  summaryTitle: { ...typography.subheading, color: colors.text },
+  summaryCount: { ...typography.caption, color: colors.muted },
+  summaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.md,
+  },
+  summaryCell: {
+    flex: 1,
+    minWidth: 120,
+    gap: 2,
+    padding: spacing.sm,
+    borderRadius: radius.md,
+    backgroundColor: colors.background,
+  },
+  summaryCellLabel: { ...typography.caption, color: colors.muted },
+  summaryCellValue: { ...typography.bodyStrong, color: colors.text },
+  summaryHint: { ...typography.caption, color: colors.subtle },
   filterCard: {
     gap: spacing.sm,
     padding: spacing.mlg,
@@ -372,4 +516,5 @@ const styles = StyleSheet.create({
   transactionRight: { alignItems: "flex-end", gap: spacing.xs },
   transactionAmount: { ...typography.bodyStrong, color: colors.text },
   creditAmount: { color: colors.success },
+  debitAmount: { color: colors.danger },
 });

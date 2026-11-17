@@ -6,7 +6,11 @@ import {
 } from "react-test-renderer";
 import { AppState, type AppStateStatus } from "react-native";
 
-import { AuthProvider, useAuth } from "@/features/auth/context/AuthContext";
+import {
+  AuthProvider,
+  BACKGROUND_LOCK_GRACE_MS,
+  useAuth,
+} from "@/features/auth/context/AuthContext";
 import {
   cancelRegistration as cancelRegistrationRequest,
   login as loginRequest,
@@ -468,7 +472,52 @@ describe("AuthProvider session restore and lifecycle", () => {
     },
   );
 
-  it("khóa session khi chuyển sang background/inactive và tự động refresh khi quay lại active", async () => {
+  it("giữ nguyên session authenticated khi chuyển sang background dưới 30 giây để lấy mã TOTP", async () => {
+    const addEventListenerSpy = jest.spyOn(AppState, "addEventListener");
+    refreshSessionRequestMock.mockResolvedValue(refreshedResponse);
+
+    await renderProvider();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(getAuth().status).toBe("authenticated");
+    const initialRefreshCalls = refreshSessionRequestMock.mock.calls.length;
+
+    const changeListener = addEventListenerSpy.mock.calls.find(
+      ([type]) => type === "change",
+    )?.[1] as ((state: AppStateStatus) => void) | undefined;
+
+    expect(changeListener).toBeDefined();
+
+    jest.useFakeTimers();
+    try {
+      act(() => {
+        changeListener!("inactive");
+        changeListener!("background");
+      });
+
+      // Chưa quá 30 giây: không khóa phiên để bảo toàn màn hình nhập TOTP
+      act(() => {
+        jest.advanceTimersByTime(BACKGROUND_LOCK_GRACE_MS - 5_000);
+      });
+
+      expect(getAuth().status).toBe("authenticated");
+      expect(getAuth().isAuthenticated).toBe(true);
+
+      act(() => {
+        changeListener!("active");
+      });
+
+      expect(getAuth().status).toBe("authenticated");
+      expect(getAuth().isAuthenticated).toBe(true);
+      expect(refreshSessionRequestMock).toHaveBeenCalledTimes(initialRefreshCalls);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("khóa session khi ở background quá 30 giây và tự động refresh khi quay lại active", async () => {
     const addEventListenerSpy = jest.spyOn(AppState, "addEventListener");
     refreshSessionRequestMock.mockResolvedValue(refreshedResponse);
 
@@ -486,53 +535,140 @@ describe("AuthProvider session restore and lifecycle", () => {
 
     expect(changeListener).toBeDefined();
 
-    // 1. Chuyển sang background: session bị khóa, không còn authenticated
-    act(() => {
-      changeListener!("background");
-    });
+    jest.useFakeTimers();
+    try {
+      // 1. Chuyển sang background và vượt quá thời gian ân hạn 30 giây
+      act(() => {
+        changeListener!("background");
+      });
+      expect(getAuth().status).toBe("authenticated");
 
-    expect(getAuth().status).toBe("locked");
-    expect(getAuth().isAuthenticated).toBe(false);
-    expect(getAuth().session).toEqual(
-      expect.objectContaining({
-        accessToken: refreshedResponse.accessToken,
-      }),
-    );
+      act(() => {
+        jest.advanceTimersByTime(BACKGROUND_LOCK_GRACE_MS);
+      });
 
-    // 2. Chuẩn bị deferred refresh promise cho lần active
-    const foregroundRefreshDeferred = createDeferred<LoginResponse>();
-    refreshSessionRequestMock.mockReturnValueOnce(foregroundRefreshDeferred.promise);
+      expect(getAuth().status).toBe("locked");
+      expect(getAuth().isAuthenticated).toBe(false);
+      expect(getAuth().session).toEqual(
+        expect.objectContaining({
+          accessToken: refreshedResponse.accessToken,
+        }),
+      );
 
-    // 3. Chuyển về active: kích hoạt refresh, trong lúc pending chưa authenticated
-    act(() => {
-      changeListener!("active");
-    });
+      // 2. Chuẩn bị deferred refresh promise cho lần active
+      const foregroundRefreshDeferred = createDeferred<LoginResponse>();
+      refreshSessionRequestMock.mockReturnValueOnce(foregroundRefreshDeferred.promise);
 
-    expect(getAuth().status).toBe("refreshing");
-    expect(getAuth().isAuthenticated).toBe(false);
+      // 3. Chuyển về active: kích hoạt refresh, trong lúc pending chưa authenticated
+      act(() => {
+        changeListener!("active");
+      });
 
-    // 4. Hoàn tất refresh: session được lưu và chuyển sang authenticated
-    const foregroundResponse: LoginResponse = {
-      ...refreshedResponse,
-      accessToken: "access-token-foreground",
-      refreshToken: "refresh-token-foreground",
-    };
+      expect(getAuth().status).toBe("refreshing");
+      expect(getAuth().isAuthenticated).toBe(false);
 
-    saveAuthSessionMock.mockClear();
+      // 4. Hoàn tất refresh: session được lưu và chuyển sang authenticated
+      const foregroundResponse: LoginResponse = {
+        ...refreshedResponse,
+        accessToken: "access-token-foreground",
+        refreshToken: "refresh-token-foreground",
+      };
+
+      saveAuthSessionMock.mockClear();
+      await act(async () => {
+        foregroundRefreshDeferred.resolve(foregroundResponse);
+      });
+
+      expect(saveAuthSessionMock).toHaveBeenCalledTimes(1);
+      expect(saveAuthSessionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accessToken: foregroundResponse.accessToken,
+          refreshToken: foregroundResponse.refreshToken,
+        }),
+      );
+      expect(getAuth().status).toBe("authenticated");
+      expect(getAuth().isAuthenticated).toBe(true);
+      expect(getAuth().session?.accessToken).toBe(foregroundResponse.accessToken);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("vẫn khóa và refresh khi hệ điều hành đóng băng timer nền quá 30 giây", async () => {
+    const addEventListenerSpy = jest.spyOn(AppState, "addEventListener");
+    const nowSpy = jest.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    refreshSessionRequestMock.mockResolvedValue(refreshedResponse);
+
+    await renderProvider();
     await act(async () => {
-      foregroundRefreshDeferred.resolve(foregroundResponse);
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    expect(saveAuthSessionMock).toHaveBeenCalledTimes(1);
-    expect(saveAuthSessionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        accessToken: foregroundResponse.accessToken,
-        refreshToken: foregroundResponse.refreshToken,
-      }),
-    );
+    const changeListener = addEventListenerSpy.mock.calls.find(
+      ([type]) => type === "change",
+    )?.[1] as ((state: AppStateStatus) => void) | undefined;
+    expect(changeListener).toBeDefined();
+
+    jest.useFakeTimers({ doNotFake: ["Date"] });
+    try {
+      act(() => {
+        changeListener!("background");
+      });
+
+      // Giả lập OS đóng băng setTimeout khi sleep, chỉ Date.now tăng quá 30s
+      nowSpy.mockReturnValue(1_800_000_000_000 + BACKGROUND_LOCK_GRACE_MS + 1_000);
+
+      const resumeRefreshDeferred = createDeferred<LoginResponse>();
+      refreshSessionRequestMock.mockReturnValueOnce(resumeRefreshDeferred.promise);
+
+      act(() => {
+        changeListener!("active");
+      });
+
+      expect(getAuth().status).toBe("refreshing");
+      expect(getAuth().isAuthenticated).toBe(false);
+
+      await act(async () => {
+        resumeRefreshDeferred.resolve(refreshedResponse);
+      });
+
+      expect(getAuth().status).toBe("authenticated");
+      expect(getAuth().isAuthenticated).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("làm mới token im lặng khi đang authenticated không làm rớt màn hình về refreshing", async () => {
+    refreshSessionRequestMock.mockResolvedValue(refreshedResponse);
+    await renderProvider();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(getAuth().status).toBe("authenticated");
+
+    const silentRefreshDeferred = createDeferred<LoginResponse>();
+    refreshSessionRequestMock.mockReturnValueOnce(silentRefreshDeferred.promise);
+
+    let tokenPromise!: Promise<string | null>;
+    act(() => {
+      tokenPromise = getAuth().refreshAccessToken();
+    });
+
+    // Vẫn giữ authenticated trong khi silent refresh chạy nền
     expect(getAuth().status).toBe("authenticated");
     expect(getAuth().isAuthenticated).toBe(true);
-    expect(getAuth().session?.accessToken).toBe(foregroundResponse.accessToken);
+
+    await act(async () => {
+      silentRefreshDeferred.resolve({
+        ...refreshedResponse,
+        accessToken: "access-token-silent",
+      });
+      await expect(tokenPromise).resolves.toBe("access-token-silent");
+    });
+
+    expect(getAuth().status).toBe("authenticated");
+    expect(getAuth().session?.accessToken).toBe("access-token-silent");
   });
 
   test("completeMfaRevocation invalidates session immediately, clears storage, and sets pending recovery codes", async () => {

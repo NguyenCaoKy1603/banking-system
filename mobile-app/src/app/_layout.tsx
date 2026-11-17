@@ -1,20 +1,98 @@
-import { Stack } from "expo-router";
+import {
+  type Href,
+  Stack,
+  useGlobalSearchParams,
+  usePathname,
+  useRouter,
+  useSegments,
+} from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  AppState,
+  type AppStateStatus,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 
 import { BrandMark } from "@/components/brand/BrandMark";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { AuthProvider, useAuth } from "@/features/auth/context/AuthContext";
+import {
+  buildCurrentAuthenticatedHref,
+  shouldUseReplaceForRestore,
+} from "@/features/auth/domain/routePreservation";
 import { colors, radius, spacing, typography } from "@/theme";
 
 SplashScreen.setOptions({ duration: 300, fade: true });
 
 function RootNavigator() {
   const { isAuthenticated, logout, refreshAccessToken, status } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const segments = useSegments();
+  const globalSearchParams = useGlobalSearchParams();
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [appState, setAppState] = useState<AppStateStatus>(
+    AppState.currentState ?? "active",
+  );
+  const lastAuthenticatedHrefRef = useRef<string | null>(null);
+  const needsRouteRestoreRef = useRef(false);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", setAppState);
+    return () => subscription?.remove();
+  }, []);
+
+  useEffect(() => {
+    if (status === "anonymous" || status === "loggingOut") {
+      lastAuthenticatedHrefRef.current = null;
+      needsRouteRestoreRef.current = false;
+      return;
+    }
+
+    if (status === "locked" || status === "refreshing") {
+      if (
+        lastAuthenticatedHrefRef.current &&
+        lastAuthenticatedHrefRef.current !== "/"
+      ) {
+        needsRouteRestoreRef.current = true;
+      }
+      return;
+    }
+
+    if (status !== "authenticated") {
+      return;
+    }
+
+    if (needsRouteRestoreRef.current) {
+      const targetHref = lastAuthenticatedHrefRef.current;
+      const timer = setTimeout(() => {
+        needsRouteRestoreRef.current = false;
+        if (targetHref && targetHref !== "/") {
+          if (shouldUseReplaceForRestore(targetHref)) {
+            router.replace(targetHref as Href);
+          } else {
+            router.push(targetHref as Href);
+          }
+        }
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+
+    const currentHref = buildCurrentAuthenticatedHref(
+      pathname,
+      segments,
+      globalSearchParams,
+    );
+    if (currentHref !== null) {
+      lastAuthenticatedHrefRef.current = currentHref;
+    }
+  }, [globalSearchParams, pathname, router, segments, status]);
 
   if (
     status === "booting" ||
@@ -96,6 +174,20 @@ function RootNavigator() {
           <Stack.Screen name="financial-advice" />
         </Stack.Protected>
       </Stack>
+      {isAuthenticated && (appState === "background" || appState === "inactive") ? (
+        <View
+          accessibilityViewIsModal
+          pointerEvents="auto"
+          style={styles.privacyOverlay}
+          testID="background-privacy-shield"
+        >
+          <BrandMark />
+          <Text style={styles.lockedTitle}>Dữ liệu đang được bảo vệ</Text>
+          <Text style={styles.privacySubtitle}>
+            Nội dung tài chính được che tạm thời khi chuyển ứng dụng.
+          </Text>
+        </View>
+      ) : null}
       {status === "loggingOut" ? (
         <View
           accessibilityViewIsModal
@@ -123,6 +215,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: spacing.lg,
     backgroundColor: colors.background,
+  },
+  privacyOverlay: {
+    ...StyleSheet.absoluteFill,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: spacing.lg,
+    gap: spacing.md,
+    backgroundColor: colors.background,
+  },
+  privacySubtitle: {
+    maxWidth: 420,
+    ...typography.body,
+    color: colors.muted,
+    textAlign: "center",
   },
   loadingScreen: {
     flex: 1,

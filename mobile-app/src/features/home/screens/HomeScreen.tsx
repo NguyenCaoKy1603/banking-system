@@ -28,7 +28,8 @@ export function HomeScreen() {
     () => ({ accessToken, deviceId, refreshAccessToken }),
     [accessToken, deviceId, refreshAccessToken],
   );
-  const [account, setAccount] = useState<PaymentAccount | null>(null);
+  const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<unknown>();
@@ -40,6 +41,23 @@ export function HomeScreen() {
   const [isCopyingAccountNumber, setIsCopyingAccountNumber] = useState(false);
   const [accountNumberError, setAccountNumberError] = useState<unknown>();
   const [hasActiveTotp, setHasActiveTotp] = useState<boolean | null>(null);
+
+  const account = useMemo(
+    () => accounts.find((item) => item.id === selectedAccountId) ?? accounts[0] ?? null,
+    [accounts, selectedAccountId],
+  );
+
+  const totalBalanceMinor = useMemo(
+    () => accounts.reduce((sum, item) => sum + BigInt(item.currentBalance.amountMinor), 0n).toString(),
+    [accounts],
+  );
+
+  const handleSelectAccount = useCallback((nextAccountId: string) => {
+    setSelectedAccountId(nextAccountId);
+    setIsAccountNumberVisible(false);
+    setRevealedAccountNumber(null);
+    setAccountNumberError(undefined);
+  }, []);
 
   const checkMfaStatus = useCallback(async () => {
     if (!accessToken || !deviceId) {
@@ -70,7 +88,8 @@ export function HomeScreen() {
     setAccountNumberError(undefined);
 
     if (!accessToken) {
-      setAccount(null);
+      setAccounts([]);
+      setSelectedAccountId(null);
       setError(undefined);
       setIsSessionExpired(true);
       setIsLoading(false);
@@ -83,9 +102,15 @@ export function HomeScreen() {
 
     try {
       const response = await listAccounts(auth);
-      setAccount(response.accounts[0] ?? null);
+      setAccounts(response.accounts);
+      setSelectedAccountId((current) =>
+        current && response.accounts.some((item) => item.id === current)
+          ? current
+          : (response.accounts[0]?.id ?? null),
+      );
     } catch (requestError: unknown) {
-      setAccount(null);
+      setAccounts([]);
+      setSelectedAccountId(null);
       setIsSessionExpired(requestError instanceof ApiError && requestError.status === 401);
       setError(requestError);
     } finally {
@@ -210,6 +235,8 @@ export function HomeScreen() {
           ) : account ? (
             <BalanceCard
               account={account}
+              accounts={accounts}
+              totalBalanceMinor={totalBalanceMinor}
               isBalanceVisible={isBalanceVisible}
               isAccountNumberVisible={isAccountNumberVisible}
               isAccountNumberLoading={isAccountNumberLoading}
@@ -219,6 +246,7 @@ export function HomeScreen() {
               onPress={() =>
                 router.push({ pathname: "/account/[accountId]", params: { accountId: account.id } })
               }
+              onSelectAccount={handleSelectAccount}
               onToggleBalance={() => setIsBalanceVisible((current) => !current)}
               onToggleAccountNumber={() => void handleToggleAccountNumber()}
               onCopyAccountNumber={() => void handleCopyAccountNumber()}

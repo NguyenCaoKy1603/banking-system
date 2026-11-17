@@ -50,13 +50,21 @@
       [
         "expo-camera",
         {
-        "cameraPermission": "Cho phép ứng dụng dùng camera để quét mã QR."
+          "cameraPermission": "Cho phép ứng dụng dùng camera để quét mã QR."
         }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "runtimeEnvironment": "staging",
+      "router": {},
+      "eas": {
+        "projectId": "6219b2dc-859c-4042-b68b-5cfd093d5d10"
+      }
+    },
+    "owner": "nguyencaoky"
   }
 }

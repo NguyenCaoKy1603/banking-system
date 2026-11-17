@@ -39,7 +39,14 @@ import {
   saveAuthSession,
 } from "@/features/auth/storage/authSessionStorage";
 import { loadDeviceBindingId } from "@/features/auth/storage/deviceBindingStorage";
+import { clearPendingTotpEnrollment } from "@/features/auth/storage/mfaEnrollmentMemoryCache";
 import { ApiError } from "@/services/api/ApiError";
+
+/**
+ * Allows brief app switching (for example copying a 6-digit TOTP code from an
+ * authenticator app on the same device) before background lock tears down UI state.
+ */
+export const BACKGROUND_LOCK_GRACE_MS = 30_000;
 
 export type AuthStatus =
   | "booting"
@@ -159,7 +166,27 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const sessionLifecycleEpochRef = useRef(0);
   const logoutOperationRef = useRef<Promise<LogoutResult> | null>(null);
   const pendingStorageClearRef = useRef<Promise<void> | null>(null);
+  const backgroundedAtRef = useRef<number | null>(null);
+  const backgroundLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const isMountedRef = useRef(true);
+
+  const clearBackgroundLockState = useCallback(() => {
+    if (backgroundLockTimerRef.current !== null) {
+      clearTimeout(backgroundLockTimerRef.current);
+      backgroundLockTimerRef.current = null;
+    }
+    backgroundedAtRef.current = null;
+  }, []);
+
+  const isWithinBackgroundGrace = useCallback(() => {
+    const backgroundedAt = backgroundedAtRef.current;
+    return (
+      backgroundedAt !== null &&
+      Date.now() - backgroundedAt < BACKGROUND_LOCK_GRACE_MS
+    );
+  }, []);
 
   const setActiveSession = useCallback(
     (nextSession: AuthSession | null, nextStatus: AuthStatus) => {
@@ -209,9 +236,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
       let operation!: Promise<AuthSession | null>;
       operation = (async () => {
         let refreshedSession: AuthSession | null = null;
-        const transientFallbackStatus =
-          statusRef.current === "locked" ? "locked" : "authenticated";
+        const startedAuthenticated = statusRef.current === "authenticated";
+        const transientFallbackStatus = startedAuthenticated
+          ? "authenticated"
+          : "locked";
+        // Avoid dropping the mounted navigator for silent token rotations while
+        // the user is already authenticated; only locked/booting restores show
+        // the refreshing lock gate.
         if (
+          !startedAuthenticated &&
           isMountedRef.current &&
           sessionRef.current?.sessionEpoch === sessionEpoch
         ) {
@@ -250,9 +283,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
           if (sessionRef.current?.sessionEpoch !== sessionEpoch) {
             return null;
           }
+          const keepUnlocked =
+            appStateRef.current === "active" ||
+            (startedAuthenticated &&
+              statusRef.current === "authenticated" &&
+              isWithinBackgroundGrace());
           setActiveSession(
             refreshedSession,
-            appStateRef.current === "active" ? "authenticated" : "locked",
+            keepUnlocked ? "authenticated" : "locked",
           );
           return refreshedSession;
         } catch (error: unknown) {
@@ -264,16 +302,21 @@ export function AuthProvider({ children }: PropsWithChildren) {
           }
 
           if (isTerminalRefreshFailure(error)) {
+            clearBackgroundLockState();
+            clearPendingTotpEnrollment();
             await clearAuthSession().catch(() => undefined);
             setActiveSession(null, "anonymous");
             return null;
           }
 
+          const keepFallbackStatus =
+            appStateRef.current === "active" ||
+            (transientFallbackStatus === "authenticated" &&
+              statusRef.current === "authenticated" &&
+              isWithinBackgroundGrace());
           setActiveSession(
             currentSession,
-            appStateRef.current === "active"
-              ? transientFallbackStatus
-              : "locked",
+            keepFallbackStatus ? transientFallbackStatus : "locked",
           );
           throw error;
         } finally {
@@ -286,7 +329,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
       refreshPromisesRef.current.set(sessionEpoch, operation);
       return operation;
     },
-    [ensureDeviceId, setActiveSession],
+    [
+      clearBackgroundLockState,
+      ensureDeviceId,
+      isWithinBackgroundGrace,
+      setActiveSession,
+    ],
   );
 
   const refreshAccessTokenForEpoch = useCallback(async (
@@ -357,28 +405,71 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     return () => {
       isMountedRef.current = false;
+      clearBackgroundLockState();
     };
-  }, [ensureDeviceId, refreshSession, setActiveSession]);
+  }, [clearBackgroundLockState, ensureDeviceId, refreshSession, setActiveSession]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
       appStateRef.current = nextState;
       const currentSession = sessionRef.current;
-      if (!currentSession) return;
-
-      if (nextState !== "active") {
-        setActiveSession(currentSession, "locked");
+      if (!currentSession) {
+        clearBackgroundLockState();
         return;
       }
+
+      if (nextState !== "active") {
+        if (statusRef.current !== "authenticated") {
+          return;
+        }
+        if (backgroundedAtRef.current === null) {
+          backgroundedAtRef.current = Date.now();
+        }
+        if (backgroundLockTimerRef.current === null) {
+          backgroundLockTimerRef.current = setTimeout(() => {
+            backgroundLockTimerRef.current = null;
+            if (
+              appStateRef.current !== "active" &&
+              sessionRef.current &&
+              statusRef.current === "authenticated"
+            ) {
+              setActiveSession(sessionRef.current, "locked");
+            }
+          }, BACKGROUND_LOCK_GRACE_MS);
+        }
+        return;
+      }
+
+      const backgroundedAt = backgroundedAtRef.current;
+      const elapsedMs =
+        backgroundedAt !== null ? Date.now() - backgroundedAt : 0;
+      clearBackgroundLockState();
+
       if (statusRef.current === "locked") {
+        void refreshSession(currentSession).catch(() => undefined);
+        return;
+      }
+
+      if (
+        statusRef.current === "authenticated" &&
+        backgroundedAt !== null &&
+        elapsedMs >= BACKGROUND_LOCK_GRACE_MS
+      ) {
+        // Mobile OSes often suspend timers in background; enforce grace timeout on resume.
+        setActiveSession(currentSession, "locked");
         void refreshSession(currentSession).catch(() => undefined);
       }
     });
-    return () => subscription.remove();
-  }, [refreshSession, setActiveSession]);
+    return () => {
+      subscription?.remove();
+      clearBackgroundLockState();
+    };
+  }, [clearBackgroundLockState, refreshSession, setActiveSession]);
 
   const login = useCallback(
     async (request: LoginRequest) => {
+      clearBackgroundLockState();
+      clearPendingTotpEnrollment();
       sessionLifecycleEpochRef.current += 1;
       setLogoutNotice(null);
       setPendingRecoveryCodes(null);
@@ -394,7 +485,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       await saveAuthSession(nextSession);
       setActiveSession(nextSession, "authenticated");
     },
-    [ensureDeviceId, setActiveSession],
+    [clearBackgroundLockState, ensureDeviceId, setActiveSession],
   );
 
   const register = useCallback(
@@ -470,15 +561,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
         pendingStorageClearRef.current = null;
       }
     }
+    clearBackgroundLockState();
+    clearPendingTotpEnrollment();
     setActiveSession(null, "anonymous");
     return localSessionCleared;
-  }, [setActiveSession]);
+  }, [clearBackgroundLockState, setActiveSession]);
 
   const beginLogout = useCallback((scope: LogoutScope): Promise<LogoutResult> => {
     if (logoutOperationRef.current) {
       return logoutOperationRef.current;
     }
 
+    clearBackgroundLockState();
+    clearPendingTotpEnrollment();
     const currentSession = sessionRef.current;
     const sessionEpoch = currentSession?.sessionEpoch ?? null;
     if (sessionEpoch) {
@@ -546,7 +641,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
       },
     );
     return operation;
-  }, [clearLocalSession, ensureDeviceId, setActiveSession, waitForPendingRefreshes]);
+  }, [
+    clearBackgroundLockState,
+    clearLocalSession,
+    ensureDeviceId,
+    setActiveSession,
+    waitForPendingRefreshes,
+  ]);
 
   const logout = useCallback(
     (): Promise<LogoutResult> => beginLogout("current"),
@@ -566,6 +667,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const completeMfaRevocation = useCallback(
     async (input?: CompleteMfaRevocationInput) => {
+      clearBackgroundLockState();
+      clearPendingTotpEnrollment();
       const currentSession = sessionRef.current;
       const sessionEpoch = currentSession?.sessionEpoch ?? null;
       if (sessionEpoch) {
@@ -614,7 +717,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setLogoutNotice(notice);
       }
     },
-    [],
+    [clearBackgroundLockState],
   );
 
   const value = useMemo(

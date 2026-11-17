@@ -182,6 +182,21 @@ export class RelationalCreditService {
     await new ControlPolicyRepository(client).assertCreditApplicationAllowed(customerId);
   }
 
+  private async assertKycApproved(client: PoolClient, customerId: string): Promise<void> {
+    const result = await client.query<{ status: string }>(
+      `SELECT status FROM kyc_applications
+        WHERE customer_id = $1 AND status = 'APPROVED'
+        LIMIT 1 FOR SHARE`,
+      [customerId],
+    );
+    if (result.rows.length === 0) {
+      throw new RelationalConflictError(
+        "KYC_REQUIRED",
+        "KYC application must be approved before applying for a credit card.",
+      );
+    }
+  }
+
   private async assertCreditPaymentAllowed(client: PoolClient, customerId: string, amountMinor?: bigint): Promise<bigint> {
     return new ControlPolicyRepository(client).assertCreditPaymentAllowed(customerId, amountMinor);
   }
@@ -243,6 +258,7 @@ export class RelationalCreditService {
     const requestFingerprint = fingerprint({ requestedLimitMinor: requested.toString() });
     return this.unitOfWork.transaction(async ({ client }) => {
       await this.assertCreditApplicationAllowed(client, input.customerId);
+      await this.assertKycApproved(client, input.customerId);
       const repository = new CreditRepository(client);
       const reservation = await repository.reserveIdempotency({ id: randomUUID(), customerId: input.customerId, operationType: "CREDIT_APPLICATION", idempotencyKey: key, requestFingerprint });
       if (!reservation.created) {
@@ -275,6 +291,7 @@ export class RelationalCreditService {
     const requestFingerprint = fingerprint({ applicationId: input.applicationId });
     return this.unitOfWork.transaction(async ({ client }) => {
       await this.assertCreditApplicationAllowed(client, input.customerId);
+      await this.assertKycApproved(client, input.customerId);
       const repository = new CreditRepository(client);
       const reservation = await repository.reserveIdempotency({ id: randomUUID(), customerId: input.customerId, operationType: "CREDIT_ACTIVATION", idempotencyKey: key, requestFingerprint });
       if (!reservation.created) {

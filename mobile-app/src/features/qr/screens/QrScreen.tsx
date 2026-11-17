@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Clipboard from "expo-clipboard";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { AppState, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AppHeader } from "@/components/ui/AppHeader";
 import { AppIcon } from "@/components/ui/AppIcon";
@@ -36,11 +36,12 @@ function getErrorMessage(error: unknown): string {
 
 export function QrScreen({ showBackButton = true }: QrScreenProps) {
   const router = useRouter();
+  const isFocused = useIsFocused();
   const params = useLocalSearchParams<{ accountId?: string; mode?: string }>();
   const { deviceId, refreshAccessToken, session } = useAuth();
   const accessToken = session?.accessToken ?? null;
   const requestedAccountId = typeof params.accountId === "string" ? params.accountId : undefined;
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [mode, setMode] = useState<QrMode>(params.mode === "scan" ? "scan" : "my");
   const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [account, setAccount] = useState<PaymentAccount | null>(null);
@@ -53,7 +54,8 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
   const [scanError, setScanError] = useState<string | undefined>();
   const [hasScanned, setHasScanned] = useState(false);
   const [cameraError, setCameraError] = useState<string | undefined>();
-  const [isCameraEnabled, setIsCameraEnabled] = useState(false);
+  const [appState, setAppState] = useState(AppState.currentState ?? "active");
+  const hasAutoRequestedPermissionRef = useRef(false);
   const auth = useMemo(
     () => ({ accessToken, deviceId, refreshAccessToken }),
     [accessToken, deviceId, refreshAccessToken],
@@ -183,15 +185,85 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
     [handleParsePayload, hasScanned],
   );
 
+  const requestCameraPermission = useCallback(async () => {
+    try {
+      const nextPermission = await requestPermission();
+      if (nextPermission.granted) {
+        setCameraError(undefined);
+        return;
+      }
+      setCameraError(
+        nextPermission.canAskAgain
+          ? "Chưa được cấp quyền camera. Bạn có thể bấm thử lại hoặc nhập nội dung QR thủ công."
+          : "Quyền camera đang bị tắt trong Cài đặt. Vui lòng mở Cài đặt để bật quyền Máy ảnh.",
+      );
+    } catch {
+      setCameraError("Không thể khởi tạo quyền camera trên thiết bị này. Bạn vẫn có thể nhập nội dung QR thủ công.");
+    }
+  }, [requestPermission]);
+
   const handleEnableCamera = useCallback(async () => {
     setCameraError(undefined);
-    const nextPermission = permission?.granted ? permission : await requestPermission();
-    if (nextPermission.granted) {
-      setIsCameraEnabled(true);
+    if (permission?.granted) {
       return;
     }
-    setCameraError("Không thể cấp quyền camera. Bạn vẫn có thể nhập nội dung QR thủ công.");
-  }, [permission, requestPermission]);
+    if (permission && !permission.canAskAgain) {
+      const refreshed = await getPermission().catch(() => null);
+      if (refreshed?.granted) {
+        setCameraError(undefined);
+        return;
+      }
+    }
+    await requestCameraPermission();
+  }, [getPermission, permission, requestCameraPermission]);
+
+  const handleOpenSettings = useCallback(async () => {
+    try {
+      await Linking.openSettings();
+    } catch {
+      setCameraError("Không thể tự động mở Cài đặt. Vui lòng bật quyền Camera cho NOVA trong Cài đặt thiết bị.");
+    }
+  }, []);
+
+  const handleSelectMode = useCallback((nextMode: QrMode) => {
+    setMode(nextMode);
+    if (nextMode !== "scan") {
+      hasAutoRequestedPermissionRef.current = false;
+      return;
+    }
+    setCameraError(undefined);
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      setAppState(nextState);
+      if (nextState === "active" && mode === "scan" && isFocused) {
+        // Re-check permission silently in case user just enabled Camera in OS Settings.
+        void getPermission()
+          .then((nextPermission) => {
+            if (nextPermission.granted) {
+              setCameraError(undefined);
+            }
+          })
+          .catch(() => undefined);
+      }
+    });
+    return () => subscription?.remove();
+  }, [getPermission, isFocused, mode]);
+
+  useEffect(() => {
+    if (mode !== "scan" || !isFocused || parsedPayload) {
+      return;
+    }
+    if (!permission || permission.granted || !permission.canAskAgain) {
+      return;
+    }
+    if (hasAutoRequestedPermissionRef.current) {
+      return;
+    }
+    hasAutoRequestedPermissionRef.current = true;
+    void requestCameraPermission();
+  }, [isFocused, mode, parsedPayload, permission, requestCameraPermission]);
 
   const resetScanner = useCallback(() => {
     setParsedPayload(null);
@@ -199,8 +271,16 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
     setManualPayload("");
     setHasScanned(false);
     setCameraError(undefined);
-    setIsCameraEnabled(false);
   }, []);
+
+  const shouldShowCamera =
+    mode === "scan" &&
+    isFocused &&
+    appState !== "background" &&
+    appState !== "inactive" &&
+    Boolean(permission?.granted) &&
+    !parsedPayload &&
+    !cameraError;
 
   return (
     <Screen>
@@ -225,7 +305,7 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
                 accessibilityRole="button"
                 accessibilityState={{ selected }}
                 key={item.key}
-                onPress={() => setMode(item.key)}
+                onPress={() => handleSelectMode(item.key)}
                 style={[styles.modeButton, selected ? styles.modeButtonSelected : null]}
                 testID={item.key === "my" ? "qr-my-qr" : "qr-scan"}
               >
@@ -330,32 +410,56 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
               </View>
             </View>
 
-            {isCameraEnabled && permission?.granted && !parsedPayload && !cameraError ? (
+            {shouldShowCamera ? (
               <View style={styles.cameraFrame}>
                 <CameraView
                   accessibilityLabel="Camera quét mã QR"
                   barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                  facing="back"
                   onBarcodeScanned={handleBarcodeScanned}
-                  onMountError={(event) => setCameraError(event.message)}
+                  onMountError={(event) => {
+                    setCameraError(event.message || "Không thể khởi động camera.");
+                  }}
                   style={styles.camera}
                   testID="qr-camera"
                 />
                 <View pointerEvents="none" style={styles.scanGuide} />
               </View>
-            ) : !parsedPayload && !cameraError ? (
+            ) : !parsedPayload ? (
               <View style={styles.permissionBox}>
                 <View style={styles.permissionIcon}>
                   <AppIcon color={colors.primary} name="scan" size={28} />
                 </View>
-                <Text style={styles.permissionTitle}>Bật camera để quét QR</Text>
-                <Text style={styles.permissionText}>
-                  Ứng dụng chỉ truy cập camera khi bạn đang dùng màn hình này.
+                <Text style={styles.permissionTitle}>
+                  {permission && !permission.granted && !permission.canAskAgain
+                    ? "Cần bật quyền Camera trong Cài đặt"
+                    : "Bật camera để quét QR"}
                 </Text>
+                <Text style={styles.permissionText}>
+                  {permission && !permission.granted && !permission.canAskAgain
+                    ? "Bạn đã từ chối quyền Camera trước đó. Hãy bật lại quyền Máy ảnh trong Cài đặt thiết bị để quét mã QR."
+                    : "Ứng dụng chỉ truy cập camera khi bạn đang mở màn hình quét mã."}
+                </Text>
+                {permission && !permission.granted && !permission.canAskAgain ? (
+                  <Button
+                    icon="shield"
+                    label="Mở Cài đặt ứng dụng"
+                    onPress={() => void handleOpenSettings()}
+                    testID="qr-open-settings"
+                  />
+                ) : null}
                 <Button
                   icon="scan"
-                  label={permission?.granted ? "Mở camera" : "Cấp quyền camera"}
+                  label={
+                    permission?.granted
+                      ? "Mở camera"
+                      : permission && !permission.canAskAgain
+                        ? "Kiểm tra lại quyền"
+                        : "Cấp quyền camera"
+                  }
                   onPress={() => void handleEnableCamera()}
                   testID="qr-request-camera"
+                  variant={permission && !permission.granted && !permission.canAskAgain ? "outline" : "primary"}
                 />
               </View>
             ) : null}
@@ -514,11 +618,12 @@ const styles = StyleSheet.create({
   cameraFrame: {
     position: "relative",
     overflow: "hidden",
-    minHeight: 300,
+    width: "100%",
+    height: 300,
     borderRadius: radius.lg,
     backgroundColor: colors.navy,
   },
-  camera: { width: "100%", minHeight: 300 },
+  camera: { width: "100%", height: 300 },
   scanGuide: {
     position: "absolute",
     top: 46,
