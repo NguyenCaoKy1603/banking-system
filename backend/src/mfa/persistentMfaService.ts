@@ -11,12 +11,14 @@ import { OutboxRepository } from "../database/repositories/outboxRepository.js";
 import { createId, createOpaqueToken, fingerprint, hashOpaqueToken } from "../security.js";
 import {
   buildTotpUri,
+  generateBiometricSecret,
   generateTotpSecret,
   OtpDigestKeyring,
   SecureOtpCodeGenerator,
   type KeyEncryptionPort,
   type OtpCodeGenerator,
   validateTotp,
+  verifyBiometricAssertion,
 } from "./crypto.js";
 import {
   NullEmailProvider,
@@ -54,13 +56,23 @@ export type MfaChallengePurpose =
 
 export type MfaChallengeResponse = {
   challengeId: string;
-  method: "EMAIL_OTP" | "TOTP";
+  method: "EMAIL_OTP" | "TOTP" | "BIOMETRIC";
   /** The wire contract keeps the selected factor in an array for Mobile. */
-  methods: Array<"EMAIL_OTP" | "TOTP">;
+  methods: Array<"EMAIL_OTP" | "TOTP" | "BIOMETRIC" | "OTP">;
   purpose: MfaChallengePurpose;
   expiresAt: string;
   resendAfter?: string;
   maskedDestination?: string;
+};
+
+export type BiometricEnrollmentResponse = {
+  credentialId: string;
+  credentialType: "BIOMETRIC";
+  deviceId: string;
+  displayName: string;
+  status: "ACTIVE";
+  biometricSecret: string;
+  enrolledAt: string;
 };
 
 export type TotpEnrollmentResponse = {
@@ -439,6 +451,131 @@ export class PersistentMfaService {
     return { challengeId, method: "TOTP", methods: ["TOTP"], purpose: input.purpose, expiresAt };
   }
 
+  async enrollBiometricCredential(input: {
+    customerId: string;
+    deviceId: string;
+    displayName?: string;
+  }): Promise<BiometricEnrollmentResponse> {
+    const normalizedDeviceId = input.deviceId.trim();
+    if (!normalizedDeviceId) {
+      throw invalidRequest("X-Device-ID is required to enroll biometric authentication.");
+    }
+    const biometricSecret = generateBiometricSecret();
+    const credentialId = createId("mfa-credential");
+    const enrolledAt = new Date(this.clock()).toISOString();
+    const encryptedSecret = this.options.encryption.encrypt(
+      biometricSecret,
+      this.encryptionContext("mfa-biometric", credentialId, input.customerId),
+    );
+    const metadata = envelopeMetadata(encryptedSecret);
+    const deviceSuffix = fingerprint(normalizedDeviceId).slice(0, 6);
+    const displayName = input.displayName?.trim()
+      ? `${input.displayName.trim()} (${deviceSuffix})`
+      : `Sinh trắc học thiết bị (${deviceSuffix})`;
+
+    await this.options.unitOfWork.transaction(async ({ client }) => {
+      const repository = new MfaRepository(client);
+      await repository.revokeActiveBiometricByDevice(input.customerId, normalizedDeviceId);
+      await repository.createBiometricCredential({
+        id: credentialId,
+        customerId: input.customerId,
+        deviceId: normalizedDeviceId,
+        displayName,
+        secretCiphertext: encryptedSecret,
+        secretKeyId: this.options.encryption.keyId,
+        secretCipherVersion: metadata.version,
+        secretAadVersion: metadata.aadVersion,
+        secretEncryptionAlgorithm: metadata.algorithm,
+        secretEncryptedDataKey: metadata.encryptedDataKey,
+      });
+      await repository.insertSecurityEvent({
+        id: createId("auth-security-event"),
+        customerId: input.customerId,
+        eventType: "MFA_BIOMETRIC_ENROLLED",
+        purpose: "MFA_FACTOR_CHANGE",
+        deviceFingerprint: fingerprint(normalizedDeviceId),
+        resourceId: credentialId,
+        metadata: { credentialType: "BIOMETRIC" },
+      });
+    });
+
+    this.metrics.increment("mfa_credentials_enrolled_total");
+    return {
+      credentialId,
+      credentialType: "BIOMETRIC",
+      deviceId: normalizedDeviceId,
+      displayName,
+      status: "ACTIVE",
+      biometricSecret,
+      enrolledAt,
+    };
+  }
+
+  async beginBiometricChallenge(input: {
+    customerId: string;
+    deviceId: string;
+    purpose: Exclude<MfaChallengePurpose, "REGISTRATION_EMAIL_VERIFY" | "EMAIL_CHANGE_VERIFY" | "RECOVERY_EMAIL_VERIFY">;
+    resourceId?: string | null;
+    requestFingerprint?: string | null;
+    networkFingerprint?: string | null;
+  }): Promise<MfaChallengeResponse> {
+    const challengeId = createOpaqueToken();
+    const challengeHash = hashOpaqueToken(challengeId);
+    const expiresAt = new Date(this.clock() + EMAIL_CHALLENGE_TTL_MS).toISOString();
+    await this.options.unitOfWork.transaction(async ({ client }) => {
+      const repository = new MfaRepository(client);
+      const credential = await repository.findActiveBiometric(input.customerId, input.deviceId);
+      if (!credential || credential.customerId !== input.customerId || credential.status !== "ACTIVE") {
+        throw unauthorized("Biometric credential is not active for this device.");
+      }
+      const customerRate = await repository.atomicRateLimit({
+        bucketKey: `mfa-challenge:customer:${input.customerId}:${input.purpose}`,
+        windowSeconds: 600,
+        maxAttempts: 10,
+      });
+      const deviceRate = await repository.atomicRateLimit({
+        bucketKey: `mfa-challenge:device:${fingerprint(input.deviceId)}`,
+        windowSeconds: 3600,
+        maxAttempts: 20,
+      });
+      const networkRate = input.networkFingerprint
+        ? await repository.atomicRateLimit({
+            bucketKey: `mfa-challenge:network:${fingerprint(input.networkFingerprint)}`,
+            windowSeconds: 3600,
+            maxAttempts: 50,
+          })
+        : { allowed: true, retryAfterSeconds: 0 };
+      if (!customerRate.allowed || !deviceRate.allowed || !networkRate.allowed) {
+        this.metrics.increment("auth_challenges_rate_limited_total");
+        throw rateLimited(
+          "Too many MFA challenge requests.",
+          Math.max(customerRate.retryAfterSeconds, deviceRate.retryAfterSeconds, networkRate.retryAfterSeconds),
+        );
+      }
+      await repository.cancelActiveChallenges({
+        customerId: input.customerId,
+        deviceId: input.deviceId,
+        purpose: input.purpose,
+        resourceId: input.resourceId,
+        requestFingerprint: input.requestFingerprint,
+      });
+      await repository.createChallenge({
+        id: challengeHash,
+        customerId: input.customerId,
+        credentialId: credential.id,
+        deviceId: input.deviceId,
+        method: "BIOMETRIC",
+        purpose: input.purpose,
+        resourceId: input.resourceId,
+        requestFingerprint: input.requestFingerprint,
+        expiresAt,
+        maxAttempts: 5,
+      });
+    });
+    this.metrics.increment("auth_challenges_created_total");
+    return { challengeId, method: "BIOMETRIC", methods: ["BIOMETRIC"], purpose: input.purpose, expiresAt };
+  }
+
   async createEmailChallenge(input: {
     customerId?: string | null;
     pendingRegistrationId?: string | null;
@@ -599,6 +736,55 @@ export class PersistentMfaService {
           resourceId: input.resourceId,
         });
         return { ok: true as const, reason: "ok" as const, customerId: challenge.customerId, credentialId: null, timeStep: null };
+      }
+      if (
+        challenge.method === "BIOMETRIC" ||
+        (challenge.method === "TOTP" && typeof input.proof === "string" && input.proof.startsWith("biometric-v1."))
+      ) {
+        const matchedBiometric = challenge.method === "BIOMETRIC" && challenge.credentialId
+          ? await repository.lockCredential(challenge.credentialId)
+          : await repository.findActiveBiometric(challenge.customerId ?? "", input.deviceId);
+        const credential = matchedBiometric && matchedBiometric.id !== challenge.credentialId
+          ? await repository.lockCredential(matchedBiometric.id)
+          : matchedBiometric;
+        if (
+          !credential ||
+          credential.status !== "ACTIVE" ||
+          credential.credentialType !== "BIOMETRIC" ||
+          (credential.deviceId && credential.deviceId !== input.deviceId) ||
+          !credential.secretCiphertext ||
+          !credential.secretKeyId
+        ) {
+          await repository.recordChallengeFailure(challengeHash);
+          return { ok: false as const, reason: "credential" as const, customerId: challenge.customerId, credentialId: null, timeStep: null };
+        }
+        const biometricSecret = this.options.encryption.decrypt(
+          credential.secretCiphertext,
+          credential.secretKeyId,
+          this.encryptionContext("mfa-biometric", credential.id, challenge.customerId ?? "unknown"),
+        );
+        const biometricValid = verifyBiometricAssertion(input.proof, biometricSecret, {
+          challengeId: input.challengeId,
+          deviceId: input.deviceId,
+          purpose: input.purpose,
+          resourceId: input.resourceId,
+        });
+        if (!biometricValid) {
+          const failure = await repository.recordChallengeFailure(challengeHash);
+          return { ok: false as const, reason: failure.locked ? "locked" as const : "invalid" as const, customerId: challenge.customerId, credentialId: credential.id, timeStep: null };
+        }
+        await repository.touchCredentialUsed(credential.id);
+        await repository.consumeChallenge(challengeHash);
+        await repository.insertSecurityEvent({
+          id: createId("auth-security-event"),
+          customerId: challenge.customerId,
+          eventType: "MFA_VERIFY_SUCCEEDED",
+          purpose: input.purpose,
+          challengeId: challengeHash,
+          resourceId: input.resourceId,
+          metadata: { method: "BIOMETRIC" },
+        });
+        return { ok: true as const, reason: "ok" as const, customerId: challenge.customerId, credentialId: credential.id, timeStep: null };
       }
       if (challenge.method !== "TOTP" || !challenge.credentialId) {
         await repository.recordChallengeFailure(challengeHash);

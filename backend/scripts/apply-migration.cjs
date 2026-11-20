@@ -147,6 +147,8 @@ const requiredTablesByMigration = {
   "041_admin_two_roles": [],
   "042_admin_direct_operations_accounts": ["admin_staff_account_creation_requests"],
   "043_retire_staff_invite_approval": [],
+  "045_transaction_anomaly_detection": ["transaction_anomalies"],
+  "046_biometric_authentication": [],
 };
 
 async function main() {

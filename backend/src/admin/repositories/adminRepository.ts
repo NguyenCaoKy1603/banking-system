@@ -232,6 +232,31 @@ export type AdminFraudCase = {
   updatedAt: string;
 };
 
+export type AdminAnomalyRecord = {
+  id: string;
+  customerId: string;
+  customerName: string | null;
+  accountId: string;
+  transferId: string | null;
+  transactionId: string | null;
+  amountMinor: string;
+  currency: string;
+  counterpartyName: string | null;
+  maskedDestinationAccount: string | null;
+  riskLevel: "MEDIUM" | "HIGH" | "CRITICAL";
+  riskScore: number;
+  ruleCodes: string[];
+  summary: string;
+  status: "OPEN" | "CONFIRMED_SAFE" | "REPORTED_SUSPICIOUS" | "RESOLVED";
+  customerNote: string | null;
+  acknowledgedAt: string | null;
+  resolutionCode: string | null;
+  resolvedAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AdminJob = {
   id: string;
   jobType: string;
@@ -260,6 +285,7 @@ type AdminRepositorySeed = {
   transactions?: AdminTransaction[];
   applications?: AdminApplication[];
   transfers?: AdminTransfer[];
+  anomalies?: AdminAnomalyRecord[];
   fraudCases?: AdminFraudCase[];
   jobs?: AdminJob[];
   outboxEvents?: Array<Record<string, unknown>>;
@@ -354,6 +380,8 @@ export interface AdminRepository {
   listTransfers(status?: string): Promise<AdminTransfer[]>;
   findTransfer(id: string): Promise<AdminTransfer | null>;
   listTransferTimeline(id: string): Promise<AdminTimelineEvent[]>;
+  listAnomalies(status?: string): Promise<AdminAnomalyRecord[]>;
+  resolveAnomaly(input: { id: string; staffId: string; reasonCode: string; comment?: string | null; traceId: string }): Promise<AdminAnomalyRecord>;
   listFraudCases(status?: string): Promise<AdminFraudCase[]>;
   findFraudCase(id: string): Promise<AdminFraudCase | null>;
   listFraudCaseTimeline(id: string): Promise<AdminTimelineEvent[]>;
@@ -424,6 +452,33 @@ function mapTransfer(row: Record<string, unknown>): AdminTransfer {
 }
 function mapFraud(row: Record<string, unknown>): AdminFraudCase {
   return { id: String(row.id), customerId: String(row.customer_id), accountId: String(row.account_id), transactionId: String(row.transaction_id), reasonPreview: String(row.reason ?? "").slice(0, 160), status: String(row.status), severity: String(row.severity ?? "MEDIUM"), assignedStaffId: row.assigned_staff_id ? String(row.assigned_staff_id) : null, resolutionCode: row.resolution_code ? String(row.resolution_code) : null, version: asNumber(row.version, 1), createdAt: new Date(String(row.created_at)).toISOString(), updatedAt: new Date(String(row.updated_at ?? row.created_at)).toISOString() };
+}
+function mapAdminAnomaly(row: Record<string, unknown>): AdminAnomalyRecord {
+  const ruleCodes = Array.isArray(row.rule_codes) ? row.rule_codes.map((item) => String(item)) : [];
+  return {
+    id: String(row.id),
+    customerId: String(row.customer_id),
+    customerName: row.customer_name ? String(row.customer_name) : null,
+    accountId: String(row.account_id),
+    transferId: row.transfer_id ? String(row.transfer_id) : null,
+    transactionId: row.transaction_id ? String(row.transaction_id) : null,
+    amountMinor: String(row.amount_minor),
+    currency: String(row.currency ?? "VND"),
+    counterpartyName: row.counterparty_name ? String(row.counterparty_name) : null,
+    maskedDestinationAccount: row.masked_destination_account ? maskAccountNumber(String(row.masked_destination_account)) : null,
+    riskLevel: String(row.risk_level) as AdminAnomalyRecord["riskLevel"],
+    riskScore: asNumber(row.risk_score, 0),
+    ruleCodes,
+    summary: String(row.summary),
+    status: String(row.status) as AdminAnomalyRecord["status"],
+    customerNote: row.customer_note ? String(row.customer_note) : null,
+    acknowledgedAt: row.acknowledged_at ? new Date(String(row.acknowledged_at)).toISOString() : null,
+    resolutionCode: row.resolution_code ? String(row.resolution_code) : null,
+    resolvedAt: row.resolved_at ? new Date(String(row.resolved_at)).toISOString() : null,
+    version: asNumber(row.version, 1),
+    createdAt: new Date(String(row.created_at)).toISOString(),
+    updatedAt: new Date(String(row.updated_at)).toISOString(),
+  };
 }
 function maskedCustomer(row: CustomerSummary): CustomerSummary { return { ...row, email: maskEmail(row.email), phoneNumber: maskPhone(row.phoneNumber) }; }
 function mapJob(row: Record<string, unknown>): AdminJob {
@@ -521,6 +576,7 @@ export class InMemoryAdminRepository implements AdminRepository {
   private readonly transactions = new Map<string, AdminTransaction[]>();
   private readonly applications = new Map<string, AdminApplication>();
   private readonly transfers = new Map<string, AdminTransfer>();
+  private readonly anomalies = new Map<string, AdminAnomalyRecord>();
   private readonly fraudCases = new Map<string, AdminFraudCase>();
   private readonly fraudNotes = new Map<string, AdminTimelineEvent[]>();
   private readonly jobs = new Map<string, AdminJob>();
@@ -542,6 +598,7 @@ export class InMemoryAdminRepository implements AdminRepository {
     for (const row of this.seed.transactions ?? []) this.transactions.set(row.accountId, [structuredClone(row), ...(this.transactions.get(row.accountId) ?? [])]);
     for (const row of this.seed.applications ?? []) this.applications.set(row.id, structuredClone(row));
     for (const row of this.seed.transfers ?? []) this.transfers.set(row.id, structuredClone(row));
+    for (const row of this.seed.anomalies ?? []) this.anomalies.set(row.id, structuredClone(row));
     for (const row of this.seed.fraudCases ?? []) this.fraudCases.set(row.id, structuredClone(row));
     for (const row of this.seed.jobs ?? []) this.jobs.set(row.id, structuredClone(row));
     for (const row of this.seed.outboxEvents ?? []) {
@@ -794,6 +851,43 @@ export class InMemoryAdminRepository implements AdminRepository {
   listTransfers(status?: string) { return Promise.resolve([...this.transfers.values()].filter((row) => !status || row.status === status).map((row) => structuredClone(row))); }
   findTransfer(id: string) { const row = this.transfers.get(id); return Promise.resolve(row ? structuredClone(row) : null); }
   listTransferTimeline(id: string) { return Promise.resolve(this.audit.filter((event) => event.targetType === "TRANSFER" && event.targetId === id).map((event) => ({ id: event.id, eventType: event.action, occurredAt: event.occurredAt, actorStaffId: event.actorStaffId, outcome: event.outcome, reasonCode: event.reasonCode, metadata: structuredClone(event.metadata) })).sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt))); }
+  listAnomalies(status?: string) {
+    return Promise.resolve(
+      [...this.anomalies.values()]
+        .filter((row) => !status || row.status === status)
+        .sort((left, right) => right.riskScore - left.riskScore || Date.parse(right.createdAt) - Date.parse(left.createdAt))
+        .map((row) => structuredClone(row)),
+    );
+  }
+  async resolveAnomaly(input: { id: string; staffId: string; reasonCode: string; comment?: string | null; traceId: string }): Promise<AdminAnomalyRecord> {
+    const row = this.anomalies.get(input.id);
+    if (!row) throw notFound("Transaction anomaly not found.");
+    const reasonCode = input.reasonCode.trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{3,64}$/.test(reasonCode)) throw invalidRequest("A normalized reason code is required.");
+    const now = nowIso();
+    row.status = "RESOLVED";
+    row.resolutionCode = reasonCode;
+    row.resolvedAt = now;
+    row.version += 1;
+    row.updatedAt = now;
+    await this.appendAudit({
+      id: randomUUID(),
+      actorStaffId: input.staffId,
+      action: "ADMIN_ANOMALY_RESOLVED",
+      targetType: "TRANSACTION_ANOMALY",
+      targetId: row.id,
+      outcome: "SUCCEEDED",
+      reasonCode,
+      requestId: null,
+      traceId: input.traceId,
+      correlationId: null,
+      beforeVersion: row.version - 1,
+      afterVersion: row.version,
+      metadata: { riskLevel: row.riskLevel, riskScore: row.riskScore, comment: input.comment ?? null },
+      occurredAt: now,
+    });
+    return structuredClone(row);
+  }
   listFraudCases(status?: string) { return Promise.resolve([...this.fraudCases.values()].filter((row) => !status || row.status === status).map((row) => structuredClone(row))); }
   findFraudCase(id: string) { const row = this.fraudCases.get(id); return Promise.resolve(row ? structuredClone(row) : null); }
   listFraudCaseTimeline(id: string) { return Promise.resolve([...this.audit.filter((event) => event.targetType === "FRAUD_CASE" && event.targetId === id).map((event) => ({ id: event.id, eventType: event.action, occurredAt: event.occurredAt, actorStaffId: event.actorStaffId, outcome: event.outcome, reasonCode: event.reasonCode, metadata: structuredClone(event.metadata) })), ...(this.fraudNotes.get(id) ?? []).map((event) => structuredClone(event))].sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt))); }
@@ -1524,6 +1618,70 @@ export class PostgresAdminRepository implements AdminRepository {
       ...transactions.rows.map((row) => ({ id: String(row.id), eventType: "ACCOUNT_TRANSACTION", occurredAt: new Date(String(row.occurred_at)).toISOString(), actorStaffId: null, outcome: String(row.status), reasonCode: null, metadata: { direction: String(row.direction), amountMinor: String(row.amount_minor), feeMinor: String(row.fee_minor), reference: String(row.reference) } })),
       ...outbox.rows.map((row) => ({ id: String(row.id), eventType: `OUTBOX:${String(row.event_type)}`, occurredAt: new Date(String(row.occurred_at)).toISOString(), actorStaffId: null, outcome: String(row.status), reasonCode: row.last_error_code ? String(row.last_error_code) : null, metadata: { attempts: asNumber(row.attempts), traceId: row.trace_id ? String(row.trace_id) : null } })),
     ].sort((a, b) => Date.parse(a.occurredAt) - Date.parse(b.occurredAt));
+  }
+  async listAnomalies(status?: string): Promise<AdminAnomalyRecord[]> {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const normalizedStatus = status?.trim().toUpperCase() || null;
+      const result = await client.query(
+        `SELECT a.*, c.full_name AS customer_name
+         FROM transaction_anomalies a
+         LEFT JOIN customers c ON a.customer_id = c.id
+         WHERE ($1::text IS NULL OR a.status = $1)
+         ORDER BY a.risk_score DESC, a.created_at DESC
+         LIMIT 200`,
+        [normalizedStatus],
+      );
+      return result.rows.map((row) => mapAdminAnomaly(row as Record<string, unknown>));
+    });
+  }
+  async resolveAnomaly(input: { id: string; staffId: string; reasonCode: string; comment?: string | null; traceId: string }): Promise<AdminAnomalyRecord> {
+    const reasonCode = input.reasonCode.trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{3,64}$/.test(reasonCode)) {
+      throw invalidRequest("A normalized reason code is required.", { reasonCode: "reasonCode must be 3-64 uppercase characters." });
+    }
+    const safeComment = typeof input.comment === "string"
+      ? input.comment.replace(/[<>]/g, "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").trim().slice(0, 500) || null
+      : null;
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const current = await client.query(
+        `SELECT a.*, c.full_name AS customer_name
+         FROM transaction_anomalies a
+         LEFT JOIN customers c ON a.customer_id = c.id
+         WHERE a.id = $1 FOR UPDATE OF a`,
+        [input.id],
+      );
+      if (!current.rows[0]) throw notFound("Transaction anomaly not found.");
+      const before = asNumber(current.rows[0].version, 1);
+      const updated = await client.query(
+        `UPDATE transaction_anomalies
+            SET status = 'RESOLVED',
+                resolved_by_staff_id = $2,
+                resolution_code = $3,
+                resolved_at = NOW(),
+                version = version + 1,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING *`,
+        [input.id, input.staffId, reasonCode],
+      );
+      const updatedRow = updated.rows[0] as Record<string, unknown>;
+      updatedRow.customer_name = current.rows[0].customer_name;
+      const mapped = mapAdminAnomaly(updatedRow);
+      await client.query(
+        "INSERT INTO audit_events (id,event_type,actor_type,actor_staff_id,action,target_type,target_id,outcome,reason_code,request_id,trace_id,before_version,after_version,payload,occurred_at) VALUES ($1,'ADMIN_ANOMALY_RESOLVED','STAFF',$2,'ANOMALY_RESOLVE','TRANSACTION_ANOMALY',$3,'SUCCEEDED',$4,NULL,$5,$6,$7,$8,NOW())",
+        [
+          randomUUID(),
+          input.staffId,
+          mapped.id,
+          reasonCode,
+          input.traceId,
+          before,
+          mapped.version,
+          JSON.stringify(redactAdminMetadata({ riskLevel: mapped.riskLevel, riskScore: mapped.riskScore, comment: safeComment })),
+        ],
+      );
+      return mapped;
+    });
   }
   async listFraudCases(status?: string) {
     return this.unitOfWork.transaction(async ({ client }) => {

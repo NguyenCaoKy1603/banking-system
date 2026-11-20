@@ -12,5 +12,6 @@ export * from "./cardRoutes.js";
 export * from "./savingsRoutes.js";
 export * from "./kycRoutes.js";
 export * from "./notificationRoutes.js";
+export * from "./anomalyRoutes.js";
 export * from "./assistantRoutes.js";
 export * from "./mobileRoutes.js";

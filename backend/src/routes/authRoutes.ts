@@ -21,6 +21,7 @@ import {
   confirmRecoveryTotpEnrollmentController,
   resendRegistrationChallengeController,
   listMfaMethodsController,
+  enrollBiometricController,
   beginTotpEnrollmentController,
   confirmTotpEnrollmentController,
   revokeMfaMethodController,
@@ -253,6 +254,7 @@ export async function handlePublicAuthRoute(
 /**
  * Handles authenticated MFA & Security routes (Router / Dispatcher):
  * - GET    /auth/mfa/methods
+ * - POST   /auth/mfa/biometric/enroll
  * - POST   /auth/mfa/totp/enroll
  * - POST   /auth/mfa/totp/confirm
  * - DELETE /auth/mfa/methods
@@ -280,14 +282,26 @@ export async function handleAuthenticatedMfaRoute(
 
   // GET /auth/mfa/methods
   if (
-    options.mfaService &&
     request.method === "GET" &&
     segments.length === 3 &&
     segments[0] === "auth" &&
     segments[1] === "mfa" &&
     segments[2] === "methods"
   ) {
-    await listMfaMethodsController(response, userId, options, traceId);
+    await listMfaMethodsController(response, userId, options, system, traceId);
+    return true;
+  }
+
+  // POST /auth/mfa/biometric/enroll
+  if (
+    request.method === "POST" &&
+    segments.length === 4 &&
+    segments[0] === "auth" &&
+    segments[1] === "mfa" &&
+    segments[2] === "biometric" &&
+    segments[3] === "enroll"
+  ) {
+    await enrollBiometricController(request, response, userId, body, options, system, relationalAuth, traceId);
     return true;
   }
 
@@ -321,7 +335,6 @@ export async function handleAuthenticatedMfaRoute(
 
   // DELETE /auth/mfa/methods/:id
   if (
-    options.mfaService &&
     request.method === "DELETE" &&
     segments.length === 4 &&
     segments[0] === "auth" &&

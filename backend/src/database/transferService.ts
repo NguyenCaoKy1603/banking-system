@@ -3,13 +3,15 @@ import { randomUUID } from "node:crypto";
 import { UnitOfWork } from "./unitOfWork.js";
 import { IdempotencyConflictError, RelationalConflictError, RelationalNotFoundError } from "./commandErrors.js";
 import { AccountRepository } from "./repositories/accountRepository.js";
+import { AnomalyRepository } from "./repositories/anomalyRepository.js";
 import { AuditRepository } from "./repositories/auditRepository.js";
 import { LedgerRepository } from "./repositories/ledgerRepository.js";
 import { OutboxRepository } from "./repositories/outboxRepository.js";
 import { TransferRepository, type TransferRow } from "./repositories/transferRepository.js";
+import { evaluateTransferAnomaly } from "../domain/anomaly/index.js";
 import { fingerprint, hashOpaqueToken } from "../security.js";
 import { parseMoney, toMoney } from "../domain/money.js";
-import type { Beneficiary, TransferQuote, TransferReceipt } from "../types.js";
+import type { Beneficiary, TransferAnomalyAssessment, TransferQuote, TransferReceipt } from "../types.js";
 import { conflict, invalidRequest, notFound } from "../errors.js";
 import { ControlPolicyRepository } from "./controlPolicyRepository.js";
 
@@ -66,7 +68,11 @@ function publicBeneficiary(row: Record<string, unknown>): Beneficiary {
   };
 }
 
-function publicTransfer(row: TransferRow): TransferReceipt {
+type TransferRowWithAssessment = TransferRow & {
+  anomalyAssessment?: TransferAnomalyAssessment;
+};
+
+function publicTransfer(row: TransferRowWithAssessment): TransferReceipt {
   return {
     transferId: row.id,
     reference: row.reference,
@@ -75,6 +81,7 @@ function publicTransfer(row: TransferRow): TransferReceipt {
     fee: toMoney(BigInt(row.feeMinor)),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    ...(row.anomalyAssessment ? { anomalyAssessment: row.anomalyAssessment } : {}),
   };
 }
 
@@ -137,6 +144,20 @@ export class RelationalTransferService {
         destinationOwnerId: String(destination.destination_owner_id ?? destination.destination_customer_id),
         destinationOwnerName: String(destination.destination_full_name ?? destination.account_holder_name ?? ""),
       });
+      const signals = await new AnomalyRepository(client).getTransferRiskSignals({
+        customerId: input.customerId,
+        destinationAccountId,
+        now,
+      });
+      const anomalyAssessment = evaluateTransferAnomaly({
+        amountMinor,
+        feeMinor,
+        availableBalanceMinor: BigInt(source.availableMinor),
+        isNewRecipient: !hasBeneficiary && !signals.hasPriorRelationship,
+        recentTransfersLast10mCount: signals.recentTransfersLast10mCount,
+        sameRecipientLast15mCount: signals.sameRecipientLast15mCount,
+        occurredAt: now,
+      });
       await new AuditRepository(client).append({
         id: randomUUID(),
         eventType: "TRANSFER_QUOTED",
@@ -152,16 +173,18 @@ export class RelationalTransferService {
         fee: toMoney(feeMinor),
         totalDebit: toMoney(amountMinor + feeMinor),
         expiresAt,
+        anomalyAssessment,
       };
     }, { maxRetries: 1 });
   }
 
-  async submit(input: TransferCommandInput): Promise<TransferRow> {
+  async submit(input: TransferCommandInput): Promise<TransferRowWithAssessment> {
     assertUuid(input.quoteId, "quoteId");
     const now = input.now ?? new Date().toISOString();
     return this.unitOfWork.transaction(
       async ({ client }) => {
         const accounts = new AccountRepository(client);
+        const anomalies = new AnomalyRepository(client);
         const transfers = new TransferRepository(client);
         const ledger = new LedgerRepository(client);
         const audit = new AuditRepository(client);
@@ -254,9 +277,25 @@ export class RelationalTransferService {
         if (amount <= 0n || fee < 0n || totalDebit <= 0n) {
           throw new RelationalConflictError("INVALID_AMOUNT", "Transfer amount and fee are invalid.");
         }
-        if (BigInt(source.availableMinor) < totalDebit) {
+        const preTransferAvailableMinor = BigInt(source.availableMinor);
+        if (preTransferAvailableMinor < totalDebit) {
           throw new RelationalConflictError("INSUFFICIENT_BALANCE", "Insufficient available balance.");
         }
+
+        const riskSignals = await anomalies.getTransferRiskSignals({
+          customerId: input.customerId,
+          destinationAccountId: destination.id,
+          now,
+        });
+        const anomalyAssessment = evaluateTransferAnomaly({
+          amountMinor: amount,
+          feeMinor: fee,
+          availableBalanceMinor: preTransferAvailableMinor,
+          isNewRecipient: !quote.beneficiaryId && !riskSignals.hasPriorRelationship,
+          recentTransfersLast10mCount: riskSignals.recentTransfersLast10mCount,
+          sameRecipientLast15mCount: riskSignals.sameRecipientLast15mCount,
+          occurredAt: now,
+        });
 
         const transferId = input.transferId ?? randomUUID();
         const reference = input.reference ?? `REF-${transferId.slice(-12).toUpperCase()}`;
@@ -420,12 +459,81 @@ export class RelationalTransferService {
         });
         await input.fault?.("after_outbox_written");
 
+        if (anomalyAssessment.flagged && anomalyAssessment.riskLevel !== "LOW") {
+          const anomalyRecord = await anomalies.insertAnomaly({
+            id: randomUUID(),
+            customerId: input.customerId,
+            accountId: source.id,
+            transferId: transfer.id,
+            transactionId: transfer.sourceTransactionId,
+            amountMinor: amount.toString(),
+            counterpartyName: quote.destinationOwnerName || null,
+            maskedDestinationAccount: destination.maskedNumber ?? null,
+            riskLevel: anomalyAssessment.riskLevel,
+            riskScore: anomalyAssessment.riskScore,
+            ruleCodes: anomalyAssessment.flags.map((flag) => flag.code),
+            summary: anomalyAssessment.summary,
+            flags: anomalyAssessment.flags,
+            now,
+          });
+          const anomalyNotificationId = randomUUID();
+          await client.query(
+            `INSERT INTO notifications
+               (id, customer_id, notification_type, title, body, resource_id,
+                resource_account_id, is_read, created_at)
+             VALUES
+               ($1, $2, 'SECURITY', 'Cảnh báo giao dịch bất thường', $3, $4, NULL, false, $5)`,
+            [
+              anomalyNotificationId,
+              input.customerId,
+              anomalyAssessment.summary,
+              anomalyRecord.id,
+              now,
+            ],
+          );
+          await audit.append({
+            id: randomUUID(),
+            eventType: "TRANSACTION_ANOMALY_DETECTED",
+            actorCustomerId: input.customerId,
+            resourceId: anomalyRecord.id,
+            occurredAt: now,
+            traceId: input.traceId,
+            payload: {
+              transferId: transfer.id,
+              riskLevel: anomalyAssessment.riskLevel,
+              riskScore: anomalyAssessment.riskScore,
+              ruleCodes: anomalyAssessment.flags.map((flag) => flag.code),
+            },
+          });
+          await outbox.append({
+            id: randomUUID(),
+            eventType: "SECURITY_ANOMALY_DETECTED",
+            aggregateType: "security",
+            aggregateId: anomalyRecord.id,
+            deduplicationKey: `SECURITY_ANOMALY_DETECTED:${anomalyRecord.id}`,
+            occurredAt: now,
+            payload: {
+              anomalyId: anomalyRecord.id,
+              transferId: transfer.id,
+              riskLevel: anomalyAssessment.riskLevel,
+              riskScore: anomalyAssessment.riskScore,
+            },
+            traceId: input.traceId,
+            subjectCustomerIds: [input.customerId],
+            notificationIds: [anomalyNotificationId],
+          });
+        }
+
+        const resultWithAssessment: TransferRowWithAssessment = {
+          ...transfer,
+          anomalyAssessment,
+        };
         await transfers.completeCommandIdempotency(input.customerId, "TRANSFER_SUBMIT", input.idempotencyKey, {
           aggregateId: transfer.id,
           status: transfer.status,
-          responsePayload: transfer,
+          responsePayload: resultWithAssessment,
         });
-        return transfer;
+        return resultWithAssessment;
       },
       { traceId: input.traceId, maxRetries: 1 },
     );
@@ -454,7 +562,7 @@ export class RelationalTransferService {
     });
   }
 
-  toPublic(row: TransferRow): TransferReceipt {
+  toPublic(row: TransferRowWithAssessment): TransferReceipt {
     return publicTransfer(row);
   }
 }

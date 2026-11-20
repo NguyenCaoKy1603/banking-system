@@ -96,7 +96,8 @@ export type RegisterResponse = {
 export type MfaCredentialSummary = {
   id: string;
   customerId: string;
-  credentialType: "TOTP" | "PASSKEY" | "OOB_SMS";
+  credentialType: "TOTP" | "BIOMETRIC" | "PASSKEY" | "OOB_SMS";
+  deviceId?: string | null;
   displayName: string;
   status: "PENDING" | "ACTIVE" | "SUSPENDED" | "REVOKED";
   algorithm: string;
@@ -108,6 +109,23 @@ export type MfaCredentialSummary = {
   revokedAt: string | null;
   compromisedAt: string | null;
   createdAt: string;
+};
+
+export type BiometricEnrollmentRequest = {
+  password: string;
+  displayName?: string;
+  challengeId?: string;
+  code?: string;
+};
+
+export type BiometricEnrollmentResponse = {
+  credentialId: string;
+  credentialType: "BIOMETRIC";
+  deviceId: string;
+  displayName: string;
+  status: "ACTIVE";
+  biometricSecret: string;
+  enrolledAt: string;
 };
 
 export type MfaMethodsResponse = {

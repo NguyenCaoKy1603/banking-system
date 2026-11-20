@@ -48,8 +48,13 @@ export class FakeEmailProvider implements VerificationCodeDeliveryPort {
 }
 
 export class NullEmailProvider implements VerificationCodeDeliveryPort {
-  async send(_input: VerificationCodeDeliveryInput): Promise<DeliveryResult> {
-    return { status: "FAILED", reason: "email-provider-not-configured" };
+  async send(input: VerificationCodeDeliveryInput): Promise<DeliveryResult> {
+    console.log("\n============================================================");
+    console.log(`[LOCAL DEV OTP] Mục đích:        ${input.purpose}`);
+    console.log(`[LOCAL DEV OTP] Đến:             ${input.destination}`);
+    console.log(`[LOCAL DEV OTP] MÃ OTP XÁC NHẬN: ${input.code}`);
+    console.log("============================================================\n");
+    return { status: "SENT", providerMessageId: `local-dev-${input.deliveryId}` };
   }
 
   health(): EmailProviderHealth {

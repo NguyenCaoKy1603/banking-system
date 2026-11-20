@@ -27,7 +27,12 @@ import { ApiError } from "@/services/api/ApiError";
 import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
 import { useTotpStatus } from "@/features/auth/hooks/useTotpStatus";
 import { isTotpNotEnrolledError, TOTP_NOT_ENROLLED_MESSAGE } from "@/features/auth/utils/totpError";
-import { getDeviceBoundAssertion, requestBiometricAuthentication } from "@/services/security/biometricAuth";
+import { loadBiometricCredential } from "@/features/auth/storage/biometricCredentialStorage";
+import {
+  createDeviceBoundBiometricAssertion,
+  getDeviceBoundAssertion,
+  requestBiometricAuthentication,
+} from "@/services/security/biometricAuth";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 type PaymentStep = "input" | "review" | "stepUp" | "result";
@@ -284,8 +289,21 @@ export function CreditPaymentScreen() {
     let requestStarted = false;
     try {
       let proof = stepUpProof.trim();
-      if (stepUpMethod === "BIOMETRIC") { await requestBiometricAuthentication("Xác thực thanh toán thẻ"); proof = getDeviceBoundAssertion(); }
-      if (!proof) { setError("Cần nhập mã xác thực hoặc hoàn tất phương thức được hỗ trợ."); return; }
+      if (stepUpMethod === "BIOMETRIC") {
+        await requestBiometricAuthentication("Xác thực thanh toán thẻ");
+        const stored = userId && deviceId ? await loadBiometricCredential(userId, deviceId) : null;
+        proof =
+          stored && deviceId
+            ? createDeviceBoundBiometricAssertion({
+                biometricSecret: stored.biometricSecret,
+                challengeId: paymentChallenge.challengeId,
+                deviceId,
+                purpose: "CREDIT_PAYMENT",
+                resourceId: quote.quoteId,
+              })
+            : getDeviceBoundAssertion();
+      }
+      if (!proof) { setError("Cần nhập mã xác thực hoặc kích hoạt Sinh trắc học trong Bảo mật tài khoản."); return; }
       await saveCardPaymentIntent({ phase: "SUBMIT_UNKNOWN", submitAttempted: true, userId, cardId, creditAccountId: quote.creditAccountId, statementId: quote.statementId, idempotencyKey, quote, createdAt: Date.now() });
       setIntentPhase("SUBMIT_UNKNOWN");
       requestStarted = true;
@@ -331,7 +349,7 @@ export function CreditPaymentScreen() {
       }
     }
     finally { submitLockRef.current = false; setIsSubmitting(false); }
-  }, [auth, cardId, clockMs, idempotencyKey, intentPhase, loadData, manualReviewCode, paymentChallenge, quote, recoveryBlocked, router, stepUpMethod, stepUpProof, userId]);
+  }, [auth, cardId, clockMs, deviceId, idempotencyKey, intentPhase, loadData, manualReviewCode, paymentChallenge, quote, recoveryBlocked, router, stepUpMethod, stepUpProof, userId]);
 
   const handleEditQuote = useCallback(() => {
     if (manualReviewCode) {

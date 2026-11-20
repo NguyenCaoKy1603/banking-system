@@ -139,6 +139,32 @@ paths:
                 $ref: '#/components/schemas/MfaMethodsResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /auth/mfa/biometric/enroll:
+    post:
+      tags: [Auth]
+      operationId: enrollBiometricMfa
+      summary: Enroll a device-bound biometric MFA credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BiometricEnrollmentRequest'
+      responses:
+        '201':
+          description: Active device-bound biometric credential and one-time signing secret.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BiometricEnrollmentResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /auth/mfa/totp/enroll:
     post:
       tags: [Auth]
@@ -479,6 +505,70 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+  /anomalies:
+    get:
+      tags: [Security]
+      operationId: listTransactionAnomalies
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [OPEN, CONFIRMED_SAFE, REPORTED_SUSPICIOUS, RESOLVED]
+      responses:
+        '200':
+          description: Transaction anomaly alerts visible to the authenticated customer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionAnomaliesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /anomalies/{anomalyId}:
+    get:
+      tags: [Security]
+      operationId: getTransactionAnomaly
+      parameters:
+        - $ref: '#/components/parameters/AnomalyId'
+      responses:
+        '200':
+          description: Detailed transaction anomaly alert.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionAnomalyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /anomalies/{anomalyId}/acknowledge:
+    post:
+      tags: [Security]
+      operationId: acknowledgeTransactionAnomaly
+      parameters:
+        - $ref: '#/components/parameters/AnomalyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcknowledgeAnomalyRequest'
+      responses:
+        '200':
+          description: Anomaly alert acknowledged by customer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionAnomalyResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /accounts:
     get:
       tags: [Accounts]
@@ -1477,6 +1567,13 @@ components:
       schema:
         type: string
         minLength: 1
+    AnomalyId:
+      name: anomalyId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     SavingsOpeningId:
       name: openingId
       in: path
@@ -1754,12 +1851,35 @@ components:
       properties:
         id: { type: string, format: uuid }
         customerId: { type: string, format: uuid }
-        credentialType: { type: string, enum: [TOTP, PASSKEY, OOB_SMS] }
+        credentialType: { type: string, enum: [TOTP, BIOMETRIC, PASSKEY, OOB_SMS] }
+        deviceId: { type: [string, 'null'] }
         displayName: { type: string }
         status: { type: string, enum: [PENDING, ACTIVE, SUSPENDED, REVOKED] }
         algorithm: { type: string }
         digits: { type: integer }
         periodSeconds: { type: integer }
+    BiometricEnrollmentRequest:
+      type: object
+      required: [password]
+      example:
+        password: <provided-by-test-secret>
+        displayName: Device Biometric
+      properties:
+        password: { type: string, minLength: 8, writeOnly: true }
+        displayName: { type: string, minLength: 1, maxLength: 80 }
+        challengeId: { type: string, minLength: 1 }
+        code: { type: string, pattern: '^\d{6}$', writeOnly: true }
+    BiometricEnrollmentResponse:
+      type: object
+      required: [credentialId, credentialType, deviceId, displayName, status, biometricSecret, enrolledAt]
+      properties:
+        credentialId: { type: string }
+        credentialType: { type: string, enum: [BIOMETRIC] }
+        deviceId: { type: string }
+        displayName: { type: string }
+        status: { type: string, enum: [ACTIVE] }
+        biometricSecret: { type: string, writeOnly: true }
+        enrolledAt: { type: string, format: date-time }
     MfaMethodsResponse:
       type: object
       required: [items]
@@ -2208,6 +2328,7 @@ components:
         fee: { $ref: '#/components/schemas/Money' }
         totalDebit: { $ref: '#/components/schemas/Money' }
         expiresAt: { type: string, format: date-time }
+        anomalyAssessment: { $ref: '#/components/schemas/TransferAnomalyAssessment' }
     SubmitTransferRequest:
       type: object
       required: [quoteId, stepUp]
@@ -2237,6 +2358,7 @@ components:
         fee: { $ref: '#/components/schemas/Money' }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        anomalyAssessment: { $ref: '#/components/schemas/TransferAnomalyAssessment' }
     SavingsProduct:
       type: object
       required: [productId, name, termMonths, annualRateBasisPoints, currency, minAmountMinor, maxAmountMinor, status, termsVersion]
@@ -3176,3 +3298,78 @@ components:
       properties:
         code: { type: string, enum: [BASE_BUDGET_DEFICIT, BUFFER_NOT_COVERED] }
         message: { type: string }
+    AnomalyFlag:
+      type: object
+      required: [code, title, detail, weight]
+      properties:
+        code:
+          type: string
+          enum:
+            - HIGH_VALUE_TRANSFER
+            - LARGE_BALANCE_DRAIN
+            - NEW_RECIPIENT_HIGH_AMOUNT
+            - VELOCITY_SPIKE
+            - RAPID_REPEATED_RECIPIENT
+            - UNUSUAL_NIGHT_HOUR
+        title: { type: string }
+        detail: { type: string }
+        weight: { type: integer, minimum: 1, maximum: 100 }
+    TransferAnomalyAssessment:
+      type: object
+      required: [riskLevel, riskScore, flagged, requiresConfirmation, summary, flags, evaluatedAt]
+      properties:
+        riskLevel: { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] }
+        riskScore: { type: integer, minimum: 0, maximum: 100 }
+        flagged: { type: boolean }
+        requiresConfirmation: { type: boolean }
+        summary: { type: string }
+        flags:
+          type: array
+          items: { $ref: '#/components/schemas/AnomalyFlag' }
+        evaluatedAt: { type: string, format: date-time }
+    TransactionAnomaly:
+      type: object
+      required: [id, customerId, accountId, amount, riskLevel, riskScore, ruleCodes, summary, flags, status, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        customerId: { type: string }
+        accountId: { type: string }
+        transferId: { type: [string, "null"] }
+        transactionId: { type: [string, "null"] }
+        amount: { $ref: '#/components/schemas/Money' }
+        counterpartyName: { type: [string, "null"] }
+        maskedDestinationAccount: { type: [string, "null"] }
+        riskLevel: { type: string, enum: [MEDIUM, HIGH, CRITICAL] }
+        riskScore: { type: integer, minimum: 1, maximum: 100 }
+        ruleCodes:
+          type: array
+          items: { type: string }
+        summary: { type: string }
+        flags:
+          type: array
+          items: { $ref: '#/components/schemas/AnomalyFlag' }
+        status: { type: string, enum: [OPEN, CONFIRMED_SAFE, REPORTED_SUSPICIOUS, RESOLVED] }
+        customerNote: { type: [string, "null"] }
+        acknowledgedAt: { type: [string, "null"], format: date-time }
+        resolutionCode: { type: [string, "null"] }
+        resolvedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    TransactionAnomaliesResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/TransactionAnomaly' }
+    TransactionAnomalyResponse:
+      type: object
+      required: [anomaly]
+      properties:
+        anomaly: { $ref: '#/components/schemas/TransactionAnomaly' }
+    AcknowledgeAnomalyRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [CONFIRMED_SAFE, REPORTED_SUSPICIOUS] }
+        note: { type: string, maxLength: 500 }

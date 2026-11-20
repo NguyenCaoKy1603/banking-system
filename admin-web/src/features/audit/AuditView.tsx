@@ -66,6 +66,10 @@ const ACTION_TRANSLATIONS: Record<string, { label: string; icon: string }> = {
   ADMIN_PERMISSION_DENIED: { label: "Truy cập bị từ chối do thiếu quyền", icon: "⛔" },
   LOCAL_ADMIN_PASSWORD_RECOVERY: { label: "Khôi phục mật khẩu Admin cục bộ", icon: "🔑" },
   LOCAL_FIXTURE_CLEANUP: { label: "Dọn dẹp fixture môi trường cục bộ", icon: "🧹" },
+  MFA_BIOMETRIC_ENROLLED: { label: "Kích hoạt xác thực Sinh trắc học trên thiết bị", icon: "🛡️" },
+  TRANSACTION_ANOMALY_DETECTED: { label: "Phát hiện cảnh báo giao dịch bất thường", icon: "🚨" },
+  TRANSACTION_ANOMALY_ACKNOWLEDGED: { label: "Khách hàng phản hồi cảnh báo bất thường", icon: "📌" },
+  ADMIN_ANOMALY_RESOLVED: { label: "Quản trị viên xử lý cảnh báo bất thường", icon: "✅" },
 };
 
 function formatAction(action: string): { label: string; icon: string } {

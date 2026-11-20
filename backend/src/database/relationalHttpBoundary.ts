@@ -1,5 +1,6 @@
-import type { AuthUser, Beneficiary, LoginResponse, PaymentAccount, Transaction, TransactionDetail, TransferQuote, TransferReceipt } from "../types.js";
+import type { AuthUser, Beneficiary, LoginResponse, PaymentAccount, Transaction, TransactionAnomaly, TransactionDetail, TransferQuote, TransferReceipt } from "../types.js";
 import { RelationalAccountReadService } from "./relationalAccountReadService.js";
+import { RelationalAnomalyService } from "./anomalyService.js";
 import { RelationalAuthService } from "./relationalAuthService.js";
 import { RelationalRegistrationService, type RegistrationBeginInput } from "./registrationService.js";
 import { RelationalBeneficiaryService } from "./relationalBeneficiaryService.js";
@@ -35,6 +36,7 @@ export class RelationalHttpBoundary {
   private readonly routes: Set<RelationalHttpRoute>;
   private readonly auth: RelationalAuthService;
   private readonly accounts: RelationalAccountReadService;
+  private readonly anomalies: RelationalAnomalyService;
   private readonly registration: RelationalRegistrationService;
   private readonly beneficiaries: RelationalBeneficiaryService;
   private readonly transfers: RelationalTransferService;
@@ -51,6 +53,7 @@ export class RelationalHttpBoundary {
     }
     this.auth = new RelationalAuthService(unitOfWork);
     this.accounts = new RelationalAccountReadService(unitOfWork);
+    this.anomalies = new RelationalAnomalyService(unitOfWork);
     this.registration = new RelationalRegistrationService(unitOfWork);
     this.beneficiaries = new RelationalBeneficiaryService(unitOfWork);
     this.transfers = new RelationalTransferService(unitOfWork);
@@ -114,6 +117,7 @@ export class RelationalHttpBoundary {
     if (this.routes.has("mfa") && segments[0] === "auth") {
       const mfaLifecycleRoute =
         (verb === "GET" && segments.length === 3 && segments[1] === "mfa" && segments[2] === "methods") ||
+        (verb === "POST" && segments.length === 4 && segments[1] === "mfa" && segments[2] === "biometric" && segments[3] === "enroll") ||
         (verb === "POST" && segments.length === 4 && segments[1] === "mfa" && segments[2] === "totp" && (segments[3] === "enroll" || segments[3] === "confirm")) ||
         (verb === "DELETE" && segments.length === 4 && segments[1] === "mfa" && segments[2] === "methods") ||
         (verb === "POST" && segments.length === 3 && segments[1] === "mfa" && segments[2] === "recover") ||
@@ -131,6 +135,10 @@ export class RelationalHttpBoundary {
         (verb === "POST" && segments.length === 1) ||
         (verb === "PATCH" && segments.length === 2) ||
         (verb === "DELETE" && segments.length === 2);
+    }
+    if ((this.routes.has("transfers") || this.routes.has("accounts")) && segments[0] === "anomalies") {
+      return (verb === "GET" && (segments.length === 1 || segments.length === 2)) ||
+        (verb === "POST" && segments.length === 3 && segments[2] === "acknowledge");
     }
     if (this.routes.has("transfers") && segments[0] === "transfers") {
       return (verb === "POST" && segments.length === 2 && segments[1] === "quote") ||
@@ -307,6 +315,24 @@ export class RelationalHttpBoundary {
 
   getTransfer(customerId: string, transferId: string): Promise<TransferReceipt> {
     return this.transfers.get(customerId, transferId);
+  }
+
+  listAnomalies(customerId: string, status?: string): Promise<TransactionAnomaly[]> {
+    return this.anomalies.listAnomalies(customerId, status);
+  }
+
+  getAnomaly(customerId: string, anomalyId: string): Promise<TransactionAnomaly> {
+    return this.anomalies.getAnomaly(customerId, anomalyId);
+  }
+
+  acknowledgeAnomaly(input: {
+    customerId: string;
+    anomalyId: string;
+    decision: unknown;
+    note?: unknown;
+    traceId?: string;
+  }): Promise<TransactionAnomaly> {
+    return this.anomalies.acknowledgeAnomaly(input);
   }
 
   getTransferStepUpRequestFingerprint(quoteId: string): Promise<string | null> {

@@ -1,9 +1,12 @@
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { AppIcon } from "@/components/ui/AppIcon";
 import { Button } from "@/components/ui/Button";
 import { PrimaryButton } from "@/components/ui/PrimaryButton";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { TextField } from "@/components/ui/TextField";
 import type { PaymentAccount } from "@/features/accounts/types/account";
+import { getRiskLevelPresentation } from "@/features/anomalies/presentation/anomalyPresentation";
 import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
 import { formatVndMinor, formatVndWords } from "@/features/banking/presentation/formatMoney";
 import type { ManualReviewCode } from "@/features/banking/domain/submitFailure";
@@ -267,6 +270,40 @@ export function TransferReviewStep({
           </Text>
         </View>
       </View>
+      {quote?.anomalyAssessment?.flagged ? (
+        <View
+          style={[
+            stepStyles.anomalyBox,
+            quote.anomalyAssessment.requiresConfirmation
+              ? stepStyles.anomalyBoxDanger
+              : stepStyles.anomalyBoxWarning,
+          ]}
+          testID="transfer-anomaly-warning"
+        >
+          <View style={stepStyles.anomalyHeader}>
+            <AppIcon
+              color={
+                quote.anomalyAssessment.requiresConfirmation
+                  ? colors.danger
+                  : colors.warning
+              }
+              name="alert"
+              size={20}
+            />
+            <Text style={stepStyles.anomalyTitle}>Cảnh báo giao dịch bất thường</Text>
+            <StatusBadge
+              label={`${getRiskLevelPresentation(quote.anomalyAssessment.riskLevel).label} (${quote.anomalyAssessment.riskScore}/100)`}
+              tone={getRiskLevelPresentation(quote.anomalyAssessment.riskLevel).tone}
+            />
+          </View>
+          <Text style={stepStyles.anomalySummary}>{quote.anomalyAssessment.summary}</Text>
+          {quote.anomalyAssessment.flags.map((flag) => (
+            <Text key={flag.code} style={stepStyles.anomalyFlagText}>
+              • {flag.title}: {flag.detail}
+            </Text>
+          ))}
+        </View>
+      ) : null}
       {error ? (
         isTotpError ? (
           <TotpRequiredNotice
@@ -289,32 +326,62 @@ export function TransferReviewStep({
 }
 
 export function TransferStepUpStep({
+  stepUpMethod,
   stepUpProof,
+  canUseBiometric = false,
   manualReviewCode,
   error,
   isTotpError,
   isTransferChallengeUnavailable,
   isSubmitting,
   onChangeProof,
+  onUseBiometric,
   onRenewChallenge,
   onSubmitTransfer,
 }: {
+  stepUpMethod?: "OTP" | "TOTP" | "BIOMETRIC";
   stepUpProof: string;
+  canUseBiometric?: boolean;
   manualReviewCode: ManualReviewCode | null;
   error?: string;
   isTotpError: boolean;
   isTransferChallengeUnavailable: boolean;
   isSubmitting: boolean;
   onChangeProof: (value: string) => void;
+  onUseBiometric?: () => void;
   onRenewChallenge: () => void;
   onSubmitTransfer: () => void;
 }) {
+  const isBiometricVerified =
+    stepUpMethod === "BIOMETRIC" && stepUpProof.trim().length > 0;
+
   return (
     <View style={stepStyles.formCard}>
       <Text style={stepStyles.stepTitle}>Xác thực giao dịch</Text>
       <Text style={stepStyles.description}>
-        Mở ứng dụng Google Authenticator trên điện thoại để lấy mã TOTP gồm 6 chữ số.
+        {canUseBiometric
+          ? "Chọn xác thực bằng Sinh trắc học (Vân tay / Khuôn mặt) hoặc nhập mã TOTP gồm 6 chữ số từ Google Authenticator."
+          : "Mở ứng dụng Google Authenticator trên điện thoại để lấy mã TOTP gồm 6 chữ số."}
       </Text>
+      {canUseBiometric && onUseBiometric ? (
+        <Button
+          disabled={isSubmitting || isTransferChallengeUnavailable || Boolean(manualReviewCode)}
+          icon="shield"
+          label={
+            isBiometricVerified
+              ? "Đã xác thực Sinh trắc học — Bấm để quét lại"
+              : "Xác thực bằng Sinh trắc học"
+          }
+          onPress={onUseBiometric}
+          testID="transfer-step-up-biometric"
+          variant="outline"
+        />
+      ) : null}
+      {isBiometricVerified ? (
+        <Text style={stepStyles.biometricVerifiedText} testID="transfer-step-up-biometric-verified">
+          Đã ký xác nhận sinh trắc học trên thiết bị. Nhấn &quot;Gửi giao dịch&quot; bên dưới để hoàn tất.
+        </Text>
+      ) : null}
       <TextField
         accessibilityLabel="Mã xác thực bước hai"
         autoCapitalize="none"
@@ -325,7 +392,7 @@ export function TransferStepUpStep({
         placeholder="000000"
         secureTextEntry
         testID="transfer-step-up-code"
-        value={stepUpProof}
+        value={stepUpMethod === "BIOMETRIC" ? "" : stepUpProof}
       />
       {manualReviewCode ? (
         <Text style={stepStyles.errorText}>
@@ -476,6 +543,15 @@ export const stepStyles = StyleSheet.create({
     color: colors.danger,
     backgroundColor: colors.dangerSoft,
   },
+  biometricVerifiedText: {
+    ...typography.body,
+    padding: spacing.smd,
+    borderRadius: radius.sm,
+    color: colors.success,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.success,
+  },
   resultTitle: {
     ...typography.title,
     color: colors.text,
@@ -561,5 +637,38 @@ export const stepStyles = StyleSheet.create({
   allBalanceText: {
     color: colors.primary,
     fontWeight: "600",
+  },
+  anomalyBox: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+  },
+  anomalyBoxWarning: {
+    borderColor: colors.warning,
+    backgroundColor: colors.warningSoft,
+  },
+  anomalyBoxDanger: {
+    borderColor: colors.danger,
+    backgroundColor: colors.dangerSoft,
+  },
+  anomalyHeader: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: spacing.xs,
+  },
+  anomalyTitle: {
+    ...typography.bodyStrong,
+    color: colors.text,
+  },
+  anomalySummary: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: "600",
+  },
+  anomalyFlagText: {
+    ...typography.caption,
+    color: colors.muted,
   },
 });

@@ -1,3 +1,4 @@
+import { isTransferAnomalyAssessment } from "@/features/anomalies/validation/anomalyResponseValidators";
 import type {
   Beneficiary,
   BeneficiariesResponse,
@@ -62,7 +63,9 @@ export function isTransferQuote(value: unknown): value is TransferQuote {
     isMoney(value.amount) &&
     isMoney(value.fee) &&
     isMoney(value.totalDebit) &&
-    isNonEmptyDateTime(value.expiresAt)
+    isNonEmptyDateTime(value.expiresAt) &&
+    (value.anomalyAssessment === undefined ||
+      isTransferAnomalyAssessment(value.anomalyAssessment))
   );
 }
 
@@ -75,6 +78,8 @@ export function isTransferReceipt(value: unknown): value is TransferReceipt {
     isMoney(value.amount) &&
     isMoney(value.fee) &&
     isNonEmptyDateTime(value.createdAt) &&
-    isNonEmptyDateTime(value.updatedAt)
+    isNonEmptyDateTime(value.updatedAt) &&
+    (value.anomalyAssessment === undefined ||
+      isTransferAnomalyAssessment(value.anomalyAssessment))
   );
 }

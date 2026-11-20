@@ -204,6 +204,14 @@ export function HistoryScreen() {
           title="Lịch sử giao dịch"
         />
 
+        <Button
+          icon="alert"
+          label="Xem cảnh báo giao dịch bất thường"
+          onPress={() => router.push("/anomalies")}
+          testID="history-open-anomalies"
+          variant="secondary"
+        />
+
         {accounts.length > 1 ? (
           <View style={styles.filterCard} testID="history-account-switcher">
             <Text style={styles.filterLabel}>Tài khoản thanh toán</Text>

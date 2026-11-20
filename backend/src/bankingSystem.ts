@@ -103,10 +103,18 @@ import {
   DeterministicOtpCodeGenerator,
   OtpDigestKeyring,
   SecureOtpCodeGenerator,
+  generateBiometricSecret,
   type OtpCodeGenerator,
+  verifyBiometricAssertion,
 } from "./mfa/crypto.js";
 import { NullEmailProvider, type VerificationCodeDeliveryPort } from "./mfa/delivery.js";
+import {
+  cloneAnomalyAssessment,
+  cloneTransactionAnomaly,
+  evaluateTransferAnomaly,
+} from "./domain/anomaly/index.js";
 import type {
+  AnomalyStatus,
   AuthUser,
   AuthChallengeResponse,
   Beneficiary,
@@ -120,7 +128,9 @@ import type {
   OtpPurpose,
   PaymentAccount,
   Transaction,
+  TransactionAnomaly,
   TransactionDetail,
+  TransferAnomalyAssessment,
   TransferQuote,
   TransferReceipt,
 } from "./types.js";
@@ -321,6 +331,20 @@ export type CreditStatementsResult = {
 
 type StepUpMethod = "OTP" | "TOTP" | "BIOMETRIC";
 
+type BiometricCredentialRecord = {
+  id: string;
+  customerId: string;
+  credentialType: "BIOMETRIC";
+  deviceId: string;
+  displayName: string;
+  status: "ACTIVE" | "REVOKED";
+  biometricSecret: string;
+  enrolledAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+};
+
 type ExternalStepUpVerification = {
   userId: string;
   challengeId: string;
@@ -491,6 +515,9 @@ function cloneQuote(quote: TransferQuote): TransferQuote {
     amount: { ...quote.amount },
     fee: { ...quote.fee },
     totalDebit: { ...quote.totalDebit },
+    ...(quote.anomalyAssessment
+      ? { anomalyAssessment: cloneAnomalyAssessment(quote.anomalyAssessment) }
+      : {}),
   };
 }
 
@@ -499,6 +526,9 @@ function cloneReceipt(receipt: TransferReceipt): TransferReceipt {
     ...receipt,
     amount: { ...receipt.amount },
     fee: { ...receipt.fee },
+    ...(receipt.anomalyAssessment
+      ? { anomalyAssessment: cloneAnomalyAssessment(receipt.anomalyAssessment) }
+      : {}),
   };
 }
 
@@ -680,6 +710,8 @@ export type BankingSystemState = {
   creditActivationIdempotency?: Array<[string, CreditActivationIdempotencyRecord]>;
   fraudReports?: Array<[string, FraudReportRecord]>;
   fraudReportIdempotency?: Array<[string, FraudReportIdempotencyRecord]>;
+  transactionAnomalies?: Array<[string, TransactionAnomaly]>;
+  biometricCredentials?: Array<[string, BiometricCredentialRecord]>;
   auditEventStore: AuditEvent[];
   outboxEventStore: OutboxEvent[];
 };
@@ -795,6 +827,10 @@ function migrateBankingSystemState(input: BankingSystemState): BankingSystemStat
     ),
     fraudReports: candidate.fraudReports ?? [],
     fraudReportIdempotency: candidate.fraudReportIdempotency ?? [],
+    transactionAnomalies: (candidate.transactionAnomalies ?? []).map(([id, record]) => [
+      id,
+      cloneTransactionAnomaly(record),
+    ]),
     auditEventStore: candidate.auditEventStore!,
     outboxEventStore: candidate.outboxEventStore!,
   };
@@ -990,6 +1026,8 @@ export class BankingSystem {
   private readonly creditActivationIdempotency = new Map<string, CreditActivationIdempotencyRecord>();
   private readonly fraudReports = new Map<string, FraudReportRecord>();
   private readonly fraudReportIdempotency = new Map<string, FraudReportIdempotencyRecord>();
+  private readonly transactionAnomalies = new Map<string, TransactionAnomaly>();
+  private readonly biometricCredentials = new Map<string, BiometricCredentialRecord>();
   private readonly policy: ControlPolicy;
 
   constructor(
@@ -1498,7 +1536,7 @@ export class BankingSystem {
     this.consumeOtpChallengeIssuance(
       `otp-issuance:${userId}:${normalizedDeviceId}`,
     );
-    const methods =
+    const baseMethods =
       purpose === "TRANSFER"
         ? this.policy.stepUpMethods
         : purpose === "SAVINGS_OPENING"
@@ -1508,6 +1546,10 @@ export class BankingSystem {
             : purpose === "CARD_UNLOCK" || purpose === "CARD_REPORT_LOST"
               ? this.policy.cardUnlockStepUpMethods
               : ["OTP"] as StepUpMethod[];
+    const methods =
+      this.hasActiveBiometricCredential(userId, normalizedDeviceId) && !baseMethods.includes("BIOMETRIC")
+        ? [...baseMethods, "BIOMETRIC" as StepUpMethod]
+        : baseMethods;
     const effectiveFingerprint =
       this.resolveOtpRequestFingerprint(purpose, normalizedResourceId) ?? requestFingerprint;
     for (const [challengeHash, challenge] of this.authChallenges) {
@@ -1659,6 +1701,141 @@ export class BankingSystem {
   verifyCurrentPassword(userId: string, password: string): boolean {
     const user = this.users.get(userId);
     return Boolean(user && typeof password === "string" && verifyPassword(password, user.passwordSalt, user.passwordDigest));
+  }
+
+  hasActiveBiometricCredential(userId: string, deviceId?: string): boolean {
+    if (!deviceId?.trim()) return false;
+    const normalized = this.normalizeDeviceId(deviceId);
+    for (const credential of this.biometricCredentials.values()) {
+      if (
+        credential.customerId === userId &&
+        credential.deviceId === normalized &&
+        credential.status === "ACTIVE"
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  enrollBiometricCredential(
+    userId: string,
+    deviceId: string | undefined,
+    displayName?: string,
+  ): {
+    credentialId: string;
+    credentialType: "BIOMETRIC";
+    deviceId: string;
+    displayName: string;
+    status: "ACTIVE";
+    biometricSecret: string;
+    enrolledAt: string;
+  } {
+    if (!this.users.has(userId)) {
+      throw notFound("User not found.");
+    }
+    const normalizedDeviceId = this.normalizeDeviceId(deviceId);
+    const now = nowIso(this.clock);
+    for (const credential of this.biometricCredentials.values()) {
+      if (
+        credential.customerId === userId &&
+        credential.deviceId === normalizedDeviceId &&
+        credential.status !== "REVOKED"
+      ) {
+        credential.status = "REVOKED";
+        credential.revokedAt = now;
+      }
+    }
+    const credentialId = createId("mfa-credential");
+    const biometricSecret = generateBiometricSecret();
+    const deviceSuffix = fingerprint(normalizedDeviceId).slice(0, 6);
+    const label = displayName?.trim()
+      ? `${displayName.trim()} (${deviceSuffix})`
+      : `Sinh trắc học thiết bị (${deviceSuffix})`;
+    this.biometricCredentials.set(credentialId, {
+      id: credentialId,
+      customerId: userId,
+      credentialType: "BIOMETRIC",
+      deviceId: normalizedDeviceId,
+      displayName: label,
+      status: "ACTIVE",
+      biometricSecret,
+      enrolledAt: now,
+      lastUsedAt: null,
+      revokedAt: null,
+      createdAt: now,
+    });
+    this.recordAudit("MFA_BIOMETRIC_ENROLLED", userId, credentialId);
+    return {
+      credentialId,
+      credentialType: "BIOMETRIC",
+      deviceId: normalizedDeviceId,
+      displayName: label,
+      status: "ACTIVE",
+      biometricSecret,
+      enrolledAt: now,
+    };
+  }
+
+  listBiometricCredentials(userId: string) {
+    return [...this.biometricCredentials.values()]
+      .filter((item) => item.customerId === userId)
+      .map(({ biometricSecret: _secret, ...summary }) => ({
+        ...summary,
+        algorithm: "HMAC-SHA256",
+        digits: 6,
+        periodSeconds: 30,
+        lastAcceptedTimeStep: null,
+        compromisedAt: null,
+      }));
+  }
+
+  revokeBiometricCredential(userId: string, credentialId: string): void {
+    const credential = this.biometricCredentials.get(credentialId);
+    if (!credential || credential.customerId !== userId || credential.status === "REVOKED") {
+      throw notFound("MFA credential not found.");
+    }
+    credential.status = "REVOKED";
+    credential.revokedAt = nowIso(this.clock);
+    this.recordAudit("MFA_FACTOR_REVOKED", userId, credentialId);
+  }
+
+  private hasExternalStepUpVerificationForMethod(
+    userId: string,
+    challengeId: string | undefined,
+    deviceId: string | undefined,
+    method: StepUpMethod,
+  ): boolean {
+    if (!challengeId || !deviceId?.trim()) return false;
+    const normalized = this.normalizeDeviceId(deviceId);
+    for (const marker of this.externalStepUpVerifications.values()) {
+      if (
+        marker.userId === userId &&
+        marker.challengeId === challengeId &&
+        marker.deviceId === normalized &&
+        marker.method === method &&
+        marker.expiresAt > this.clock()
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private isStepUpMethodEnabledForRequest(
+    userId: string,
+    deviceId: string | undefined,
+    stepUp: { method: StepUpMethod; challengeId?: string },
+    configuredMethods: readonly StepUpMethod[],
+  ): boolean {
+    if (configuredMethods.includes(stepUp.method)) return true;
+    if (stepUp.method === "BIOMETRIC") {
+      return (
+        this.hasActiveBiometricCredential(userId, deviceId) ||
+        this.hasExternalStepUpVerificationForMethod(userId, stepUp.challengeId, deviceId, "BIOMETRIC")
+      );
+    }
+    return false;
   }
 
   /**
@@ -2649,7 +2826,7 @@ export class BankingSystem {
       this.recordSavingsStepUpFailure(stepUpRateKey);
       throw invalidRequest("stepUp proof is required.");
     }
-    if (!this.policy.savingsStepUpMethods.includes(stepUp.method)) {
+    if (!this.isStepUpMethodEnabledForRequest(userId, deviceId, stepUp, this.policy.savingsStepUpMethods)) {
       throw conflict("The requested step-up method is not enabled.");
     }
     try {
@@ -3070,6 +3247,21 @@ export class BankingSystem {
     }
 
     const feeMinor = 1_000n;
+    const now = nowIso(this.clock);
+    const isSavedBeneficiary = Boolean(
+      this.beneficiaries
+        .get(userId)
+        ?.some((item) => item.destinationAccountId === destinationAccountId),
+    );
+    const anomalyAssessment = this.evaluateInMemoryTransferAnomaly({
+      userId,
+      sourceAccountId,
+      destinationAccountId,
+      amountMinor,
+      feeMinor,
+      isSavedBeneficiary,
+      occurredAt: now,
+    });
     const quote: TransferQuote = {
       quoteId: createId("quote"),
       sourceAccountId,
@@ -3078,6 +3270,7 @@ export class BankingSystem {
       fee: toMoney(feeMinor),
       totalDebit: toMoney(amountMinor + feeMinor),
       expiresAt: new Date(this.clock() + QUOTE_TTL_MS).toISOString(),
+      anomalyAssessment,
     };
     this.quotes.set(quote.quoteId, {
       userId,
@@ -3150,7 +3343,7 @@ export class BankingSystem {
       this.recordTransferStepUpFailure(stepUpRateKey);
       throw invalidRequest("stepUp proof is required.");
     }
-    if (!this.policy.stepUpMethods.includes(stepUp.method)) {
+    if (!this.isStepUpMethodEnabledForRequest(userId, deviceId, stepUp, this.policy.stepUpMethods)) {
       throw conflict("The requested step-up method is not enabled.");
     }
     const transferContextFingerprint = fingerprint({
@@ -3198,17 +3391,39 @@ export class BankingSystem {
     this.transferStepUpAttemptWindows.delete(stepUpRateKey);
     this.recordAudit("TRANSFER_STEP_UP_VERIFIED", userId, quoteRecord.quote.quoteId);
 
-    const receipt = this.core.postTransfer(userId, {
+    const now = nowIso(this.clock);
+    const amountMinor = BigInt(quoteRecord.quote.amount.amountMinor);
+    const feeMinor = BigInt(quoteRecord.quote.fee.amountMinor);
+    const isSavedBeneficiary = Boolean(
+      this.beneficiaries
+        .get(userId)
+        ?.some((item) => item.destinationAccountId === quoteRecord.destinationAccountId),
+    );
+    const anomalyAssessment = this.evaluateInMemoryTransferAnomaly({
+      userId,
+      sourceAccountId: quoteRecord.quote.sourceAccountId,
+      destinationAccountId: quoteRecord.destinationAccountId,
+      amountMinor,
+      feeMinor,
+      isSavedBeneficiary,
+      occurredAt: now,
+    });
+
+    const rawReceipt = this.core.postTransfer(userId, {
       accountId: quoteRecord.quote.sourceAccountId,
       destinationAccountId: quoteRecord.destinationAccountId,
       destinationOwnerId: quoteRecord.destinationOwnerId,
-      amountMinor: BigInt(quoteRecord.quote.amount.amountMinor),
-      feeMinor: BigInt(quoteRecord.quote.fee.amountMinor),
+      amountMinor,
+      feeMinor,
       counterpartyName: quoteRecord.quote.beneficiary.displayName,
       description: `Chuyển tiền đến ${quoteRecord.quote.beneficiary.displayName}`,
-      now: nowIso(this.clock),
+      now,
       settleImmediately: this.settleTransfersImmediately,
     });
+    const receipt: TransferReceipt = {
+      ...rawReceipt,
+      anomalyAssessment,
+    };
     const transferTarget = this.core.getTransferTarget(userId, receipt.transferId);
     quoteRecord.consumedTransferId = receipt.transferId;
     for (const [hash, lookup] of this.recipientLookups.entries()) {
@@ -3250,6 +3465,46 @@ export class BankingSystem {
       read: false,
       createdAt: receipt.updatedAt,
     });
+    if (anomalyAssessment.flagged && anomalyAssessment.riskLevel !== "LOW") {
+      const anomalyRecord: TransactionAnomaly = {
+        id: createId("anomaly"),
+        customerId: userId,
+        accountId: quoteRecord.quote.sourceAccountId,
+        transferId: receipt.transferId,
+        transactionId: transferTarget.transactionId,
+        amount: { ...receipt.amount },
+        counterpartyName: quoteRecord.quote.beneficiary.displayName,
+        maskedDestinationAccount: quoteRecord.quote.beneficiary.maskedAccountNumber,
+        riskLevel: anomalyAssessment.riskLevel,
+        riskScore: anomalyAssessment.riskScore,
+        ruleCodes: anomalyAssessment.flags.map((flag) => flag.code),
+        summary: anomalyAssessment.summary,
+        flags: anomalyAssessment.flags.map((flag) => ({ ...flag })),
+        status: "OPEN",
+        customerNote: null,
+        acknowledgedAt: null,
+        resolutionCode: null,
+        resolvedAt: null,
+        createdAt: receipt.createdAt,
+        updatedAt: receipt.updatedAt,
+      };
+      this.transactionAnomalies.set(anomalyRecord.id, anomalyRecord);
+      this.recordAudit("TRANSACTION_ANOMALY_DETECTED", userId, anomalyRecord.id);
+      this.enqueueOutbox("SECURITY_ANOMALY_DETECTED", anomalyRecord.id, receipt.updatedAt);
+      const userNotifications = this.notifications.get(userId);
+      if (userNotifications) {
+        userNotifications.splice(1, 0, {
+          id: createId("notification"),
+          type: "SECURITY",
+          title: "Cảnh báo giao dịch bất thường",
+          body: anomalyAssessment.summary,
+          resourceId: anomalyRecord.id,
+          resourceAccountId: null,
+          read: false,
+          createdAt: receipt.updatedAt,
+        });
+      }
+    }
     if (receipt.status === "SUCCEEDED" && transferParties.destinationTransactionId) {
       this.notifications.get(transferParties.destinationOwnerId)?.unshift({
         id: createId("notification"),
@@ -4229,7 +4484,7 @@ export class BankingSystem {
       this.recordCreditStepUpFailure(key);
       throw invalidRequest("stepUp proof is required.");
     }
-    if (!allowedMethods.includes(stepUp.method)) {
+    if (!this.isStepUpMethodEnabledForRequest(userId, deviceId, stepUp, allowedMethods)) {
       throw conflictWithCode("STEP_UP_INVALID", "Phương thức xác thực bước hai không được bật.");
     }
     try {
@@ -4423,6 +4678,14 @@ export class BankingSystem {
       fraudReportIdempotency: [...this.fraudReportIdempotency.entries()].map(
         ([key, record]) => [key, { ...record }],
       ),
+      transactionAnomalies: [...this.transactionAnomalies.entries()].map(([id, record]) => [
+        id,
+        cloneTransactionAnomaly(record),
+      ]),
+      biometricCredentials: [...this.biometricCredentials.entries()].map(([id, record]) => [
+        id,
+        { ...record },
+      ]),
       auditEventStore: this.auditEventStore.map((event) => ({ ...event })),
       outboxEventStore: this.outboxEventStore.map((event) => ({ ...event })),
     };
@@ -4641,6 +4904,14 @@ export class BankingSystem {
     for (const [key, record] of state.fraudReportIdempotency ?? []) {
       this.fraudReportIdempotency.set(key, { ...record });
     }
+    this.transactionAnomalies.clear();
+    for (const [id, record] of state.transactionAnomalies ?? []) {
+      this.transactionAnomalies.set(id, cloneTransactionAnomaly(record));
+    }
+    this.biometricCredentials.clear();
+    for (const [id, record] of state.biometricCredentials ?? []) {
+      this.biometricCredentials.set(id, { ...record });
+    }
     this.auditEventStore.length = 0;
     this.auditEventStore.push(...state.auditEventStore.map((event) => ({ ...event })));
     this.outboxEventStore.length = 0;
@@ -4668,6 +4939,134 @@ export class BankingSystem {
     }
     notification.read = true;
     return { ...notification };
+  }
+
+  private evaluateInMemoryTransferAnomaly(input: {
+    userId: string;
+    sourceAccountId: string;
+    destinationAccountId: string;
+    amountMinor: bigint;
+    feeMinor: bigint;
+    isSavedBeneficiary: boolean;
+    occurredAt: string;
+  }): TransferAnomalyAssessment {
+    const sourceAccount = this.core.getPaymentAccount(input.userId, input.sourceAccountId);
+    const availableBalanceMinor = BigInt(sourceAccount.availableBalance.amountMinor);
+    const nowMs = Date.parse(input.occurredAt);
+    let recentTransfersLast10mCount = 0;
+    let sameRecipientLast15mCount = 0;
+    let hasPriorSucceededTransfer = false;
+
+    for (const record of this.transfers.values()) {
+      if (record.userId !== input.userId) continue;
+      const parties = this.core.getTransferParties(record.receipt.transferId);
+      const createdMs = Date.parse(record.receipt.createdAt);
+      const deltaMs = nowMs - createdMs;
+      if (deltaMs >= 0 && deltaMs <= 10 * 60 * 1000) {
+        recentTransfersLast10mCount += 1;
+      }
+      if (parties.destinationAccountId === input.destinationAccountId) {
+        if (record.receipt.status === "SUCCEEDED") {
+          hasPriorSucceededTransfer = true;
+        }
+        if (deltaMs >= 0 && deltaMs <= 15 * 60 * 1000) {
+          sameRecipientLast15mCount += 1;
+        }
+      }
+    }
+
+    return evaluateTransferAnomaly({
+      amountMinor: input.amountMinor,
+      feeMinor: input.feeMinor,
+      availableBalanceMinor,
+      isNewRecipient: !input.isSavedBeneficiary && !hasPriorSucceededTransfer,
+      recentTransfersLast10mCount,
+      sameRecipientLast15mCount,
+      occurredAt: input.occurredAt,
+    });
+  }
+
+  listTransactionAnomalies(userId: string, status?: string): TransactionAnomaly[] {
+    let statusFilter: AnomalyStatus | undefined;
+    if (status && status.trim()) {
+      const normalized = status.trim().toUpperCase();
+      if (
+        normalized !== "OPEN" &&
+        normalized !== "CONFIRMED_SAFE" &&
+        normalized !== "REPORTED_SUSPICIOUS" &&
+        normalized !== "RESOLVED"
+      ) {
+        throw invalidRequest("status filter is invalid.", {
+          status: "status must be OPEN, CONFIRMED_SAFE, REPORTED_SUSPICIOUS, or RESOLVED.",
+        });
+      }
+      statusFilter = normalized;
+    }
+
+    return [...this.transactionAnomalies.values()]
+      .filter((item) => item.customerId === userId && (!statusFilter || item.status === statusFilter))
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+      .map(cloneTransactionAnomaly);
+  }
+
+  getTransactionAnomaly(userId: string, anomalyId: string): TransactionAnomaly {
+    const item = this.transactionAnomalies.get(anomalyId);
+    if (!item || item.customerId !== userId) {
+      throw notFound("Transaction anomaly not found.");
+    }
+    return cloneTransactionAnomaly(item);
+  }
+
+  acknowledgeTransactionAnomaly(
+    userId: string,
+    anomalyId: string,
+    input: { decision: unknown; note?: unknown },
+  ): TransactionAnomaly {
+    const item = this.transactionAnomalies.get(anomalyId);
+    if (!item || item.customerId !== userId) {
+      throw notFound("Transaction anomaly not found.");
+    }
+    if (input.decision !== "CONFIRMED_SAFE" && input.decision !== "REPORTED_SUSPICIOUS") {
+      throw invalidRequest("decision is invalid.", {
+        decision: "decision must be CONFIRMED_SAFE or REPORTED_SUSPICIOUS.",
+      });
+    }
+    const rawNote = typeof input.note === "string" ? input.note.trim() : "";
+    if (rawNote.length > 500) {
+      throw invalidRequest("note is too long.", {
+        note: "note must be at most 500 characters.",
+      });
+    }
+    if (item.status === "RESOLVED") {
+      throw conflict("Cảnh báo giao dịch này đã được quản trị viên đóng.");
+    }
+    if (item.status === input.decision) {
+      return cloneTransactionAnomaly(item);
+    }
+
+    const now = nowIso(this.clock);
+    item.status = input.decision;
+    if (rawNote.length > 0) {
+      item.customerNote = rawNote;
+    }
+    item.acknowledgedAt = now;
+    item.updatedAt = now;
+
+    this.recordAudit("TRANSACTION_ANOMALY_ACKNOWLEDGED", userId, item.id);
+    if (input.decision === "REPORTED_SUSPICIOUS") {
+      this.enqueueOutbox("SECURITY_ANOMALY_ACKNOWLEDGED", item.id, now);
+      this.notifications.get(userId)?.unshift({
+        id: createId("notification"),
+        type: "SECURITY",
+        title: "Đã tiếp nhận báo cáo giao dịch bất thường",
+        body: "Báo cáo nghi ngờ giao dịch của bạn đã được chuyển tới bộ phận vận hành để rà soát.",
+        resourceId: item.id,
+        resourceAccountId: null,
+        read: false,
+        createdAt: now,
+      });
+    }
+    return cloneTransactionAnomaly(item);
   }
 
   reconcile() {
@@ -5020,6 +5419,15 @@ export class BankingSystem {
       this.recordChallengeFailure(challengeHash, challenge);
       throw unauthorized("OTP challenge is invalid.");
     }
+    const activeBiometric =
+      method === "BIOMETRIC" && deviceId?.trim()
+        ? [...this.biometricCredentials.values()].find(
+            (credential) =>
+              credential.customerId === userId &&
+              credential.deviceId === this.normalizeDeviceId(deviceId) &&
+              credential.status === "ACTIVE",
+          )
+        : undefined;
     const valid =
       method === "OTP" || method === "TOTP"
         ? challenge.proofDigest !== null && this.otpDigestKeyring.verify(
@@ -5028,10 +5436,20 @@ export class BankingSystem {
             challenge.proofDigest,
             challenge.digestKeyId ?? undefined,
           )
-        : this.allowUnsafeDirectSandboxStepUp && proof === "sandbox-biometric";
+        : activeBiometric && proof.startsWith("biometric-v1.")
+          ? verifyBiometricAssertion(proof, activeBiometric.biometricSecret, {
+              challengeId,
+              deviceId: this.normalizeDeviceId(deviceId),
+              purpose,
+              resourceId,
+            })
+          : this.allowUnsafeDirectSandboxStepUp && proof === "sandbox-biometric";
     if (!valid) {
       this.recordChallengeFailure(challengeHash, challenge);
       throw unauthorized("OTP challenge verification failed.");
+    }
+    if (activeBiometric && proof.startsWith("biometric-v1.")) {
+      activeBiometric.lastUsedAt = nowIso(this.clock);
     }
     this.authChallenges.delete(challengeHash);
     this.testVerificationCodes.delete(challengeHash);

@@ -27,7 +27,8 @@ export type MfaRecoveryRequestStatus =
 export type MfaCredentialRow = {
   id: string;
   customerId: string;
-  credentialType: "TOTP" | "PASSKEY" | "OOB_SMS";
+  credentialType: "TOTP" | "BIOMETRIC" | "PASSKEY" | "OOB_SMS";
+  deviceId: string | null;
   displayName: string;
   status: MfaCredentialStatus;
   secretCiphertext: string | null;
@@ -72,6 +73,7 @@ function mapCredential(row: Record<string, unknown>): MfaCredentialRow {
     id: requireUuid(row.id),
     customerId: requireUuid(row.customer_id, "customer_id"),
     credentialType: String(row.credential_type) as MfaCredentialRow["credentialType"],
+    deviceId: row.device_id === null || row.device_id === undefined ? null : String(row.device_id),
     displayName: String(row.display_name),
     status: String(row.status) as MfaCredentialStatus,
     secretCiphertext: row.secret_ciphertext === null ? null : String(row.secret_ciphertext),
@@ -142,6 +144,77 @@ export class MfaRepository {
       [requireUuid(customerId, "customerId")],
     );
     return result.rows[0] ? mapCredential(result.rows[0] as Record<string, unknown>) : null;
+  }
+
+  async findActiveBiometric(customerId: string, deviceId: string): Promise<MfaCredentialRow | null> {
+    const result = await this.client.query(
+      `SELECT * FROM mfa_credentials
+       WHERE customer_id = $1
+         AND credential_type = 'BIOMETRIC'
+         AND status = 'ACTIVE'
+         AND (device_id = $2 OR device_id IS NULL)
+       ORDER BY created_at DESC LIMIT 1`,
+      [requireUuid(customerId, "customerId"), deviceId],
+    );
+    return result.rows[0] ? mapCredential(result.rows[0] as Record<string, unknown>) : null;
+  }
+
+  async revokeActiveBiometricByDevice(customerId: string, deviceId: string): Promise<void> {
+    await this.client.query(
+      `UPDATE mfa_credentials
+       SET status = 'REVOKED', revoked_at = NOW(), updated_at = NOW()
+       WHERE customer_id = $1
+         AND credential_type = 'BIOMETRIC'
+         AND status <> 'REVOKED'
+         AND (device_id = $2 OR device_id IS NULL)`,
+      [requireUuid(customerId, "customerId"), deviceId],
+    );
+  }
+
+  async createBiometricCredential(input: {
+    id: string;
+    customerId: string;
+    deviceId: string;
+    displayName: string;
+    secretCiphertext: string;
+    secretKeyId: string;
+    secretCipherVersion?: string;
+    secretAadVersion?: string | null;
+    secretEncryptionAlgorithm?: string;
+    secretEncryptedDataKey?: string | null;
+  }): Promise<MfaCredentialRow> {
+    const result = await this.client.query(
+      `INSERT INTO mfa_credentials
+        (id, customer_id, credential_type, device_id, display_name, status,
+         secret_ciphertext, secret_key_id, secret_cipher_version,
+         secret_aad_version, secret_encryption_algorithm, secret_encrypted_data_key,
+         algorithm, digits, period_seconds, enrolled_at)
+       VALUES ($1, $2, 'BIOMETRIC', $3, $4, 'ACTIVE', $5, $6, $7, $8, $9, $10, 'HMAC-SHA256', 6, 30, NOW())
+       RETURNING *`,
+      [
+        requireUuid(input.id),
+        requireUuid(input.customerId, "customerId"),
+        input.deviceId,
+        input.displayName,
+        input.secretCiphertext,
+        input.secretKeyId,
+        input.secretCipherVersion ?? "v2",
+        input.secretAadVersion ?? "aad-v1",
+        input.secretEncryptionAlgorithm ?? "AES-256-GCM-ENVELOPE",
+        input.secretEncryptedDataKey ?? null,
+      ],
+    );
+    return mapCredential(result.rows[0] as Record<string, unknown>);
+  }
+
+  async touchCredentialUsed(credentialId: string): Promise<boolean> {
+    const result = await this.client.query(
+      `UPDATE mfa_credentials
+       SET last_used_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND status = 'ACTIVE'`,
+      [requireUuid(credentialId, "credentialId")],
+    );
+    return (result.rowCount ?? 0) === 1;
   }
 
   async createTotpCredential(input: {
@@ -320,7 +393,7 @@ export class MfaRepository {
     pendingRegistrationId?: string | null;
     credentialId?: string | null;
     deviceId: string;
-    method: "EMAIL_OTP" | "SMS_OTP" | "TOTP";
+    method: "EMAIL_OTP" | "SMS_OTP" | "TOTP" | "BIOMETRIC";
     purpose: string;
     resourceId?: string | null;
     requestFingerprint?: string | null;

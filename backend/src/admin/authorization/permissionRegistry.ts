@@ -132,6 +132,8 @@ export const ADMIN_ROUTES: readonly AdminRouteDefinition[] = [
   { method: "POST", path: "/admin/transfers/{transferId}/retry-requests", permission: "transfer.action.request", stateChanging: true },
   { method: "POST", path: "/admin/transfers/{transferId}/cancel-requests", permission: "transfer.action.request", stateChanging: true },
   { method: "POST", path: "/admin/transfers/{transferId}/reversal-requests", permission: "transfer.action.request", stateChanging: true },
+  { method: "GET", path: "/admin/anomalies", permission: "transfer.pending.read" },
+  { method: "POST", path: "/admin/anomalies/{anomalyId}/resolve", permission: "transfer.action.request", stateChanging: true },
   { method: "GET", path: "/admin/operations/outbox/summary", permission: "outbox.read" },
   { method: "GET", path: "/admin/operations/outbox/events", permission: "outbox.read" },
   { method: "GET", path: "/admin/operations/outbox/events/{eventId}", permission: "outbox.read" },

@@ -8,3 +8,4 @@ export * from "./money.js";
 export * from "./ledger.js";
 export * as savings from "./savings/index.js";
 export * as credit from "./credit/index.js";
+export * as anomaly from "./anomaly/index.js";

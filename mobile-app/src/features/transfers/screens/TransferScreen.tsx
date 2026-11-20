@@ -39,7 +39,12 @@ import {
 } from "@/features/transfers/services/transfersApi";
 import { createOtpChallenge } from "@/features/auth/services/otpApi";
 import { listMfaMethods } from "@/features/auth/services/authApi";
+import { loadBiometricCredential } from "@/features/auth/storage/biometricCredentialStorage";
 import { isTotpNotEnrolledError, TOTP_NOT_ENROLLED_MESSAGE } from "@/features/auth/utils/totpError";
+import {
+  createDeviceBoundBiometricAssertion,
+  requestBiometricAuthentication,
+} from "@/services/security/biometricAuth";
 import { TransferProgress } from "@/features/transfers/components/TransferProgress";
 import {
   TransferAmountStep,
@@ -155,7 +160,7 @@ export function TransferScreen() {
         throw new Error("Máy chủ trả challenge không đúng mục đích chuyển tiền.");
       }
       setTransferChallenge(challenge);
-      setStepUpMethod("TOTP");
+      setStepUpMethod(challenge.method === "BIOMETRIC" ? "BIOMETRIC" : "TOTP");
       setStepUpProof("");
     },
     [],
@@ -230,7 +235,10 @@ export function TransferScreen() {
         refreshAccessToken,
       });
       const hasActive = response.items.some(
-        (m) => m.status === "ACTIVE" && m.credentialType === "TOTP",
+        (m) =>
+          m.status === "ACTIVE" &&
+          (m.credentialType === "TOTP" ||
+            (m.credentialType === "BIOMETRIC" && (!m.deviceId || m.deviceId === deviceId))),
       );
       setHasActiveTotp(hasActive);
     } catch {
@@ -800,6 +808,50 @@ export function TransferScreen() {
     }
   }, [auth, clockMs, idempotencyKey, intentPhase, manualReviewCode, quote, recoveryBlocked, stepUpMethod, stepUpProof, transferChallenge, userId]);
 
+  const handleBiometricTransferStepUp = useCallback(async () => {
+    if (submitLockRef.current || manualReviewCode || recoveryBlocked) {
+      if (manualReviewCode) setError(MANUAL_REVIEW_MESSAGE);
+      return;
+    }
+    if (!quote || !userId || !deviceId || !transferChallenge) {
+      setError("Phiên xác thực chuyển tiền chưa sẵn sàng.");
+      return;
+    }
+    if (!transferChallenge.methods.includes("BIOMETRIC")) {
+      setError("Challenge hiện tại chưa bật xác thực sinh trắc học.");
+      return;
+    }
+    if (clockMs >= Date.parse(transferChallenge.expiresAt)) {
+      setError("Mã xác thực đã hết hạn. Vui lòng tạo mã mới.");
+      return;
+    }
+    setIsSubmitting(true);
+    setError(undefined);
+    try {
+      await requestBiometricAuthentication("Xác thực chuyển khoản NOVA");
+      const stored = await loadBiometricCredential(userId, deviceId);
+      if (!stored) {
+        setError(
+          "Thiết bị chưa có khóa Sinh trắc học đã kích hoạt. Vui lòng kích hoạt trong Bảo mật tài khoản.",
+        );
+        return;
+      }
+      const proof = createDeviceBoundBiometricAssertion({
+        biometricSecret: stored.biometricSecret,
+        challengeId: transferChallenge.challengeId,
+        deviceId,
+        purpose: "TRANSFER",
+        resourceId: quote.quoteId,
+      });
+      setStepUpMethod("BIOMETRIC");
+      setStepUpProof(proof);
+    } catch (biometricError: unknown) {
+      setError(getErrorMessage(biometricError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [clockMs, deviceId, manualReviewCode, quote, recoveryBlocked, transferChallenge, userId]);
+
   const handleRenewTransferChallenge = useCallback(async () => {
     if (!quote || submitLockRef.current || manualReviewCode || recoveryBlocked) {
       if (manualReviewCode) setError(MANUAL_REVIEW_MESSAGE);
@@ -1010,17 +1062,21 @@ export function TransferScreen() {
           />
         ) : step === "stepUp" ? (
           <TransferStepUpStep
+            canUseBiometric={Boolean(transferChallenge?.methods.includes("BIOMETRIC"))}
             error={error}
             isSubmitting={isSubmitting}
             isTotpError={Boolean(error && isTotpNotEnrolledError(error))}
             isTransferChallengeUnavailable={isTransferChallengeUnavailable}
             manualReviewCode={manualReviewCode}
             onChangeProof={(value) => {
+              setStepUpMethod("TOTP");
               setStepUpProof(value);
               setError(undefined);
             }}
             onRenewChallenge={handleRenewTransferChallenge}
             onSubmitTransfer={handleSubmitTransfer}
+            onUseBiometric={handleBiometricTransferStepUp}
+            stepUpMethod={stepUpMethod}
             stepUpProof={stepUpProof}
           />
         ) : (

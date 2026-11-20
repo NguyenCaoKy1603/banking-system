@@ -1,3 +1,4 @@
+import type { TransferAnomalyAssessment } from "@/features/anomalies/types/anomaly";
 import type { Money } from "@/features/banking/types/money";
 
 export type BeneficiaryStatus = "ACTIVE" | "BLOCKED";
@@ -44,6 +45,7 @@ export type TransferQuote = {
   fee: Money;
   totalDebit: Money;
   expiresAt: string;
+  anomalyAssessment?: TransferAnomalyAssessment;
 };
 
 export type StepUpMethod = "OTP" | "TOTP" | "BIOMETRIC";
@@ -84,4 +86,5 @@ export type TransferReceipt = {
   fee: Money;
   createdAt: string;
   updatedAt: string;
+  anomalyAssessment?: TransferAnomalyAssessment;
 };

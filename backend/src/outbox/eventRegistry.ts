@@ -66,6 +66,8 @@ export const EVENT_POLICIES: readonly EventPolicy[] = [
   policy("security.registration_otp_requested", "SECURITY", [], 15, 10 * 60, ["REGISTRATION_OTP_REQUESTED"]),
   policy("security.kyc_submitted", "SECURITY", ["PUSH"], 35, 14 * 24 * 60 * 60, ["SECURITY_KYC_SUBMITTED"]),
   policy("security.kyc_status_changed", "SECURITY", ["PUSH", "EMAIL"], 30, 14 * 24 * 60 * 60, ["SECURITY_KYC_STATUS_CHANGED"]),
+  policy("security.anomaly_detected", "SECURITY", ["PUSH", "EMAIL"], 10, null, ["SECURITY_ANOMALY_DETECTED"]),
+  policy("security.anomaly_acknowledged", "SECURITY", [], 30, null, ["SECURITY_ANOMALY_ACKNOWLEDGED"]),
   policy("sandbox.funding_succeeded", "SECURITY", [], 90, 24 * 60 * 60, ["SANDBOX_FUNDING_SUCCEEDED"]),
   // Admin mutations are internal integration events.  They intentionally do
   // not fan out to customer channels, but they still use the same canonical

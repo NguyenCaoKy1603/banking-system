@@ -1,3 +1,21 @@
+import type {
+  AnomalyFlag,
+  AnomalyRiskLevel,
+  AnomalyRuleCode,
+  AnomalyStatus,
+  TransactionAnomaly,
+  TransferAnomalyAssessment,
+} from "./domain/anomaly/types.js";
+
+export type {
+  AnomalyFlag,
+  AnomalyRiskLevel,
+  AnomalyRuleCode,
+  AnomalyStatus,
+  TransactionAnomaly,
+  TransferAnomalyAssessment,
+};
+
 export type Currency = "VND";
 
 export type Money = {
@@ -121,6 +139,7 @@ export type TransferQuote = {
   fee: Money;
   totalDebit: Money;
   expiresAt: string;
+  anomalyAssessment?: TransferAnomalyAssessment;
 };
 
 export type TransferReceipt = {
@@ -131,6 +150,7 @@ export type TransferReceipt = {
   fee: Money;
   createdAt: string;
   updatedAt: string;
+  anomalyAssessment?: TransferAnomalyAssessment;
 };
 
 export type ControlPolicy = {

@@ -5,16 +5,17 @@ import { Modal } from "../../components/common/Modal";
 import { Notice } from "../../components/common/Notice";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { useStaff } from "../../context/StaffContext";
-import type { Transfer } from "../../types";
+import type { TransactionAnomaly, Transfer } from "../../types";
 
 interface TransfersProps {
   items: Transfer[];
+  anomalies?: TransactionAnomaly[];
   onReload: () => Promise<void>;
   onFilterChange: (status: string) => Promise<void>;
   loading: boolean;
 }
 
-export function Transfers({ items, onReload, onFilterChange, loading }: TransfersProps) {
+export function Transfers({ items, anomalies = [], onReload, onFilterChange, loading }: TransfersProps) {
   const { hasPermission } = useStaff();
   const [statusFilter, setStatusFilter] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -30,8 +31,31 @@ export function Transfers({ items, onReload, onFilterChange, loading }: Transfer
   const [error, setError] = useState<ApiError | null>(null);
   const [modalError, setModalError] = useState<ApiError | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [resolvingAnomalyId, setResolvingAnomalyId] = useState<string | null>(null);
 
   const canOperate = hasPermission("transfer.action.request");
+
+  const handleResolveAnomaly = async (anomaly: TransactionAnomaly) => {
+    if (resolvingAnomalyId) return;
+    setResolvingAnomalyId(anomaly.id);
+    setError(null);
+    try {
+      await adminFetch<{ anomaly: TransactionAnomaly }>(`/admin/anomalies/${anomaly.id}/resolve`, {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey("anomaly-resolve") },
+        body: JSON.stringify({
+          reasonCode: anomaly.status === "REPORTED_SUSPICIOUS" ? "FRAUD_VERIFIED_REVIEWED" : "ANOMALY_REVIEWED",
+          comment: "Đã kiểm tra cảnh báo giao dịch bất thường từ bảng điều khiển Admin.",
+        }),
+      });
+      setSuccessNotice(`Đã đánh dấu xử lý cảnh báo bất thường #${shortId(anomaly.id)}.`);
+      await onReload();
+    } catch (caught) {
+      setError(caught as ApiError);
+    } finally {
+      setResolvingAnomalyId(null);
+    }
+  };
 
   const handleFilter = async (status: string) => {
     setStatusFilter(status);
@@ -144,6 +168,121 @@ export function Transfers({ items, onReload, onFilterChange, loading }: Transfer
           {successNotice}
         </Notice>
       ) : null}
+
+      {/* Anomaly Detection Queue */}
+      <div
+        className="filter-controls-card"
+        style={{
+          marginBottom: "1rem",
+          background: "var(--color-surface, #fff)",
+          padding: "1rem",
+          borderRadius: "8px",
+          border: "1px solid var(--color-border, #e2e8f0)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem", flexWrap: "wrap", gap: "0.5rem" }}>
+          <div>
+            <strong style={{ fontSize: "1rem" }}>🛡️ Phát hiện & Cảnh báo Giao dịch Bất thường (Anomaly Detection)</strong>
+            <div className="muted" style={{ fontSize: "0.82rem" }}>
+              Tự động chấm điểm rủi ro theo giá trị lớn, rút cạn số dư, người nhận mới, tần suất bất thường và khung giờ đêm.
+            </div>
+          </div>
+          <span className="muted" style={{ fontSize: "0.82rem" }}>
+            Cảnh báo mở: <strong>{anomalies.filter((a) => a.status === "OPEN" || a.status === "REPORTED_SUSPICIOUS").length}</strong> / {anomalies.length}
+          </span>
+        </div>
+
+        {anomalies.length === 0 ? (
+          <div className="muted" style={{ fontSize: "0.85rem" }}>
+            Chưa ghi nhận giao dịch nào vượt ngưỡng cảnh báo bất thường.
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>Khách hàng / Người nhận</th>
+                  <th style={{ width: "130px" }}>Số tiền</th>
+                  <th style={{ width: "160px" }}>Mức độ & Điểm</th>
+                  <th>Quy tắc kích hoạt</th>
+                  <th style={{ width: "150px" }}>Trạng thái</th>
+                  <th style={{ width: "140px", textAlign: "right" }}>Xử lý</th>
+                </tr>
+              </thead>
+              <tbody>
+                {anomalies.slice(0, 10).map((anomaly) => {
+                  const severityVariant =
+                    anomaly.riskLevel === "CRITICAL" || anomaly.riskLevel === "HIGH"
+                      ? "danger"
+                      : "warning";
+                  const statusVariant =
+                    anomaly.status === "REPORTED_SUSPICIOUS"
+                      ? "danger"
+                      : anomaly.status === "OPEN"
+                      ? "warning"
+                      : "success";
+                  const statusLabel =
+                    anomaly.status === "OPEN"
+                      ? "Chờ xác nhận"
+                      : anomaly.status === "CONFIRMED_SAFE"
+                      ? "KH xác nhận an toàn"
+                      : anomaly.status === "REPORTED_SUSPICIOUS"
+                      ? "KH báo nghi ngờ"
+                      : "Đã xử lý";
+
+                  return (
+                    <tr key={anomaly.id}>
+                      <td>
+                        <div><strong>{anomaly.customerName || `KH: ${shortId(anomaly.customerId)}`}</strong></div>
+                        <div className="muted" style={{ fontSize: "0.75rem" }}>
+                          Tới: {anomaly.counterpartyName || "Người nhận nội bộ"} {anomaly.maskedDestinationAccount ? `(${anomaly.maskedDestinationAccount})` : ""}
+                        </div>
+                        <div className="muted" style={{ fontSize: "0.72rem" }}>{formatDate(anomaly.createdAt)}</div>
+                      </td>
+                      <td>
+                        <strong>{formatMinor(anomaly.amountMinor)}</strong>
+                      </td>
+                      <td>
+                        <StatusBadge
+                          status={anomaly.riskLevel}
+                          variant={severityVariant}
+                          label={`${anomaly.riskLevel} (${anomaly.riskScore}/100)`}
+                        />
+                      </td>
+                      <td style={{ fontSize: "0.78rem" }}>
+                        <div>{anomaly.summary}</div>
+                        <div className="muted" style={{ fontFamily: "monospace", fontSize: "0.72rem", marginTop: "2px" }}>
+                          {anomaly.ruleCodes.join(", ")}
+                        </div>
+                      </td>
+                      <td>
+                        <StatusBadge status={anomaly.status} variant={statusVariant} label={statusLabel} />
+                      </td>
+                      <td style={{ textAlign: "right" }}>
+                        {canOperate && anomaly.status !== "RESOLVED" ? (
+                          <button
+                            type="button"
+                            className="secondary"
+                            style={{ padding: "0.25rem 0.6rem", fontSize: "0.8rem" }}
+                            disabled={resolvingAnomalyId === anomaly.id || busy}
+                            onClick={() => void handleResolveAnomaly(anomaly)}
+                          >
+                            {resolvingAnomalyId === anomaly.id ? "Đang lưu…" : "Đánh dấu đã xử lý"}
+                          </button>
+                        ) : (
+                          <span className="muted" style={{ fontSize: "0.78rem" }}>
+                            {anomaly.resolutionCode || "—"}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Search & Filter Toolbar */}
       <div className="filter-controls-card" style={{ display: "flex", gap: "1rem", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap", background: "var(--color-surface, #fff)", padding: "0.75rem 1rem", borderRadius: "8px", border: "1px solid var(--color-border, #e2e8f0)" }}>

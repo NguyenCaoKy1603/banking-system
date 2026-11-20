@@ -26,6 +26,7 @@ import {
   buildCurrentAuthenticatedHref,
   shouldUseReplaceForRestore,
 } from "@/features/auth/domain/routePreservation";
+import { requestBiometricAuthentication } from "@/services/security/biometricAuth";
 import { colors, radius, spacing, typography } from "@/theme";
 
 SplashScreen.setOptions({ duration: 300, fade: true });
@@ -128,6 +129,20 @@ function RootNavigator() {
               }}
               testID="session-recovery-retry"
             />
+            <Button
+              icon="shield"
+              label="Mở khóa bằng Sinh trắc học"
+              onPress={() => {
+                setRecoveryError(null);
+                void requestBiometricAuthentication("Mở khóa ứng dụng NOVA")
+                  .then(() => refreshAccessToken())
+                  .catch(() => {
+                    setRecoveryError("Xác thực sinh trắc học hoặc xác nhận phiên chưa thành công.");
+                  });
+              }}
+              testID="session-recovery-biometric"
+              variant="outline"
+            />
             <Button icon="logout" label="Đăng xuất thiết bị này" onPress={() => void logout()} testID="session-recovery-logout" variant="outline" />
           </View>
         </Card>
@@ -164,6 +179,7 @@ function RootNavigator() {
           <Stack.Screen name="transaction/[transactionId]" />
           <Stack.Screen name="notifications" />
           <Stack.Screen name="notifications/[notificationId]" />
+          <Stack.Screen name="anomalies" />
           <Stack.Screen name="kyc" />
           <Stack.Screen name="qr" />
           <Stack.Screen name="mfa" />

@@ -161,7 +161,7 @@ export async function submitTransferController(
     const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp)
       ? data.stepUp as Record<string, unknown>
       : null;
-    if (!options.mfaService || !stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") {
+    if (!options.mfaService || !stepUp || (stepUp.method !== "TOTP" && stepUp.method !== "BIOMETRIC") || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") {
       throw invalidRequest("Step-up challenge is required for relational transfer submission.");
     }
     const transferRequestFingerprint = await options.relationalHttp.getTransferStepUpRequestFingerprint(quoteId);

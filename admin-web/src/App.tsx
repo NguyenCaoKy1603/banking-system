@@ -22,6 +22,7 @@ import type {
   NavTab,
   OutboxEvent,
   Staff,
+  TransactionAnomaly,
   Transfer,
 } from "./types";
 
@@ -34,6 +35,7 @@ function AppShell() {
   const [summary, setSummary] = useState<Record<string, number>>({});
   const [applications, setApplications] = useState<Application[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [anomalies, setAnomalies] = useState<TransactionAnomaly[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [outboxEvents, setOutboxEvents] = useState<OutboxEvent[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
@@ -74,8 +76,12 @@ function AppShell() {
         }
 
         if (target === "transfers") {
-          const result = await adminFetch<{ items: Transfer[] }>("/admin/transfers");
-          setTransfers(result.items);
+          const [transferResult, anomalyResult] = await Promise.all([
+            adminFetch<{ items: Transfer[] }>("/admin/transfers"),
+            adminFetch<{ items: TransactionAnomaly[] }>("/admin/anomalies"),
+          ]);
+          setTransfers(transferResult.items);
+          setAnomalies(anomalyResult.items);
         }
 
         if (target === "staff") {
@@ -153,6 +159,7 @@ function AppShell() {
       {tab === "transfers" ? (
         <Transfers
           items={transfers}
+          anomalies={anomalies}
           onReload={() => load("transfers")}
           onFilterChange={loadTransfersWithStatus}
           loading={loading}

@@ -1,5 +1,6 @@
 import type {
   AuthChallengeResponse,
+  BiometricEnrollmentResponse,
   LoginResponse,
   MfaCredentialSummary,
   MfaMethodsResponse,
@@ -110,7 +111,11 @@ function isMfaCredentialSummary(value: unknown): value is MfaCredentialSummary {
   return (
     typeof value.id === "string" && value.id.trim().length > 0 &&
     typeof value.customerId === "string" && value.customerId.trim().length > 0 &&
-    (value.credentialType === "TOTP" || value.credentialType === "PASSKEY" || value.credentialType === "OOB_SMS") &&
+    (value.credentialType === "TOTP" ||
+      value.credentialType === "BIOMETRIC" ||
+      value.credentialType === "PASSKEY" ||
+      value.credentialType === "OOB_SMS") &&
+    (value.deviceId === undefined || isNullableString(value.deviceId)) &&
     typeof value.displayName === "string" &&
     (value.status === "PENDING" || value.status === "ACTIVE" || value.status === "SUSPENDED" || value.status === "REVOKED") &&
     typeof value.algorithm === "string" &&
@@ -122,6 +127,21 @@ function isMfaCredentialSummary(value: unknown): value is MfaCredentialSummary {
     isNullableString(value.revokedAt) &&
     isNullableString(value.compromisedAt) &&
     isNonEmptyDateTime(value.createdAt)
+  );
+}
+
+export function isBiometricEnrollmentResponse(
+  payload: unknown,
+): payload is BiometricEnrollmentResponse {
+  return (
+    isRecord(payload) &&
+    typeof payload.credentialId === "string" && payload.credentialId.trim().length > 0 &&
+    payload.credentialType === "BIOMETRIC" &&
+    typeof payload.deviceId === "string" && payload.deviceId.trim().length > 0 &&
+    typeof payload.displayName === "string" &&
+    payload.status === "ACTIVE" &&
+    typeof payload.biometricSecret === "string" && payload.biometricSecret.trim().length > 0 &&
+    isNonEmptyDateTime(payload.enrolledAt)
   );
 }
 

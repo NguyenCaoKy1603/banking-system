@@ -134,6 +134,31 @@ export type TransferTimelineItem = {
   occurredAt: string;
 };
 
+export type TransactionAnomaly = {
+  id: string;
+  customerId: string;
+  customerName: string | null;
+  accountId: string;
+  transferId: string | null;
+  transactionId: string | null;
+  amountMinor: string;
+  currency: string;
+  counterpartyName: string | null;
+  maskedDestinationAccount: string | null;
+  riskLevel: "MEDIUM" | "HIGH" | "CRITICAL";
+  riskScore: number;
+  ruleCodes: string[];
+  summary: string;
+  status: "OPEN" | "CONFIRMED_SAFE" | "REPORTED_SUSPICIOUS" | "RESOLVED";
+  customerNote: string | null;
+  acknowledgedAt: string | null;
+  resolutionCode: string | null;
+  resolvedAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type FraudCase = {
   id: string;
   customerId: string;

@@ -1,5 +1,7 @@
 import type {
   AuthChallengeResponse,
+  BiometricEnrollmentRequest,
+  BiometricEnrollmentResponse,
   LoginRequest,
   LoginResponse,
   LogoutRequest,
@@ -17,6 +19,7 @@ import type {
 } from "@/features/auth/types/auth";
 import {
   isAuthChallengeResponse,
+  isBiometricEnrollmentResponse,
   isLoginResponse,
   isMfaMethodsResponse,
   isRecoveryCompletedResponse,
@@ -231,6 +234,17 @@ export function confirmTotpEnrollment(
   );
 }
 
+export function enrollBiometricMfa(
+  request: BiometricEnrollmentRequest,
+  options: AuthenticatedRequestOptions,
+): Promise<BiometricEnrollmentResponse> {
+  return requestJson<BiometricEnrollmentResponse>(
+    "/auth/mfa/biometric/enroll",
+    { method: "POST", body: request, auth: requireAuthenticated(options) },
+    isBiometricEnrollmentResponse,
+  );
+}
+
 export function createMfaChallenge(
   request: { purpose: MfaLifecyclePurpose; method?: "TOTP" | "EMAIL_OTP" },
   options: AuthenticatedRequestOptions,
@@ -329,6 +343,7 @@ export const authApi = {
   revokeSession,
   revokeAllSessions,
   listMfaMethods,
+  enrollBiometricMfa,
   beginTotpEnrollment,
   confirmTotpEnrollment,
   createMfaChallenge,

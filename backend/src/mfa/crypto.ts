@@ -391,3 +391,54 @@ export const MFA_TOTP_POLICY = Object.freeze({
   periodSeconds: TOTP_PERIOD_SECONDS,
   acceptedWindow: 1,
 });
+
+export type BiometricAssertionContext = {
+  challengeId: string;
+  deviceId: string;
+  purpose: string;
+  resourceId?: string | null;
+};
+
+export function generateBiometricSecret(): string {
+  return randomBytes(32).toString("base64url");
+}
+
+function biometricSigningPayload(biometricSecret: string, context: BiometricAssertionContext): string {
+  return [
+    "biometric-v1",
+    biometricSecret.trim(),
+    context.challengeId.trim(),
+    context.deviceId.trim(),
+    context.purpose.trim(),
+    context.resourceId?.trim() ?? "",
+  ].join(":");
+}
+
+export function computeBiometricAssertion(
+  biometricSecret: string,
+  context: BiometricAssertionContext,
+): string {
+  if (!biometricSecret.trim() || !context.challengeId.trim() || !context.deviceId.trim() || !context.purpose.trim()) {
+    throw new Error("Biometric assertion requires non-empty secret, challengeId, deviceId, and purpose.");
+  }
+  const digestHex = createHash("sha256")
+    .update(biometricSigningPayload(biometricSecret, context), "utf8")
+    .digest("hex");
+  return `biometric-v1.${digestHex}`;
+}
+
+export function verifyBiometricAssertion(
+  proof: string,
+  biometricSecret: string,
+  context: BiometricAssertionContext,
+): boolean {
+  if (typeof proof !== "string") return false;
+  const trimmed = proof.trim();
+  if (!/^biometric-v1\.[0-9a-f]{64}$/i.test(trimmed)) {
+    return false;
+  }
+  const expected = computeBiometricAssertion(biometricSecret, context);
+  const actualBuf = Buffer.from(trimmed.slice("biometric-v1.".length).toLowerCase(), "hex");
+  const expectedBuf = Buffer.from(expected.slice("biometric-v1.".length), "hex");
+  return actualBuf.length === expectedBuf.length && timingSafeEqual(actualBuf, expectedBuf);
+}

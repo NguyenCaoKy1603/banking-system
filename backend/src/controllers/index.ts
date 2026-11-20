@@ -10,5 +10,6 @@ export * from "./savingsController.js";
 export * from "./cardController.js";
 export * from "./kycController.js";
 export * from "./notificationController.js";
+export * from "./anomalyController.js";
 export * from "./assistantController.js";
 export * from "./mobileController.js";

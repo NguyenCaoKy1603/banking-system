@@ -14,6 +14,7 @@ import {
   beginTotpEnrollment,
   confirmTotpEnrollment,
   createMfaChallenge,
+  enrollBiometricMfa,
   listMfaMethods,
   revokeMfaMethod,
   rotateRecoveryCodes,
@@ -34,6 +35,11 @@ import {
   savePendingMfaChallenge,
   savePendingTotpEnrollment,
 } from "@/features/auth/storage/mfaEnrollmentMemoryCache";
+import {
+  clearBiometricCredential,
+  saveBiometricCredential,
+} from "@/features/auth/storage/biometricCredentialStorage";
+import { requestBiometricAuthentication } from "@/services/security/biometricAuth";
 import { ApiError } from "@/services/api/ApiError";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
@@ -73,6 +79,7 @@ export function MfaMethodsScreen() {
   );
   const [challengeCode, setChallengeCode] = useState("");
   const [error, setError] = useState<string | undefined>();
+  const [notice, setNotice] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(false);
   const [isCopiedSecret, setIsCopiedSecret] = useState(false);
 
@@ -248,13 +255,23 @@ export function MfaMethodsScreen() {
           challengeId: challenge.challengeId,
           code: challengeCode,
         }, auth);
+        if (
+          pendingAction.credential.credentialType === "BIOMETRIC" &&
+          session?.user.id &&
+          deviceId
+        ) {
+          await clearBiometricCredential(session.user.id, deviceId).catch(() => undefined);
+        }
         clearPendingMfaChallenge();
         setPendingAction(null);
         setChallenge(null);
         setChallengeCode("");
         setPassword("");
         await completeMfaRevocation({
-          notice: "Phương thức Authenticator đã được thu hồi. Vui lòng đăng nhập lại.",
+          notice:
+            pendingAction.credential.credentialType === "BIOMETRIC"
+              ? "Phương thức Sinh trắc học đã được thu hồi. Vui lòng đăng nhập lại."
+              : "Phương thức Authenticator đã được thu hồi. Vui lòng đăng nhập lại.",
         });
       } else {
         const response = await rotateRecoveryCodes({
@@ -284,7 +301,50 @@ export function MfaMethodsScreen() {
     }
   }
 
-  const activeCredentials = credentials.filter((credential) => credential.status === "ACTIVE");
+  async function handleEnrollBiometric() {
+    if (!auth || !session?.user.id || !deviceId) {
+      setError("Phiên đăng nhập chưa sẵn sàng.");
+      return;
+    }
+    if (!password.trim()) {
+      setError("Nhập mật khẩu hiện tại để kích hoạt Sinh trắc học.");
+      return;
+    }
+    setIsLoading(true);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      await requestBiometricAuthentication(
+        "Xác thực vân tay hoặc khuôn mặt để liên kết thiết bị với NOVA",
+      );
+      const enrolled = await enrollBiometricMfa(
+        { password, displayName: "Sinh trắc học thiết bị" },
+        auth,
+      );
+      await saveBiometricCredential({
+        credentialId: enrolled.credentialId,
+        userId: session.user.id,
+        deviceId: enrolled.deviceId,
+        biometricSecret: enrolled.biometricSecret,
+        displayName: enrolled.displayName,
+        enrolledAt: enrolled.enrolledAt,
+      });
+      setPassword("");
+      setNotice("Đã kích hoạt xác thực Sinh trắc học (Vân tay / Khuôn mặt) cho thiết bị này.");
+      await loadCredentials();
+    } catch (biometricError: unknown) {
+      setError(getMessage(biometricError, "Không thể kích hoạt xác thực Sinh trắc học."));
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  const activeCredentials = credentials.filter(
+    (credential) => credential.status === "ACTIVE" && credential.credentialType !== "BIOMETRIC",
+  );
+  const activeBiometricCredentials = credentials.filter(
+    (credential) => credential.status === "ACTIVE" && credential.credentialType === "BIOMETRIC",
+  );
   const activeCredential = activeCredentials[0];
 
   return (
@@ -293,12 +353,13 @@ export function MfaMethodsScreen() {
         <AppHeader
           eyebrow="Bảo mật tài khoản"
           onBack={() => router.back()}
-          subtitle="Dùng ứng dụng Authenticator để bảo vệ giao dịch và thay đổi quan trọng."
-          title="Ứng dụng xác thực"
+          subtitle="Dùng ứng dụng Authenticator hoặc Sinh trắc học để bảo vệ giao dịch và thay đổi quan trọng."
+          title="Ứng dụng xác thực & Sinh trắc học"
         />
         <EnvironmentBadge />
 
         {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
+        {notice ? <Text accessibilityLiveRegion="polite" style={styles.successNotice}>{notice}</Text> : null}
         {isLoading ? <Text style={styles.muted}>Đang cập nhật bảo mật…</Text> : null}
 
         <View style={styles.card}>
@@ -405,6 +466,55 @@ export function MfaMethodsScreen() {
           ) : null}
         </View>
 
+        {!enrollment && !challenge ? (
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Sinh trắc học trên thiết bị này</Text>
+            <Text style={styles.description}>
+              Liên kết Vân tay hoặc Khuôn mặt (Face ID) với thiết bị này để xác thực nhanh giao dịch và mở khóa ứng dụng.
+            </Text>
+            {activeBiometricCredentials.length === 0 ? (
+              <Text style={styles.muted}>Chưa kích hoạt Sinh trắc học trên thiết bị này.</Text>
+            ) : (
+              activeBiometricCredentials.map((credential) => (
+                <View key={credential.id} style={styles.factorRow}>
+                  <View style={styles.factorText}>
+                    <Text style={styles.factorName}>{credential.displayName}</Text>
+                    <Text style={styles.activeStatusText}>
+                      🟢 Đang hoạt động (BIOMETRIC)
+                    </Text>
+                  </View>
+                  <View style={{ alignSelf: "flex-start", marginTop: spacing.xs }}>
+                    <Button
+                      disabled={isLoading}
+                      label="Thu hồi"
+                      onPress={() =>
+                        void handleStartLifecycleAction(
+                          { kind: "remove", credential },
+                          "MFA_FACTOR_REMOVAL",
+                        )
+                      }
+                      testID={`mfa-remove-${credential.id}`}
+                      variant="danger"
+                    />
+                  </View>
+                </View>
+              ))
+            )}
+            <Button
+              disabled={isLoading}
+              icon="shield"
+              label={
+                activeBiometricCredentials.length > 0
+                  ? "Cập nhật lại Sinh trắc học thiết bị"
+                  : "Kích hoạt Sinh trắc học"
+              }
+              onPress={() => void handleEnrollBiometric()}
+              testID="mfa-biometric-enroll"
+              variant="outline"
+            />
+          </View>
+        ) : null}
+
         {enrollment ? (
           <View style={styles.card}>
             <Text style={styles.sectionTitle}>Hoàn tất đăng ký Authenticator</Text>
@@ -501,6 +611,7 @@ const styles = StyleSheet.create({
   factorName: { ...typography.bodyStrong, color: colors.text },
   muted: { ...typography.body, color: colors.muted },
   error: { ...typography.body, padding: spacing.md, borderRadius: radius.md, color: colors.danger, backgroundColor: colors.dangerSoft },
+  successNotice: { ...typography.body, padding: spacing.md, borderRadius: radius.md, color: colors.success, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.success },
   activeStatusText: { ...typography.body, color: colors.success, fontWeight: "600" },
   passwordHint: { ...typography.caption, color: colors.muted },
   secret: { color: colors.text, fontSize: 16, fontWeight: "700", letterSpacing: 1.5 },

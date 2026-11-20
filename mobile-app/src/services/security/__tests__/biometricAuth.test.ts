@@ -1,6 +1,7 @@
 import * as LocalAuthentication from "expo-local-authentication";
 
 import {
+  createDeviceBoundBiometricAssertion,
   getDeviceBoundAssertion,
   requestBiometricAuthentication,
 } from "@/services/security/biometricAuth";
@@ -68,5 +69,28 @@ describe("biometricAuth", () => {
 
   it("không lấy hoặc tự tạo device proof từ public bundle", () => {
     expect(getDeviceBoundAssertion()).toBe("");
+  });
+
+  it("ký challenge sinh trắc học theo ngữ cảnh thiết bị khớp SHA-256 chuẩn", () => {
+    const assertionA = createDeviceBoundBiometricAssertion({
+      biometricSecret: "secret-123",
+      challengeId: "challenge-456",
+      deviceId: "device-789",
+      purpose: "TRANSFER",
+      resourceId: "quote-001",
+    });
+    const assertionB = createDeviceBoundBiometricAssertion({
+      biometricSecret: "secret-123",
+      challengeId: "challenge-456",
+      deviceId: "device-other",
+      purpose: "TRANSFER",
+      resourceId: "quote-001",
+    });
+
+    expect(assertionA).toMatch(/^biometric-v1\.[0-9a-f]{64}$/);
+    expect(assertionA).toBe(
+      "biometric-v1.dc23c22fa1481e66d0671091550c5f9bea2771a707bec853bc9e76e84e71d5ac",
+    );
+    expect(assertionB).not.toBe(assertionA);
   });
 });

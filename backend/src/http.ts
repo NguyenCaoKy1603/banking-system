@@ -61,6 +61,7 @@ import { handleSavingsRoute } from "./routes/savingsRoutes.js";
 import { handleCardRoute } from "./routes/cardRoutes.js";
 import { handleKycRoute } from "./routes/kycRoutes.js";
 import { handleNotificationRoute } from "./routes/notificationRoutes.js";
+import { handleAnomalyRoute } from "./routes/anomalyRoutes.js";
 import { handleAssistantRoute } from "./routes/assistantRoutes.js";
 import { handleMobileRoute } from "./routes/mobileRoutes.js";
 import {
@@ -417,6 +418,22 @@ export async function handleRequest(
       traceId,
     );
     if (notificationHandled) {
+      return;
+    }
+
+    const anomalyHandled = await handleAnomalyRoute(
+      request,
+      response,
+      requestUrl,
+      segments,
+      body,
+      userId,
+      relationalRoute,
+      options,
+      system,
+      traceId,
+    );
+    if (anomalyHandled) {
       return;
     }
 

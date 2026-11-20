@@ -72,9 +72,10 @@ export async function verifyPersistentStepUp(
     throw invalidRequest("stepUp is required for this command.");
   }
   const stepUp = rawStepUp as Record<string, unknown>;
-  if (stepUp.method !== "TOTP") {
-    throw conflictWithCode("STEP_UP_INVALID", "Production-like runtime chỉ chấp nhận TOTP cho step-up.");
+  if (stepUp.method !== "TOTP" && stepUp.method !== "BIOMETRIC") {
+    throw conflictWithCode("STEP_UP_INVALID", "Production-like runtime chỉ chấp nhận TOTP hoặc Sinh trắc học cho step-up.");
   }
+  const verifiedMethod = stepUp.method as "TOTP" | "BIOMETRIC";
   if (typeof stepUp.challengeId !== "string" || !stepUp.challengeId.trim()) {
     throw invalidRequest("stepUp.challengeId is required.");
   }
@@ -103,7 +104,7 @@ export async function verifyPersistentStepUp(
     userId,
     challengeId: stepUp.challengeId,
     deviceId,
-    method: "TOTP",
+    method: verifiedMethod,
     purpose: purpose as OtpPurpose,
     resourceId,
     requestFingerprint,
@@ -143,7 +144,14 @@ export function isAuthenticatedRoute(
     return true;
   }
   if (
+    (method === "GET" && (segments.length === 1 || segments.length === 2) && segments[0] === "anomalies") ||
+    (method === "POST" && segments.length === 3 && segments[0] === "anomalies" && segments[2] === "acknowledge")
+  ) {
+    return true;
+  }
+  if (
     (method === "GET" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") ||
+    (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "biometric" && segments[3] === "enroll") ||
     (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "totp" && (segments[3] === "enroll" || segments[3] === "confirm")) ||
     (method === "DELETE" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") ||
     (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "recovery-codes" && segments[3] === "rotate") ||

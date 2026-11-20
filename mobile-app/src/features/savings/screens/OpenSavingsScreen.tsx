@@ -44,7 +44,12 @@ import { ApiError } from "@/services/api/ApiError";
 import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
 import { useTotpStatus } from "@/features/auth/hooks/useTotpStatus";
 import { isTotpNotEnrolledError, TOTP_NOT_ENROLLED_MESSAGE } from "@/features/auth/utils/totpError";
-import { getDeviceBoundAssertion, requestBiometricAuthentication } from "@/services/security/biometricAuth";
+import { loadBiometricCredential } from "@/features/auth/storage/biometricCredentialStorage";
+import {
+  createDeviceBoundBiometricAssertion,
+  getDeviceBoundAssertion,
+  requestBiometricAuthentication,
+} from "@/services/security/biometricAuth";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
 
 type OpenSavingsStep = "input" | "review" | "stepUp" | "result";
@@ -560,9 +565,20 @@ export function OpenSavingsScreen() {
     setError(undefined);
     try {
       await requestBiometricAuthentication("Xác thực mở tiền gửi");
-      const proof = getDeviceBoundAssertion();
+      const stored =
+        userId && deviceId ? await loadBiometricCredential(userId, deviceId) : null;
+      const proof =
+        stored && savingsChallenge && deviceId
+          ? createDeviceBoundBiometricAssertion({
+              biometricSecret: stored.biometricSecret,
+              challengeId: savingsChallenge.challengeId,
+              deviceId,
+              purpose: "SAVINGS_OPENING",
+              resourceId: quote?.quoteId ?? null,
+            })
+          : getDeviceBoundAssertion();
       if (!proof) {
-        setError("Thiết bị chưa cung cấp kết quả xác thực sinh trắc học.");
+        setError("Thiết bị chưa kích hoạt khóa Sinh trắc học. Vui lòng thiết lập trong Bảo mật tài khoản.");
         return;
       }
       setStepUpMethod("BIOMETRIC");
@@ -572,7 +588,7 @@ export function OpenSavingsScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [manualReviewCode, recoveryBlocked, savingsChallenge]);
+  }, [deviceId, manualReviewCode, quote, recoveryBlocked, savingsChallenge, userId]);
 
   const handleRenewSavingsChallenge = useCallback(async () => {
     if (!quote || submitLockRef.current || manualReviewCode || recoveryBlocked) {

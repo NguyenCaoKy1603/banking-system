@@ -74,7 +74,7 @@ export async function unlockCardController(
   if (relationalRoute && options.relationalHttp) {
     if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational card unlock.");
     const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
-    if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational card unlock.");
+    if (!stepUp || (stepUp.method !== "TOTP" && stepUp.method !== "BIOMETRIC") || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP or Biometric step-up challenge is required for relational card unlock.");
     const verified = await options.mfaService.verifyChallenge({
       challengeId: stepUp.challengeId,
       customerId: userId,
@@ -118,7 +118,7 @@ export async function reportCardLostController(
   if (!options.relationalHttp) return;
   if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required to report a card lost.");
   const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
-  if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required to report a card lost.");
+  if (!stepUp || (stepUp.method !== "TOTP" && stepUp.method !== "BIOMETRIC") || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP or Biometric step-up challenge is required to report a card lost.");
   const verified = await options.mfaService.verifyChallenge({
     challengeId: stepUp.challengeId,
     customerId: userId,
@@ -164,7 +164,7 @@ export async function submitCreditApplicationController(
   if (relationalRoute && options.relationalHttp) {
     if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational credit application.");
     const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
-    if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational credit application.");
+    if (!stepUp || (stepUp.method !== "TOTP" && stepUp.method !== "BIOMETRIC") || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP or Biometric step-up challenge is required for relational credit application.");
     const requestFingerprint = await options.relationalHttp.getCreditApplicationRequestFingerprint(data.requestedLimit);
     const verified = await options.mfaService.verifyChallenge({
       challengeId: stepUp.challengeId,
@@ -239,7 +239,7 @@ export async function activateCreditApplicationController(
   if (relationalRoute && options.relationalHttp) {
     if (!options.mfaService) throw invalidRequest("TOTP step-up challenge is required for relational credit activation.");
     const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
-    if (!stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational credit activation.");
+    if (!stepUp || (stepUp.method !== "TOTP" && stepUp.method !== "BIOMETRIC") || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP or Biometric step-up challenge is required for relational credit activation.");
     const verified = await options.mfaService.verifyChallenge({
       challengeId: stepUp.challengeId,
       customerId: userId,
@@ -406,7 +406,7 @@ export async function submitCreditPaymentController(
   const data = requireObject(body);
   if (relationalRoute && options.relationalHttp) {
     const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp) ? data.stepUp as Record<string, unknown> : null;
-    if (!options.mfaService || !stepUp || stepUp.method !== "TOTP" || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP step-up challenge is required for relational credit payment.");
+    if (!options.mfaService || !stepUp || (stepUp.method !== "TOTP" && stepUp.method !== "BIOMETRIC") || typeof stepUp.challengeId !== "string" || typeof stepUp.proof !== "string") throw invalidRequest("TOTP or Biometric step-up challenge is required for relational credit payment.");
     const quoteId = typeof data.quoteId === "string" ? data.quoteId : "";
     const requestFingerprint = await options.relationalHttp.getCreditPaymentStepUpRequestFingerprint(quoteId);
     if (!requestFingerprint) throw notFound("Credit payment quote not found.");

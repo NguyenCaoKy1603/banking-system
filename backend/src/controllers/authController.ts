@@ -378,10 +378,57 @@ export async function listMfaMethodsController(
   response: ServerResponse,
   userId: string,
   options: HttpOptions,
+  system: BankingSystem,
   traceId: string,
 ): Promise<void> {
-  if (!options.mfaService) return;
+  if (!options.mfaService) {
+    writeResponse(response, 200, traceId, { items: system.listBiometricCredentials(userId) });
+    return;
+  }
   writeResponse(response, 200, traceId, { items: await options.mfaService.listCredentials(userId) });
+}
+
+export async function enrollBiometricController(
+  request: IncomingMessage,
+  response: ServerResponse,
+  userId: string,
+  body: unknown,
+  options: HttpOptions,
+  system: BankingSystem,
+  relationalAuth: RelationalHttpBoundary | undefined,
+  traceId: string,
+): Promise<void> {
+  const data = requireObject(body);
+  const deviceId = requireDeviceId(request);
+  const passwordValid = relationalAuth
+    ? await relationalAuth.verifyCurrentPassword(userId, typeof data.password === "string" ? data.password : "")
+    : typeof data.password === "string" && system.verifyCurrentPassword(userId, data.password);
+  if (!passwordValid) {
+    throw unauthorized("Current password is invalid.");
+  }
+  const displayName = typeof data.displayName === "string" ? data.displayName : undefined;
+  if (options.mfaService) {
+    if (typeof data.challengeId === "string" && data.challengeId.trim()) {
+      await verifyMfaLifecycleChallenge(options.mfaService, request, userId, data, "MFA_FACTOR_CHANGE");
+    }
+    writeResponse(
+      response,
+      201,
+      traceId,
+      await options.mfaService.enrollBiometricCredential({
+        customerId: userId,
+        deviceId,
+        displayName,
+      }),
+    );
+    return;
+  }
+  writeResponse(
+    response,
+    201,
+    traceId,
+    system.enrollBiometricCredential(userId, deviceId, displayName),
+  );
 }
 
 export async function beginTotpEnrollmentController(
@@ -453,13 +500,17 @@ export async function revokeMfaMethodController(
   relationalAuth: RelationalHttpBoundary | undefined,
   traceId: string,
 ): Promise<void> {
-  if (!options.mfaService) return;
   const data = body === undefined ? {} : requireObject(body);
   const passwordValid = relationalAuth
     ? await relationalAuth.verifyCurrentPassword(userId, typeof data.password === "string" ? data.password : "")
     : typeof data.password === "string" && system.verifyCurrentPassword(userId, data.password);
   if (!passwordValid) {
     throw unauthorized("Current password is invalid.");
+  }
+  if (!options.mfaService) {
+    system.revokeBiometricCredential(userId, credentialId);
+    writeResponse(response, 204, traceId);
+    return;
   }
   const credentials = await options.mfaService.listCredentials(userId);
   if (credentials.some((credential) => credential.status === "ACTIVE")) {
@@ -639,16 +690,63 @@ export async function createOtpChallengeController(
           typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
         );
     const requestedMethod = typeof data.method === "string" ? data.method : undefined;
+    const deviceId = requireDeviceId(request);
     const activeCredentials = await options.mfaService.listCredentials(userId);
     const hasActiveTotp = activeCredentials.some((c) => c.status === "ACTIVE" && c.credentialType === "TOTP");
+    const hasActiveBiometric = activeCredentials.some(
+      (c) =>
+        c.status === "ACTIVE" &&
+        c.credentialType === "BIOMETRIC" &&
+        (!c.deviceId || c.deviceId === deviceId),
+    );
+
+    if (requestedMethod === "BIOMETRIC") {
+      if (!hasActiveBiometric) {
+        throw invalidRequest("Thiết bị này chưa kích hoạt xác thực sinh trắc học.");
+      }
+      const bioChallenge = await options.mfaService.beginBiometricChallenge({
+        customerId: userId,
+        deviceId,
+        purpose,
+        resourceId,
+        requestFingerprint,
+        networkFingerprint: getMfaClientAddress(request),
+      });
+      writeResponse(response, 201, traceId, {
+        challengeId: bioChallenge.challengeId,
+        expiresAt: bioChallenge.expiresAt,
+        methods: hasActiveTotp ? ["TOTP", "BIOMETRIC"] : ["BIOMETRIC"],
+        method: "BIOMETRIC",
+        purpose,
+      });
+      return;
+    }
 
     if (purpose === "TRANSFER") {
-      if (!hasActiveTotp) {
-        throw invalidRequest("Tài khoản chưa kích hoạt Google Authenticator (TOTP). Vui lòng cài đặt trong mục Cài đặt bảo mật trước khi chuyển tiền.");
+      if (!hasActiveTotp && !hasActiveBiometric) {
+        throw invalidRequest("Tài khoản chưa kích hoạt Google Authenticator (TOTP) hoặc Sinh trắc học. Vui lòng cài đặt trong mục Bảo mật tài khoản trước khi chuyển tiền.");
+      }
+      if (!hasActiveTotp && hasActiveBiometric) {
+        const bioChallenge = await options.mfaService.beginBiometricChallenge({
+          customerId: userId,
+          deviceId,
+          purpose,
+          resourceId,
+          requestFingerprint,
+          networkFingerprint: getMfaClientAddress(request),
+        });
+        writeResponse(response, 201, traceId, {
+          challengeId: bioChallenge.challengeId,
+          expiresAt: bioChallenge.expiresAt,
+          methods: ["BIOMETRIC"],
+          method: "BIOMETRIC",
+          purpose,
+        });
+        return;
       }
       const challenge = await options.mfaService.beginTotpChallenge({
         customerId: userId,
-        deviceId: requireDeviceId(request),
+        deviceId,
         purpose,
         resourceId,
         requestFingerprint,
@@ -657,17 +755,17 @@ export async function createOtpChallengeController(
       writeResponse(response, 201, traceId, {
         challengeId: challenge.challengeId,
         expiresAt: challenge.expiresAt,
-        methods: ["TOTP"],
+        methods: hasActiveBiometric ? ["TOTP", "BIOMETRIC"] : ["TOTP"],
         method: "TOTP",
         purpose,
       });
       return;
     }
 
-    if (requestedMethod === "EMAIL_OTP" || requestedMethod === "OTP" || !hasActiveTotp) {
+    if (requestedMethod === "EMAIL_OTP" || requestedMethod === "OTP" || (!hasActiveTotp && !hasActiveBiometric)) {
       const emailChallenge = await options.mfaService.createEmailChallenge({
         customerId: userId,
-        deviceId: requireDeviceId(request),
+        deviceId,
         purpose,
         resourceId,
         requestFingerprint,
@@ -676,7 +774,9 @@ export async function createOtpChallengeController(
       writeResponse(response, 201, traceId, {
         challengeId: emailChallenge.challengeId,
         expiresAt: emailChallenge.expiresAt,
-        methods: hasActiveTotp ? ["TOTP", "EMAIL_OTP", "OTP"] : ["EMAIL_OTP", "OTP"],
+        methods: hasActiveTotp
+          ? (hasActiveBiometric ? ["TOTP", "BIOMETRIC", "EMAIL_OTP", "OTP"] : ["TOTP", "EMAIL_OTP", "OTP"])
+          : (hasActiveBiometric ? ["BIOMETRIC", "EMAIL_OTP", "OTP"] : ["EMAIL_OTP", "OTP"]),
         method: "EMAIL_OTP",
         purpose,
         maskedDestination: emailChallenge.maskedDestination,
@@ -685,9 +785,28 @@ export async function createOtpChallengeController(
       return;
     }
 
+    if (!hasActiveTotp && hasActiveBiometric) {
+      const bioChallenge = await options.mfaService.beginBiometricChallenge({
+        customerId: userId,
+        deviceId,
+        purpose,
+        resourceId,
+        requestFingerprint,
+        networkFingerprint: getMfaClientAddress(request),
+      });
+      writeResponse(response, 201, traceId, {
+        challengeId: bioChallenge.challengeId,
+        expiresAt: bioChallenge.expiresAt,
+        methods: ["BIOMETRIC", "EMAIL_OTP", "OTP"],
+        method: "BIOMETRIC",
+        purpose,
+      });
+      return;
+    }
+
     const challenge = await options.mfaService.beginTotpChallenge({
       customerId: userId,
-      deviceId: requireDeviceId(request),
+      deviceId,
       purpose,
       resourceId,
       requestFingerprint,
@@ -696,7 +815,7 @@ export async function createOtpChallengeController(
     writeResponse(response, 201, traceId, {
       challengeId: challenge.challengeId,
       expiresAt: challenge.expiresAt,
-      methods: ["TOTP", "EMAIL_OTP", "OTP"],
+      methods: hasActiveBiometric ? ["TOTP", "BIOMETRIC", "EMAIL_OTP", "OTP"] : ["TOTP", "EMAIL_OTP", "OTP"],
       method: "TOTP",
       purpose,
     });
