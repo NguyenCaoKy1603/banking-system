@@ -1,7 +1,7 @@
 import * as SecureStore from "expo-secure-store";
-import * as Crypto from "expo-crypto";
 import { Platform } from "react-native";
 
+import { safeRandomUUID } from "@/utils/uuid";
 import type { AuthUser } from "@/features/auth/types/auth";
 import type { AuthSession } from "@/features/auth/types/session";
 import { isAuthUser } from "@/features/auth/validation/authDataValidators";
@@ -94,7 +94,7 @@ function parseAuthSession(value: string | null): ParsedAuthSession | null {
 
     const sessionEpoch = isNonEmptyToken(parsed.sessionEpoch)
       ? parsed.sessionEpoch
-      : Crypto.randomUUID();
+      : safeRandomUUID();
     const session = { ...parsed, sessionEpoch };
 
     return isAuthSession(session)
@@ -155,7 +155,7 @@ async function loadLegacyAuthSession(): Promise<{
       accessToken,
       refreshToken,
       accessTokenExpiresAt: metadata.accessTokenExpiresAt,
-      sessionEpoch: Crypto.randomUUID(),
+      sessionEpoch: safeRandomUUID(),
       user: metadata.user,
     },
   };

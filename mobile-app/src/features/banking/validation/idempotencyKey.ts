@@ -1,4 +1,4 @@
-import * as Crypto from "expo-crypto";
+import { safeRandomUUID } from "@/utils/uuid";
 
 export const COMMAND_IDEMPOTENCY_KEY_MIN_LENGTH = 16;
 export const GENERAL_IDEMPOTENCY_KEY_MIN_LENGTH = 8;
@@ -25,5 +25,5 @@ export function createIdempotencyKey(namespace: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(normalizedNamespace)) {
     throw new TypeError("Idempotency key namespace không hợp lệ.");
   }
-  return `${normalizedNamespace}-${Crypto.randomUUID()}`;
+  return `${normalizedNamespace}-${safeRandomUUID()}`;
 }

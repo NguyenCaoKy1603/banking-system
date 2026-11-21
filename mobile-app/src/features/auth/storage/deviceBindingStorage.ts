@@ -1,6 +1,7 @@
-import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
+
+import { safeRandomUUID } from "@/utils/uuid";
 
 const DEVICE_ID_KEY = "banking.device.binding.v1";
 const SECURE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
@@ -21,7 +22,18 @@ export function loadDeviceBindingId(): Promise<string> {
 
   deviceIdPromise = (async () => {
     if (Platform.OS === "web") {
-      return Crypto.randomUUID();
+      try {
+        if (typeof window !== "undefined" && window.localStorage) {
+          const stored = window.localStorage.getItem(DEVICE_ID_KEY);
+          if (isDeviceId(stored)) return stored;
+          const created = safeRandomUUID();
+          window.localStorage.setItem(DEVICE_ID_KEY, created);
+          return created;
+        }
+      } catch {
+        // fallback if localStorage is disabled or throws
+      }
+      return safeRandomUUID();
     }
 
     const storedValue = await SecureStore.getItemAsync(
@@ -33,7 +45,7 @@ export function loadDeviceBindingId(): Promise<string> {
       return storedValue;
     }
 
-    const deviceId = Crypto.randomUUID();
+    const deviceId = safeRandomUUID();
     await SecureStore.setItemAsync(
       DEVICE_ID_KEY,
       deviceId,

@@ -1,4 +1,4 @@
-import * as Crypto from "expo-crypto";
+import { safeRandomUUID } from "@/utils/uuid";
 
 import type { AuthUser, LoginResponse } from "@/features/auth/types/auth";
 
@@ -13,7 +13,7 @@ export type AuthSession = {
 export function createAuthSession(
   loginResponse: LoginResponse,
   now = Date.now(),
-  sessionEpoch = Crypto.randomUUID(),
+  sessionEpoch = safeRandomUUID(),
 ): AuthSession {
   if (
     !Number.isFinite(loginResponse.expiresInSeconds) ||
