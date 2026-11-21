@@ -98,5 +98,13 @@ export function resolveApiUrl(
 export const API_URL = resolveApiUrl(process.env.EXPO_PUBLIC_API_URL);
 
 export const apiConfig = {
-  baseUrl: API_URL,
+  get baseUrl(): string {
+    if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.hostname) {
+      const host = window.location.hostname;
+      if (host && host !== "localhost" && host !== "127.0.0.1") {
+        return API_URL.replace(/localhost|127\.0\.0\.1|10\.0\.2\.2/, host);
+      }
+    }
+    return API_URL;
+  },
 } as const;
