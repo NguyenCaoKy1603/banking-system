@@ -185,6 +185,7 @@ test("HTTP transfer flow flags anomalous quote/submit and supports customer ackn
     headers: { ...authHeaders, "Idempotency-Key": "anomaly-transfer-intent-1" },
     body: JSON.stringify({
       quoteId: quote.quoteId,
+      confirmHighRisk: true,
       stepUp: { method: "OTP", proof: "123456" },
     }),
   });

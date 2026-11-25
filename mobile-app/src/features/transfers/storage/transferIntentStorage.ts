@@ -85,6 +85,7 @@ export type PendingTransferIntent = ClientIntentLifecycle & {
   idempotencyKey: string;
   quote: TransferQuote;
   createdAt: number;
+  confirmHighRisk?: boolean;
   manualReviewCode?: ManualReviewCode;
   transferId?: string;
   receipt?: TransferReceipt;
@@ -131,6 +132,8 @@ function parseIntent(value: string | null): ParsedIntent | null {
       typeof parsed.createdAt !== "number" ||
       !Number.isFinite(parsed.createdAt) ||
       parsed.createdAt <= 0 ||
+      (parsed.confirmHighRisk !== undefined &&
+        typeof parsed.confirmHighRisk !== "boolean") ||
       (parsed.manualReviewCode !== undefined &&
         !isManualReviewCode(parsed.manualReviewCode)) ||
       (parsed.transferId !== undefined && !isNonEmptyString(parsed.transferId)) ||
@@ -171,6 +174,9 @@ function parseIntent(value: string | null): ParsedIntent | null {
         idempotencyKey: parsed.idempotencyKey,
         quote: parsed.quote,
         createdAt: parsed.createdAt,
+        ...(parsed.confirmHighRisk === undefined
+          ? {}
+          : { confirmHighRisk: parsed.confirmHighRisk }),
         ...(parsed.manualReviewCode === undefined
           ? {}
           : { manualReviewCode: parsed.manualReviewCode }),

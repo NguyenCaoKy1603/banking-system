@@ -1,5 +1,5 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
-import { AppState, type AppStateStatus, Linking } from "react-native";
+import { AppState, type AppStateStatus, Linking, Platform } from "react-native";
 
 import { QrScreen } from "@/features/qr/screens/QrScreen";
 import { useAuth } from "@/features/auth/context/AuthContext";
@@ -410,5 +410,95 @@ describe("QrScreen camera scanning flow", () => {
         description: "Tra tien cafe",
       },
     });
+  });
+
+  it("không clip SurfaceView bằng overflow/nền đặc, cho phép đổi camera trước/sau và thử lại khi onMountError", async () => {
+    mockPermissionState = {
+      granted: true,
+      canAskAgain: true,
+      status: "granted",
+      expires: "never",
+    };
+
+    await act(async () => {
+      renderer = create(<QrScreen />);
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      findNode(renderer!, "qr-scan", "onPress").props.onPress();
+    });
+    await flushMicrotasks();
+
+    const camera = findNode(renderer!, "qr-camera");
+    expect(camera.props.facing).toBe("back");
+    expect(camera.props.autofocus).toBe("on");
+    expect(camera.props.active).toBe(true);
+
+    const frame = camera.parent;
+    expect(frame?.props.collapsable).toBe(false);
+    expect(frame?.props.style?.overflow).not.toBe("hidden");
+    expect(frame?.props.style?.backgroundColor).toBe("transparent");
+
+    await act(async () => {
+      camera.props.onCameraReady();
+    });
+    await flushMicrotasks();
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Camera sau đang hoạt động");
+
+    await act(async () => {
+      findNode(renderer!, "qr-switch-facing", "onPress").props.onPress();
+    });
+    await flushMicrotasks();
+    expect(findNode(renderer!, "qr-camera").props.facing).toBe("front");
+
+    await act(async () => {
+      findNode(renderer!, "qr-camera", "onMountError").props.onMountError({
+        message: "Camera busy",
+      });
+    });
+    await flushMicrotasks();
+
+    expect(renderer!.root.findAllByProps({ testID: "qr-camera-error" }).length).toBeGreaterThan(0);
+    expect(renderer!.root.findAllByProps({ testID: "qr-camera" }).length).toBe(0);
+
+    await act(async () => {
+      findNode(renderer!, "qr-retry-camera", "onPress").props.onPress();
+    });
+    await flushMicrotasks();
+    expect(renderer!.root.findAllByProps({ testID: "qr-camera" }).length).toBeGreaterThan(0);
+  });
+
+  it("hiển thị hướng dẫn rõ ràng khi chạy Web qua HTTP không bảo mật", async () => {
+    const originalOs = Platform.OS;
+    const originalWindow = globalThis.window;
+    Object.defineProperty(Platform, "OS", { configurable: true, value: "web" });
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { ...(originalWindow ?? {}), isSecureContext: false },
+    });
+
+    try {
+      await act(async () => {
+        renderer = create(<QrScreen />);
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findNode(renderer!, "qr-scan", "onPress").props.onPress();
+      });
+      await flushMicrotasks();
+
+      expect(mockRequestPermission).not.toHaveBeenCalled();
+      expect(renderer!.root.findAllByProps({ testID: "qr-camera-error" }).length).toBeGreaterThan(0);
+      expect(JSON.stringify(renderer!.toJSON())).toContain("HTTPS");
+      expect(renderer!.root.findAllByProps({ testID: "qr-request-camera" }).length).toBe(0);
+    } finally {
+      Object.defineProperty(Platform, "OS", { configurable: true, value: originalOs });
+      Object.defineProperty(globalThis, "window", {
+        configurable: true,
+        value: originalWindow,
+      });
+    }
   });
 });

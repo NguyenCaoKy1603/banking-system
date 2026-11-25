@@ -168,6 +168,7 @@ describe("authApi", () => {
       expect.objectContaining({
         headers: expect.objectContaining({
           "X-Device-ID": "00000000-0000-4000-8000-000000000001",
+          "X-Device-Name": "Test Phone (Android 15)",
         }),
       }),
     );

@@ -8,6 +8,8 @@ import {
   lookupBeneficiary,
   lookupExternalRecipient,
   lookupInternalRecipient,
+  quoteTransfer,
+  submitTransfer,
 } from "@/features/transfers/services/transfersApi";
 import { loadTransferIntent } from "@/features/transfers/storage/transferIntentStorage";
 import { listMfaMethods } from "@/features/auth/services/authApi";
@@ -71,6 +73,8 @@ const getControlPolicyMock = jest.mocked(getControlPolicy);
 const lookupInternalRecipientMock = jest.mocked(lookupInternalRecipient);
 const lookupExternalRecipientMock = jest.mocked(lookupExternalRecipient);
 const lookupBeneficiaryMock = jest.mocked(lookupBeneficiary);
+const quoteTransferMock = jest.mocked(quoteTransfer);
+const submitTransferMock = jest.mocked(submitTransfer);
 const loadTransferIntentMock = jest.mocked(loadTransferIntent);
 const listMfaMethodsMock = jest.mocked(listMfaMethods);
 const createOtpChallengeMock = jest.mocked(createOtpChallenge);
@@ -258,7 +262,7 @@ describe("TransferScreen QR route integration", () => {
     expect(JSON.stringify(renderer!.toJSON())).toContain("Xác thực");
   });
 
-  it("shows biometric button when enrolled, amount < 1,000,000 VND, and risk is LOW", async () => {
+  it("shows biometric button when enrolled, amount <= 1,000,000 VND, and risk is LOW", async () => {
     listMfaMethodsMock.mockResolvedValue({
       items: [
         {
@@ -312,8 +316,8 @@ describe("TransferScreen QR route integration", () => {
           bankName: "NOVA",
           status: "ACTIVE",
         },
-        amount: { currency: "VND", amountMinor: "999000" },
-        fee: { currency: "VND", amountMinor: "1000" },
+        amount: { currency: "VND", amountMinor: "1000000" },
+        fee: { currency: "VND", amountMinor: "0" },
         totalDebit: { currency: "VND", amountMinor: "1000000" },
         expiresAt: new Date(Date.now() + 300_000).toISOString(),
         anomalyAssessment: {
@@ -344,7 +348,7 @@ describe("TransferScreen QR route integration", () => {
     expect(biometricButton.props.label).toBe("Xác thực bằng Vân tay / Face ID");
   });
 
-  it("hides biometric button and enforces TOTP when amount >= 1,000,000 VND or risk is HIGH/CRITICAL", async () => {
+  it("hides biometric button and enforces TOTP when amount > 1,000,000 VND or risk is HIGH/CRITICAL", async () => {
     listMfaMethodsMock.mockResolvedValue({
       items: [
         {
@@ -382,9 +386,9 @@ describe("TransferScreen QR route integration", () => {
           bankName: "NOVA",
           status: "ACTIVE",
         },
-        amount: { currency: "VND", amountMinor: "1000000" },
+        amount: { currency: "VND", amountMinor: "1000001" },
         fee: { currency: "VND", amountMinor: "1000" },
-        totalDebit: { currency: "VND", amountMinor: "1001000" },
+        totalDebit: { currency: "VND", amountMinor: "1001001" },
         expiresAt: new Date(Date.now() + 300_000).toISOString(),
         anomalyAssessment: {
           riskLevel: "HIGH",
@@ -498,5 +502,113 @@ describe("TransferScreen QR route integration", () => {
 
     // Renders prefilled transfer message / description
     expect(JSON.stringify(renderer!.toJSON())).toContain("Tien an trua");
+  });
+
+  it("requires explicit high-risk confirmation before CRITICAL transfer review and forwards confirmHighRisk on submit", async () => {
+    mockRouteParams = {
+      accountNumber: "99990001",
+      bankBin: "970436",
+      amountMinor: "250000",
+      description: "Critical test",
+    };
+    lookupExternalRecipientMock.mockResolvedValue({
+      recipient: {
+        lookupId: "ext-lookup-critical",
+        rail: "NAPAS_IBFT",
+        bankBin: "970436",
+        bankCode: "VCB",
+        accountHolderName: "NGUYEN VAN MINH (VCB)",
+        maskedAccountNumber: "••••0001",
+        bankName: "Vietcombank",
+        status: "ACTIVE",
+        expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      },
+    });
+    quoteTransferMock.mockResolvedValue({
+      quoteId: "44444444-4444-4444-8444-444444444499",
+      sourceAccountId: "22222222-2222-4222-8222-222222222222",
+      beneficiary: {
+        id: "55555555-5555-4555-8555-555555555555",
+        displayName: "NGUYEN VAN MINH (VCB)",
+        maskedAccountNumber: "••••0001",
+        bankName: "Vietcombank",
+        status: "ACTIVE",
+      },
+      amount: { currency: "VND", amountMinor: "250000" },
+      fee: { currency: "VND", amountMinor: "0" },
+      totalDebit: { currency: "VND", amountMinor: "250000" },
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+      anomalyAssessment: {
+        riskLevel: "CRITICAL",
+        riskScore: 90,
+        flagged: true,
+        requiresConfirmation: true,
+        summary: "Giao dịch có dấu hiệu rủi ro nghiêm trọng.",
+        flags: [{ code: "UNUSUAL_NIGHT_HOUR", title: "Người nhận mới", detail: "Chuyển ban đêm", weight: 40 }],
+        evaluatedAt: new Date().toISOString(),
+      },
+    });
+    createOtpChallengeMock.mockResolvedValue({
+      challengeId: "66666666-6666-4666-8666-666666666699",
+      purpose: "TRANSFER",
+      method: "TOTP",
+      methods: ["TOTP"],
+      expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    });
+    submitTransferMock.mockResolvedValue({
+      transferId: "77777777-7777-4777-8777-777777777799",
+      reference: "FT-CRITICAL-1",
+      status: "SUCCEEDED",
+      amount: { currency: "VND", amountMinor: "250000" },
+      fee: { currency: "VND", amountMinor: "0" },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    act(() => {
+      renderer = create(<TransferScreen />);
+    });
+    await flushMicrotasks();
+
+    const createQuoteButton = renderer!.root.findByProps({ testID: "transfer-create-quote" });
+    await act(async () => {
+      await createQuoteButton.props.onPress();
+    });
+    await flushMicrotasks();
+
+    const confirmRiskCheckbox = renderer!.root.findByProps({ testID: "transfer-confirm-high-risk" });
+    const reviewConfirmBefore = renderer!.root.findByProps({ testID: "transfer-review-confirm" });
+    expect(reviewConfirmBefore.props.disabled).toBe(true);
+
+    act(() => {
+      confirmRiskCheckbox.props.onPress();
+    });
+
+    const reviewConfirmAfter = renderer!.root.findByProps({ testID: "transfer-review-confirm" });
+    expect(reviewConfirmAfter.props.disabled).toBe(false);
+
+    await act(async () => {
+      await reviewConfirmAfter.props.onPress();
+    });
+    await flushMicrotasks();
+
+    const otpInput = renderer!.root.findByProps({ testID: "transfer-step-up-code" });
+    act(() => {
+      otpInput.props.onChangeText("123456");
+    });
+
+    const submitButton = renderer!.root.findByProps({ testID: "transfer-submit" });
+    await act(async () => {
+      await submitButton.props.onPress();
+    });
+    await flushMicrotasks();
+
+    expect(submitTransferMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        quoteId: "44444444-4444-4444-8444-444444444499",
+        confirmHighRisk: true,
+      }),
+      expect.objectContaining({ auth: expect.objectContaining({ accessToken: "token-1" }) }),
+    );
   });
 });

@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Clipboard from "expo-clipboard";
-import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
+import {
+  CameraView,
+  useCameraPermissions,
+  type BarcodeScanningResult,
+  type BarcodeType,
+  type CameraType,
+} from "expo-camera";
 import { useIsFocused, useLocalSearchParams, useRouter } from "expo-router";
 import QRCode from "react-native-qrcode-svg";
-import { AppState, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { AppState, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { AppHeader } from "@/components/ui/AppHeader";
 import { AppIcon } from "@/components/ui/AppIcon";
@@ -28,6 +34,39 @@ type QrMode = "my" | "scan";
 type QrScreenProps = {
   showBackButton?: boolean;
 };
+
+type ModernCameraApi = {
+  isModernBarcodeScannerAvailable?: boolean;
+  launchScanner?: (options?: { barcodeTypes: BarcodeType[] }) => Promise<void>;
+  dismissScanner?: () => Promise<void>;
+  onModernBarcodeScanned?: (
+    listener: (event: { data: string; type: string }) => void,
+  ) => { remove: () => void };
+};
+
+function getModernCameraApi(): ModernCameraApi | null {
+  const candidate = CameraView as unknown as ModernCameraApi | string | null | undefined;
+  if (!candidate || typeof candidate === "string") {
+    return null;
+  }
+  return candidate;
+}
+
+function getWebCameraUnavailableReason(): string | null {
+  if (Platform.OS !== "web") {
+    return null;
+  }
+  if (typeof window !== "undefined" && window.isSecureContext === false) {
+    return "Trình duyệt chặn camera khi chạy HTTP theo IP mạng nội bộ. Hãy mở qua HTTPS hoặc http://localhost để dùng camera, hoặc nhập mã QR thủ công bên dưới.";
+  }
+  if (
+    typeof navigator !== "undefined" &&
+    (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function")
+  ) {
+    return "Trình duyệt hiện tại không hỗ trợ API camera. Bạn có thể dùng Expo Go / APK trên điện thoại hoặc nhập mã QR thủ công bên dưới.";
+  }
+  return null;
+}
 
 function getErrorMessage(error: unknown): string {
   return error instanceof ApiError
@@ -55,6 +94,9 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
   const [scanError, setScanError] = useState<string | undefined>();
   const [hasScanned, setHasScanned] = useState(false);
   const [cameraError, setCameraError] = useState<string | undefined>();
+  const [cameraFacing, setCameraFacing] = useState<CameraType>("back");
+  const [isCameraReady, setIsCameraReady] = useState(false);
+  const [cameraRetryKey, setCameraRetryKey] = useState(0);
   const [appState, setAppState] = useState(AppState.currentState ?? "active");
   const [qrStandard, setQrStandard] = useState<"VIETQR" | "INTERNAL">("VIETQR");
   const [dynamicAmount, setDynamicAmount] = useState("");
@@ -202,11 +244,27 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
     [handleParsePayload, hasScanned],
   );
 
+  const webUnavailableReason = mode === "scan" ? getWebCameraUnavailableReason() : null;
+  const effectiveCameraError = cameraError ?? webUnavailableReason ?? undefined;
+  const modernCameraApi = getModernCameraApi();
+  const isModernScannerAvailable =
+    Platform.OS !== "web" &&
+    !webUnavailableReason &&
+    modernCameraApi?.isModernBarcodeScannerAvailable === true &&
+    typeof modernCameraApi?.launchScanner === "function" &&
+    typeof modernCameraApi?.onModernBarcodeScanned === "function";
+
   const requestCameraPermission = useCallback(async () => {
+    const blockedReason = getWebCameraUnavailableReason();
+    if (blockedReason) {
+      setCameraError(blockedReason);
+      return;
+    }
     try {
       const nextPermission = await requestPermission();
       if (nextPermission.granted) {
         setCameraError(undefined);
+        setIsCameraReady(false);
         return;
       }
       setCameraError(
@@ -221,13 +279,22 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
 
   const handleEnableCamera = useCallback(async () => {
     setCameraError(undefined);
+    const blockedReason = getWebCameraUnavailableReason();
+    if (blockedReason) {
+      setCameraError(blockedReason);
+      return;
+    }
     if (permission?.granted) {
+      setIsCameraReady(false);
+      setCameraRetryKey((prev) => prev + 1);
       return;
     }
     if (permission && !permission.canAskAgain) {
       const refreshed = await getPermission().catch(() => null);
       if (refreshed?.granted) {
         setCameraError(undefined);
+        setIsCameraReady(false);
+        setCameraRetryKey((prev) => prev + 1);
         return;
       }
     }
@@ -244,12 +311,66 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
 
   const handleSelectMode = useCallback((nextMode: QrMode) => {
     setMode(nextMode);
+    setIsCameraReady(false);
     if (nextMode !== "scan") {
       hasAutoRequestedPermissionRef.current = false;
       return;
     }
     setCameraError(undefined);
+    setScanError(undefined);
   }, []);
+
+  const handleSwitchFacing = useCallback(() => {
+    setCameraError(undefined);
+    setIsCameraReady(false);
+    setCameraFacing((prev) => (prev === "back" ? "front" : "back"));
+  }, []);
+
+  const handleRestartCamera = useCallback(() => {
+    setCameraError(undefined);
+    setScanError(undefined);
+    setIsCameraReady(false);
+    setCameraRetryKey((prev) => prev + 1);
+  }, []);
+
+  const handleLaunchModernScanner = useCallback(async () => {
+    const api = getModernCameraApi();
+    if (!api || typeof api.launchScanner !== "function") {
+      return;
+    }
+    setScanError(undefined);
+    setCameraError(undefined);
+    try {
+      await api.launchScanner({ barcodeTypes: ["qr"] });
+    } catch (error: unknown) {
+      setCameraError(
+        error instanceof Error && error.message
+          ? error.message
+          : "Không thể mở trình quét QR của hệ thống.",
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isModernScannerAvailable) {
+      return;
+    }
+    const api = getModernCameraApi();
+    if (!api || typeof api.onModernBarcodeScanned !== "function") {
+      return;
+    }
+    const subscription = api.onModernBarcodeScanned((event) => {
+      if (event?.data && !hasScanned) {
+        handleParsePayload(event.data);
+      }
+      if (typeof api.dismissScanner === "function") {
+        void api.dismissScanner().catch(() => undefined);
+      }
+    });
+    return () => {
+      subscription?.remove();
+    };
+  }, [handleParsePayload, hasScanned, isModernScannerAvailable]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
@@ -269,7 +390,7 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
   }, [getPermission, isFocused, mode]);
 
   useEffect(() => {
-    if (mode !== "scan" || !isFocused || parsedPayload) {
+    if (mode !== "scan" || !isFocused || parsedPayload || webUnavailableReason) {
       return;
     }
     if (!permission || permission.granted || !permission.canAskAgain) {
@@ -280,7 +401,7 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
     }
     hasAutoRequestedPermissionRef.current = true;
     void requestCameraPermission();
-  }, [isFocused, mode, parsedPayload, permission, requestCameraPermission]);
+  }, [isFocused, mode, parsedPayload, permission, requestCameraPermission, webUnavailableReason]);
 
   const resetScanner = useCallback(() => {
     setParsedPayload(null);
@@ -288,6 +409,8 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
     setManualPayload("");
     setHasScanned(false);
     setCameraError(undefined);
+    setIsCameraReady(false);
+    setCameraRetryKey((prev) => prev + 1);
   }, []);
 
   const shouldShowCamera =
@@ -297,7 +420,7 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
     appState !== "inactive" &&
     Boolean(permission?.granted) &&
     !parsedPayload &&
-    !cameraError;
+    !effectiveCameraError;
 
   return (
     <Screen>
@@ -518,7 +641,7 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
             )}
           </Card>
         ) : (
-          <Card elevated>
+          <Card elevated={false}>
             <View style={styles.receiveHeader}>
               <View style={styles.receiveIcon}>
                 <AppIcon color={colors.primary} name="scan" size={22} />
@@ -530,21 +653,54 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
             </View>
 
             {shouldShowCamera ? (
-              <View style={styles.cameraFrame}>
-                <CameraView
-                  accessibilityLabel="Camera quét mã QR"
-                  barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-                  facing="back"
-                  onBarcodeScanned={handleBarcodeScanned}
-                  onMountError={(event) => {
-                    setCameraError(event.message || "Không thể khởi động camera.");
-                  }}
-                  style={styles.camera}
-                  testID="qr-camera"
-                />
-                <View pointerEvents="none" style={styles.scanGuide} />
+              <View style={styles.cameraSection}>
+                <View collapsable={false} style={styles.cameraFrame}>
+                  <CameraView
+                    accessibilityLabel="Camera quét mã QR"
+                    active={shouldShowCamera}
+                    autofocus="on"
+                    barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                    facing={cameraFacing}
+                    key={`${cameraFacing}-${cameraRetryKey}`}
+                    onBarcodeScanned={handleBarcodeScanned}
+                    onCameraReady={() => {
+                      setIsCameraReady(true);
+                      setCameraError(undefined);
+                    }}
+                    onMountError={(event) => {
+                      setIsCameraReady(false);
+                      setCameraError(event.message || "Không thể khởi động camera.");
+                    }}
+                    style={styles.camera}
+                    testID="qr-camera"
+                  />
+                  <View pointerEvents="none" style={styles.scanGuide} />
+                </View>
+                <Text style={styles.cameraStatusText} testID="qr-camera-status">
+                  {isCameraReady
+                    ? `Camera ${cameraFacing === "back" ? "sau" : "trước"} đang hoạt động · Hướng khung vào mã QR`
+                    : "Đang khởi động camera..."}
+                </Text>
+                <View style={styles.cameraControlsRow}>
+                  <View style={styles.cameraControlItem}>
+                    <Button
+                      label={cameraFacing === "back" ? "Đổi cam trước" : "Đổi cam sau"}
+                      onPress={handleSwitchFacing}
+                      testID="qr-switch-facing"
+                      variant="outline"
+                    />
+                  </View>
+                  <View style={styles.cameraControlItem}>
+                    <Button
+                      label="Mở lại cam"
+                      onPress={handleRestartCamera}
+                      testID="qr-restart-camera"
+                      variant="secondary"
+                    />
+                  </View>
+                </View>
               </View>
-            ) : !parsedPayload ? (
+            ) : !parsedPayload && !webUnavailableReason && !(permission?.granted && effectiveCameraError) ? (
               <View style={styles.permissionBox}>
                 <View style={styles.permissionIcon}>
                   <AppIcon color={colors.primary} name="scan" size={28} />
@@ -583,10 +739,38 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
               </View>
             ) : null}
 
-            {cameraError ? (
-              <View style={styles.errorBox}>
+            {effectiveCameraError ? (
+              <View style={styles.cameraErrorContainer} testID="qr-camera-error">
+                <View style={styles.errorBox}>
+                  <AppIcon color={colors.danger} name="alert" size={18} />
+                  <Text style={styles.errorText}>Camera không sẵn sàng: {effectiveCameraError}</Text>
+                </View>
+                {!webUnavailableReason ? (
+                  <Button
+                    icon="scan"
+                    label="Thử lại mở camera"
+                    onPress={() => void handleEnableCamera()}
+                    testID="qr-retry-camera"
+                    variant="secondary"
+                  />
+                ) : null}
+              </View>
+            ) : null}
+
+            {isModernScannerAvailable && !parsedPayload ? (
+              <Button
+                icon="scan"
+                label="Mở trình quét toàn màn hình"
+                onPress={() => void handleLaunchModernScanner()}
+                testID="qr-launch-modern-scanner"
+                variant="outline"
+              />
+            ) : null}
+
+            {scanError && !parsedPayload ? (
+              <View style={styles.errorBox} testID="qr-scan-error">
                 <AppIcon color={colors.danger} name="alert" size={18} />
-                <Text style={styles.errorText}>Camera không sẵn sàng: {cameraError}</Text>
+                <Text style={styles.errorText}>{scanError}</Text>
               </View>
             ) : null}
 
@@ -757,15 +941,31 @@ const styles = StyleSheet.create({
     backgroundColor: colors.infoSoft,
   },
   infoText: { flex: 1, ...typography.caption, color: colors.info },
+  cameraSection: {
+    gap: spacing.sm,
+  },
   cameraFrame: {
     position: "relative",
-    overflow: "hidden",
     width: "100%",
-    height: 300,
-    borderRadius: radius.lg,
-    backgroundColor: colors.navy,
+    height: 320,
+    backgroundColor: "transparent",
   },
-  camera: { width: "100%", height: 300 },
+  camera: { width: "100%", height: 320 },
+  cameraStatusText: {
+    ...typography.caption,
+    color: colors.muted,
+    textAlign: "center",
+  },
+  cameraControlsRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+  },
+  cameraControlItem: {
+    flex: 1,
+  },
+  cameraErrorContainer: {
+    gap: spacing.sm,
+  },
   scanGuide: {
     position: "absolute",
     top: 46,

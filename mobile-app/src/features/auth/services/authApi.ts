@@ -1,3 +1,4 @@
+import * as Device from "expo-device";
 import { Platform } from "react-native";
 
 import type {
@@ -72,6 +73,22 @@ function requireAuthenticated(
   };
 }
 
+function resolveDeviceDisplayName(): string {
+  if (Platform.OS === "web") {
+    return "NOVA Web";
+  }
+  const rawName = (Device.deviceName || Device.modelName || "").trim();
+  const osInfo = [Device.osName, Device.osVersion].filter(Boolean).join(" ").trim();
+  const label = rawName
+    ? osInfo
+      ? `${rawName} (${osInfo})`
+      : rawName
+    : osInfo
+      ? `NOVA App (${osInfo})`
+      : `NOVA App (${Platform.OS})`;
+  return label.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 80) || `NOVA App (${Platform.OS})`;
+}
+
 function createDeviceHeaders(
   options: AuthRequestOptions | undefined,
 ): Record<string, string> {
@@ -94,7 +111,7 @@ export function login(
     body,
     headers: {
       ...createDeviceHeaders(options),
-      "X-Device-Name": `NOVA App (${Platform.OS})`,
+      "X-Device-Name": resolveDeviceDisplayName(),
     },
   }, isLoginResponse);
 }
@@ -113,7 +130,10 @@ export function register(
   return requestJson<AuthChallengeResponse>("/auth/register", {
     method: "POST",
     body,
-    headers: createDeviceHeaders(options),
+    headers: {
+      ...createDeviceHeaders(options),
+      "X-Device-Name": resolveDeviceDisplayName(),
+    },
   }, isRegistrationChallengeResponse);
 }
 
@@ -126,7 +146,10 @@ export function verifyRegistrationChallenge(
     {
       method: "POST",
       body: request,
-      headers: createDeviceHeaders(options),
+      headers: {
+        ...createDeviceHeaders(options),
+        "X-Device-Name": resolveDeviceDisplayName(),
+      },
     },
     isRegisterResponse,
   );

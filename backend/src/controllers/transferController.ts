@@ -192,6 +192,12 @@ export async function submitTransferController(
   verifyStepUp: VerifyStepUpFn,
 ): Promise<void> {
   const data = requireObject(body);
+  if (data.confirmHighRisk !== undefined && typeof data.confirmHighRisk !== "boolean") {
+    throw invalidRequest("confirmHighRisk must be a boolean.", {
+      confirmHighRisk: "confirmHighRisk must be a boolean.",
+    });
+  }
+  const confirmHighRisk = data.confirmHighRisk === true;
   if (relationalRoute && options.relationalHttp) {
     const quoteId = typeof data.quoteId === "string" ? data.quoteId : "";
     const stepUp = typeof data.stepUp === "object" && data.stepUp !== null && !Array.isArray(data.stepUp)
@@ -219,6 +225,7 @@ export async function submitTransferController(
       idempotencyKey,
       quoteId,
       requestFingerprint: transferRequestFingerprint,
+      confirmHighRisk,
       traceId,
     });
     writeResponse(

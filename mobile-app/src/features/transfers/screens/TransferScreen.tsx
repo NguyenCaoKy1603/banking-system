@@ -155,6 +155,7 @@ export function TransferScreen() {
   );
   const [transferDescription] = useState(initialDescription);
   const [quote, setQuote] = useState<TransferQuote | null>(null);
+  const [confirmHighRisk, setConfirmHighRisk] = useState(false);
   const [stepUpMethod, setStepUpMethod] = useState<StepUpMethod>("TOTP");
   const [stepUpProof, setStepUpProof] = useState("");
   const [transferChallenge, setTransferChallenge] =
@@ -313,6 +314,7 @@ export function TransferScreen() {
 
       setRecoveryBlocked(false);
       setQuote(intent.quote);
+      setConfirmHighRisk(Boolean(intent.confirmHighRisk));
       setBeneficiary(intent.quote.beneficiary);
       setBeneficiaryId(intent.quote.beneficiary.id);
       setRecipientLookupId(null);
@@ -341,6 +343,7 @@ export function TransferScreen() {
           idempotencyKey: intent.idempotencyKey,
           quote: intent.quote,
           createdAt: intent.createdAt,
+          ...(intent.confirmHighRisk ? { confirmHighRisk: true } : {}),
           transferId: latestReceipt.transferId,
           receipt: latestReceipt,
         });
@@ -359,6 +362,7 @@ export function TransferScreen() {
           await clearTransferIntent(userId).catch(() => undefined);
           setRecoveryBlocked(false);
           setQuote(null);
+          setConfirmHighRisk(false);
           setBeneficiary(null);
           setBeneficiaryId("");
           setRecipientAccountNumber("");
@@ -385,6 +389,7 @@ export function TransferScreen() {
             await clearTransferIntent(userId).catch(() => undefined);
             setRecoveryBlocked(false);
             setQuote(null);
+            setConfirmHighRisk(false);
             setBeneficiary(null);
             setBeneficiaryId("");
             setRecipientAccountNumber("");
@@ -430,6 +435,7 @@ export function TransferScreen() {
     }
     setRecoveryBlocked(false);
     setQuote(null);
+    setConfirmHighRisk(false);
     setBeneficiary(null);
     setBeneficiaryId("");
     setRecipientAccountNumber("");
@@ -674,6 +680,7 @@ export function TransferScreen() {
         auth,
       );
       setQuote(response);
+      setConfirmHighRisk(false);
       setStep("review");
     } catch (requestError: unknown) {
       setError(getErrorMessage(requestError));
@@ -706,6 +713,11 @@ export function TransferScreen() {
       return;
     }
 
+    if (quote.anomalyAssessment?.riskLevel === "CRITICAL" && !confirmHighRisk) {
+      setError("Vui lòng xác nhận cảnh báo rủi ro nghiêm trọng trước khi tiếp tục.");
+      return;
+    }
+
     submitLockRef.current = true;
     setIsSubmitting(true);
     setError(undefined);
@@ -721,6 +733,7 @@ export function TransferScreen() {
         idempotencyKey: nextIdempotencyKey,
         quote,
         createdAt: Date.now(),
+        ...(confirmHighRisk ? { confirmHighRisk: true } : {}),
       });
       const challenge = await createOtpChallenge(
         { purpose: "TRANSFER", resourceId: quote.quoteId, method: "TOTP" },
@@ -737,7 +750,7 @@ export function TransferScreen() {
       submitLockRef.current = false;
       setIsSubmitting(false);
     }
-  }, [applyTransferChallenge, auth, idempotencyKey, quote, recoveryBlocked, userId]);
+  }, [applyTransferChallenge, auth, confirmHighRisk, idempotencyKey, quote, recoveryBlocked, userId]);
 
   const handleSubmitTransfer = useCallback(async () => {
     if (recoveryBlocked) {
@@ -802,12 +815,14 @@ export function TransferScreen() {
         idempotencyKey,
         quote,
         createdAt: Date.now(),
+        ...(confirmHighRisk ? { confirmHighRisk: true } : {}),
       });
       setIntentPhase("SUBMIT_UNKNOWN");
       requestStarted = true;
       const response = await submitTransfer(
         {
           quoteId: quote.quoteId,
+          ...(confirmHighRisk ? { confirmHighRisk: true } : {}),
           stepUp: {
             method: stepUpMethod,
             proof: stepUpProof,
@@ -827,6 +842,7 @@ export function TransferScreen() {
         idempotencyKey,
         quote,
         createdAt: Date.now(),
+        ...(confirmHighRisk ? { confirmHighRisk: true } : {}),
         transferId: response.transferId,
         receipt: response,
       }).catch(() => undefined);
@@ -849,6 +865,7 @@ export function TransferScreen() {
         setIntentPhase(null);
         setManualReviewCode(null);
         setQuote(null);
+        setConfirmHighRisk(false);
         setRecoveryTransferId(null);
         setStep("amount");
       } else if (requestStarted && requiresManualReview(requestError)) {
@@ -859,6 +876,7 @@ export function TransferScreen() {
           idempotencyKey,
           quote,
           createdAt: Date.now(),
+          ...(confirmHighRisk ? { confirmHighRisk: true } : {}),
           manualReviewCode: requestError.code,
         }).catch(() => undefined);
         setManualReviewCode(requestError.code);
@@ -875,6 +893,7 @@ export function TransferScreen() {
           idempotencyKey,
           quote,
           createdAt: Date.now(),
+          ...(confirmHighRisk ? { confirmHighRisk: true } : {}),
         }).catch(() => undefined);
         setIntentPhase("DRAFT_QUOTE");
         setManualReviewCode(null);
@@ -883,7 +902,7 @@ export function TransferScreen() {
       submitLockRef.current = false;
       setIsSubmitting(false);
     }
-  }, [auth, clockMs, idempotencyKey, intentPhase, manualReviewCode, quote, recoveryBlocked, stepUpMethod, stepUpProof, transferChallenge, userId]);
+  }, [auth, clockMs, confirmHighRisk, idempotencyKey, intentPhase, manualReviewCode, quote, recoveryBlocked, stepUpMethod, stepUpProof, transferChallenge, userId]);
 
   const isBiometricEligibleForQuote = useMemo(() => {
     if (!quote) return false;
@@ -891,7 +910,7 @@ export function TransferScreen() {
       const amount = BigInt(quote.amount.amountMinor);
       const riskLevel = quote.anomalyAssessment?.riskLevel;
       return (
-        amount < BIOMETRIC_TRANSFER_LIMIT_MINOR &&
+        amount <= BIOMETRIC_TRANSFER_LIMIT_MINOR &&
         riskLevel !== "HIGH" &&
         riskLevel !== "CRITICAL"
       );
@@ -911,7 +930,7 @@ export function TransferScreen() {
     }
     if (!isBiometricEligibleForQuote) {
       setError(
-        "Giao dịch từ 1.000.000 VND trở lên hoặc có cảnh báo rủi ro cao bắt buộc xác thực bằng mã TOTP.",
+        "Giao dịch trên 1.000.000 VND hoặc có cảnh báo rủi ro cao bắt buộc xác thực bằng mã TOTP.",
       );
       return;
     }
@@ -1110,8 +1129,8 @@ export function TransferScreen() {
       return "Giao dịch có cảnh báo rủi ro cao — bắt buộc xác thực bằng mã TOTP gồm 6 chữ số.";
     }
     try {
-      if (BigInt(quote.amount.amountMinor) >= BIOMETRIC_TRANSFER_LIMIT_MINOR) {
-        return "Giao dịch từ 1.000.000 VND trở lên bắt buộc xác thực bằng mã TOTP gồm 6 chữ số.";
+      if (BigInt(quote.amount.amountMinor) > BIOMETRIC_TRANSFER_LIMIT_MINOR) {
+        return "Giao dịch trên 1.000.000 VND bắt buộc xác thực bằng mã TOTP gồm 6 chữ số.";
       }
     } catch {
       return undefined;
@@ -1223,11 +1242,13 @@ export function TransferScreen() {
         ) : step === "review" ? (
           <TransferReviewStep
             beneficiary={beneficiary}
+            confirmHighRisk={confirmHighRisk}
             description={transferDescription}
             error={error}
             isSubmitting={isSubmitting}
             isTotpError={Boolean(error && isTotpNotEnrolledError(error))}
             onContinueToStepUp={handleContinueToStepUp}
+            onToggleConfirmHighRisk={() => setConfirmHighRisk((prev) => !prev)}
             quote={quote}
           />
         ) : step === "stepUp" ? (

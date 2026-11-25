@@ -104,6 +104,34 @@ const operationsSafetySchema = fs.readFileSync(
   path.resolve(__dirname, "../database/040_card_security_and_suspense_retry.sql"),
   "utf8",
 );
+const anomalyDetectionSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/045_transaction_anomaly_detection.sql"),
+  "utf8",
+);
+const biometricAuthSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/046_biometric_authentication.sql"),
+  "utf8",
+);
+const normalizeLedgerRefsSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/047_normalize_ledger_account_refs.sql"),
+  "utf8",
+);
+const dailyTransferLimitSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/048_daily_transfer_limit_policy.sql"),
+  "utf8",
+);
+const interbankHeldFundsSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/049_interbank_transfers_and_held_funds.sql"),
+  "utf8",
+);
+const passwordResetDevicesSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/050_password_reset_and_device_metadata.sql"),
+  "utf8",
+);
+const dynamicTransferFeeSchema = fs.readFileSync(
+  path.resolve(__dirname, "../database/051_dynamic_transfer_fee_policy.sql"),
+  "utf8",
+);
 const secretSchema = `${secretMetadataSchema}\n${secretRotationSchema}`;
 const businessHardeningSchema = [
   policyEntitlementsSchema,
@@ -113,6 +141,13 @@ const businessHardeningSchema = [
   kycRuntimeSchema,
   lifecycleHardeningSchema,
   operationsSafetySchema,
+  anomalyDetectionSchema,
+  biometricAuthSchema,
+  normalizeLedgerRefsSchema,
+  dailyTransferLimitSchema,
+  interbankHeldFundsSchema,
+  passwordResetDevicesSchema,
+  dynamicTransferFeeSchema,
 ].join("\n");
 
 const requiredTables = [
@@ -170,7 +205,12 @@ const outboxWorkerTables = [
 const mfaTables = ["mfa_credentials", "mfa_recovery_codes", "mfa_recovery_requests", "auth_security_events"];
 const secretMetadataTables = ["encryption_rekey_checkpoints"];
 const drRecoveryTables = ["dr_recovery_markers"];
-const businessHardeningTables = ["customer_feature_entitlements", "savings_maturity_suspense", "card_security_cases"];
+const businessHardeningTables = [
+  "customer_feature_entitlements",
+  "savings_maturity_suspense",
+  "card_security_cases",
+  "transaction_anomalies",
+];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -227,6 +267,7 @@ const businessHardeningTableBlocks = new Map([
   ["customer_feature_entitlements", tableBlock(policyEntitlementsSchema, "customer_feature_entitlements")],
   ["savings_maturity_suspense", tableBlock(lifecycleHardeningSchema, "savings_maturity_suspense")],
   ["card_security_cases", tableBlock(operationsSafetySchema, "card_security_cases")],
+  ["transaction_anomalies", tableBlock(anomalyDetectionSchema, "transaction_anomalies")],
 ]);
 
 function requireColumn(tableName, columnName, definitionPattern) {
@@ -820,6 +861,22 @@ async function validateLiveDatabase() {
       ["dr_recovery_markers", "committed_at", "timestamptz"],
       ["dr_recovery_markers", "marker_hash", "text"],
       ["dr_recovery_markers", "source_release_id", "text"],
+      ["transaction_anomalies", "customer_id", "uuid"],
+      ["transaction_anomalies", "account_id", "uuid"],
+      ["transaction_anomalies", "amount_minor", "int8"],
+      ["transaction_anomalies", "risk_level", "text"],
+      ["transaction_anomalies", "risk_score", "int4"],
+      ["transaction_anomalies", "status", "text"],
+      ["mfa_credentials", "device_id", "text"],
+      ["control_policy", "daily_transfer_limit_minor", "int8"],
+      ["control_policy", "transfer_fee_minor", "int8"],
+      ["recipient_lookups", "rail", "text"],
+      ["transfer_quotes", "rail", "text"],
+      ["transfers", "rail", "text"],
+      ["transfers", "external_bank_bin", "text"],
+      ["transfers", "napas_trace_id", "text"],
+      ["customer_devices", "device_name", "text"],
+      ["customer_devices", "last_seen_at", "timestamptz"],
     ]) {
       if (liveColumns.get(`${tableName}.${columnName}`) !== expectedType) {
         throw new Error(

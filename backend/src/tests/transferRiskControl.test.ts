@@ -389,8 +389,18 @@ test("PersistentMfaService enforces tiered Biometric eligibility and blocks biom
   });
   assert.equal(verifiedBio.customerId, customerId);
 
-  // 2. Transfer >= 1,000,000 VND -> beginBiometricChallenge rejects with 409 BIOMETRIC_TIER_LIMIT_EXCEEDED
+  // 2. Transfer <= 1,000,000 VND (exact boundary) succeeds, while > 1,000,000 VND -> 409 BIOMETRIC_TIER_LIMIT_EXCEEDED
   quoteAmountMinor = "1000000";
+  const boundaryBioChallenge = await service.beginBiometricChallenge({
+    customerId,
+    deviceId,
+    purpose: "TRANSFER",
+    resourceId: quoteId,
+    requestFingerprint: "fp-bio-boundary",
+  });
+  assert.equal(boundaryBioChallenge.method, "BIOMETRIC");
+
+  quoteAmountMinor = "1000001";
   await assert.rejects(
     () =>
       service.beginBiometricChallenge({
@@ -584,4 +594,133 @@ test("RelationalTransferService.submit blocks CRITICAL risk transfers before cre
   );
   assert.equal(transferInserted, false);
   assert.equal(accountUpdated, false);
+});
+
+test("POST /transfers enforces confirmHighRisk on CRITICAL risk and accepts when confirmHighRisk=true", async (t) => {
+  const { BankingSystem } = await import("../bankingSystem.js");
+  const { createBankingServer } = await import("../http.js");
+  const { computeRegistrationNetworkFingerprint } = await import("../security.js");
+  void computeRegistrationNetworkFingerprint;
+
+  let clockMs = Date.UTC(2026, 10, 17, 19, 30, 0); // 02:30 Vietnam time (night hour rule)
+  const system = new BankingSystem({
+    sandboxOtp: "123456",
+    allowUnsafeDirectSandboxStepUp: true,
+    clock: () => clockMs,
+  });
+  const server = createBankingServer(system, {
+    registrationFingerprintKey: Buffer.alloc(32, 0x42),
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+
+  const address = server.address() as { port: number };
+  const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+  const headers = { "Content-Type": "application/json", "X-Device-ID": "dev-critical-http" };
+
+  const registerAndLogin = async (email: string, phone: string, fullName: string) => {
+    const reg = await fetch(`${baseUrl}/auth/register`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ fullName, email, phoneNumber: phone, password: "Password!1234" }),
+    });
+    const regBody = (await reg.json()) as { challengeId: string };
+    await fetch(`${baseUrl}/auth/register/verify`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        challengeId: regBody.challengeId,
+        method: "EMAIL_OTP",
+        proof: system.readTestVerificationCode(regBody.challengeId),
+      }),
+    });
+    const login = await fetch(`${baseUrl}/auth/login`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ email, password: "Password!1234" }),
+    });
+    return (await login.json()) as { accessToken: string; user: { id: string } };
+  };
+
+  const sender = await registerAndLogin("crit-sender@example.test", "0901112233", "Crit Sender");
+  const receiver = await registerAndLogin("crit-recv@example.test", "0901112244", "Crit Receiver");
+
+  const receiverAccountsRes = await fetch(`${baseUrl}/accounts`, {
+    headers: { ...headers, Authorization: `Bearer ${receiver.accessToken}` },
+  });
+  const receiverAccounts = (await receiverAccountsRes.json()) as { accounts: Array<{ id: string }> };
+  const receiverNumberRes = await fetch(`${baseUrl}/accounts/${receiverAccounts.accounts[0]!.id}/number`, {
+    headers: { ...headers, Authorization: `Bearer ${receiver.accessToken}` },
+  });
+  const receiverNumber = ((await receiverNumberRes.json()) as { accountNumber: string }).accountNumber;
+
+  const senderAccountsRes = await fetch(`${baseUrl}/accounts`, {
+    headers: { ...headers, Authorization: `Bearer ${sender.accessToken}` },
+  });
+  const senderAccounts = (await senderAccountsRes.json()) as { accounts: Array<{ id: string }> };
+  const senderAccountId = senderAccounts.accounts[0]!.id;
+  const senderNumberRes = await fetch(`${baseUrl}/accounts/${senderAccountId}/number`, {
+    headers: { ...headers, Authorization: `Bearer ${sender.accessToken}` },
+  });
+  const senderNumber = ((await senderNumberRes.json()) as { accountNumber: string }).accountNumber;
+  system.seedReferenceFunding("crit-seed-funding", {
+    recipientAccountNumber: senderNumber,
+    amount: { currency: "VND", amountMinor: "5000000" },
+    reason: "Seed test balance",
+  });
+
+  const lookupRes = await fetch(`${baseUrl}/internal-recipients/lookup`, {
+    method: "POST",
+    headers: { ...headers, Authorization: `Bearer ${sender.accessToken}` },
+    body: JSON.stringify({ accountNumber: receiverNumber }),
+  });
+  const lookupId = ((await lookupRes.json()) as { recipient: { lookupId: string } }).recipient.lookupId;
+
+  // High value (>=3.5M, +35) + >80% drain (+30) + new recipient (+30) + night hour (+25) => CRITICAL (100)
+  const quoteRes = await fetch(`${baseUrl}/transfers/quote`, {
+    method: "POST",
+    headers: { ...headers, Authorization: `Bearer ${sender.accessToken}` },
+    body: JSON.stringify({
+      sourceAccountId: senderAccountId,
+      lookupId,
+      amount: { currency: "VND", amountMinor: "4500000" },
+    }),
+  });
+  assert.equal(quoteRes.status, 200);
+  const quote = (await quoteRes.json()) as { quoteId: string };
+
+  const blockedSubmit = await fetch(`${baseUrl}/transfers`, {
+    method: "POST",
+    headers: {
+      ...headers,
+      Authorization: `Bearer ${sender.accessToken}`,
+      "Idempotency-Key": "crit-blocked-idem-0001",
+    },
+    body: JSON.stringify({
+      quoteId: quote.quoteId,
+      stepUp: { method: "OTP", proof: "123456" },
+    }),
+  });
+  assert.equal(blockedSubmit.status, 409);
+  const blockedBody = (await blockedSubmit.json()) as { code: string };
+  assert.equal(blockedBody.code, "CRITICAL_ANOMALY_BLOCKED");
+
+  const confirmedSubmit = await fetch(`${baseUrl}/transfers`, {
+    method: "POST",
+    headers: {
+      ...headers,
+      Authorization: `Bearer ${sender.accessToken}`,
+      "Idempotency-Key": "crit-confirm-idem-0001",
+    },
+    body: JSON.stringify({
+      quoteId: quote.quoteId,
+      confirmHighRisk: true,
+      stepUp: { method: "OTP", proof: "123456" },
+    }),
+  });
+  assert.equal(confirmedSubmit.status, 200);
+  const receipt = (await confirmedSubmit.json()) as { status: string; anomalyAssessment?: { riskLevel: string } };
+  assert.equal(receipt.status, "SUCCEEDED");
+  assert.equal(receipt.anomalyAssessment?.riskLevel, "CRITICAL");
+  void clockMs;
 });

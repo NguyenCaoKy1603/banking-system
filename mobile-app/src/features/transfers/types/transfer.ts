@@ -52,6 +52,7 @@ export type StepUpMethod = "OTP" | "TOTP" | "BIOMETRIC";
 
 export type SubmitTransferRequest = {
   quoteId: string;
+  confirmHighRisk?: boolean;
   stepUp: {
     method: StepUpMethod;
     proof: string;

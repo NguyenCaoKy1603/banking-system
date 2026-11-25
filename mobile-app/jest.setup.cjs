@@ -6,3 +6,11 @@ jest.mock("expo-constants", () => ({
   __esModule: true,
   default: { expoConfig: { extra: { runtimeEnvironment: "local-sandbox" } } },
 }));
+
+jest.mock("expo-device", () => ({
+  __esModule: true,
+  deviceName: "Test Phone",
+  modelName: "Pixel 7",
+  osName: "Android",
+  osVersion: "15",
+}));

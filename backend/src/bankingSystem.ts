@@ -302,6 +302,7 @@ export type ReferenceFundingRequest = {
 
 export type SubmitTransferRequest = {
   quoteId: string;
+  confirmHighRisk?: boolean;
   stepUp: {
     method: "OTP" | "TOTP" | "BIOMETRIC";
     proof: string;
@@ -1868,6 +1869,19 @@ export class BankingSystem {
       if (s.userId === userId && s.deviceId === match.deviceId) familyIds.add(s.familyId);
     }
     for (const familyId of familyIds) this.revokeFamily(familyId);
+    for (const [credId, credential] of this.biometricCredentials.entries()) {
+      if (
+        credential.customerId === userId &&
+        credential.deviceId === match.deviceId &&
+        credential.status === "ACTIVE"
+      ) {
+        this.biometricCredentials.set(credId, {
+          ...credential,
+          status: "REVOKED",
+          revokedAt: now,
+        });
+      }
+    }
     this.recordAudit("DEVICE_REVOKED", userId, match.id);
   }
 
@@ -3662,6 +3676,12 @@ export class BankingSystem {
       isSavedBeneficiary,
       occurredAt: now,
     });
+    if (anomalyAssessment.riskLevel === "CRITICAL" && !request.confirmHighRisk) {
+      throw conflictWithCode(
+        "CRITICAL_ANOMALY_BLOCKED",
+        "Giao dịch có dấu hiệu bất thường nghiêm trọng (CRITICAL) và đã bị chặn theo chính sách an toàn.",
+      );
+    }
 
     const rawReceipt = this.core.postTransfer(userId, {
       accountId: quoteRecord.quote.sourceAccountId,

@@ -72,6 +72,7 @@ test("RelationalAuthService changePassword, resetPassword, preparePasswordReset,
   let revokedRecordsCount = 0;
   let emailBucketAttempts = 0;
   let deviceBRevoked = false;
+  let biometricRevokedForDeviceB = false;
 
   const client = new MockPoolClient((sql, params) => {
     if (sql.includes("SELECT * FROM customers WHERE id = $1 FOR UPDATE")) {
@@ -172,6 +173,10 @@ test("RelationalAuthService changePassword, resetPassword, preparePasswordReset,
       deviceBRevoked = true;
       return { rows: [], rowCount: 1 };
     }
+    if (sql.startsWith("UPDATE mfa_credentials") && params[1] === "device-b") {
+      biometricRevokedForDeviceB = true;
+      return { rows: [], rowCount: 1 };
+    }
     if (sql.includes("SELECT DISTINCT family_id FROM auth_sessions")) {
       return { rows: [{ family_id: familyB }] };
     }
@@ -247,6 +252,7 @@ test("RelationalAuthService changePassword, resetPassword, preparePasswordReset,
 
   await auth.revokeDevice(customerId, deviceRecordB, "device-a");
   assert.equal(deviceBRevoked, true);
+  assert.equal(biometricRevokedForDeviceB, true);
   assert.equal(auditEvents.some((e) => e.eventType === "DEVICE_REVOKED" && e.resourceId === deviceRecordB), true);
 
   // Revoking non-existent or already-revoked device throws 404
@@ -336,12 +342,56 @@ test("HTTP password change, forgot/reset via OTP, and device management end-to-e
   assert.equal(itemB?.isCurrentDevice, false);
   assert.equal(itemB?.deviceName, "Pixel 9");
 
-  // Device A revokes Device B
+  // Device B enrolls a biometric credential bound to device-http-b
+  const enrollBioBRes = await request("/auth/mfa/biometric/enroll", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${sessionB.accessToken}`, ...devBHeaders },
+    body: JSON.stringify({ password: "InitialPassword!1", displayName: "Pixel 9 Biometric" }),
+  });
+  assert.equal(enrollBioBRes.status, 201);
+
+  const mfaBeforeRevokeRes = await request("/auth/mfa/methods", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${sessionA.accessToken}`, ...devAHeaders },
+  });
+  assert.equal(mfaBeforeRevokeRes.status, 200);
+  const mfaBeforeRevokeData = (await mfaBeforeRevokeRes.json()) as {
+    items: Array<{ credentialType: string; deviceId: string | null; status: string }>;
+  };
+  assert.equal(
+    mfaBeforeRevokeData.items.some(
+      (item) => item.credentialType === "BIOMETRIC" && item.deviceId === "device-http-b" && item.status === "ACTIVE",
+    ),
+    true,
+  );
+
+  // Device A revokes Device B -> revokes sessions and device-bound biometric credential
   const revokeBRes = await request(`/auth/devices/${encodeURIComponent(itemB!.id)}`, {
     method: "DELETE",
     headers: { Authorization: `Bearer ${sessionA.accessToken}`, ...devAHeaders },
   });
   assert.equal(revokeBRes.status, 204);
+
+  const mfaAfterRevokeRes = await request("/auth/mfa/methods", {
+    method: "GET",
+    headers: { Authorization: `Bearer ${sessionA.accessToken}`, ...devAHeaders },
+  });
+  assert.equal(mfaAfterRevokeRes.status, 200);
+  const mfaAfterRevokeData = (await mfaAfterRevokeRes.json()) as {
+    items: Array<{ credentialType: string; deviceId: string | null; status: string }>;
+  };
+  assert.equal(
+    mfaAfterRevokeData.items.some(
+      (item) => item.credentialType === "BIOMETRIC" && item.deviceId === "device-http-b" && item.status === "ACTIVE",
+    ),
+    false,
+  );
+  assert.equal(
+    mfaAfterRevokeData.items.some(
+      (item) => item.credentialType === "BIOMETRIC" && item.deviceId === "device-http-b" && item.status === "REVOKED",
+    ),
+    true,
+  );
 
   // Device B's access token and refresh token are now invalid
   const accountsB = await request("/accounts", {

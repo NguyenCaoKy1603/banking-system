@@ -403,6 +403,7 @@ export class RelationalHttpBoundary {
     idempotencyKey: string;
     quoteId: string;
     requestFingerprint: string;
+    confirmHighRisk?: boolean;
     traceId?: string;
   }): Promise<TransferReceipt> {
     const transfer = await this.transfers.submit(input);

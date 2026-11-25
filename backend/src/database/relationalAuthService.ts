@@ -547,6 +547,18 @@ export class RelationalAuthService {
         [target.id],
       );
 
+      await client.query(
+        `UPDATE mfa_credentials
+            SET status = 'REVOKED',
+                revoked_at = NOW(),
+                updated_at = NOW()
+          WHERE customer_id = $1
+            AND credential_type = 'BIOMETRIC'
+            AND device_id = $2
+            AND status <> 'REVOKED'`,
+        [customerId, target.device_id],
+      );
+
       const sessionFamilies = await client.query<{ family_id: string }>(
         `SELECT DISTINCT family_id FROM auth_sessions WHERE customer_id = $1 AND device_id = $2`,
         [customerId, target.id],

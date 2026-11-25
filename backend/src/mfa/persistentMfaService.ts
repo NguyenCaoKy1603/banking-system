@@ -556,10 +556,10 @@ export class PersistentMfaService {
         const quote = quoteResult.rows[0];
         if (quote && String(quote.customer_id) === input.customerId) {
           const amountMinor = BigInt(String(quote.amount_minor));
-          if (amountMinor >= BIOMETRIC_TRANSFER_MAX_AMOUNT_MINOR) {
+          if (amountMinor > BIOMETRIC_TRANSFER_MAX_AMOUNT_MINOR) {
             throw conflictWithCode(
               "BIOMETRIC_TIER_LIMIT_EXCEEDED",
-              "Giao dịch từ 1.000.000 VND trở lên bắt buộc xác thực bằng mã TOTP.",
+              "Giao dịch trên 1.000.000 VND bắt buộc xác thực bằng mã TOTP.",
             );
           }
           if (quote.destination_account_id) {

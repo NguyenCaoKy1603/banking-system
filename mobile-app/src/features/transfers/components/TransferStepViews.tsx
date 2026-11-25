@@ -330,6 +330,8 @@ export function TransferReviewStep({
   quote,
   beneficiary,
   description,
+  confirmHighRisk = false,
+  onToggleConfirmHighRisk,
   error,
   isTotpError,
   isSubmitting,
@@ -338,11 +340,15 @@ export function TransferReviewStep({
   quote: TransferQuote | null;
   beneficiary: Beneficiary | null;
   description?: string;
+  confirmHighRisk?: boolean;
+  onToggleConfirmHighRisk?: () => void;
   error?: string;
   isTotpError: boolean;
   isSubmitting: boolean;
   onContinueToStepUp: () => void;
 }) {
+  const isCriticalRisk = quote?.anomalyAssessment?.riskLevel === "CRITICAL";
+
   return (
     <View style={stepStyles.formCard}>
       <Text style={stepStyles.stepTitle}>Kiểm tra giao dịch</Text>
@@ -415,6 +421,29 @@ export function TransferReviewStep({
               • {flag.title}: {flag.detail}
             </Text>
           ))}
+          {isCriticalRisk && onToggleConfirmHighRisk ? (
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: confirmHighRisk }}
+              onPress={onToggleConfirmHighRisk}
+              style={stepStyles.confirmRiskRow}
+              testID="transfer-confirm-high-risk"
+            >
+              <View
+                style={[
+                  stepStyles.confirmRiskCheckbox,
+                  confirmHighRisk ? stepStyles.confirmRiskCheckboxChecked : null,
+                ]}
+              >
+                {confirmHighRisk ? (
+                  <AppIcon color={colors.onPrimary} name="check" size={14} />
+                ) : null}
+              </View>
+              <Text style={stepStyles.confirmRiskLabel}>
+                Tôi xác nhận đã kiểm tra kỹ người nhận và vẫn muốn tiếp tục giao dịch rủi ro nghiêm trọng này.
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
       {error ? (
@@ -429,7 +458,7 @@ export function TransferReviewStep({
         )
       ) : null}
       <PrimaryButton
-        disabled={isSubmitting}
+        disabled={isSubmitting || (isCriticalRisk && !confirmHighRisk)}
         label={isSubmitting ? "Đang chuẩn bị..." : "Tiếp tục xác thực"}
         onPress={onContinueToStepUp}
         testID="transfer-review-confirm"
@@ -790,6 +819,35 @@ export const stepStyles = StyleSheet.create({
   anomalyFlagText: {
     ...typography.caption,
     color: colors.muted,
+  },
+  confirmRiskRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  confirmRiskCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: colors.danger,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  confirmRiskCheckboxChecked: {
+    backgroundColor: colors.danger,
+  },
+  confirmRiskLabel: {
+    flex: 1,
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: "600",
   },
   railRow: {
     flexDirection: "row",
