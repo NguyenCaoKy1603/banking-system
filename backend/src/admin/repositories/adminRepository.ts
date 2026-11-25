@@ -278,6 +278,50 @@ export type AdminTimelineEvent = {
   metadata: Record<string, unknown>;
 };
 
+export type AdminControlPolicy = {
+  configVersion: number;
+  globalKillSwitch: boolean;
+  transfersEnabled: boolean;
+  maxTransferAmountMinor: string;
+  dailyTransferLimitMinor: string;
+  transferFeeMinor: string;
+  savingsEnabled: boolean;
+  maxSavingsAmountMinor: string;
+  creditEnabled: boolean;
+  creditPaymentsEnabled: boolean;
+  cardControlsEnabled: boolean;
+  maxCreditPaymentAmountMinor: string;
+  updatedAt: string;
+};
+
+export type AdminLedgerReconciliation = {
+  status: "BALANCED" | "MISMATCH";
+  checkedAt: string;
+  unbalancedJournalCount: number;
+  totalJournalsChecked: number;
+  paymentAccountsTotalMinor: string;
+  ledgerPaymentAccountsNetMinor: string;
+  discrepancyMinor: string;
+  unbalancedJournals: Array<{
+    journalId: string;
+    journalType: string;
+    aggregateId: string;
+    debitMinor: string;
+    creditMinor: string;
+  }>;
+};
+
+type AdminLedgerJournalSeed = {
+  id: string;
+  journalType: string;
+  aggregateId: string;
+  entries: Array<{
+    accountRef: string;
+    side: "DEBIT" | "CREDIT";
+    amountMinor: string;
+  }>;
+};
+
 type AdminRepositorySeed = {
   staff?: StaffRecord[];
   customers?: CustomerSummary[];
@@ -289,6 +333,8 @@ type AdminRepositorySeed = {
   fraudCases?: AdminFraudCase[];
   jobs?: AdminJob[];
   outboxEvents?: Array<Record<string, unknown>>;
+  controlPolicy?: Partial<AdminControlPolicy>;
+  ledgerJournals?: AdminLedgerJournalSeed[];
 };
 
 export type CreateActionInput = {
@@ -399,6 +445,135 @@ export interface AdminRepository {
   completeBootstrap(): Promise<void>;
   outboxSummary(): Promise<Record<string, number>>;
   listOutboxEvents(status?: string): Promise<Array<Record<string, unknown>>>;
+  getControlPolicy(): Promise<AdminControlPolicy>;
+  updateControlPolicy(patch: Record<string, unknown>, actorStaffId: string, traceId: string): Promise<AdminControlPolicy>;
+  reconcileLedger(): Promise<AdminLedgerReconciliation>;
+}
+
+const DEFAULT_CONTROL_POLICY: AdminControlPolicy = {
+  configVersion: 1,
+  globalKillSwitch: false,
+  transfersEnabled: true,
+  maxTransferAmountMinor: "50000000",
+  dailyTransferLimitMinor: "50000000",
+  transferFeeMinor: "1000",
+  savingsEnabled: true,
+  maxSavingsAmountMinor: "500000000",
+  creditEnabled: true,
+  creditPaymentsEnabled: true,
+  cardControlsEnabled: true,
+  maxCreditPaymentAmountMinor: "100000000",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+};
+
+const POLICY_PATCH_FIELD_ALIASES = new Set([
+  "globalKillSwitch",
+  "global_kill_switch",
+  "transfersEnabled",
+  "transfers_enabled",
+  "maxTransferAmountMinor",
+  "max_transfer_amount_minor",
+  "dailyTransferLimitMinor",
+  "daily_transfer_limit_minor",
+  "transferFeeMinor",
+  "transfer_fee_minor",
+  "savingsEnabled",
+  "savings_enabled",
+  "maxSavingsAmountMinor",
+  "max_savings_amount_minor",
+  "creditEnabled",
+  "credit_enabled",
+  "creditPaymentsEnabled",
+  "credit_payments_enabled",
+  "cardControlsEnabled",
+  "card_controls_enabled",
+  "maxCreditPaymentAmountMinor",
+  "max_credit_payment_amount_minor",
+  "reasonCode",
+  "reason_code",
+]);
+
+function parseBooleanPolicyField(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw invalidRequest(`${field} must be a boolean.`, { [field]: `${field} must be a boolean.` });
+  }
+  return value;
+}
+
+function parseMinorPolicyField(value: unknown, field: string, allowZero: boolean): string {
+  const raw = typeof value === "string" || typeof value === "number" || typeof value === "bigint"
+    ? String(value).trim()
+    : "";
+  if (!/^\d+$/.test(raw)) {
+    throw invalidRequest(`${field} must be an integer minor unit string.`, {
+      [field]: `${field} must be an integer minor unit string.`,
+    });
+  }
+  const parsed = BigInt(raw);
+  if ((!allowZero && parsed <= 0n) || (allowZero && parsed < 0n)) {
+    throw invalidRequest(`${field} is out of range.`, {
+      [field]: allowZero ? `${field} must be >= 0.` : `${field} must be > 0.`,
+    });
+  }
+  return parsed.toString();
+}
+
+function applyControlPolicyPatch(
+  current: AdminControlPolicy,
+  patch: Record<string, unknown>,
+): { next: AdminControlPolicy; reasonCode: string } {
+  const unknownFields = Object.keys(patch).filter((key) => !POLICY_PATCH_FIELD_ALIASES.has(key));
+  if (unknownFields.length > 0) {
+    throw invalidRequest("Unsupported policy fields.", {
+      [unknownFields[0]]: "This policy field cannot be modified.",
+    });
+  }
+
+  const pick = <T>(camel: string, snake: string, fallback: T, parser: (val: unknown, name: string) => T): T => {
+    if (patch[camel] !== undefined) return parser(patch[camel], camel);
+    if (patch[snake] !== undefined) return parser(patch[snake], camel);
+    return fallback;
+  };
+
+  const rawReason = patch.reasonCode ?? patch.reason_code;
+  const reasonCode = typeof rawReason === "string" && rawReason.trim()
+    ? rawReason.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "_").slice(0, 64)
+    : "CONTROL_POLICY_UPDATED";
+
+  const next: AdminControlPolicy = {
+    configVersion: current.configVersion + 1,
+    globalKillSwitch: pick("globalKillSwitch", "global_kill_switch", current.globalKillSwitch, parseBooleanPolicyField),
+    transfersEnabled: pick("transfersEnabled", "transfers_enabled", current.transfersEnabled, parseBooleanPolicyField),
+    maxTransferAmountMinor: pick("maxTransferAmountMinor", "max_transfer_amount_minor", current.maxTransferAmountMinor, (v, n) => parseMinorPolicyField(v, n, false)),
+    dailyTransferLimitMinor: pick("dailyTransferLimitMinor", "daily_transfer_limit_minor", current.dailyTransferLimitMinor, (v, n) => parseMinorPolicyField(v, n, false)),
+    transferFeeMinor: pick("transferFeeMinor", "transfer_fee_minor", current.transferFeeMinor, (v, n) => parseMinorPolicyField(v, n, true)),
+    savingsEnabled: pick("savingsEnabled", "savings_enabled", current.savingsEnabled, parseBooleanPolicyField),
+    maxSavingsAmountMinor: pick("maxSavingsAmountMinor", "max_savings_amount_minor", current.maxSavingsAmountMinor, (v, n) => parseMinorPolicyField(v, n, false)),
+    creditEnabled: pick("creditEnabled", "credit_enabled", current.creditEnabled, parseBooleanPolicyField),
+    creditPaymentsEnabled: pick("creditPaymentsEnabled", "credit_payments_enabled", current.creditPaymentsEnabled, parseBooleanPolicyField),
+    cardControlsEnabled: pick("cardControlsEnabled", "card_controls_enabled", current.cardControlsEnabled, parseBooleanPolicyField),
+    maxCreditPaymentAmountMinor: pick("maxCreditPaymentAmountMinor", "max_credit_payment_amount_minor", current.maxCreditPaymentAmountMinor, (v, n) => parseMinorPolicyField(v, n, false)),
+    updatedAt: nowIso(),
+  };
+  return { next, reasonCode };
+}
+
+function mapControlPolicyRow(row: Record<string, unknown>): AdminControlPolicy {
+  return {
+    configVersion: asNumber(row.config_version, 1),
+    globalKillSwitch: Boolean(row.global_kill_switch),
+    transfersEnabled: Boolean(row.transfers_enabled),
+    maxTransferAmountMinor: String(row.max_transfer_amount_minor ?? DEFAULT_CONTROL_POLICY.maxTransferAmountMinor),
+    dailyTransferLimitMinor: String(row.daily_transfer_limit_minor ?? DEFAULT_CONTROL_POLICY.dailyTransferLimitMinor),
+    transferFeeMinor: String(row.transfer_fee_minor ?? DEFAULT_CONTROL_POLICY.transferFeeMinor),
+    savingsEnabled: Boolean(row.savings_enabled),
+    maxSavingsAmountMinor: String(row.max_savings_amount_minor ?? DEFAULT_CONTROL_POLICY.maxSavingsAmountMinor),
+    creditEnabled: Boolean(row.credit_enabled),
+    creditPaymentsEnabled: Boolean(row.credit_payments_enabled),
+    cardControlsEnabled: Boolean(row.card_controls_enabled),
+    maxCreditPaymentAmountMinor: String(row.max_credit_payment_amount_minor ?? DEFAULT_CONTROL_POLICY.maxCreditPaymentAmountMinor),
+    updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : nowIso(),
+  };
 }
 
 function nowIso(): string { return new Date().toISOString(); }
@@ -582,6 +757,8 @@ export class InMemoryAdminRepository implements AdminRepository {
   private readonly jobs = new Map<string, AdminJob>();
   private readonly outboxEvents = new Map<string, Record<string, unknown>>();
   private readonly executing = new Set<string>();
+  private controlPolicyState: AdminControlPolicy = { ...DEFAULT_CONTROL_POLICY };
+  private readonly ledgerJournals: AdminLedgerJournalSeed[] = [];
 
   constructor(private readonly seed: AdminRepositorySeed = {}) {}
 
@@ -604,6 +781,12 @@ export class InMemoryAdminRepository implements AdminRepository {
     for (const row of this.seed.outboxEvents ?? []) {
       const id = String(row.id ?? randomUUID());
       this.outboxEvents.set(id, { ...structuredClone(row), id, requeueable: row.requeueable === true });
+    }
+    if (this.seed.controlPolicy) {
+      this.controlPolicyState = { ...DEFAULT_CONTROL_POLICY, ...structuredClone(this.seed.controlPolicy) };
+    }
+    for (const journal of this.seed.ledgerJournals ?? []) {
+      this.ledgerJournals.push(structuredClone(journal));
     }
   }
   async close(): Promise<void> {}
@@ -914,6 +1097,84 @@ export class InMemoryAdminRepository implements AdminRepository {
   async completeBootstrap() {}
   outboxSummary() { const result: Record<string, number> = { PENDING: 0, PROCESSING: 0, DEAD: 0, SKIPPED: 0 }; for (const row of this.outboxEvents.values()) { const status = String(row.status ?? "PENDING"); result[status] = (result[status] ?? 0) + 1; } return Promise.resolve(result); }
   listOutboxEvents(status?: string) { return Promise.resolve([...this.outboxEvents.values()].filter((row) => !status || String(row.status) === status).map((row) => structuredClone(row))); }
+  getControlPolicy() {
+    return Promise.resolve(structuredClone(this.controlPolicyState));
+  }
+  async updateControlPolicy(patch: Record<string, unknown>, actorStaffId: string, traceId: string): Promise<AdminControlPolicy> {
+    const before = structuredClone(this.controlPolicyState);
+    const { next, reasonCode } = applyControlPolicyPatch(before, patch);
+    this.controlPolicyState = structuredClone(next);
+    await this.appendAudit({
+      id: randomUUID(),
+      actorStaffId,
+      action: "CONTROL_POLICY_UPDATED",
+      targetType: "CONTROL_POLICY",
+      targetId: "singleton",
+      outcome: "SUCCEEDED",
+      reasonCode,
+      requestId: null,
+      traceId,
+      correlationId: null,
+      beforeVersion: before.configVersion,
+      afterVersion: next.configVersion,
+      metadata: { before, after: next },
+      occurredAt: next.updatedAt,
+    });
+    return structuredClone(next);
+  }
+  reconcileLedger(): Promise<AdminLedgerReconciliation> {
+    let paymentAccountsTotal = 0n;
+    for (const account of this.accounts.values()) {
+      paymentAccountsTotal += BigInt(account.currentMinor);
+    }
+
+    const unbalancedJournals: AdminLedgerReconciliation["unbalancedJournals"] = [];
+    let ledgerPaymentNet = 0n;
+    if (this.ledgerJournals.length > 0) {
+      for (const journal of this.ledgerJournals) {
+        let debit = 0n;
+        let credit = 0n;
+        for (const entry of journal.entries) {
+          const amount = BigInt(entry.amountMinor);
+          if (entry.side === "DEBIT") {
+            debit += amount;
+            if (entry.accountRef.startsWith("payment-account:")) {
+              ledgerPaymentNet -= amount;
+            }
+          } else {
+            credit += amount;
+            if (entry.accountRef.startsWith("payment-account:")) {
+              ledgerPaymentNet += amount;
+            }
+          }
+        }
+        if (debit !== credit) {
+          unbalancedJournals.push({
+            journalId: journal.id,
+            journalType: journal.journalType,
+            aggregateId: journal.aggregateId,
+            debitMinor: debit.toString(),
+            creditMinor: credit.toString(),
+          });
+        }
+      }
+    } else {
+      ledgerPaymentNet = paymentAccountsTotal;
+    }
+
+    const discrepancy = paymentAccountsTotal - ledgerPaymentNet;
+    const status = unbalancedJournals.length === 0 && discrepancy === 0n ? "BALANCED" : "MISMATCH";
+    return Promise.resolve({
+      status,
+      checkedAt: nowIso(),
+      unbalancedJournalCount: unbalancedJournals.length,
+      totalJournalsChecked: this.ledgerJournals.length,
+      paymentAccountsTotalMinor: paymentAccountsTotal.toString(),
+      ledgerPaymentAccountsNetMinor: ledgerPaymentNet.toString(),
+      discrepancyMinor: discrepancy.toString(),
+      unbalancedJournals,
+    });
+  }
 }
 
 function mapStaff(row: Record<string, unknown>, roles: StaffRecord["roles"] = []): StaffRecord {
@@ -1759,4 +2020,120 @@ export class PostgresAdminRepository implements AdminRepository {
   async completeBootstrap() { await this.unitOfWork.transaction(async ({ client }) => { await client.query("UPDATE admin_bootstrap_state SET completed_at=NOW() WHERE singleton=true AND reserved_at IS NOT NULL AND completed_at IS NULL"); }); }
   async outboxSummary() { const result = await this.pool.query("SELECT status, COUNT(*)::int AS count FROM outbox_events GROUP BY status"); return Object.fromEntries(result.rows.map((row) => [String(row.status), asNumber(row.count)])); }
   async listOutboxEvents(status?: string) { const result = await this.pool.query(`SELECT id,event_type,aggregate_id,status,attempts,last_error_code,occurred_at,updated_at,trace_id FROM outbox_events ${status ? "WHERE status=$1" : ""} ORDER BY occurred_at DESC LIMIT 200`, status ? [status] : []); return result.rows.map((row) => ({ id: String(row.id), eventType: String(row.event_type), aggregateId: String(row.aggregate_id), status: String(row.status), attempts: asNumber(row.attempts), lastErrorCode: row.last_error_code ? String(row.last_error_code) : null, occurredAt: new Date(String(row.occurred_at)).toISOString(), updatedAt: row.updated_at ? new Date(String(row.updated_at)).toISOString() : null, traceId: row.trace_id ? String(row.trace_id) : null })); }
+  async getControlPolicy(): Promise<AdminControlPolicy> {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query("SELECT * FROM control_policy WHERE singleton = true");
+      if (!result.rows[0]) {
+        throw notFound("Control policy is not initialized.");
+      }
+      return mapControlPolicyRow(result.rows[0] as Record<string, unknown>);
+    });
+  }
+  async updateControlPolicy(patch: Record<string, unknown>, actorStaffId: string, traceId: string): Promise<AdminControlPolicy> {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const locked = await client.query("SELECT * FROM control_policy WHERE singleton = true FOR UPDATE");
+      if (!locked.rows[0]) {
+        throw notFound("Control policy is not initialized.");
+      }
+      const before = mapControlPolicyRow(locked.rows[0] as Record<string, unknown>);
+      const { next, reasonCode } = applyControlPolicyPatch(before, patch);
+      const updated = await client.query(
+        `UPDATE control_policy
+            SET global_kill_switch = $1,
+                transfers_enabled = $2,
+                max_transfer_amount_minor = $3,
+                daily_transfer_limit_minor = $4,
+                transfer_fee_minor = $5,
+                savings_enabled = $6,
+                max_savings_amount_minor = $7,
+                credit_enabled = $8,
+                credit_payments_enabled = $9,
+                card_controls_enabled = $10,
+                max_credit_payment_amount_minor = $11,
+                config_version = config_version + 1,
+                updated_at = NOW()
+          WHERE singleton = true
+          RETURNING *`,
+        [
+          next.globalKillSwitch,
+          next.transfersEnabled,
+          next.maxTransferAmountMinor,
+          next.dailyTransferLimitMinor,
+          next.transferFeeMinor,
+          next.savingsEnabled,
+          next.maxSavingsAmountMinor,
+          next.creditEnabled,
+          next.creditPaymentsEnabled,
+          next.cardControlsEnabled,
+          next.maxCreditPaymentAmountMinor,
+        ],
+      );
+      const after = mapControlPolicyRow(updated.rows[0] as Record<string, unknown>);
+      await client.query(
+        `INSERT INTO audit_events
+          (id, event_type, actor_type, actor_staff_id, action, target_type, target_id,
+           outcome, reason_code, request_id, trace_id, before_version, after_version, payload, occurred_at)
+         VALUES ($1, 'CONTROL_POLICY_UPDATED', 'STAFF', $2, 'CONTROL_POLICY_UPDATED', 'CONTROL_POLICY', 'singleton',
+                 'SUCCEEDED', $3, NULL, $4, $5, $6, $7, NOW())`,
+        [
+          randomUUID(),
+          actorStaffId,
+          reasonCode,
+          traceId,
+          before.configVersion,
+          after.configVersion,
+          JSON.stringify(redactAdminMetadata({ before, after })),
+        ],
+      );
+      return after;
+    });
+  }
+  async reconcileLedger(): Promise<AdminLedgerReconciliation> {
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const unbalancedResult = await client.query(
+        `SELECT j.id AS journal_id,
+                j.journal_type,
+                j.aggregate_id,
+                COALESCE(SUM(CASE WHEN e.side = 'DEBIT' THEN e.amount_minor ELSE 0 END), 0)::text AS debit_minor,
+                COALESCE(SUM(CASE WHEN e.side = 'CREDIT' THEN e.amount_minor ELSE 0 END), 0)::text AS credit_minor
+           FROM ledger_journals j
+           LEFT JOIN ledger_entries e ON e.journal_id = j.id
+          GROUP BY j.id, j.journal_type, j.aggregate_id
+         HAVING COALESCE(SUM(CASE WHEN e.side = 'DEBIT' THEN e.amount_minor ELSE 0 END), 0)
+             <> COALESCE(SUM(CASE WHEN e.side = 'CREDIT' THEN e.amount_minor ELSE 0 END), 0)
+          ORDER BY j.created_at DESC
+          LIMIT 50`,
+      );
+      const totalsResult = await client.query(
+        `SELECT
+           (SELECT COUNT(*)::int FROM ledger_journals) AS total_journals,
+           (SELECT COALESCE(SUM(current_minor), 0)::text FROM payment_accounts) AS accounts_total_minor,
+           (SELECT (COALESCE(SUM(CASE WHEN side = 'CREDIT' THEN amount_minor ELSE 0 END), 0)
+                  - COALESCE(SUM(CASE WHEN side = 'DEBIT' THEN amount_minor ELSE 0 END), 0))::text
+              FROM ledger_entries
+             WHERE account_ref LIKE 'payment-account:%') AS ledger_net_minor`,
+      );
+      const row = (totalsResult.rows[0] ?? {}) as Record<string, unknown>;
+      const paymentAccountsTotal = BigInt(String(row.accounts_total_minor ?? "0"));
+      const ledgerNet = BigInt(String(row.ledger_net_minor ?? "0"));
+      const discrepancy = paymentAccountsTotal - ledgerNet;
+      const unbalancedJournals = unbalancedResult.rows.map((entry) => ({
+        journalId: String(entry.journal_id),
+        journalType: String(entry.journal_type),
+        aggregateId: String(entry.aggregate_id),
+        debitMinor: String(entry.debit_minor),
+        creditMinor: String(entry.credit_minor),
+      }));
+      return {
+        status: unbalancedJournals.length === 0 && discrepancy === 0n ? "BALANCED" : "MISMATCH",
+        checkedAt: nowIso(),
+        unbalancedJournalCount: unbalancedJournals.length,
+        totalJournalsChecked: asNumber(row.total_journals, 0),
+        paymentAccountsTotalMinor: paymentAccountsTotal.toString(),
+        ledgerPaymentAccountsNetMinor: ledgerNet.toString(),
+        discrepancyMinor: discrepancy.toString(),
+        unbalancedJournals,
+      };
+    });
+  }
 }

@@ -1,4 +1,5 @@
 import { RelationalLifecycleService, type CreditLifecycleSummary } from "../database/lifecycleService.js";
+import { RelationalTransferService } from "../database/transferService.js";
 import { UnitOfWork } from "../database/unitOfWork.js";
 import { WorkerMetrics } from "../observability/metrics.js";
 
@@ -14,6 +15,7 @@ export type ScheduledLifecycleRunResult = CreditLifecycleSummary & {
   savingsSuspenseResolved: number;
   savingsSuspenseRetried: number;
   savingsSuspenseDeadLettered: number;
+  interbankReconciled?: number;
 };
 
 function positiveEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
@@ -53,6 +55,7 @@ export type ScheduledLifecycleHealth = {
  */
 export class RelationalLifecycleScheduler {
   private readonly lifecycle: RelationalLifecycleService;
+  private readonly transfers: RelationalTransferService;
   private timer: NodeJS.Timeout | undefined;
   private inFlight: Promise<ScheduledLifecycleRunResult> | undefined;
   private started = false;
@@ -66,6 +69,7 @@ export class RelationalLifecycleScheduler {
     private readonly metrics: WorkerMetrics,
   ) {
     this.lifecycle = new RelationalLifecycleService(unitOfWork);
+    this.transfers = new RelationalTransferService(unitOfWork);
     if (config.pollIntervalMs <= 0 || config.batchSize <= 0 || config.stallThresholdMs <= 0) {
       throw new Error("Scheduled lifecycle configuration must use positive values.");
     }
@@ -144,11 +148,13 @@ export class RelationalLifecycleScheduler {
       const savingsMaturities = await this.lifecycle.runSavingsMaturities(asOf, this.config.batchSize);
       const savingsSuspense = await this.lifecycle.runSavingsSuspense(asOf, this.config.batchSize);
       const credit = await this.lifecycle.runCreditLifecycle(asOf, this.config.batchSize);
+      const interbankReconciled = await this.transfers.reconcilePendingInterbankTransfers(asOf, this.config.batchSize);
       const result = {
         savingsMaturities,
         savingsSuspenseResolved: savingsSuspense.resolved,
         savingsSuspenseRetried: savingsSuspense.retried,
         savingsSuspenseDeadLettered: savingsSuspense.deadLettered,
+        interbankReconciled,
         ...credit,
       };
       this.lastSuccessfulTick = new Date().toISOString();
@@ -156,7 +162,7 @@ export class RelationalLifecycleScheduler {
       this.lastErrorCode = null;
       this.metrics.increment("scheduled_lifecycle_ticks_total");
       this.metrics.increment("scheduled_lifecycle_success_total");
-      this.metrics.increment("scheduled_lifecycle_jobs_succeeded_total", savingsMaturities + savingsSuspense.resolved + credit.statementsClosed + credit.statementsOverdue + credit.paymentsSettled);
+      this.metrics.increment("scheduled_lifecycle_jobs_succeeded_total", savingsMaturities + savingsSuspense.resolved + interbankReconciled + credit.statementsClosed + credit.statementsOverdue + credit.paymentsSettled);
       this.metrics.increment("scheduled_lifecycle_suspense_resolved_total", savingsSuspense.resolved);
       this.metrics.increment("scheduled_lifecycle_suspense_retry_total", savingsSuspense.retried);
       this.metrics.increment("scheduled_lifecycle_suspense_dead_letter_total", savingsSuspense.deadLettered);

@@ -1,9 +1,112 @@
 import {
   createReceiveQrPayload,
+  createVietQrPayload,
   parseReceiveQrPayload,
 } from "@/features/qr/validation/qrPayload";
+import {
+  crc16CcittFalse,
+  decodeVietQr,
+  parseTlvMap,
+  DEFAULT_NOVA_BIN,
+} from "@/features/qr/validation/vietQrCodec";
 
-describe("receive QR payload", () => {
+describe("VietQR EMVCo codec & validation", () => {
+  it("calculates correct CRC-16/CCITT-FALSE according to reference standard", () => {
+    // Standard test vector: "123456789" with Poly 0x1021 and Init 0xFFFF gives 0x29B1
+    expect(crc16CcittFalse("123456789")).toBe("29B1");
+  });
+
+  it("encodes and decodes a static VietQR payload", () => {
+    const raw = createVietQrPayload({
+      accountNumber: "1234567890",
+      bankBin: "970436", // Vietcombank
+      merchantName: "NGUYEN VAN A",
+    });
+
+    expect(raw).toMatch(/^000201010211/);
+    expect(raw).toContain("38");
+    expect(raw).toContain("970436");
+    expect(raw).toContain("1234567890");
+    expect(raw).toContain("5303704"); // VND
+    expect(raw).toContain("5802VN"); // Vietnam
+    expect(parseTlvMap(raw).has("54")).toBe(false); // No amount tag in static QR
+
+    const parsed = parseReceiveQrPayload(raw);
+    expect(parsed).toMatchObject({
+      format: "VIETQR",
+      accountNumber: "1234567890",
+      bankBin: "970436",
+      bankName: "Vietcombank",
+      currency: "VND",
+      pointOfInitiation: "11",
+      trust: "UNVERIFIED",
+    });
+    expect(parsed.amountMinor).toBeUndefined();
+    expect(parsed.description).toBeUndefined();
+  });
+
+  it("encodes and decodes a dynamic VietQR with prefilled amount and message", () => {
+    const raw = createVietQrPayload({
+      accountNumber: "9876543210",
+      bankBin: "970422", // MB Bank
+      amountMinor: "250000",
+      message: "Tien an trua",
+      merchantName: "TRAN VAN B",
+    });
+
+    expect(raw).toMatch(/^000201010212/); // Tag 01 = 12 (Dynamic)
+    expect(raw).toContain("5406250000"); // Tag 54 = 250000
+    expect(raw).toContain("Tien an trua"); // Tag 62 with sub-tag 08
+
+    const parsed = parseReceiveQrPayload(raw);
+    expect(parsed).toMatchObject({
+      format: "VIETQR",
+      accountNumber: "9876543210",
+      bankBin: "970422",
+      bankName: "MB Bank",
+      amountMinor: "250000",
+      description: "Tien an trua",
+      currency: "VND",
+      pointOfInitiation: "12",
+      trust: "UNVERIFIED",
+    });
+  });
+
+  it("defaults to NOVA bank BIN when no bankBin is provided", () => {
+    const raw = createVietQrPayload({
+      accountNumber: "970400123456",
+    });
+
+    const parsed = parseReceiveQrPayload(raw);
+    expect(parsed.bankBin).toBe(DEFAULT_NOVA_BIN);
+    expect(parsed.bankName).toBe("Ngân hàng NOVA");
+  });
+
+  it("rejects VietQR with invalid or tampered CRC-16 checksum", () => {
+    const valid = createVietQrPayload({
+      accountNumber: "1234567890",
+      bankBin: "970436",
+    });
+
+    // Tamper the last character of CRC
+    const tampered = valid.slice(0, -1) + (valid.slice(-1) === "0" ? "1" : "0");
+    expect(() => parseReceiveQrPayload(tampered)).toThrow(/CRC-16 không hợp lệ/i);
+  });
+
+  it("rejects truncated or malformed VietQR string", () => {
+    expect(() => decodeVietQr("000201")).toThrow(/quá ngắn/i);
+    expect(() => decodeVietQr("00020101021163040000")).toThrow();
+  });
+
+  it("rejects VietQR without Tag 38 or invalid sub-tags", () => {
+    // Missing Tag 38
+    const invalid = "00020101021153037045802VN6304";
+    const crc = crc16CcittFalse(invalid);
+    expect(() => decodeVietQr(invalid + crc)).toThrow(/Tag 38/i);
+  });
+});
+
+describe("receive QR payload (Internal JSON v2 backward compatibility)", () => {
   it("creates and validates a versioned VND receive payload", () => {
     const raw = createReceiveQrPayload({
       accountNumber: "970400000001",
@@ -16,6 +119,7 @@ describe("receive QR payload", () => {
       accountNumber: "970400000001",
       version: 2,
       currency: "VND",
+      format: "INTERNAL_V2",
       trust: "UNVERIFIED",
     });
   });

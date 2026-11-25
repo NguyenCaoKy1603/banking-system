@@ -25,7 +25,7 @@ const nginxTemplate = fs.readFileSync(path.join(__dirname, "..", "nginx.conf.tem
 const runtimeScript = fs.readFileSync(path.join(__dirname, "..", "docker-entrypoint.d", "10-validate-runtime-config.sh"), "utf8");
 
 test("Admin Web exposes the P0 control-plane areas", () => {
-  for (const label of ["Hồ sơ định danh", "Giao dịch chuyển tiền", "Outbox / Jobs", "Staff / Roles", "Audit Explorer"]) {
+  for (const label of ["Hồ sơ định danh", "Giao dịch chuyển tiền", "Outbox / Jobs", "Chính sách & Biểu phí", "Staff / Roles", "Audit Explorer"]) {
     assert.match(app, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   for (const marker of [
@@ -37,6 +37,8 @@ test("Admin Web exposes the P0 control-plane areas", () => {
     "retry-requests",
     "role-change-requests",
     "disable-requests",
+    "/admin/control-policy",
+    "/admin/operations/ledger-reconciliation",
   ]) {
     assert.match(app, new RegExp(marker));
   }

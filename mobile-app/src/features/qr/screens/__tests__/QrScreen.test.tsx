@@ -4,7 +4,7 @@ import { AppState, type AppStateStatus, Linking } from "react-native";
 import { QrScreen } from "@/features/qr/screens/QrScreen";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { getAccountNumber, listAccounts } from "@/features/accounts/services/accountsApi";
-import { createReceiveQrPayload } from "@/features/qr/validation/qrPayload";
+import { createReceiveQrPayload, createVietQrPayload } from "@/features/qr/validation/qrPayload";
 
 const mockBack = jest.fn();
 const mockPush = jest.fn();
@@ -305,5 +305,110 @@ describe("QrScreen camera scanning flow", () => {
     await flushMicrotasks();
 
     expect(renderer!.root.findAllByProps({ testID: "qr-camera" }).length).toBeGreaterThan(0);
+  });
+
+  it("cho phép người dùng mở form và tạo mã VietQR động có sẵn số tiền & lời nhắn", async () => {
+    await act(async () => {
+      renderer = create(<QrScreen />);
+    });
+    await flushMicrotasks();
+
+    // Verify initial QR code is rendered
+    expect(renderer!.root.findByProps({ testID: "qr-code" })).toBeTruthy();
+    expect(JSON.stringify(renderer!.toJSON())).toContain("VietQR chuẩn NAPAS");
+
+    // Toggle dynamic QR form
+    const toggleBtn = findNode(renderer!, "qr-toggle-dynamic", "onPress");
+    await act(async () => {
+      toggleBtn.props.onPress();
+    });
+    await flushMicrotasks();
+
+    expect(renderer!.root.findByProps({ testID: "qr-dynamic-form" })).toBeTruthy();
+
+    // Enter amount and message
+    const amountField = findNode(renderer!, "qr-dynamic-amount");
+    const messageField = findNode(renderer!, "qr-dynamic-message");
+
+    await act(async () => {
+      amountField.props.onChangeText("50000");
+      messageField.props.onChangeText("An trua");
+    });
+    await flushMicrotasks();
+
+    // Badge updates to dynamic QR indicator
+    expect(JSON.stringify(renderer!.toJSON())).toContain("QR Động · 50.000 VND");
+
+    // QR code value contains dynamic Tag 01=12, Tag 54, Tag 62
+    const qrCode = renderer!.root.findByProps({ testID: "qr-code" });
+    const qrSvg = qrCode.props.children;
+    expect(qrSvg.props.value).toMatch(/^000201010212/);
+    expect(qrSvg.props.value).toContain("540550000");
+    expect(qrSvg.props.value).toContain("An trua");
+
+    // Clear dynamic inputs
+    const clearBtn = findNode(renderer!, "qr-clear-dynamic", "onPress");
+    await act(async () => {
+      clearBtn.props.onPress();
+    });
+    await flushMicrotasks();
+
+    expect(JSON.stringify(renderer!.toJSON())).toContain("VietQR chuẩn NAPAS");
+  });
+
+  it("quét mã VietQR động bên ngoài, hiển thị thông tin số tiền & lời nhắn, chuyển hướng sang Transfer", async () => {
+    mockPermissionState = {
+      granted: true,
+      canAskAgain: true,
+      status: "granted",
+      expires: "never",
+    };
+
+    await act(async () => {
+      renderer = create(<QrScreen />);
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      findNode(renderer!, "qr-scan", "onPress").props.onPress();
+    });
+    await flushMicrotasks();
+
+    const dynamicVietQr = createVietQrPayload({
+      accountNumber: "1234567890",
+      bankBin: "970436", // Vietcombank
+      amountMinor: "150000",
+      message: "Tra tien cafe",
+      merchantName: "CONG TY DEMO",
+    });
+
+    await act(async () => {
+      findNode(renderer!, "qr-camera", "onBarcodeScanned").props.onBarcodeScanned({
+        type: "qr",
+        data: dynamicVietQr,
+      });
+    });
+    await flushMicrotasks();
+
+    expect(renderer!.root.findByProps({ testID: "qr-amount-notice" })).toBeTruthy();
+    expect(JSON.stringify(renderer!.toJSON())).toContain("150.000 VND");
+    expect(renderer!.root.findByProps({ testID: "qr-message-notice" })).toBeTruthy();
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Tra tien cafe");
+    expect(JSON.stringify(renderer!.toJSON())).toContain("Vietcombank");
+
+    const continueBtn = findNode(renderer!, "qr-continue-transfer", "onPress");
+    await act(async () => {
+      continueBtn.props.onPress();
+    });
+
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: "/transfer",
+      params: {
+        accountNumber: "1234567890",
+        bankBin: "970436",
+        amountMinor: "150000",
+        description: "Tra tien cafe",
+      },
+    });
   });
 });

@@ -1,6 +1,9 @@
 import type {
   AuthChallengeResponse,
   BiometricEnrollmentResponse,
+  ChangePasswordResponse,
+  CustomerDevice,
+  CustomerDevicesResponse,
   LoginResponse,
   MfaCredentialSummary,
   MfaMethodsResponse,
@@ -8,6 +11,7 @@ import type {
   RecoveryStartedResponse,
   RegisterResponse,
   RefreshTokenResponse,
+  ResetPasswordResponse,
   TotpConfirmationResponse,
   TotpEnrollmentResponse,
 } from "@/features/auth/types/auth";
@@ -42,6 +46,8 @@ function isAuthChallengePurpose(
   return [
     "REGISTRATION_VERIFY",
     "REGISTRATION_EMAIL_VERIFY",
+    "PASSWORD_RESET",
+    "PASSWORD_CHANGE",
     "LOGIN",
     "TRANSFER",
     "SAVINGS_OPENING",
@@ -183,4 +189,44 @@ export function isRecoveryStartedResponse(payload: unknown): payload is Recovery
 
 export function isRecoveryCompletedResponse(payload: unknown): payload is RecoveryCompletedResponse {
   return isRecord(payload) && payload.status === "RECOVERY_COMPLETED";
+}
+
+export function isChangePasswordResponse(payload: unknown): payload is ChangePasswordResponse {
+  return (
+    isRecord(payload) &&
+    payload.status === "PASSWORD_CHANGED" &&
+    typeof payload.sessionsRevoked === "boolean"
+  );
+}
+
+export function isResetPasswordResponse(payload: unknown): payload is ResetPasswordResponse {
+  return (
+    isRecord(payload) &&
+    payload.status === "PASSWORD_RESET" &&
+    typeof payload.sessionsRevoked === "boolean"
+  );
+}
+
+function isCustomerDevice(value: unknown): value is CustomerDevice {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    value.id.trim().length > 0 &&
+    typeof value.deviceId === "string" &&
+    value.deviceId.trim().length > 0 &&
+    typeof value.deviceName === "string" &&
+    (value.attestationStatus === "PENDING" ||
+      value.attestationStatus === "VERIFIED" ||
+      value.attestationStatus === "REVOKED") &&
+    typeof value.isCurrentDevice === "boolean" &&
+    isNonEmptyDateTime(value.lastSeenAt) &&
+    isNonEmptyDateTime(value.createdAt) &&
+    typeof value.activeSessionCount === "number" &&
+    Number.isInteger(value.activeSessionCount) &&
+    value.activeSessionCount >= 0
+  );
+}
+
+export function isCustomerDevicesResponse(payload: unknown): payload is CustomerDevicesResponse {
+  return isRecord(payload) && Array.isArray(payload.items) && payload.items.every(isCustomerDevice);
 }

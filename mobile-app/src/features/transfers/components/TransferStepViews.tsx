@@ -10,7 +10,13 @@ import { getRiskLevelPresentation } from "@/features/anomalies/presentation/anom
 import { TotpRequiredNotice } from "@/features/auth/components/TotpRequiredNotice";
 import { formatVndMinor, formatVndWords } from "@/features/banking/presentation/formatMoney";
 import type { ManualReviewCode } from "@/features/banking/domain/submitFailure";
-import type { Beneficiary, TransferQuote, TransferReceipt } from "@/features/transfers/types/transfer";
+import {
+  NAPAS_BANKS,
+  type Beneficiary,
+  type TransferQuote,
+  type TransferRail,
+  type TransferReceipt,
+} from "@/features/transfers/types/transfer";
 import { colors, radius, shadows, spacing, typography } from "@/theme";
 
 const QUICK_AMOUNTS = [
@@ -23,25 +29,35 @@ const QUICK_AMOUNTS = [
 
 export function TransferBeneficiaryStep({
   hasActiveTotp,
+  transferRail = "INTERNAL",
+  selectedBankBin = NAPAS_BANKS[0]!.bin,
   recipientAccountNumber,
   beneficiaryId,
   beneficiary,
   error,
   isSubmitting,
+  onSelectRail,
+  onSelectBankBin,
   onOpenBeneficiaries,
   onChangeAccountNumber,
   onLookup,
 }: {
   hasActiveTotp: boolean | null;
+  transferRail?: TransferRail;
+  selectedBankBin?: string;
   recipientAccountNumber: string;
   beneficiaryId: string;
   beneficiary: Beneficiary | null;
   error?: string;
   isSubmitting: boolean;
+  onSelectRail?: (rail: TransferRail) => void;
+  onSelectBankBin?: (bin: string) => void;
   onOpenBeneficiaries: () => void;
   onChangeAccountNumber: (value: string) => void;
   onLookup: () => void;
 }) {
+  const selectedBank = NAPAS_BANKS.find((bank) => bank.bin === selectedBankBin);
+
   return (
     <View style={stepStyles.formCard}>
       {hasActiveTotp === false ? (
@@ -53,25 +69,105 @@ export function TransferBeneficiaryStep({
         />
       ) : null}
       <Text style={stepStyles.stepTitle}>Chọn người nhận</Text>
-      <Button
-        icon="users"
-        label="Mở danh bạ người nhận"
-        onPress={onOpenBeneficiaries}
-        testID="transfer-open-beneficiaries"
-        variant="secondary"
-      />
+      {onSelectRail ? (
+        <View style={stepStyles.railRow} testID="transfer-rail-selector">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: transferRail === "INTERNAL" }}
+            onPress={() => onSelectRail("INTERNAL")}
+            style={[
+              stepStyles.railButton,
+              transferRail === "INTERNAL" ? stepStyles.railButtonSelected : null,
+            ]}
+            testID="transfer-rail-internal"
+          >
+            <Text
+              style={[
+                stepStyles.railButtonText,
+                transferRail === "INTERNAL" ? stepStyles.railButtonTextSelected : null,
+              ]}
+            >
+              Nội bộ NOVA
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: transferRail === "NAPAS_IBFT" }}
+            onPress={() => onSelectRail("NAPAS_IBFT")}
+            style={[
+              stepStyles.railButton,
+              transferRail === "NAPAS_IBFT" ? stepStyles.railButtonSelected : null,
+            ]}
+            testID="transfer-rail-napas"
+          >
+            <Text
+              style={[
+                stepStyles.railButtonText,
+                transferRail === "NAPAS_IBFT" ? stepStyles.railButtonTextSelected : null,
+              ]}
+            >
+              Liên ngân hàng 24/7 (NAPAS)
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {transferRail === "INTERNAL" ? (
+        <Button
+          icon="users"
+          label="Mở danh bạ người nhận"
+          onPress={onOpenBeneficiaries}
+          testID="transfer-open-beneficiaries"
+          variant="secondary"
+        />
+      ) : (
+        <View style={stepStyles.quickAmountContainer} testID="transfer-napas-bank-list">
+          <Text style={stepStyles.quickAmountTitle}>Chọn ngân hàng thụ hưởng (NAPAS 24/7):</Text>
+          <View style={stepStyles.chipsRow}>
+            {NAPAS_BANKS.map((bank) => {
+              const selected = bank.bin === selectedBankBin;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  key={bank.bin}
+                  onPress={() => onSelectBankBin?.(bank.bin)}
+                  style={[stepStyles.chipButton, selected ? stepStyles.allBalanceChip : null]}
+                  testID={`transfer-napas-bank-${bank.bin}`}
+                >
+                  <Text style={[stepStyles.chipText, selected ? stepStyles.allBalanceText : null]}>
+                    [{bank.code}] {bank.name}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {selectedBank ? (
+            <Text style={stepStyles.description}>
+              Ngân hàng đã chọn: {selectedBank.name} (BIN {selectedBank.bin})
+            </Text>
+          ) : null}
+        </View>
+      )}
       <TextField
         accessibilityLabel="Số tài khoản người nhận"
         autoCapitalize="none"
         error={error}
         keyboardType="number-pad"
-        label="Số tài khoản người nhận"
+        label={
+          transferRail === "NAPAS_IBFT"
+            ? "Số tài khoản liên ngân hàng"
+            : "Số tài khoản người nhận"
+        }
         onChangeText={onChangeAccountNumber}
-        placeholder="Nhập đủ 6–34 chữ số"
+        placeholder={
+          transferRail === "NAPAS_IBFT"
+            ? "Ví dụ: 99990001 (hoặc 99999999 để test lỗi)"
+            : "Nhập đủ 6–34 chữ số"
+        }
         testID="transfer-beneficiary-id"
         value={recipientAccountNumber}
       />
-      {beneficiaryId ? (
+      {transferRail === "INTERNAL" && beneficiaryId ? (
         <Text style={stepStyles.description}>Người nhận đã lưu: {beneficiary?.displayName ?? beneficiaryId}</Text>
       ) : null}
       <PrimaryButton
@@ -89,6 +185,7 @@ export function TransferAmountStep({
   sourceAccount,
   beneficiary,
   amountMinor,
+  description,
   error,
   isExceedingBalance,
   isSubmitting,
@@ -102,6 +199,7 @@ export function TransferAmountStep({
   sourceAccount?: PaymentAccount;
   beneficiary: Beneficiary | null;
   amountMinor: string;
+  description?: string;
   error?: string;
   isExceedingBalance: boolean;
   isSubmitting: boolean;
@@ -167,6 +265,13 @@ export function TransferAmountStep({
         </Text>
       </View>
 
+      {description ? (
+        <View style={stepStyles.summaryRow}>
+          <Text style={stepStyles.summaryLabel}>Nội dung chuyển</Text>
+          <Text style={stepStyles.summaryValue}>{description}</Text>
+        </View>
+      ) : null}
+
       <TextField
         accessibilityLabel="Số tiền chuyển"
         error={error || (isExceedingBalance ? "Số tiền chuyển vượt quá số dư khả dụng." : undefined)}
@@ -224,6 +329,7 @@ export function TransferAmountStep({
 export function TransferReviewStep({
   quote,
   beneficiary,
+  description,
   error,
   isTotpError,
   isSubmitting,
@@ -231,6 +337,7 @@ export function TransferReviewStep({
 }: {
   quote: TransferQuote | null;
   beneficiary: Beneficiary | null;
+  description?: string;
   error?: string;
   isTotpError: boolean;
   isSubmitting: boolean;
@@ -251,6 +358,12 @@ export function TransferReviewStep({
           {beneficiary?.maskedAccountNumber ?? ""}
           {beneficiary?.bankName ? ` · ${beneficiary.bankName}` : ""}
         </Text>
+        {description ? (
+          <View style={stepStyles.summaryRow}>
+            <Text style={stepStyles.summaryLabel}>Nội dung</Text>
+            <Text style={stepStyles.summaryValue}>{description}</Text>
+          </View>
+        ) : null}
         <View style={stepStyles.summaryRow}>
           <Text style={stepStyles.summaryLabel}>Số tiền</Text>
           <Text style={stepStyles.summaryValue}>
@@ -329,6 +442,7 @@ export function TransferStepUpStep({
   stepUpMethod,
   stepUpProof,
   canUseBiometric = false,
+  stepUpHint,
   manualReviewCode,
   error,
   isTotpError,
@@ -342,6 +456,7 @@ export function TransferStepUpStep({
   stepUpMethod?: "OTP" | "TOTP" | "BIOMETRIC";
   stepUpProof: string;
   canUseBiometric?: boolean;
+  stepUpHint?: string;
   manualReviewCode: ManualReviewCode | null;
   error?: string;
   isTotpError: boolean;
@@ -360,8 +475,9 @@ export function TransferStepUpStep({
       <Text style={stepStyles.stepTitle}>Xác thực giao dịch</Text>
       <Text style={stepStyles.description}>
         {canUseBiometric
-          ? "Chọn xác thực bằng Sinh trắc học (Vân tay / Khuôn mặt) hoặc nhập mã TOTP gồm 6 chữ số từ Google Authenticator."
-          : "Mở ứng dụng Google Authenticator trên điện thoại để lấy mã TOTP gồm 6 chữ số."}
+          ? "Chọn xác thực bằng Vân tay / Face ID hoặc nhập mã TOTP gồm 6 chữ số từ Google Authenticator."
+          : stepUpHint ??
+            "Mở ứng dụng Google Authenticator trên điện thoại để lấy mã TOTP gồm 6 chữ số."}
       </Text>
       {canUseBiometric && onUseBiometric ? (
         <Button
@@ -369,8 +485,8 @@ export function TransferStepUpStep({
           icon="shield"
           label={
             isBiometricVerified
-              ? "Đã xác thực Sinh trắc học — Bấm để quét lại"
-              : "Xác thực bằng Sinh trắc học"
+              ? "Đã xác thực Vân tay / Face ID — Bấm để quét lại"
+              : "Xác thực bằng Vân tay / Face ID"
           }
           onPress={onUseBiometric}
           testID="transfer-step-up-biometric"
@@ -471,7 +587,11 @@ export function TransferResultStep({
         Mã tham chiếu: {receipt?.reference ?? "—"}
       </Text>
       <Text style={stepStyles.description}>
-        Nếu giao dịch đang xử lý, bạn có thể cập nhật tại đây hoặc kiểm tra lại trong lịch sử.
+        {receipt?.status === "PENDING"
+          ? "Đang đối soát qua hệ thống NAPAS 24/7. Trạng thái sẽ tự động cập nhật."
+          : receipt?.status === "REVERSED"
+            ? "Giao dịch không thành công ở ngân hàng nhận; số tiền giữ tạm đã được hoàn trả về số dư khả dụng."
+            : "Nếu giao dịch đang xử lý, bạn có thể cập nhật tại đây hoặc kiểm tra lại trong lịch sử."}
       </Text>
       {receipt?.status === "PENDING" || (!receipt && recoveryTransferId) ? (
         <PrimaryButton
@@ -670,5 +790,33 @@ export const stepStyles = StyleSheet.create({
   anomalyFlagText: {
     ...typography.caption,
     color: colors.muted,
+  },
+  railRow: {
+    flexDirection: "row",
+    gap: spacing.xs,
+  },
+  railButton: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  railButtonSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.surface,
+  },
+  railButtonText: {
+    ...typography.caption,
+    color: colors.muted,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  railButtonTextSelected: {
+    color: colors.primary,
   },
 });

@@ -1,4 +1,5 @@
 import type {
+  AccountMonthlySummary,
   AccountNumberResponse,
   AccountsResponse,
   PaymentAccount,
@@ -100,5 +101,32 @@ export function isTransactionDetail(
     isNonEmptyString(value.reference) &&
     isNonEmptyDateTime(value.createdAt) &&
     (value.completedAt === null || isNonEmptyDateTime(value.completedAt))
+  );
+}
+
+export function isAccountMonthlySummary(
+  value: unknown,
+): value is AccountMonthlySummary {
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value.accountId) &&
+    isNonEmptyString(value.month) &&
+    isNonEmptyString(value.monthLabel) &&
+    value.currency === "VND" &&
+    typeof value.totalIncomeMinor === "string" &&
+    /^\d+$/.test(value.totalIncomeMinor) &&
+    typeof value.totalExpenseMinor === "string" &&
+    /^\d+$/.test(value.totalExpenseMinor) &&
+    typeof value.netMinor === "string" &&
+    /^-?\d+$/.test(value.netMinor) &&
+    typeof value.succeededCount === "number" &&
+    Number.isInteger(value.succeededCount) &&
+    value.succeededCount >= 0 &&
+    typeof value.creditCount === "number" &&
+    Number.isInteger(value.creditCount) &&
+    value.creditCount >= 0 &&
+    typeof value.debitCount === "number" &&
+    Number.isInteger(value.debitCount) &&
+    value.debitCount >= 0
   );
 }

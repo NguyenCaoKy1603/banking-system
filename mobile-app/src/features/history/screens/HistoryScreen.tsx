@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
+import * as Clipboard from "expo-clipboard";
 import { useFocusEffect, useRouter } from "expo-router";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
 
 import { AppHeader } from "@/components/ui/AppHeader";
 import { AppIcon } from "@/components/ui/AppIcon";
@@ -9,12 +10,21 @@ import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
 import { StateCard } from "@/components/ui/StateCard";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import {
+  exportAccountStatement,
+  getAccountSummary,
   listAccounts,
   listTransactions,
 } from "@/features/accounts/services/accountsApi";
-import type { PaymentAccount, Transaction } from "@/features/accounts/types/account";
+import type {
+  AccountMonthlySummary,
+  PaymentAccount,
+  StatementExportFormat,
+  Transaction,
+  TransactionFilterParams,
+} from "@/features/accounts/types/account";
 import { formatVndMinor } from "@/features/banking/presentation/formatMoney";
 import {
   filterTransactions,
@@ -26,6 +36,67 @@ import {
   summarizeMonthlyCashFlow,
 } from "@/features/history/presentation/historySummary";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
+
+type HistoryPeriodPreset = "ALL" | "THIS_MONTH" | "LAST_MONTH" | "CUSTOM";
+
+function formatDateYmd(year: number, monthIndexZeroBased: number, day: number): string {
+  const month = String(monthIndexZeroBased + 1).padStart(2, "0");
+  const dd = String(day).padStart(2, "0");
+  return `${year}-${month}-${dd}`;
+}
+
+function resolveMonthParam(period: HistoryPeriodPreset, now: Date = new Date()): string {
+  const year = period === "LAST_MONTH" && now.getMonth() === 0
+    ? now.getFullYear() - 1
+    : now.getFullYear();
+  const monthIndex = period === "LAST_MONTH"
+    ? (now.getMonth() + 11) % 12
+    : now.getMonth();
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+}
+
+function resolveDateRange(
+  period: HistoryPeriodPreset,
+  customFrom: string,
+  customTo: string,
+  now: Date = new Date(),
+): { from?: string; to?: string } {
+  if (period === "THIS_MONTH") {
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    return {
+      from: formatDateYmd(y, m, 1),
+      to: formatDateYmd(y, m, lastDay),
+    };
+  }
+  if (period === "LAST_MONTH") {
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const y = prev.getFullYear();
+    const m = prev.getMonth();
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    return {
+      from: formatDateYmd(y, m, 1),
+      to: formatDateYmd(y, m, lastDay),
+    };
+  }
+  if (period === "CUSTOM") {
+    const trimmedFrom = customFrom.trim();
+    const trimmedTo = customTo.trim();
+    return {
+      ...(trimmedFrom ? { from: trimmedFrom } : {}),
+      ...(trimmedTo ? { to: trimmedTo } : {}),
+    };
+  }
+  return {};
+}
+
+const periodFilters: { value: HistoryPeriodPreset; label: string }[] = [
+  { value: "ALL", label: "Tất cả" },
+  { value: "THIS_MONTH", label: "Tháng này" },
+  { value: "LAST_MONTH", label: "Tháng trước" },
+  { value: "CUSTOM", label: "Tùy chọn" },
+];
 
 function getTransactionAmount(transaction: Transaction): string {
   const prefix = transaction.direction === "CREDIT" ? "+" : "−";
@@ -95,18 +166,75 @@ export function HistoryScreen() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<unknown>();
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [serverSummary, setServerSummary] = useState<AccountMonthlySummary | null>(null);
   const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>("ALL");
   const [directionFilter, setDirectionFilter] = useState<HistoryDirectionFilter>("ALL");
+  const [periodFilter, setPeriodFilter] = useState<HistoryPeriodPreset>("ALL");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [appliedQuery, setAppliedQuery] = useState("");
+
+  const buildFilterParams = useCallback(
+    (overrides?: {
+      status?: HistoryStatusFilter;
+      direction?: HistoryDirectionFilter;
+      period?: HistoryPeriodPreset;
+      from?: string;
+      to?: string;
+      q?: string;
+    }): TransactionFilterParams => {
+      const nextStatus = overrides?.status ?? statusFilter;
+      const nextDirection = overrides?.direction ?? directionFilter;
+      const nextPeriod = overrides?.period ?? periodFilter;
+      const nextFrom = overrides?.from ?? customFrom;
+      const nextTo = overrides?.to ?? customTo;
+      const nextQuery = (overrides?.q ?? appliedQuery).trim();
+      const range = resolveDateRange(nextPeriod, nextFrom, nextTo);
+
+      return {
+        ...(nextStatus !== "ALL" ? { status: nextStatus } : {}),
+        ...(nextDirection !== "ALL" ? { direction: nextDirection } : {}),
+        ...range,
+        ...(nextQuery ? { q: nextQuery } : {}),
+      };
+    },
+    [appliedQuery, customFrom, customTo, directionFilter, periodFilter, statusFilter],
+  );
+
+  const fetchSummarySafely = useCallback(
+    async (accountId: string, period: HistoryPeriodPreset) => {
+      if (typeof getAccountSummary !== "function") {
+        setServerSummary(null);
+        return;
+      }
+      try {
+        const month = resolveMonthParam(period);
+        const summary = await getAccountSummary(accountId, { auth, month });
+        setServerSummary(summary);
+      } catch {
+        setServerSummary(null);
+      }
+    },
+    [auth],
+  );
 
   const loadAccountTransactions = useCallback(
-    async (accountId: string) => {
+    async (accountId: string, filters?: TransactionFilterParams, period: HistoryPeriodPreset = periodFilter) => {
       setIsLoading(true);
       setError(undefined);
+      setExportNotice(null);
       setTransactions([]);
       setNextCursor(null);
       try {
-        const page = await listTransactions(accountId, { auth, limit: 20 });
+        const effectiveFilters = filters ?? buildFilterParams();
+        const [page] = await Promise.all([
+          listTransactions(accountId, { auth, limit: 20, ...effectiveFilters }),
+          fetchSummarySafely(accountId, period),
+        ]);
         setTransactions(page.items);
         setNextCursor(page.nextCursor);
       } catch (requestError: unknown) {
@@ -115,7 +243,7 @@ export function HistoryScreen() {
         setIsLoading(false);
       }
     },
-    [auth],
+    [auth, buildFilterParams, fetchSummarySafely, periodFilter],
   );
 
   const loadInitial = useCallback(async () => {
@@ -140,13 +268,18 @@ export function HistoryScreen() {
       if (!activeAccount) {
         selectedAccountIdRef.current = null;
         setSelectedAccountId(null);
+        setServerSummary(null);
         setIsLoading(false);
         return;
       }
 
       selectedAccountIdRef.current = activeAccount.id;
       setSelectedAccountId(activeAccount.id);
-      const page = await listTransactions(activeAccount.id, { auth, limit: 20 });
+      const activeFilters = buildFilterParams();
+      const [page] = await Promise.all([
+        listTransactions(activeAccount.id, { auth, limit: 20, ...activeFilters }),
+        fetchSummarySafely(activeAccount.id, periodFilter),
+      ]);
       setTransactions(page.items);
       setNextCursor(page.nextCursor);
     } catch (requestError: unknown) {
@@ -154,7 +287,7 @@ export function HistoryScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [accessToken, auth]);
+  }, [accessToken, auth, buildFilterParams, fetchSummarySafely, periodFilter]);
 
   const handleSelectAccount = useCallback(
     (accountId: string) => {
@@ -165,6 +298,53 @@ export function HistoryScreen() {
     },
     [loadAccountTransactions],
   );
+
+  const handleSelectStatus = useCallback(
+    (nextStatus: HistoryStatusFilter) => {
+      setStatusFilter(nextStatus);
+      if (!selectedAccountIdRef.current) return;
+      void loadAccountTransactions(
+        selectedAccountIdRef.current,
+        buildFilterParams({ status: nextStatus }),
+      );
+    },
+    [buildFilterParams, loadAccountTransactions],
+  );
+
+  const handleSelectDirection = useCallback(
+    (nextDirection: HistoryDirectionFilter) => {
+      setDirectionFilter(nextDirection);
+      if (!selectedAccountIdRef.current) return;
+      void loadAccountTransactions(
+        selectedAccountIdRef.current,
+        buildFilterParams({ direction: nextDirection }),
+      );
+    },
+    [buildFilterParams, loadAccountTransactions],
+  );
+
+  const handleSelectPeriod = useCallback(
+    (nextPeriod: HistoryPeriodPreset) => {
+      setPeriodFilter(nextPeriod);
+      if (!selectedAccountIdRef.current || nextPeriod === "CUSTOM") return;
+      void loadAccountTransactions(
+        selectedAccountIdRef.current,
+        buildFilterParams({ period: nextPeriod }),
+        nextPeriod,
+      );
+    },
+    [buildFilterParams, loadAccountTransactions],
+  );
+
+  const handleApplySearchAndDates = useCallback(() => {
+    const trimmed = searchInput.trim();
+    setAppliedQuery(trimmed);
+    if (!selectedAccountIdRef.current) return;
+    void loadAccountTransactions(
+      selectedAccountIdRef.current,
+      buildFilterParams({ q: trimmed }),
+    );
+  }, [buildFilterParams, loadAccountTransactions, searchInput]);
 
   useFocusEffect(
     useCallback(() => {
@@ -181,6 +361,7 @@ export function HistoryScreen() {
         auth,
         cursor: nextCursor,
         limit: 20,
+        ...buildFilterParams(),
       });
       setTransactions((currentTransactions) => [...currentTransactions, ...page.items]);
       setNextCursor(page.nextCursor);
@@ -189,10 +370,44 @@ export function HistoryScreen() {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [auth, isLoadingMore, nextCursor, selectedAccountId]);
+  }, [auth, buildFilterParams, isLoadingMore, nextCursor, selectedAccountId]);
+
+  const handleExportStatement = useCallback(
+    async (format: StatementExportFormat) => {
+      if (!selectedAccountId || isExporting) return;
+      setIsExporting(true);
+      setExportNotice(null);
+      try {
+        const range = resolveDateRange(periodFilter, customFrom, customTo);
+        const content = await exportAccountStatement(selectedAccountId, {
+          auth,
+          ...range,
+          format,
+        });
+        try {
+          await Clipboard.setStringAsync(content);
+        } catch {
+          // Clipboard may not be available in all test/device contexts
+        }
+        await Share.share({
+          title: `Sao kê tài khoản NOVA (${format.toUpperCase()})`,
+          message: content,
+        });
+        setExportNotice(
+          `Đã chuẩn bị sao kê ${format.toUpperCase()} (${range.from ?? "từ đầu"} → ${range.to ?? "hiện tại"}).`,
+        );
+      } catch (exportError: unknown) {
+        setError(exportError);
+      } finally {
+        setIsExporting(false);
+      }
+    },
+    [auth, customFrom, customTo, isExporting, periodFilter, selectedAccountId],
+  );
 
   const visibleTransactions = filterTransactions(transactions, statusFilter, directionFilter);
-  const monthlySummary = useMemo(() => summarizeMonthlyCashFlow(transactions), [transactions]);
+  const localSummary = useMemo(() => summarizeMonthlyCashFlow(transactions), [transactions]);
+  const monthlySummary = serverSummary ?? localSummary;
 
   return (
     <Screen>
@@ -270,10 +485,33 @@ export function HistoryScreen() {
               </View>
             </View>
             <Text style={styles.summaryHint}>
-              {nextCursor
-                ? `Đang tổng hợp trên ${transactions.length} giao dịch mới nhất đã tải. Bấm "Tải thêm giao dịch" để tính thêm các trang cũ hơn.`
-                : `Tổng hợp trên toàn bộ ${transactions.length} giao dịch đã tải.`}
+              {serverSummary
+                ? `Thống kê chính xác toàn bộ ${serverSummary.succeededCount} giao dịch thành công trong tháng trên hệ thống.`
+                : nextCursor
+                  ? `Đang tổng hợp trên ${transactions.length} giao dịch mới nhất đã tải. Bấm "Tải thêm giao dịch" để tính thêm các trang cũ hơn.`
+                  : `Tổng hợp trên toàn bộ ${transactions.length} giao dịch đã tải.`}
             </Text>
+            <View style={styles.exportRow}>
+              <Button
+                label="Xuất sao kê"
+                loading={isExporting}
+                onPress={() => void handleExportStatement("csv")}
+                testID="history-export-statement"
+                variant="outline"
+              />
+              <Button
+                label="Xuất sao kê HTML"
+                loading={isExporting}
+                onPress={() => void handleExportStatement("html")}
+                testID="history-export-statement-html"
+                variant="secondary"
+              />
+            </View>
+            {exportNotice ? (
+              <Text style={styles.exportNotice} testID="history-export-notice">
+                {exportNotice}
+              </Text>
+            ) : null}
           </View>
         ) : null}
 
@@ -284,6 +522,72 @@ export function HistoryScreen() {
             </View>
             <Text style={styles.filterTitle}>Bộ lọc giao dịch</Text>
           </View>
+          <View style={styles.searchRow}>
+            <View style={styles.searchFieldWrap}>
+              <TextField
+                autoCapitalize="none"
+                label="Tìm kiếm theo nội dung, đối tác hoặc mã tham chiếu"
+                onChangeText={setSearchInput}
+                onSubmitEditing={handleApplySearchAndDates}
+                placeholder="VD: Nhận lương, REF-..."
+                returnKeyType="search"
+                testID="history-search-input"
+                value={searchInput}
+              />
+            </View>
+            <Button
+              label="Tìm"
+              onPress={handleApplySearchAndDates}
+              testID="history-search-submit"
+              variant="secondary"
+            />
+          </View>
+          <Text style={styles.filterLabel}>Khoảng thời gian</Text>
+          <View style={styles.filterRow}>
+            {periodFilters.map((filter) => {
+              const selected = periodFilter === filter.value;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  key={filter.value}
+                  onPress={() => handleSelectPeriod(filter.value)}
+                  style={[styles.filterChip, selected ? styles.filterChipSelected : null]}
+                  testID={`history-period-${filter.value.toLowerCase()}`}
+                >
+                  <Text style={[styles.filterChipLabel, selected ? styles.filterChipLabelSelected : null]}>
+                    {filter.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {periodFilter === "CUSTOM" ? (
+            <View style={styles.customDateBlock}>
+              <TextField
+                autoCapitalize="none"
+                label="Từ ngày (YYYY-MM-DD)"
+                onChangeText={setCustomFrom}
+                placeholder="2026-11-01"
+                testID="history-custom-from"
+                value={customFrom}
+              />
+              <TextField
+                autoCapitalize="none"
+                label="Đến ngày (YYYY-MM-DD)"
+                onChangeText={setCustomTo}
+                placeholder="2026-11-30"
+                testID="history-custom-to"
+                value={customTo}
+              />
+              <Button
+                label="Áp dụng khoảng thời gian"
+                onPress={handleApplySearchAndDates}
+                testID="history-apply-custom-dates"
+                variant="outline"
+              />
+            </View>
+          ) : null}
           <Text style={styles.filterLabel}>Trạng thái</Text>
           <View style={styles.filterRow}>
             {statusFilters.map((filter) => {
@@ -293,7 +597,7 @@ export function HistoryScreen() {
                   accessibilityRole="button"
                   accessibilityState={{ selected }}
                   key={filter.value}
-                  onPress={() => setStatusFilter(filter.value)}
+                  onPress={() => handleSelectStatus(filter.value)}
                   style={[styles.filterChip, selected ? styles.filterChipSelected : null]}
                   testID={`history-status-${filter.value.toLowerCase()}`}
                 >
@@ -313,7 +617,7 @@ export function HistoryScreen() {
                   accessibilityRole="button"
                   accessibilityState={{ selected }}
                   key={filter.value}
-                  onPress={() => setDirectionFilter(filter.value)}
+                  onPress={() => handleSelectDirection(filter.value)}
                   style={[styles.filterChip, selected ? styles.filterChipSelected : null]}
                   testID={`history-direction-${filter.value.toLowerCase()}`}
                 >
@@ -462,6 +766,25 @@ const styles = StyleSheet.create({
   summaryCellLabel: { ...typography.caption, color: colors.muted },
   summaryCellValue: { ...typography.bodyStrong, color: colors.text },
   summaryHint: { ...typography.caption, color: colors.subtle },
+  exportRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+  },
+  exportNotice: {
+    ...typography.caption,
+    color: colors.success,
+    fontWeight: "600",
+  },
+  searchRow: {
+    gap: spacing.sm,
+  },
+  searchFieldWrap: {
+    width: "100%",
+  },
+  customDateBlock: {
+    gap: spacing.sm,
+  },
   filterCard: {
     gap: spacing.sm,
     padding: spacing.mlg,

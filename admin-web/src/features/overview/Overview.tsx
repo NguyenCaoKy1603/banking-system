@@ -1,15 +1,18 @@
+import { formatMinor } from "../../api";
 import { Heading } from "../../components/common/Heading";
 import { useStaff } from "../../context/StaffContext";
-import type { Action, NavTab } from "../../types";
+import type { Action, LedgerReconciliation, NavTab } from "../../types";
 
 interface OverviewProps {
   actions: Action[];
   summary: Record<string, number>;
+  reconciliation?: LedgerReconciliation | null;
   onNavigate: (tab: NavTab) => void;
 }
 
-export function Overview({ actions, summary, onNavigate }: OverviewProps) {
+export function Overview({ actions, summary, reconciliation, onNavigate }: OverviewProps) {
   const { roleList, canReadApprovals, hasPermission } = useStaff();
+  const isBalanced = reconciliation?.status === "BALANCED";
 
   return (
     <div className="overview-page">
@@ -20,6 +23,21 @@ export function Overview({ actions, summary, onNavigate }: OverviewProps) {
           <span>Hệ thống Core</span>
           <strong>ONLINE</strong>
           <small>PostgreSQL 16 Healthy</small>
+        </article>
+
+        <article className="metric-card" data-testid="ledger-reconciliation-card">
+          <span>Đối soát Sổ cái (Core Ledger Health)</span>
+          <strong
+            style={{ color: reconciliation ? (isBalanced ? "#15803d" : "#b91c1c") : undefined }}
+            className={reconciliation && !isBalanced ? "danger-text" : ""}
+          >
+            {reconciliation ? reconciliation.status : "CHƯA KIỂM TRA"}
+          </strong>
+          <small>
+            {reconciliation
+              ? `Journal lệch: ${reconciliation.unbalancedJournalCount} · Chênh lệch: ${formatMinor(reconciliation.discrepancyMinor)} (Tài khoản: ${formatMinor(reconciliation.paymentAccountsTotalMinor)} / Sổ cái: ${formatMinor(reconciliation.ledgerPaymentAccountsNetMinor)})`
+              : "Cần quyền outbox.read để xem đối soát sổ cái"}
+          </small>
         </article>
 
         <article className="metric-card">
@@ -55,6 +73,15 @@ export function Overview({ actions, summary, onNavigate }: OverviewProps) {
               onClick={() => onNavigate("customers")}
             >
               Mở dữ liệu tài khoản
+            </button>
+          ) : null}
+          {canReadApprovals ? (
+            <button
+              type="button"
+              className="secondary quick-button"
+              onClick={() => onNavigate("policy")}
+            >
+              Cấu hình Chính sách & Biểu phí
             </button>
           ) : null}
           {canReadApprovals ? (

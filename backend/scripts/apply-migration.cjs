@@ -149,6 +149,11 @@ const requiredTablesByMigration = {
   "043_retire_staff_invite_approval": [],
   "045_transaction_anomaly_detection": ["transaction_anomalies"],
   "046_biometric_authentication": [],
+  "047_normalize_ledger_account_refs": [],
+  "048_daily_transfer_limit_policy": [],
+  "049_interbank_transfers_and_held_funds": [],
+  "050_password_reset_and_device_metadata": [],
+  "051_dynamic_transfer_fee_policy": [],
 };
 
 async function main() {

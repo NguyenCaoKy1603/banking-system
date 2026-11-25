@@ -1,8 +1,13 @@
 import {
   beginTotpEnrollment as beginTotpEnrollmentApi,
+  changePassword as changePasswordApi,
+  forgotPassword as forgotPasswordApi,
+  listDevices as listDevicesApi,
   login as loginApi,
   refreshSession as refreshSessionApi,
+  resetPassword as resetPasswordApi,
   revokeAllSessions,
+  revokeDevice as revokeDeviceApi,
   register as registerApi,
   cancelRegistration as cancelRegistrationApi,
   resendRegistrationChallenge as resendRegistrationChallengeApi,
@@ -663,6 +668,97 @@ describe("authApi", () => {
             code: "123456",
           }),
         }),
+      );
+    });
+  });
+
+  describe("password change, password reset, and device management", () => {
+    const authOptions = {
+      accessToken: "access-token-active",
+      deviceId: "device-test",
+      refreshAccessToken: jest.fn<Promise<string | null>, []>(),
+    };
+
+    it("gửi POST /auth/password/change và kiểm tra payload trả về", async () => {
+      fetchMock.mockResolvedValueOnce(
+        createJsonResponse({ status: "PASSWORD_CHANGED", sessionsRevoked: true }, 200),
+      );
+
+      const res = await changePasswordApi(
+        {
+          currentPassword: "OldPassword!12",
+          newPassword: "NewPassword!34",
+          stepUp: { method: "TOTP", challengeId: "chal-1", proof: "123456" },
+        },
+        authOptions,
+      );
+
+      expect(res).toEqual({ status: "PASSWORD_CHANGED", sessionsRevoked: true });
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${API_BASE_URL}/auth/password/change`,
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("gửi POST /auth/password/forgot và POST /auth/password/reset", async () => {
+      const challenge: AuthChallengeResponse = {
+        challengeId: "pw-reset-chal-1",
+        expiresAt: "2026-11-25T10:00:00Z",
+        methods: ["EMAIL_OTP"],
+        method: "EMAIL_OTP",
+        purpose: "PASSWORD_RESET",
+        resendAfter: "2026-11-25T09:56:00Z",
+        maskedDestination: "te****@example.com",
+      };
+      fetchMock.mockResolvedValueOnce(createJsonResponse(challenge, 202));
+
+      const forgotRes = await forgotPasswordApi({ email: "tester@example.com" }, DEVICE_OPTIONS);
+      expect(forgotRes.purpose).toBe("PASSWORD_RESET");
+
+      fetchMock.mockResolvedValueOnce(
+        createJsonResponse({ status: "PASSWORD_RESET", sessionsRevoked: true }, 200),
+      );
+      const resetRes = await resetPasswordApi(
+        {
+          challengeId: "pw-reset-chal-1",
+          proof: "654321",
+          newPassword: "NewStrongPass!2026",
+        },
+        DEVICE_OPTIONS,
+      );
+      expect(resetRes).toEqual({ status: "PASSWORD_RESET", sessionsRevoked: true });
+    });
+
+    it("gửi GET /auth/devices và DELETE /auth/devices/:deviceId", async () => {
+      fetchMock.mockResolvedValueOnce(
+        createJsonResponse(
+          {
+            items: [
+              {
+                id: "dev-uuid-1",
+                deviceId: "device-test",
+                deviceName: "NOVA App (ios)",
+                attestationStatus: "PENDING",
+                isCurrentDevice: true,
+                lastSeenAt: "2026-11-25T09:00:00Z",
+                createdAt: "2026-11-25T08:00:00Z",
+                activeSessionCount: 1,
+              },
+            ],
+          },
+          200,
+        ),
+      );
+
+      const listRes = await listDevicesApi(authOptions);
+      expect(listRes.items).toHaveLength(1);
+      expect(listRes.items[0]?.isCurrentDevice).toBe(true);
+
+      fetchMock.mockResolvedValueOnce(createJsonResponse(null, 204));
+      await expect(revokeDeviceApi("dev-uuid-1", authOptions)).resolves.toBeUndefined();
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        `${API_BASE_URL}/auth/devices/dev-uuid-1`,
+        expect.objectContaining({ method: "DELETE" }),
       );
     });
   });

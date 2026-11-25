@@ -33,6 +33,8 @@ export type AuthUser = {
 
 export type OtpPurpose =
   | "REGISTRATION_VERIFY"
+  | "PASSWORD_RESET"
+  | "PASSWORD_CHANGE"
   | "LOGIN"
   | "TRANSFER"
   | "SAVINGS_OPENING"
@@ -42,6 +44,17 @@ export type OtpPurpose =
   | "CREDIT_PAYMENT"
   | "CARD_UNLOCK"
   | "CARD_REPORT_LOST";
+
+export type CustomerDeviceSummary = {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  attestationStatus: "PENDING" | "VERIFIED" | "REVOKED";
+  isCurrentDevice: boolean;
+  lastSeenAt: string;
+  createdAt: string;
+  activeSessionCount: number;
+};
 
 export type LoginResponse = {
   accessToken: string;
@@ -122,6 +135,36 @@ export type TransactionDetail = Transaction & {
   completedAt: string | null;
 };
 
+export type TransactionListFilters = {
+  status?: TransferStatus;
+  direction?: "CREDIT" | "DEBIT";
+  from?: string;
+  to?: string;
+  q?: string;
+};
+
+export type AccountMonthlySummary = {
+  accountId: string;
+  month: string;
+  monthLabel: string;
+  currency: Currency;
+  totalIncomeMinor: string;
+  totalExpenseMinor: string;
+  netMinor: string;
+  succeededCount: number;
+  creditCount: number;
+  debitCount: number;
+};
+
+export type StatementExportFormat = "csv" | "html";
+
+export type AccountStatementExport = {
+  format: StatementExportFormat;
+  contentType: string;
+  filename: string;
+  body: string;
+};
+
 export type Beneficiary = {
   id: string;
   displayName: string;
@@ -159,6 +202,8 @@ export type ControlPolicy = {
   transfersEnabled: boolean;
   allowlisted: boolean;
   maxTransferAmountMinor: string;
+  dailyTransferLimitMinor?: string;
+  transferFeeMinor?: string;
   stepUpMethods: Array<"OTP" | "TOTP" | "BIOMETRIC">;
   savingsEnabled: boolean;
   savingsAllowlisted: boolean;

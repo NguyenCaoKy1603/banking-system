@@ -10,6 +10,8 @@ export type ControlPolicyDbRow = {
   transfers_enabled: boolean;
   allowlist_enabled: boolean;
   max_transfer_amount_minor: string;
+  daily_transfer_limit_minor?: string;
+  transfer_fee_minor?: string;
   step_up_methods: string[];
   savings_enabled: boolean;
   savings_allowlist_enabled: boolean;
@@ -25,6 +27,9 @@ export type ControlPolicyDbRow = {
   updated_at: Date | string;
 };
 
+const DEFAULT_DAILY_TRANSFER_LIMIT_MINOR = "50000000";
+const DEFAULT_TRANSFER_FEE_MINOR = "1000";
+
 function unavailable(): never {
   throw new RelationalConflictError(
     "CONTROL_POLICY_UNAVAILABLE",
@@ -36,6 +41,16 @@ function positiveMinor(value: unknown): bigint {
   try {
     const parsed = BigInt(String(value));
     if (parsed <= 0n) unavailable();
+    return parsed;
+  } catch {
+    unavailable();
+  }
+}
+
+function nonNegativeMinor(value: unknown): bigint {
+  try {
+    const parsed = BigInt(String(value));
+    if (parsed < 0n) unavailable();
     return parsed;
   } catch {
     unavailable();
@@ -71,7 +86,8 @@ export class ControlPolicyRepository {
     try {
       const result = await this.client.query<ControlPolicyDbRow>(
         `SELECT config_version, global_kill_switch, transfers_enabled,
-                allowlist_enabled, max_transfer_amount_minor, step_up_methods,
+                allowlist_enabled, max_transfer_amount_minor,
+                daily_transfer_limit_minor, transfer_fee_minor, step_up_methods,
                 savings_enabled, savings_allowlist_enabled, max_savings_amount_minor,
                 savings_step_up_methods, credit_enabled, credit_allowlisted,
                 credit_payments_enabled, card_controls_enabled,
@@ -86,6 +102,12 @@ export class ControlPolicyRepository {
       // Validate every field that can affect a command.  A malformed policy
       // must fail closed rather than falling back to process environment.
       positiveMinor(row.max_transfer_amount_minor);
+      if (row.daily_transfer_limit_minor !== undefined && row.daily_transfer_limit_minor !== null) {
+        positiveMinor(row.daily_transfer_limit_minor);
+      }
+      if (row.transfer_fee_minor !== undefined && row.transfer_fee_minor !== null) {
+        nonNegativeMinor(row.transfer_fee_minor);
+      }
       positiveMinor(row.max_savings_amount_minor);
       positiveMinor(row.max_credit_payment_amount_minor);
       methods(row.step_up_methods);
@@ -99,13 +121,35 @@ export class ControlPolicyRepository {
     }
   }
 
-  async assertTransferAllowed(customerId: string, amountMinor: bigint): Promise<void> {
+  getTransferFeeMinor(policy: ControlPolicyDbRow): bigint {
+    return nonNegativeMinor(policy.transfer_fee_minor ?? DEFAULT_TRANSFER_FEE_MINOR);
+  }
+
+  async assertTransferAllowed(customerId: string, amountMinor: bigint): Promise<ControlPolicyDbRow> {
     const policy = await this.read();
     if (policy.global_kill_switch || !policy.transfers_enabled) {
       throw new RelationalConflictError("TRANSFER_DISABLED", "Transfers are temporarily unavailable.");
     }
     if (amountMinor <= 0n || amountMinor > positiveMinor(policy.max_transfer_amount_minor)) {
       throw new RelationalConflictError("TRANSFER_LIMIT_EXCEEDED", "Transfer amount exceeds the current policy limit.");
+    }
+    const dailyLimit = positiveMinor(
+      policy.daily_transfer_limit_minor ?? DEFAULT_DAILY_TRANSFER_LIMIT_MINOR,
+    );
+    const dailyResult = await this.client.query<{ daily_total_minor?: string }>(
+      `SELECT COALESCE(SUM(amount_minor), 0)::text AS daily_total_minor
+         FROM transfers
+        WHERE customer_id = $1
+          AND status = 'SUCCEEDED'
+          AND created_at >= (date_trunc('day', NOW() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh')`,
+      [customerId],
+    );
+    const dailyTotal = BigInt(String(dailyResult.rows[0]?.daily_total_minor ?? "0"));
+    if (dailyTotal + amountMinor > dailyLimit) {
+      throw new RelationalConflictError(
+        "DAILY_TRANSFER_LIMIT_EXCEEDED",
+        "Tổng số tiền chuyển trong ngày vượt quá hạn mức cho phép.",
+      );
     }
     if (policy.allowlist_enabled) {
       const entitlement = await this.client.query(
@@ -118,6 +162,7 @@ export class ControlPolicyRepository {
       }
     }
     requireRuntimeTotp(policy.step_up_methods, "TRANSFER_STEP_UP_REQUIRED", "A supported transfer TOTP step-up method is not configured.");
+    return policy;
   }
 
   async assertSavingsOpeningAllowed(customerId: string, amountMinor: bigint): Promise<void> {

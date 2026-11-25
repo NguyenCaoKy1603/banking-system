@@ -59,6 +59,8 @@ export type AuthChallengeResponse = {
   purpose:
     | "REGISTRATION_VERIFY"
     | "REGISTRATION_EMAIL_VERIFY"
+    | "PASSWORD_RESET"
+    | "PASSWORD_CHANGE"
     | "LOGIN"
     | "TRANSFER"
     | "SAVINGS_OPENING"
@@ -149,7 +151,53 @@ export type TotpConfirmationResponse = {
 export type MfaLifecyclePurpose =
   | "RECOVERY_CODE_ROTATION"
   | "MFA_FACTOR_CHANGE"
-  | "MFA_FACTOR_REMOVAL";
+  | "MFA_FACTOR_REMOVAL"
+  | "PASSWORD_CHANGE";
+
+export type ChangePasswordRequest = {
+  currentPassword: string;
+  newPassword: string;
+  stepUp?: {
+    method: "TOTP" | "BIOMETRIC";
+    challengeId: string;
+    proof: string;
+  };
+};
+
+export type ChangePasswordResponse = {
+  status: "PASSWORD_CHANGED";
+  sessionsRevoked: boolean;
+};
+
+export type ForgotPasswordRequest = {
+  email: string;
+};
+
+export type ResetPasswordRequest = {
+  challengeId: string;
+  proof: string;
+  newPassword: string;
+};
+
+export type ResetPasswordResponse = {
+  status: "PASSWORD_RESET";
+  sessionsRevoked: boolean;
+};
+
+export type CustomerDevice = {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  attestationStatus: "PENDING" | "VERIFIED" | "REVOKED";
+  isCurrentDevice: boolean;
+  lastSeenAt: string;
+  createdAt: string;
+  activeSessionCount: number;
+};
+
+export type CustomerDevicesResponse = {
+  items: CustomerDevice[];
+};
 
 export type RecoveryStartedResponse = {
   status: "RECOVERY_STARTED";

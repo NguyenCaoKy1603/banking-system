@@ -1,17 +1,19 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 
-import { unauthorized, rateLimited } from "../errors.js";
-import type { AuthUser, LoginResponse } from "../types.js";
-import { createOpaqueToken, hashOpaqueToken, hashPassword, verifyPasswordAsync } from "../security.js";
+import { forbiddenWithCode, invalidRequest, notFound, rateLimited, unauthorized } from "../errors.js";
+import type { AuthUser, CustomerDeviceSummary, LoginResponse } from "../types.js";
+import { createOpaqueToken, hashOpaqueToken, hashPassword, hashPasswordAsync, validateStrongPassword, verifyPasswordAsync } from "../security.js";
 import { UnitOfWork } from "./unitOfWork.js";
 import { CustomerRepository, type CustomerRow } from "./repositories/customerRepository.js";
 import { AuditRepository } from "./repositories/auditRepository.js";
+import { MfaRepository } from "./repositories/mfaRepository.js";
 
 const ACCESS_TOKEN_TTL_MS = 15 * 60 * 1000;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const LOGIN_WINDOW_SECONDS = 600;
 const LOGIN_MAX_ATTEMPTS = 10;
+const CUSTOMER_ACCESS_LOCKED_MESSAGE = "Tài khoản khách hàng đã bị khóa truy cập. Vui lòng liên hệ bộ phận hỗ trợ.";
 
 const DUMMY_PASSWORD = hashPassword("relational-auth-dummy-password", Buffer.alloc(16, 0));
 
@@ -66,6 +68,7 @@ export class RelationalAuthService {
         phoneNumber: String(row.phone_number),
         passwordSalt: String(row.password_salt),
         passwordDigest: String(row.password_digest),
+        accessStatus: String(row.access_status ?? "ACTIVE") === "LOCKED" ? ("LOCKED" as const) : ("ACTIVE" as const),
         createdAt: new Date(String(row.created_at)).toISOString(),
       } satisfies CustomerRow : null;
       const valid = await verifyPasswordAsync(
@@ -80,23 +83,31 @@ export class RelationalAuthService {
           : { kind: "invalid" as const };
       }
       await this.resetLoginBuckets(client, keys);
+      if (customer.accessStatus !== "ACTIVE") {
+        return { kind: "locked" as const };
+      }
       return { kind: "ok" as const, customer };
     });
     if (outcome.kind === "blocked") throw rateLimited("Too many login attempts.", outcome.retryAfterSeconds);
     if (outcome.kind === "invalid") throw unauthorized("Invalid credentials.");
+    if (outcome.kind === "locked") throw forbiddenWithCode("CUSTOMER_ACCESS_LOCKED", CUSTOMER_ACCESS_LOCKED_MESSAGE);
     return publicUser(outcome.customer);
   }
 
-  async issueSession(customerId: string, deviceId: string): Promise<LoginResponse> {
+  async issueSession(customerId: string, deviceId: string, deviceName?: string): Promise<LoginResponse> {
     const normalizedDeviceId = normalizeDeviceId(deviceId);
     return this.unitOfWork.transaction(async ({ client }) => {
       const customers = new CustomerRepository(client);
       const customer = await customers.findCustomerById(customerId);
       if (!customer) throw unauthorized("User session is invalid.");
+      if (customer.accessStatus && customer.accessStatus !== "ACTIVE") {
+        throw forbiddenWithCode("CUSTOMER_ACCESS_LOCKED", CUSTOMER_ACCESS_LOCKED_MESSAGE);
+      }
       const device = await customers.createDevice({
         id: randomUUID(),
         customerId: customer.id,
         deviceId: normalizedDeviceId,
+        deviceName,
         attestationStatus: "PENDING",
       });
       const accessToken = createOpaqueToken();
@@ -143,7 +154,8 @@ export class RelationalAuthService {
     const tokenHash = hashOpaqueToken(String(accessToken ?? ""));
     return this.unitOfWork.transaction(async ({ client }) => {
       const result = await client.query(
-        `SELECT c.id, c.full_name, c.email, c.phone_number, c.created_at
+        `SELECT c.id, c.full_name, c.email, c.phone_number, c.access_status, c.created_at,
+                d.id AS device_record_id
            FROM auth_sessions s
            JOIN customers c ON c.id = s.customer_id
            JOIN customer_devices d ON d.id = s.device_id
@@ -156,6 +168,18 @@ export class RelationalAuthService {
       );
       const row = result.rows[0] as Record<string, unknown> | undefined;
       if (!row) throw unauthorized("Access token is invalid or expired.");
+      if (String(row.access_status ?? "ACTIVE") !== "ACTIVE") {
+        throw forbiddenWithCode("CUSTOMER_ACCESS_LOCKED", CUSTOMER_ACCESS_LOCKED_MESSAGE);
+      }
+      if (row.device_record_id) {
+        await client.query(
+          `UPDATE customer_devices
+              SET last_seen_at = NOW()
+            WHERE id = $1
+              AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '60 seconds')`,
+          [row.device_record_id],
+        );
+      }
       return {
         id: String(row.id),
         fullName: String(row.full_name),
@@ -188,7 +212,7 @@ export class RelationalAuthService {
     const outcome = await this.unitOfWork.transaction(async ({ client }) => {
       const sessionResult = await client.query(
         `SELECT s.*, r.expires_at AS refresh_expires_at, r.revoked_at AS refresh_revoked_at,
-                c.full_name, c.email, c.phone_number, c.created_at,
+                c.full_name, c.email, c.phone_number, c.access_status, c.created_at,
                 d.device_id AS bound_device_id, d.revoked_at AS device_revoked_at
            FROM auth_sessions s
            JOIN customers c ON c.id = s.customer_id
@@ -204,6 +228,12 @@ export class RelationalAuthService {
       const row = sessionResult.rows[0] as Record<string, unknown> | undefined;
       if (!row || row.device_revoked_at || String(row.bound_device_id) !== normalizedDeviceId) {
         throw unauthorized("Refresh token is invalid.");
+      }
+      if (String(row.access_status ?? "ACTIVE") !== "ACTIVE") {
+        await client.query("UPDATE auth_sessions SET revoked_at = NOW() WHERE family_id = $1 AND revoked_at IS NULL", [row.family_id]);
+        await client.query("UPDATE refresh_session_families SET revoked_at = NOW() WHERE family_id = $1 AND revoked_at IS NULL", [row.family_id]);
+        await client.query("UPDATE refresh_session_records SET revoked_at = NOW() WHERE family_id = $1 AND revoked_at IS NULL", [row.family_id]);
+        return { kind: "ACCESS_LOCKED" as const };
       }
       if (row.revoked_at || row.refresh_revoked_at) {
         // A rotated refresh token was presented again: revoke the complete
@@ -250,6 +280,10 @@ export class RelationalAuthService {
         deviceId: normalizedDeviceId,
         expiresAt: new Date(now + REFRESH_TOKEN_TTL_MS).toISOString(),
       });
+      await client.query(
+        `UPDATE customer_devices SET last_seen_at = NOW() WHERE id = $1`,
+        [row.device_id],
+      );
       await new AuditRepository(client).append({
         id: randomUUID(),
         eventType: "REFRESH_ROTATED",
@@ -280,6 +314,9 @@ export class RelationalAuthService {
     if (outcome.kind === "REUSE_DETECTED") {
       throw unauthorized("Refresh token reuse detected.");
     }
+    if (outcome.kind === "ACCESS_LOCKED") {
+      throw forbiddenWithCode("CUSTOMER_ACCESS_LOCKED", CUSTOMER_ACCESS_LOCKED_MESSAGE);
+    }
     return outcome.session;
   }
 
@@ -308,15 +345,248 @@ export class RelationalAuthService {
     }, { maxRetries: 1 });
   }
 
+  private async revokeAllCustomerSessions(client: PoolClient, customerId: string): Promise<void> {
+    await client.query("UPDATE auth_sessions SET revoked_at = NOW() WHERE customer_id = $1 AND revoked_at IS NULL", [customerId]);
+    await client.query("UPDATE refresh_session_families SET revoked_at = NOW() WHERE customer_id = $1 AND revoked_at IS NULL", [customerId]);
+    await client.query("UPDATE refresh_session_records SET revoked_at = NOW() WHERE customer_id = $1 AND revoked_at IS NULL", [customerId]);
+  }
+
   async revokeAllSessions(customerId: string): Promise<void> {
     await this.unitOfWork.transaction(async ({ client }) => {
-      await client.query("UPDATE auth_sessions SET revoked_at = NOW() WHERE customer_id = $1 AND revoked_at IS NULL", [customerId]);
-      await client.query("UPDATE refresh_session_families SET revoked_at = NOW() WHERE customer_id = $1 AND revoked_at IS NULL", [customerId]);
-      await client.query("UPDATE refresh_session_records SET revoked_at = NOW() WHERE customer_id = $1 AND revoked_at IS NULL", [customerId]);
+      await this.revokeAllCustomerSessions(client, customerId);
       await new AuditRepository(client).append({
         id: randomUUID(),
         eventType: "ALL_SESSIONS_REVOKED",
         actorCustomerId: customerId,
+      });
+    }, { maxRetries: 1 });
+  }
+
+  async changePassword(input: {
+    customerId: string;
+    currentPassword: string;
+    newPassword: string;
+    deviceId: string;
+  }): Promise<void> {
+    const normalizedDeviceId = normalizeDeviceId(input.deviceId);
+    if (typeof input.currentPassword !== "string" || input.currentPassword.length === 0) {
+      throw invalidRequest("Mật khẩu hiện tại là bắt buộc.", {
+        currentPassword: "Mật khẩu hiện tại là bắt buộc.",
+      });
+    }
+    const validatedNew = validateStrongPassword(input.newPassword, "newPassword");
+    if (validatedNew === input.currentPassword) {
+      throw invalidRequest("Mật khẩu mới phải khác mật khẩu hiện tại.", {
+        newPassword: "Mật khẩu mới phải khác mật khẩu hiện tại.",
+      });
+    }
+
+    await this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query("SELECT * FROM customers WHERE id = $1 FOR UPDATE", [input.customerId]);
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) {
+        throw unauthorized("User session is invalid.");
+      }
+      if (String(row.access_status ?? "ACTIVE") !== "ACTIVE") {
+        throw forbiddenWithCode("CUSTOMER_ACCESS_LOCKED", CUSTOMER_ACCESS_LOCKED_MESSAGE);
+      }
+      const validCurrent = await verifyPasswordAsync(
+        input.currentPassword,
+        String(row.password_salt),
+        String(row.password_digest),
+      );
+      if (!validCurrent) {
+        throw unauthorized("Mật khẩu hiện tại không chính xác.");
+      }
+      const nextHash = await hashPasswordAsync(validatedNew);
+      await new CustomerRepository(client).updateCustomerPassword(input.customerId, nextHash.salt, nextHash.digest);
+      await this.revokeAllCustomerSessions(client, input.customerId);
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "PASSWORD_CHANGED",
+        actorCustomerId: input.customerId,
+        resourceId: input.customerId,
+        payload: { deviceId: normalizedDeviceId },
+      });
+    }, { maxRetries: 1 });
+  }
+
+  async preparePasswordReset(
+    email: string,
+    networkFingerprint: string,
+  ): Promise<{ normalizedEmail: string; customer: { id: string; email: string } | null }> {
+    const normalizedEmail = String(email ?? "").trim().toLowerCase();
+    if (!normalizedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      throw invalidRequest("Email không đúng định dạng.", { email: "Email không đúng định dạng." });
+    }
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const mfaRepo = new MfaRepository(client);
+      const emailLimit = await mfaRepo.atomicRateLimit({
+        bucketKey: `password-forgot:email:${normalizedEmail}`,
+        windowSeconds: 600,
+        maxAttempts: 3,
+      });
+      if (!emailLimit.allowed) {
+        throw rateLimited("Bạn đã yêu cầu đặt lại mật khẩu quá nhiều lần. Vui lòng thử lại sau.", emailLimit.retryAfterSeconds);
+      }
+      const netLimit = await mfaRepo.atomicRateLimit({
+        bucketKey: `password-forgot:net:${networkFingerprint}`,
+        windowSeconds: 600,
+        maxAttempts: 5,
+      });
+      if (!netLimit.allowed) {
+        throw rateLimited("Quá nhiều yêu cầu đặt lại mật khẩu từ thiết bị/mạng này. Vui lòng thử lại sau.", netLimit.retryAfterSeconds);
+      }
+      const result = await client.query(
+        "SELECT id, email, access_status FROM customers WHERE lower(email) = lower($1)",
+        [normalizedEmail],
+      );
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row || String(row.access_status ?? "ACTIVE") !== "ACTIVE") {
+        return { normalizedEmail, customer: null };
+      }
+      return {
+        normalizedEmail,
+        customer: {
+          id: String(row.id),
+          email: String(row.email),
+        },
+      };
+    });
+  }
+
+  async resetPassword(input: {
+    customerId: string;
+    newPassword: string;
+    deviceId: string;
+  }): Promise<void> {
+    const normalizedDeviceId = normalizeDeviceId(input.deviceId);
+    const validatedNew = validateStrongPassword(input.newPassword, "newPassword");
+
+    await this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query("SELECT * FROM customers WHERE id = $1 FOR UPDATE", [input.customerId]);
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      if (!row) {
+        throw unauthorized("Tài khoản không hợp lệ.");
+      }
+      if (String(row.access_status ?? "ACTIVE") !== "ACTIVE") {
+        throw forbiddenWithCode("CUSTOMER_ACCESS_LOCKED", CUSTOMER_ACCESS_LOCKED_MESSAGE);
+      }
+      const nextHash = await hashPasswordAsync(validatedNew);
+      await new CustomerRepository(client).updateCustomerPassword(input.customerId, nextHash.salt, nextHash.digest);
+      await this.revokeAllCustomerSessions(client, input.customerId);
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "PASSWORD_RESET",
+        actorCustomerId: input.customerId,
+        resourceId: input.customerId,
+        payload: { deviceId: normalizedDeviceId },
+      });
+    }, { maxRetries: 1 });
+  }
+
+  async listDevices(customerId: string, currentDeviceId: string): Promise<CustomerDeviceSummary[]> {
+    const normalizedDeviceId = normalizeDeviceId(currentDeviceId);
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query<Record<string, unknown>>(
+        `SELECT d.id, d.customer_id, d.device_id, d.device_name, d.attestation_status,
+                d.last_seen_at, d.created_at, d.revoked_at,
+                COUNT(s.id) FILTER (WHERE s.revoked_at IS NULL AND s.expires_at > NOW())::int AS active_session_count
+           FROM customer_devices d
+           LEFT JOIN auth_sessions s ON s.device_id = d.id AND s.customer_id = d.customer_id
+          WHERE d.customer_id = $1
+            AND d.revoked_at IS NULL
+          GROUP BY d.id
+          ORDER BY (d.device_id = $2) DESC, COALESCE(d.last_seen_at, d.created_at) DESC`,
+        [customerId, normalizedDeviceId],
+      );
+      return result.rows.map((row) => {
+        const createdAt = new Date(String(row.created_at)).toISOString();
+        const lastSeenAt = row.last_seen_at ? new Date(String(row.last_seen_at)).toISOString() : createdAt;
+        const deviceId = String(row.device_id);
+        return {
+          id: String(row.id),
+          deviceId,
+          deviceName: row.device_name && String(row.device_name).trim() ? String(row.device_name) : "Thiết bị NOVA",
+          attestationStatus: String(row.attestation_status ?? "PENDING") as CustomerDeviceSummary["attestationStatus"],
+          isCurrentDevice: deviceId === normalizedDeviceId,
+          lastSeenAt,
+          createdAt,
+          activeSessionCount: Number(row.active_session_count ?? 0),
+        };
+      });
+    });
+  }
+
+  async revokeDevice(customerId: string, targetDeviceIdentifier: string, currentDeviceId: string): Promise<void> {
+    const normalizedTarget = String(targetDeviceIdentifier ?? "").trim();
+    const normalizedCurrent = normalizeDeviceId(currentDeviceId);
+    if (!normalizedTarget) {
+      throw invalidRequest("deviceId is required.", { deviceId: "deviceId is required." });
+    }
+    await this.unitOfWork.transaction(async ({ client }) => {
+      const targetResult = await client.query<{ id: string; customer_id: string; device_id: string }>(
+        `SELECT id, customer_id, device_id
+           FROM customer_devices
+          WHERE customer_id = $1
+            AND (id::text = $2 OR device_id = $2)
+            AND revoked_at IS NULL
+          FOR UPDATE`,
+        [customerId, normalizedTarget],
+      );
+      const target = targetResult.rows[0];
+      if (!target) {
+        throw notFound("Không tìm thấy thiết bị đang hoạt động.");
+      }
+
+      await client.query(
+        `UPDATE customer_devices
+            SET revoked_at = NOW(),
+                attestation_status = 'REVOKED'
+          WHERE id = $1`,
+        [target.id],
+      );
+
+      const sessionFamilies = await client.query<{ family_id: string }>(
+        `SELECT DISTINCT family_id FROM auth_sessions WHERE customer_id = $1 AND device_id = $2`,
+        [customerId, target.id],
+      );
+      const recordFamilies = await client.query<{ family_id: string }>(
+        `SELECT DISTINCT family_id FROM refresh_session_records WHERE customer_id = $1 AND device_id = $2`,
+        [customerId, target.device_id],
+      );
+      const familyIds = Array.from(new Set([
+        ...sessionFamilies.rows.map((r) => String(r.family_id)),
+        ...recordFamilies.rows.map((r) => String(r.family_id)),
+      ]));
+
+      await client.query(
+        `UPDATE auth_sessions SET revoked_at = NOW() WHERE customer_id = $1 AND device_id = $2 AND revoked_at IS NULL`,
+        [customerId, target.id],
+      );
+      await client.query(
+        `UPDATE refresh_session_records
+            SET revoked_at = NOW()
+          WHERE customer_id = $1
+            AND (device_id = $2 OR family_id = ANY($3::uuid[]))
+            AND revoked_at IS NULL`,
+        [customerId, target.device_id, familyIds],
+      );
+      if (familyIds.length > 0) {
+        await client.query(
+          `UPDATE refresh_session_families
+              SET revoked_at = NOW()
+            WHERE customer_id = $1 AND family_id = ANY($2::uuid[]) AND revoked_at IS NULL`,
+          [customerId, familyIds],
+        );
+      }
+
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "DEVICE_REVOKED",
+        actorCustomerId: customerId,
+        resourceId: target.id,
+        payload: { revokedDeviceId: target.device_id, currentDeviceId: normalizedCurrent },
       });
     }, { maxRetries: 1 });
   }

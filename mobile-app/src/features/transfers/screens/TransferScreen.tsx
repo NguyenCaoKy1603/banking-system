@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/preserve-manual-memoization */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
@@ -32,6 +33,7 @@ import type {
 import { ApiError } from "@/services/api/ApiError";
 import {
   lookupBeneficiary,
+  lookupExternalRecipient,
   lookupInternalRecipient,
   quoteTransfer,
   submitTransfer,
@@ -54,10 +56,12 @@ import {
   TransferStepUpStep,
   stepStyles,
 } from "@/features/transfers/components/TransferStepViews";
-import type {
-  Beneficiary,
-  TransferQuote,
-  TransferReceipt,
+import {
+  NAPAS_BANKS,
+  type Beneficiary,
+  type TransferQuote,
+  type TransferRail,
+  type TransferReceipt,
 } from "@/features/transfers/types/transfer";
 import {
   clearTransferIntent,
@@ -86,6 +90,7 @@ function getErrorMessage(error: unknown): string {
 
 const MANUAL_REVIEW_MESSAGE =
   "Yêu cầu này cần được đối soát thủ công. Không gửi lại hoặc tạo mã mới; vui lòng liên hệ hỗ trợ.";
+const BIOMETRIC_TRANSFER_LIMIT_MINOR = 1_000_000n;
 
 function getReceiptStatusLabel(status: TransferReceipt["status"]): string {
   switch (status) {
@@ -105,6 +110,9 @@ export function TransferScreen() {
   const routeParams = useLocalSearchParams<{
     beneficiaryId?: string;
     accountNumber?: string;
+    bankBin?: string;
+    amountMinor?: string;
+    description?: string;
   }>();
   const { deviceId, refreshAccessToken, session } = useAuth();
   const accessToken = session?.accessToken ?? null;
@@ -113,17 +121,39 @@ export function TransferScreen() {
     typeof routeParams.beneficiaryId === "string" ? routeParams.beneficiaryId : "";
   const initialAccountNumber =
     typeof routeParams.accountNumber === "string" ? routeParams.accountNumber : "";
+  const initialBankBin =
+    typeof routeParams.bankBin === "string" ? routeParams.bankBin.trim() : "";
+  const initialAmountMinor =
+    typeof routeParams.amountMinor === "string" ? routeParams.amountMinor.trim() : "";
+  const initialDescription =
+    typeof routeParams.description === "string" ? routeParams.description.trim() : "";
+
+  const isInitialExternalBin = Boolean(
+    initialBankBin && initialBankBin !== "970400"
+  );
+
   const auth = useMemo(
     () => ({ accessToken, deviceId, refreshAccessToken }),
     [accessToken, deviceId, refreshAccessToken],
   );
   const [accounts, setAccounts] = useState<PaymentAccount[]>([]);
   const [sourceAccountId, setSourceAccountId] = useState<string | null>(null);
+  const [transferRail, setTransferRail] = useState<TransferRail>(
+    isInitialExternalBin ? "NAPAS_IBFT" : "INTERNAL"
+  );
+  const [selectedBankBin, setSelectedBankBin] = useState<string>(
+    isInitialExternalBin
+      ? initialBankBin
+      : (NAPAS_BANKS.find((b) => b.bin === initialBankBin)?.bin ?? NAPAS_BANKS[0]!.bin)
+  );
   const [beneficiaryId, setBeneficiaryId] = useState(initialBeneficiaryId);
   const [recipientAccountNumber, setRecipientAccountNumber] = useState(initialAccountNumber);
   const [recipientLookupId, setRecipientLookupId] = useState<string | null>(null);
   const [beneficiary, setBeneficiary] = useState<Beneficiary | null>(null);
-  const [amountMinor, setAmountMinor] = useState("");
+  const [amountMinor, setAmountMinor] = useState(
+    initialAmountMinor && /^[1-9]\d*$/.test(initialAmountMinor) ? initialAmountMinor : ""
+  );
+  const [transferDescription] = useState(initialDescription);
   const [quote, setQuote] = useState<TransferQuote | null>(null);
   const [stepUpMethod, setStepUpMethod] = useState<StepUpMethod>("TOTP");
   const [stepUpProof, setStepUpProof] = useState("");
@@ -148,6 +178,12 @@ export function TransferScreen() {
   const appliedRouteTargetRef = useRef<string | null>(null);
   const normalizedRouteAccountNumber = initialAccountNumber.replace(/\D/g, "");
   const normalizedRouteBeneficiaryId = initialBeneficiaryId.trim();
+  const normalizedRouteBankBin = initialBankBin;
+  const isExternalRoute = Boolean(
+    normalizedRouteAccountNumber &&
+      normalizedRouteBankBin &&
+      normalizedRouteBankBin !== "970400"
+  );
 
   useEffect(() => {
     const timer = setInterval(() => setClockMs(Date.now()), 1000);
@@ -222,10 +258,12 @@ export function TransferScreen() {
   }, [loadControlPolicy]);
 
   const [hasActiveTotp, setHasActiveTotp] = useState<boolean | null>(null);
+  const [hasActiveBiometric, setHasActiveBiometric] = useState(false);
 
   const checkMfaStatus = useCallback(async () => {
     if (!accessToken || !deviceId) {
       setHasActiveTotp(null);
+      setHasActiveBiometric(false);
       return;
     }
     try {
@@ -234,12 +272,19 @@ export function TransferScreen() {
         deviceId,
         refreshAccessToken,
       });
+      const hasBio = response.items.some(
+        (m) =>
+          m.status === "ACTIVE" &&
+          m.credentialType === "BIOMETRIC" &&
+          (!m.deviceId || m.deviceId === deviceId),
+      );
       const hasActive = response.items.some(
         (m) =>
           m.status === "ACTIVE" &&
           (m.credentialType === "TOTP" ||
             (m.credentialType === "BIOMETRIC" && (!m.deviceId || m.deviceId === deviceId))),
       );
+      setHasActiveBiometric(hasBio);
       setHasActiveTotp(hasActive);
     } catch {
       // Non-blocking fail-safe
@@ -409,10 +454,14 @@ export function TransferScreen() {
     async (target: {
       accountNumber?: string;
       beneficiaryId?: string;
+      rail?: TransferRail;
+      bankBin?: string;
       isCancelled?: () => boolean;
     }) => {
       const accountNumber = target.accountNumber?.trim() ?? "";
       const savedBeneficiaryId = target.beneficiaryId?.trim() ?? "";
+      const effectiveRail = target.rail ?? transferRail;
+      const effectiveBankBin = target.bankBin ?? selectedBankBin;
 
       if (!savedBeneficiaryId && !accountNumber) {
         setError("Nhập số tài khoản người nhận hoặc chọn người nhận đã lưu.");
@@ -423,6 +472,27 @@ export function TransferScreen() {
       setError(undefined);
 
       try {
+        if (accountNumber && effectiveRail === "NAPAS_IBFT") {
+          const response = await lookupExternalRecipient(effectiveBankBin, accountNumber, auth);
+          if (target.isCancelled?.()) return;
+          if (response.recipient.status !== "ACTIVE") {
+            setError("Tài khoản người nhận liên ngân hàng hiện không khả dụng.");
+            return;
+          }
+          setRecipientLookupId(response.recipient.lookupId);
+          setBeneficiaryId("");
+          setBeneficiary({
+            id: response.recipient.lookupId,
+            displayName: response.recipient.accountHolderName,
+            accountHolderName: response.recipient.accountHolderName,
+            maskedAccountNumber: response.recipient.maskedAccountNumber,
+            bankName: response.recipient.bankName,
+            status: response.recipient.status,
+          });
+          setStep("amount");
+          return;
+        }
+
         if (accountNumber) {
           const response = await lookupInternalRecipient(accountNumber, auth);
           if (target.isCancelled?.()) return;
@@ -465,7 +535,7 @@ export function TransferScreen() {
         }
       }
     },
-    [auth],
+    [auth, selectedBankBin, transferRail],
   );
 
   const handleLookupBeneficiary = useCallback(async () => {
@@ -476,12 +546,14 @@ export function TransferScreen() {
     await performRecipientLookup({
       accountNumber: recipientAccountNumber,
       beneficiaryId,
+      rail: transferRail,
+      bankBin: selectedBankBin,
     });
-  }, [beneficiaryId, performRecipientLookup, recipientAccountNumber, recoveryBlocked]);
+  }, [beneficiaryId, performRecipientLookup, recipientAccountNumber, recoveryBlocked, selectedBankBin, transferRail]);
 
   useEffect(() => {
     const routeTargetKey = normalizedRouteAccountNumber
-      ? `account:${normalizedRouteAccountNumber}`
+      ? `account:${normalizedRouteBankBin ? normalizedRouteBankBin + ":" : ""}${normalizedRouteAccountNumber}`
       : normalizedRouteBeneficiaryId
         ? `beneficiary:${normalizedRouteBeneficiaryId}`
         : null;
@@ -524,6 +596,8 @@ export function TransferScreen() {
     void performRecipientLookup({
       accountNumber: normalizedRouteAccountNumber || undefined,
       beneficiaryId: normalizedRouteAccountNumber ? undefined : normalizedRouteBeneficiaryId,
+      rail: isExternalRoute ? "NAPAS_IBFT" : "INTERNAL",
+      bankBin: isExternalRoute ? normalizedRouteBankBin : selectedBankBin,
       isCancelled: () => cancelled,
     });
 
@@ -534,15 +608,18 @@ export function TransferScreen() {
     accessToken,
     controlPolicy,
     intentPhase,
+    isExternalRoute,
     isLoadingAccounts,
     isLoadingControlPolicy,
     isRestoringIntent,
     normalizedRouteAccountNumber,
+    normalizedRouteBankBin,
     normalizedRouteBeneficiaryId,
     performRecipientLookup,
     quote,
     receipt,
     recoveryBlocked,
+    selectedBankBin,
   ]);
 
   const handleCreateQuote = useCallback(async () => {
@@ -808,6 +885,21 @@ export function TransferScreen() {
     }
   }, [auth, clockMs, idempotencyKey, intentPhase, manualReviewCode, quote, recoveryBlocked, stepUpMethod, stepUpProof, transferChallenge, userId]);
 
+  const isBiometricEligibleForQuote = useMemo(() => {
+    if (!quote) return false;
+    try {
+      const amount = BigInt(quote.amount.amountMinor);
+      const riskLevel = quote.anomalyAssessment?.riskLevel;
+      return (
+        amount < BIOMETRIC_TRANSFER_LIMIT_MINOR &&
+        riskLevel !== "HIGH" &&
+        riskLevel !== "CRITICAL"
+      );
+    } catch {
+      return false;
+    }
+  }, [quote]);
+
   const handleBiometricTransferStepUp = useCallback(async () => {
     if (submitLockRef.current || manualReviewCode || recoveryBlocked) {
       if (manualReviewCode) setError(MANUAL_REVIEW_MESSAGE);
@@ -817,7 +909,13 @@ export function TransferScreen() {
       setError("Phiên xác thực chuyển tiền chưa sẵn sàng.");
       return;
     }
-    if (!transferChallenge.methods.includes("BIOMETRIC")) {
+    if (!isBiometricEligibleForQuote) {
+      setError(
+        "Giao dịch từ 1.000.000 VND trở lên hoặc có cảnh báo rủi ro cao bắt buộc xác thực bằng mã TOTP.",
+      );
+      return;
+    }
+    if (!hasActiveBiometric && !transferChallenge.methods.includes("BIOMETRIC")) {
       setError("Challenge hiện tại chưa bật xác thực sinh trắc học.");
       return;
     }
@@ -836,9 +934,21 @@ export function TransferScreen() {
         );
         return;
       }
+      let activeChallenge = transferChallenge;
+      if (activeChallenge.method !== "BIOMETRIC") {
+        activeChallenge = await createOtpChallenge(
+          {
+            purpose: "TRANSFER",
+            resourceId: quote.quoteId,
+            method: "BIOMETRIC" as never,
+          },
+          auth,
+        );
+        applyTransferChallenge(activeChallenge);
+      }
       const proof = createDeviceBoundBiometricAssertion({
         biometricSecret: stored.biometricSecret,
-        challengeId: transferChallenge.challengeId,
+        challengeId: activeChallenge.challengeId,
         deviceId,
         purpose: "TRANSFER",
         resourceId: quote.quoteId,
@@ -850,7 +960,19 @@ export function TransferScreen() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [clockMs, deviceId, manualReviewCode, quote, recoveryBlocked, transferChallenge, userId]);
+  }, [
+    applyTransferChallenge,
+    auth,
+    clockMs,
+    deviceId,
+    hasActiveBiometric,
+    isBiometricEligibleForQuote,
+    manualReviewCode,
+    quote,
+    recoveryBlocked,
+    transferChallenge,
+    userId,
+  ]);
 
   const handleRenewTransferChallenge = useCallback(async () => {
     if (!quote || submitLockRef.current || manualReviewCode || recoveryBlocked) {
@@ -917,6 +1039,18 @@ export function TransferScreen() {
     }
   }, [auth, idempotencyKey, quote, receipt, recoveryTransferId, userId]);
 
+  useEffect(() => {
+    const shouldPoll =
+      step === "result" &&
+      Boolean(receipt?.transferId ?? recoveryTransferId) &&
+      (receipt?.status === "PENDING" || !receipt);
+    if (!shouldPoll) return;
+    const timer = setInterval(() => {
+      void handleRefreshTransferStatus();
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [handleRefreshTransferStatus, receipt, recoveryTransferId, step]);
+
   const handleBack = useCallback(async () => {
     if (isSubmitting || submitLockRef.current) {
       return;
@@ -964,6 +1098,26 @@ export function TransferScreen() {
 
   const isTransferChallengeUnavailable =
     !transferChallenge || clockMs >= Date.parse(transferChallenge.expiresAt);
+
+  const canUseBiometric =
+    isBiometricEligibleForQuote &&
+    (hasActiveBiometric || Boolean(transferChallenge?.methods.includes("BIOMETRIC")));
+
+  const stepUpHint = useMemo(() => {
+    if (!quote) return undefined;
+    const riskLevel = quote.anomalyAssessment?.riskLevel;
+    if (riskLevel === "HIGH" || riskLevel === "CRITICAL") {
+      return "Giao dịch có cảnh báo rủi ro cao — bắt buộc xác thực bằng mã TOTP gồm 6 chữ số.";
+    }
+    try {
+      if (BigInt(quote.amount.amountMinor) >= BIOMETRIC_TRANSFER_LIMIT_MINOR) {
+        return "Giao dịch từ 1.000.000 VND trở lên bắt buộc xác thực bằng mã TOTP gồm 6 chữ số.";
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  }, [quote]);
 
   return (
     <Screen>
@@ -1028,13 +1182,28 @@ export function TransferScreen() {
             }}
             onLookup={handleLookupBeneficiary}
             onOpenBeneficiaries={() => router.push("/beneficiaries")}
+            onSelectBankBin={(bin) => {
+              setSelectedBankBin(bin);
+              setRecipientLookupId(null);
+              setError(undefined);
+            }}
+            onSelectRail={(nextRail) => {
+              setTransferRail(nextRail);
+              setBeneficiaryId("");
+              setRecipientLookupId(null);
+              setBeneficiary(null);
+              setError(undefined);
+            }}
             recipientAccountNumber={recipientAccountNumber}
+            selectedBankBin={selectedBankBin}
+            transferRail={transferRail}
           />
         ) : step === "amount" ? (
           <TransferAmountStep
             accounts={accounts}
             amountMinor={amountMinor}
             beneficiary={beneficiary}
+            description={transferDescription}
             error={error}
             isExceedingBalance={isExceedingBalance}
             isSubmitting={isSubmitting}
@@ -1054,6 +1223,7 @@ export function TransferScreen() {
         ) : step === "review" ? (
           <TransferReviewStep
             beneficiary={beneficiary}
+            description={transferDescription}
             error={error}
             isSubmitting={isSubmitting}
             isTotpError={Boolean(error && isTotpNotEnrolledError(error))}
@@ -1062,7 +1232,7 @@ export function TransferScreen() {
           />
         ) : step === "stepUp" ? (
           <TransferStepUpStep
-            canUseBiometric={Boolean(transferChallenge?.methods.includes("BIOMETRIC"))}
+            canUseBiometric={canUseBiometric}
             error={error}
             isSubmitting={isSubmitting}
             isTotpError={Boolean(error && isTotpNotEnrolledError(error))}
@@ -1076,6 +1246,7 @@ export function TransferScreen() {
             onRenewChallenge={handleRenewTransferChallenge}
             onSubmitTransfer={handleSubmitTransfer}
             onUseBiometric={handleBiometricTransferStepUp}
+            stepUpHint={stepUpHint}
             stepUpMethod={stepUpMethod}
             stepUpProof={stepUpProof}
           />

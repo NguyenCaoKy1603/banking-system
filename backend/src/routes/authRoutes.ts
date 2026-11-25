@@ -30,6 +30,11 @@ import {
   rotateRecoveryCodesController,
   resendMfaChallengeController,
   createOtpChallengeController,
+  changePasswordController,
+  forgotPasswordController,
+  resetPasswordController,
+  listDevicesController,
+  revokeDeviceController,
 } from "../controllers/authController.js";
 
 export {
@@ -181,6 +186,30 @@ export async function handlePublicAuthRoute(
     return true;
   }
 
+  // POST /auth/password/forgot
+  if (
+    request.method === "POST" &&
+    segments.length === 3 &&
+    segments[0] === "auth" &&
+    segments[1] === "password" &&
+    segments[2] === "forgot"
+  ) {
+    await forgotPasswordController(request, response, body, options, system, relationalAuth, traceId);
+    return true;
+  }
+
+  // POST /auth/password/reset
+  if (
+    request.method === "POST" &&
+    segments.length === 3 &&
+    segments[0] === "auth" &&
+    segments[1] === "password" &&
+    segments[2] === "reset"
+  ) {
+    await resetPasswordController(request, response, body, options, system, relationalAuth, traceId);
+    return true;
+  }
+
   // PRE-AUTH MFA RECOVERY: /auth/mfa/recover(/verify|/complete)
   if (
     options.mfaService &&
@@ -278,6 +307,40 @@ export async function handleAuthenticatedMfaRoute(
 ): Promise<boolean> {
   if (segments[0] !== "auth") {
     return false;
+  }
+
+  // POST /auth/password/change
+  if (
+    request.method === "POST" &&
+    segments.length === 3 &&
+    segments[0] === "auth" &&
+    segments[1] === "password" &&
+    segments[2] === "change"
+  ) {
+    await changePasswordController(request, response, userId, body, options, system, relationalAuth, traceId);
+    return true;
+  }
+
+  // GET /auth/devices
+  if (
+    request.method === "GET" &&
+    segments.length === 2 &&
+    segments[0] === "auth" &&
+    segments[1] === "devices"
+  ) {
+    await listDevicesController(request, response, userId, relationalAuth, system, traceId);
+    return true;
+  }
+
+  // DELETE /auth/devices/:deviceId
+  if (
+    request.method === "DELETE" &&
+    segments.length === 3 &&
+    segments[0] === "auth" &&
+    segments[1] === "devices"
+  ) {
+    await revokeDeviceController(request, response, userId, segments[2], relationalAuth, system, traceId);
+    return true;
   }
 
   // GET /auth/mfa/methods

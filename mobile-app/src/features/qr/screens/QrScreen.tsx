@@ -17,7 +17,8 @@ import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import { getAccountNumber, listAccounts } from "@/features/accounts/services/accountsApi";
 import type { PaymentAccount } from "@/features/accounts/types/account";
-import { createReceiveQrPayload, parseReceiveQrPayload } from "@/features/qr/validation/qrPayload";
+import { createReceiveQrPayload, createVietQrPayload, parseReceiveQrPayload } from "@/features/qr/validation/qrPayload";
+import { DEFAULT_NOVA_BIN } from "@/features/qr/validation/vietQrCodec";
 import type { UnverifiedReceiveQrData } from "@/features/qr/types/qr";
 import { ApiError } from "@/services/api/ApiError";
 import { colors, radius, shadows, sizes, spacing, typography } from "@/theme";
@@ -55,6 +56,10 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
   const [hasScanned, setHasScanned] = useState(false);
   const [cameraError, setCameraError] = useState<string | undefined>();
   const [appState, setAppState] = useState(AppState.currentState ?? "active");
+  const [qrStandard, setQrStandard] = useState<"VIETQR" | "INTERNAL">("VIETQR");
+  const [dynamicAmount, setDynamicAmount] = useState("");
+  const [dynamicMessage, setDynamicMessage] = useState("");
+  const [isDynamicSectionOpen, setIsDynamicSectionOpen] = useState(false);
   const hasAutoRequestedPermissionRef = useRef(false);
   const auth = useMemo(
     () => ({ accessToken, deviceId, refreshAccessToken }),
@@ -78,8 +83,8 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
       setAccounts(response.accounts);
       const selectedAccount =
         response.accounts.find((item) => item.id === requestedAccountId) ??
-          response.accounts[0] ??
-          null;
+        response.accounts[0] ??
+        null;
       if (!selectedAccount) {
         setAccount(null);
         setAccountNumber(null);
@@ -142,15 +147,27 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
 
   const ownerName = session?.user.fullName?.trim() || account?.displayName || "";
 
+  const hasDynamicAmount = Boolean(dynamicAmount.trim() && /^[1-9]\d*$/.test(dynamicAmount.trim()));
+  const isDynamic = hasDynamicAmount || Boolean(dynamicMessage.trim());
+
   const qrPayload = useMemo(() => {
     if (!account || !accountNumber) return "";
-    return createReceiveQrPayload({
+    if (qrStandard === "INTERNAL") {
+      return createReceiveQrPayload({
+        accountNumber,
+        displayName: ownerName,
+        maskedAccountNumber: account.maskedNumber,
+        bankName: account.bankName,
+      });
+    }
+    return createVietQrPayload({
       accountNumber,
-      displayName: ownerName,
-      maskedAccountNumber: account.maskedNumber,
-      bankName: account.bankName,
+      bankBin: DEFAULT_NOVA_BIN,
+      amountMinor: hasDynamicAmount ? dynamicAmount.trim() : undefined,
+      message: dynamicMessage.trim() || undefined,
+      merchantName: ownerName,
     });
-  }, [account, accountNumber, ownerName]);
+  }, [account, accountNumber, dynamicAmount, dynamicMessage, hasDynamicAmount, ownerName, qrStandard]);
 
   const isSelfAccount = useMemo(() => {
     if (!parsedPayload) return false;
@@ -341,6 +358,42 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
                     <Text style={styles.sectionSubtitle}>Đưa mã này cho người chuyển tiền quét</Text>
                   </View>
                 </View>
+                <View style={styles.standardToggleRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: qrStandard === "VIETQR" }}
+                    onPress={() => setQrStandard("VIETQR")}
+                    style={[styles.standardPill, qrStandard === "VIETQR" ? styles.standardPillSelected : null]}
+                    testID="qr-standard-vietqr"
+                  >
+                    <Text style={[styles.standardPillText, qrStandard === "VIETQR" ? styles.standardPillTextSelected : null]}>
+                      VietQR (Chuẩn NAPAS)
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: qrStandard === "INTERNAL" }}
+                    onPress={() => setQrStandard("INTERNAL")}
+                    style={[styles.standardPill, qrStandard === "INTERNAL" ? styles.standardPillSelected : null]}
+                    testID="qr-standard-internal"
+                  >
+                    <Text style={[styles.standardPillText, qrStandard === "INTERNAL" ? styles.standardPillTextSelected : null]}>
+                      Nội bộ NOVA
+                    </Text>
+                  </Pressable>
+                </View>
+                <View style={styles.qrBadgeRow} testID="qr-badge-row">
+                  <StatusBadge
+                    label={
+                      isDynamic
+                        ? `QR Động · ${dynamicAmount ? Number(dynamicAmount).toLocaleString("vi-VN") : "0"} VND`
+                        : qrStandard === "VIETQR"
+                          ? "VietQR chuẩn NAPAS"
+                          : "QR nội bộ NOVA v2"
+                    }
+                    tone={isDynamic ? "info" : "neutral"}
+                  />
+                </View>
                 <View style={styles.qrFrame}>
                   <View style={styles.qrBox} testID="qr-code">
                     <QRCode
@@ -356,6 +409,72 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
                   <Text style={styles.accountNumber}>{account.maskedNumber}</Text>
                   <Text style={styles.accountMeta}>{account.bankName} · {account.currency}</Text>
                 </View>
+                {qrStandard === "VIETQR" ? (
+                  <View style={styles.dynamicSectionContainer}>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={() => setIsDynamicSectionOpen((prev) => !prev)}
+                      style={styles.dynamicSectionHeader}
+                      testID="qr-toggle-dynamic"
+                    >
+                      <View style={styles.dynamicHeaderLeft}>
+                        <AppIcon color={colors.primary} name="transfer" size={18} />
+                        <Text style={styles.dynamicHeaderTitle}>
+                          {isDynamic ? "Đang tạo QR Động có số tiền" : "Thêm số tiền & Lời nhắn (QR động)"}
+                        </Text>
+                      </View>
+                      <AppIcon color={colors.muted} name="chevronRight" size={16} />
+                    </Pressable>
+
+                    {isDynamicSectionOpen ? (
+                      <View style={styles.dynamicForm} testID="qr-dynamic-form">
+                        <TextField
+                          accessibilityLabel="Số tiền nhận"
+                          keyboardType="number-pad"
+                          label="Số tiền muốn nhận (VND)"
+                          onChangeText={(val) => setDynamicAmount(val.replace(/\D/g, ""))}
+                          placeholder="Ví dụ: 50000"
+                          testID="qr-dynamic-amount"
+                          value={dynamicAmount}
+                        />
+                        <View style={styles.quickAmountRow}>
+                          {(["50000", "100000", "200000", "500000"] as const).map((amt) => (
+                            <Pressable
+                              key={amt}
+                              onPress={() => setDynamicAmount(amt)}
+                              style={styles.quickAmountChip}
+                              testID={`qr-quick-amount-${amt}`}
+                            >
+                              <Text style={styles.quickAmountText}>
+                                {Number(amt).toLocaleString("vi-VN")}đ
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                        <TextField
+                          accessibilityLabel="Lời nhắn chuyển tiền"
+                          label="Lời nhắn (tối đa 50 ký tự)"
+                          maxLength={50}
+                          onChangeText={setDynamicMessage}
+                          placeholder="Ví dụ: Tien an trua"
+                          testID="qr-dynamic-message"
+                          value={dynamicMessage}
+                        />
+                        {dynamicAmount || dynamicMessage ? (
+                          <Button
+                            label="Xóa số tiền & lời nhắn"
+                            onPress={() => {
+                              setDynamicAmount("");
+                              setDynamicMessage("");
+                            }}
+                            testID="qr-clear-dynamic"
+                            variant="outline"
+                          />
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
                 {accounts.length > 1 ? (
                   <View style={styles.accountPicker}>
                     <Text style={styles.pickerLabel}>Tài khoản nhận tiền:</Text>
@@ -502,12 +621,30 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
 
             {parsedPayload ? (
               <View style={styles.resultBox} testID="qr-valid-payload">
-                <StatusBadge label="Đã đọc mã QR" tone="success" />
+                <StatusBadge
+                  label={parsedPayload.format === "VIETQR" ? "Đã đọc mã VietQR" : "Đã đọc mã QR"}
+                  tone="success"
+                />
                 <Text style={styles.resultTitle}>{parsedPayload.displayName}</Text>
                 <Text style={styles.summaryText}>{displayMaskedNumber}</Text>
                 <Text style={styles.summaryMeta}>
                   {parsedPayload.bankName} · {parsedPayload.currency}
+                  {parsedPayload.bankBin ? ` · BIN: ${parsedPayload.bankBin}` : ""}
                 </Text>
+                {parsedPayload.amountMinor ? (
+                  <View style={styles.payloadNoticeBox} testID="qr-amount-notice">
+                    <Text style={styles.payloadNoticeLabel}>Số tiền yêu cầu chuyển:</Text>
+                    <Text style={styles.payloadNoticeValue}>
+                      {`${Number(parsedPayload.amountMinor).toLocaleString("vi-VN")} VND`}
+                    </Text>
+                  </View>
+                ) : null}
+                {parsedPayload.description ? (
+                  <View style={styles.payloadNoticeBox} testID="qr-message-notice">
+                    <Text style={styles.payloadNoticeLabel}>Nội dung:</Text>
+                    <Text style={styles.payloadNoticeValue}>{parsedPayload.description}</Text>
+                  </View>
+                ) : null}
                 {isSelfAccount ? (
                   <View style={styles.blockedAction} testID="qr-self-account-warning">
                     <AppIcon color={colors.warning} name="alert" size={20} />
@@ -535,7 +672,12 @@ export function QrScreen({ showBackButton = true }: QrScreenProps) {
                       onPress={() =>
                         router.push({
                           pathname: "/transfer",
-                          params: { accountNumber: parsedPayload.accountNumber },
+                          params: {
+                            accountNumber: parsedPayload.accountNumber,
+                            bankBin: parsedPayload.bankBin,
+                            amountMinor: parsedPayload.amountMinor,
+                            description: parsedPayload.description,
+                          },
                         })
                       }
                       testID="qr-continue-transfer"
@@ -719,5 +861,93 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.primary,
     fontWeight: "600",
+  },
+  standardToggleRow: {
+    flexDirection: "row",
+    gap: spacing.sm,
+    justifyContent: "center",
+  },
+  standardPill: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  standardPillSelected: {
+    backgroundColor: colors.primarySoft,
+    borderColor: colors.primary,
+  },
+  standardPillText: {
+    ...typography.caption,
+    color: colors.muted,
+  },
+  standardPillTextSelected: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: "700",
+  },
+  qrBadgeRow: {
+    alignItems: "center",
+  },
+  dynamicSectionContainer: {
+    borderWidth: 1,
+    borderColor: colors.divider,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceMuted,
+    overflow: "hidden",
+  },
+  dynamicSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: spacing.md,
+  },
+  dynamicHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  dynamicHeaderTitle: {
+    ...typography.bodyStrong,
+    color: colors.text,
+  },
+  dynamicForm: {
+    padding: spacing.md,
+    paddingTop: 0,
+    gap: spacing.sm,
+  },
+  quickAmountRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  quickAmountChip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  quickAmountText: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: "600",
+  },
+  payloadNoticeBox: {
+    padding: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: colors.primarySoft,
+    gap: 2,
+  },
+  payloadNoticeLabel: {
+    ...typography.caption,
+    color: colors.muted,
+  },
+  payloadNoticeValue: {
+    ...typography.bodyStrong,
+    color: colors.primary,
   },
 });

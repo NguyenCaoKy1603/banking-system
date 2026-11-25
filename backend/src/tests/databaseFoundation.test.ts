@@ -474,6 +474,28 @@ test("direct transfer use case is idempotent, lock-ordered and atomically persis
   assert.equal(integrity.rows[0].outbox_trace, "p0-test-trace");
   assert.equal(integrity.rows[0].consumed, first.id);
 
+  const ledgerEntriesResult = await database.query<{
+    account_ref: string;
+    side: string;
+    amount_minor: string;
+  }>(
+    `SELECT le.account_ref, le.side, le.amount_minor::text
+       FROM ledger_entries le
+       JOIN ledger_journals lj ON lj.id = le.journal_id
+      WHERE lj.aggregate_id = $1
+        AND lj.journal_type = 'TRANSFER'
+      ORDER BY le.line_number`,
+    [first.id],
+  );
+  assert.deepEqual(
+    ledgerEntriesResult.rows.map((row) => [row.account_ref, row.side, row.amount_minor]),
+    [
+      [`payment-account:${fixture.sourceAccountId}`, "DEBIT", "101000"],
+      [`payment-account:${fixture.destinationAccountId}`, "CREDIT", "100000"],
+      ["fee-income:VND", "CREDIT", "1000"],
+    ],
+  );
+
   const secondQuote = randomUUID();
   await database.query(
     `INSERT INTO transfer_quotes

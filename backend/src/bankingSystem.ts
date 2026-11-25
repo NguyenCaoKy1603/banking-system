@@ -96,6 +96,8 @@ import {
   hashOpaqueToken,
   hashPassword,
   hashPasswordAsync,
+  maskEmailAddress,
+  validateStrongPassword,
   verifyPassword,
   verifyPasswordAsync,
 } from "./security.js";
@@ -113,12 +115,20 @@ import {
   cloneTransactionAnomaly,
   evaluateTransferAnomaly,
 } from "./domain/anomaly/index.js";
+import {
+  buildAccountStatementExport,
+  normalizeTransactionFilters,
+  parseSummaryMonth,
+} from "./database/relationalAccountReadService.js";
 import type {
+  AccountMonthlySummary,
+  AccountStatementExport,
   AnomalyStatus,
   AuthUser,
   AuthChallengeResponse,
   Beneficiary,
   ControlPolicy,
+  CustomerDeviceSummary,
   FundingReceipt,
   InternalRecipientLookup,
   LoginResponse,
@@ -130,6 +140,7 @@ import type {
   Transaction,
   TransactionAnomaly,
   TransactionDetail,
+  TransactionListFilters,
   TransferAnomalyAssessment,
   TransferQuote,
   TransferReceipt,
@@ -761,11 +772,11 @@ function migrateBankingSystemState(input: BankingSystemState): BankingSystemStat
     items.map((notification) =>
       notification.type === "SANDBOX_FUNDING"
         ? {
-            ...notification,
-            type: "SECURITY" as const,
-            title: "Tài khoản đã được nạp tiền",
-            body: "Một khoản ghi có đã được cập nhật vào tài khoản.",
-          }
+          ...notification,
+          type: "SECURITY" as const,
+          title: "Tài khoản đã được nạp tiền",
+          body: "Một khoản ghi có đã được cập nhật vào tài khoản.",
+        }
         : { ...notification },
     ),
   ] as [string, Notification[]]);
@@ -1002,6 +1013,7 @@ export class BankingSystem {
   private readonly creditStepUpAttemptWindows = new Map<string, CreditStepUpAttemptWindow>();
   private readonly refreshSessions = new Map<string, RefreshSession>();
   private readonly refreshFamilies = new Map<string, Set<string>>();
+  private readonly customerDevices = new Map<string, { id: string; customerId: string; deviceId: string; deviceName: string; attestationStatus: "PENDING" | "VERIFIED" | "REVOKED"; createdAt: string; lastSeenAt: string; revokedAt: string | null }>();
   private readonly beneficiaries = new Map<string, BeneficiaryRecord[]>();
   private readonly recipientLookups = new Map<string, RecipientLookupRecord>();
   private readonly notifications = new Map<string, Notification[]>();
@@ -1161,7 +1173,7 @@ export class BankingSystem {
         options.allowlisted ?? process.env.BANKING_ALLOWLIST_ENABLED !== "0",
       maxTransferAmountMinor: normalizeTransferLimit(
         options.maxTransferAmountMinor ??
-          process.env.BANKING_MAX_TRANSFER_AMOUNT_MINOR,
+        process.env.BANKING_MAX_TRANSFER_AMOUNT_MINOR,
         DEFAULT_TRANSFER_LIMIT_MINOR,
       ),
       stepUpMethods: normalizeStepUpMethods(options.stepUpMethods, ["OTP"]),
@@ -1472,12 +1484,12 @@ export class BankingSystem {
     return this.publicUser(context.user);
   }
 
-  issueMfaSession(userId: string, deviceId: string): LoginResponse {
+  issueMfaSession(userId: string, deviceId: string, deviceName?: string): LoginResponse {
     const user = this.users.get(userId);
     if (!user) {
       throw unauthorized("User session is invalid.");
     }
-    return this.issueTokenPair(user, createId("refresh-family"), this.normalizeDeviceId(deviceId));
+    return this.issueTokenPair(user, createId("refresh-family"), this.normalizeDeviceId(deviceId), deviceName);
   }
 
   verifyLoginChallenge(
@@ -1701,6 +1713,162 @@ export class BankingSystem {
   verifyCurrentPassword(userId: string, password: string): boolean {
     const user = this.users.get(userId);
     return Boolean(user && typeof password === "string" && verifyPassword(password, user.passwordSalt, user.passwordDigest));
+  }
+
+  async changePasswordAsync(input: {
+    customerId: string;
+    currentPassword: string;
+    newPassword: string;
+    deviceId: string;
+  }): Promise<void> {
+    const normalizedDeviceId = this.normalizeDeviceId(input.deviceId);
+    if (typeof input.currentPassword !== "string" || input.currentPassword.length === 0) {
+      throw invalidRequest("Mật khẩu hiện tại là bắt buộc.", { currentPassword: "Mật khẩu hiện tại là bắt buộc." });
+    }
+    const validatedNew = validateStrongPassword(input.newPassword, "newPassword");
+    if (validatedNew === input.currentPassword) {
+      throw invalidRequest("Mật khẩu mới phải khác mật khẩu hiện tại.", { newPassword: "Mật khẩu mới phải khác mật khẩu hiện tại." });
+    }
+    const user = this.users.get(input.customerId);
+    if (!user) throw unauthorized("User session is invalid.");
+    const valid = await verifyPasswordAsync(input.currentPassword, user.passwordSalt, user.passwordDigest);
+    if (!valid) throw unauthorized("Mật khẩu hiện tại không chính xác.");
+    const nextHash = await hashPasswordAsync(validatedNew);
+    user.passwordSalt = nextHash.salt;
+    user.passwordDigest = nextHash.digest;
+    this.revokeAllSessions(user.id);
+    this.recordAudit("PASSWORD_CHANGED", user.id, normalizedDeviceId);
+  }
+
+  preparePasswordReset(email: string, networkFingerprint: string): { normalizedEmail: string; customer: { id: string; email: string } | null } {
+    const normalizedEmail = assertEmail(email);
+    this.consumeOtpChallengeIssuance(`password-forgot:email:${normalizedEmail}`);
+    this.consumeOtpChallengeIssuance(`password-forgot:net:${networkFingerprint}`);
+    for (const user of this.users.values()) {
+      if (user.email.toLowerCase() === normalizedEmail) {
+        return { normalizedEmail, customer: { id: user.id, email: user.email } };
+      }
+    }
+    return { normalizedEmail, customer: null };
+  }
+
+  issuePasswordResetChallenge(email: string, deviceId: string, networkFingerprint: string): AuthChallengeResponse {
+    const normalizedDeviceId = this.normalizeDeviceId(deviceId);
+    const prepared = this.preparePasswordReset(email, networkFingerprint);
+    if (!prepared.customer) {
+      return {
+        challengeId: createOpaqueToken(),
+        expiresAt: new Date(this.clock() + 5 * 60 * 1000).toISOString(),
+        methods: ["EMAIL_OTP"],
+        method: "EMAIL_OTP",
+        resendAfter: new Date(this.clock() + 60 * 1000).toISOString(),
+        maskedDestination: maskEmailAddress(prepared.normalizedEmail),
+        purpose: "PASSWORD_RESET",
+      };
+    }
+    return this.issueOtpChallenge(prepared.customer.id, normalizedDeviceId, "PASSWORD_RESET", null, null, ["OTP"], this.sandboxOtp ?? undefined);
+  }
+
+  async resetPasswordAsync(input: { customerId: string; newPassword: string; deviceId: string }): Promise<void> {
+    const normalizedDeviceId = this.normalizeDeviceId(input.deviceId);
+    const validatedNew = validateStrongPassword(input.newPassword, "newPassword");
+    const user = this.users.get(input.customerId);
+    if (!user) throw unauthorized("Tài khoản không hợp lệ.");
+    const nextHash = await hashPasswordAsync(validatedNew);
+    user.passwordSalt = nextHash.salt;
+    user.passwordDigest = nextHash.digest;
+    this.revokeAllSessions(user.id);
+    this.recordAudit("PASSWORD_RESET", user.id, normalizedDeviceId);
+  }
+
+  async resetPasswordWithChallengeAsync(challengeId: string, proof: string, newPassword: string, deviceId: string): Promise<void> {
+    const normalizedDeviceId = this.normalizeDeviceId(deviceId);
+    const validatedNew = validateStrongPassword(newPassword, "newPassword");
+    const challengeHash = hashOpaqueToken(requireString(challengeId, "challengeId"));
+    const challenge = this.authChallenges.get(challengeHash);
+    if (!challenge || challenge.purpose !== "PASSWORD_RESET") {
+      throw unauthorized("MFA challenge is invalid or expired.");
+    }
+    this.verifyOtpChallenge(challengeId, challenge.userId, normalizedDeviceId, "OTP", proof, "PASSWORD_RESET", null, null);
+    await this.resetPasswordAsync({ customerId: challenge.userId, newPassword: validatedNew, deviceId: normalizedDeviceId });
+  }
+
+  listDevices(userId: string, currentDeviceId: string): CustomerDeviceSummary[] {
+    const normalizedCurrent = this.normalizeDeviceId(currentDeviceId);
+    const now = this.clock();
+    const deviceIds = new Set<string>();
+    for (const [key, entry] of this.customerDevices) {
+      if (entry.customerId === userId && !entry.revokedAt) deviceIds.add(entry.deviceId);
+      void key;
+    }
+    for (const session of this.accessSessions.values()) {
+      if (session.userId === userId && session.expiresAt > now) {
+        const key = `${userId}:${session.deviceId}`;
+        if (!this.customerDevices.get(key)?.revokedAt) deviceIds.add(session.deviceId);
+      }
+    }
+    for (const session of this.refreshSessions.values()) {
+      if (session.userId === userId && !session.revoked && session.expiresAt > now) {
+        const key = `${userId}:${session.deviceId}`;
+        if (!this.customerDevices.get(key)?.revokedAt) deviceIds.add(session.deviceId);
+      }
+    }
+    const items: CustomerDeviceSummary[] = [];
+    for (const devId of deviceIds) {
+      const key = `${userId}:${devId}`;
+      const meta = this.customerDevices.get(key);
+      let activeSessionCount = 0;
+      for (const s of this.accessSessions.values()) {
+        if (s.userId === userId && s.deviceId === devId && s.expiresAt > now) activeSessionCount += 1;
+      }
+      const createdAt = meta?.createdAt ?? nowIso(this.clock);
+      items.push({
+        id: meta?.id ?? createId("device"),
+        deviceId: devId,
+        deviceName: meta?.deviceName || "Thiết bị NOVA",
+        attestationStatus: meta?.attestationStatus ?? "PENDING",
+        isCurrentDevice: devId === normalizedCurrent,
+        lastSeenAt: meta?.lastSeenAt ?? createdAt,
+        createdAt,
+        activeSessionCount,
+      });
+    }
+    return items.sort((a, b) => Number(b.isCurrentDevice) - Number(a.isCurrentDevice) || b.lastSeenAt.localeCompare(a.lastSeenAt));
+  }
+
+  revokeDevice(userId: string, targetDeviceId: string, currentDeviceId: string): void {
+    const normalizedTarget = targetDeviceId.trim();
+    const normalizedCurrent = this.normalizeDeviceId(currentDeviceId);
+    if (!normalizedTarget) {
+      throw invalidRequest("deviceId is required.", { deviceId: "deviceId is required." });
+    }
+    const now = nowIso(this.clock);
+    const list = this.listDevices(userId, normalizedCurrent);
+    const match = list.find((item) => item.id === normalizedTarget || item.deviceId === normalizedTarget);
+    if (!match) {
+      throw notFound("Không tìm thấy thiết bị đang hoạt động.");
+    }
+    const key = `${userId}:${match.deviceId}`;
+    const existing = this.customerDevices.get(key);
+    this.customerDevices.set(key, {
+      id: existing?.id ?? match.id,
+      customerId: userId,
+      deviceId: match.deviceId,
+      deviceName: existing?.deviceName ?? match.deviceName,
+      attestationStatus: "REVOKED",
+      createdAt: existing?.createdAt ?? match.createdAt,
+      lastSeenAt: existing?.lastSeenAt ?? match.lastSeenAt,
+      revokedAt: now,
+    });
+    const familyIds = new Set<string>();
+    for (const s of this.accessSessions.values()) {
+      if (s.userId === userId && s.deviceId === match.deviceId) familyIds.add(s.familyId);
+    }
+    for (const s of this.refreshSessions.values()) {
+      if (s.userId === userId && s.deviceId === match.deviceId) familyIds.add(s.familyId);
+    }
+    for (const familyId of familyIds) this.revokeFamily(familyId);
+    this.recordAudit("DEVICE_REVOKED", userId, match.id);
   }
 
   hasActiveBiometricCredential(userId: string, deviceId?: string): boolean {
@@ -2012,6 +2180,7 @@ export class BankingSystem {
     accountId: string,
     cursor?: string,
     limit = 20,
+    filters?: TransactionListFilters,
   ): ListTransactionsResult {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       throw invalidRequest("limit must be an integer between 1 and 100.", {
@@ -2019,7 +2188,20 @@ export class BankingSystem {
       });
     }
 
-    const all = this.core.listTransactions(userId, accountId);
+    const normalized = normalizeTransactionFilters(filters);
+    const all = this.core.listTransactions(userId, accountId).filter((tx) => {
+      if (normalized.status && tx.status !== normalized.status) return false;
+      if (normalized.direction && tx.direction !== normalized.direction) return false;
+      const occurredTs = Date.parse(tx.occurredAt);
+      if (normalized.fromIso && occurredTs < Date.parse(normalized.fromIso)) return false;
+      if (normalized.toIso && occurredTs > Date.parse(normalized.toIso)) return false;
+      if (normalized.q) {
+        const needle = normalized.q.toLowerCase();
+        const hay = `${tx.reference}\n${tx.description}\n${tx.counterpartyName ?? ""}`.toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
+      return true;
+    });
     const page = paginateByKeyset(
       all,
       cursor,
@@ -2033,6 +2215,78 @@ export class BankingSystem {
       items: page.items.map((transaction) => this.toTransaction(transaction)),
       nextCursor: page.nextCursor,
     };
+  }
+
+  getAccountMonthlySummary(
+    userId: string,
+    accountId: string,
+    month?: string,
+  ): AccountMonthlySummary {
+    const period = parseSummaryMonth(month, new Date(this.clock()));
+    const transactions = this.core.listTransactions(userId, accountId);
+    const startTs = Date.parse(period.startIso);
+    const endTs = Date.parse(period.endIso);
+    let totalIncome = 0n;
+    let totalExpense = 0n;
+    let creditCount = 0;
+    let debitCount = 0;
+
+    for (const tx of transactions) {
+      if (tx.status !== "SUCCEEDED") continue;
+      const occurredTs = Date.parse(tx.occurredAt);
+      if (Number.isNaN(occurredTs) || occurredTs < startTs || occurredTs >= endTs) {
+        continue;
+      }
+      const amount = BigInt(tx.amount.amountMinor);
+      if (tx.direction === "CREDIT") {
+        totalIncome += amount;
+        creditCount += 1;
+      } else {
+        totalExpense += amount;
+        debitCount += 1;
+      }
+    }
+
+    return {
+      accountId,
+      month: period.month,
+      monthLabel: period.monthLabel,
+      currency: "VND",
+      totalIncomeMinor: totalIncome.toString(),
+      totalExpenseMinor: totalExpense.toString(),
+      netMinor: (totalIncome - totalExpense).toString(),
+      succeededCount: creditCount + debitCount,
+      creditCount,
+      debitCount,
+    };
+  }
+
+  exportAccountStatement(
+    userId: string,
+    accountId: string,
+    options?: { from?: string; to?: string; format?: string },
+  ): AccountStatementExport {
+    const account = this.core.getPaymentAccount(userId, accountId);
+    const normalized = normalizeTransactionFilters({
+      from: options?.from,
+      to: options?.to,
+    });
+    const transactions = this.core
+      .listTransactions(userId, accountId)
+      .filter((tx) => {
+        const occurredTs = Date.parse(tx.occurredAt);
+        if (normalized.fromIso && occurredTs < Date.parse(normalized.fromIso)) return false;
+        if (normalized.toIso && occurredTs > Date.parse(normalized.toIso)) return false;
+        return true;
+      })
+      .slice(0, 1000);
+    return buildAccountStatementExport({
+      account,
+      transactions,
+      fromIso: normalized.fromIso,
+      toIso: normalized.toIso,
+      format: options?.format,
+    });
   }
 
   getTransaction(userId: string, accountId: string, transactionId: string): TransactionDetail {
@@ -5101,7 +5355,7 @@ export class BankingSystem {
         availableCredit <= creditLimit &&
         availableCredit === creditLimit - stored - pendingAuthorizations &&
         this.findLatestCreditStatement(account.creditAccountId)?.remainingAmountDue.amountMinor ===
-          stored.toString();
+        stored.toString();
       if (difference !== 0n || !invariantValid) {
         this.recordAudit("CREDIT_RECONCILIATION_MISMATCH", null, account.creditAccountId);
       }
@@ -5177,33 +5431,33 @@ export class BankingSystem {
       const incomingRenewalCount = renewalParentCounts.get(deposit.depositId) ?? 0;
       const renewalOriginValid = Boolean(
         opening &&
-          opening.userId === deposit.userId &&
-          opening.status === "SUCCEEDED" &&
-          opening.depositId &&
-          (opening.depositId === deposit.depositId
-            ? incomingRenewalCount === 0
-            : incomingRenewalCount === 1),
+        opening.userId === deposit.userId &&
+        opening.status === "SUCCEEDED" &&
+        opening.depositId &&
+        (opening.depositId === deposit.depositId
+          ? incomingRenewalCount === 0
+          : incomingRenewalCount === 1),
       );
       const renewalChainValid =
         deposit.status === "CLOSED"
           ? Boolean(
-              deposit.renewedDepositId &&
-                renewedDeposit &&
-                renewalParentCounts.get(deposit.renewedDepositId) === 1 &&
-                renewedDeposit.depositId !== deposit.depositId &&
-                renewedDeposit.userId === deposit.userId &&
-                renewedDeposit.sourceAccountId === deposit.sourceAccountId &&
-                renewedDeposit.openingId === deposit.openingId &&
-                renewedDeposit.openedAt === deposit.maturityAt &&
-                renewedDeposit.principal.amountMinor === expectedRenewedPrincipal,
-            )
+            deposit.renewedDepositId &&
+            renewedDeposit &&
+            renewalParentCounts.get(deposit.renewedDepositId) === 1 &&
+            renewedDeposit.depositId !== deposit.depositId &&
+            renewedDeposit.userId === deposit.userId &&
+            renewedDeposit.sourceAccountId === deposit.sourceAccountId &&
+            renewedDeposit.openingId === deposit.openingId &&
+            renewedDeposit.openedAt === deposit.maturityAt &&
+            renewedDeposit.principal.amountMinor === expectedRenewedPrincipal,
+          )
           : deposit.renewedDepositId === null;
       const invariantValid =
         postedLiabilities.has(deposit.depositId) &&
         principal > 0n &&
         BigInt(deposit.expectedInterest.amountMinor) >= 0n &&
         BigInt(deposit.totalAtMaturity.amountMinor) ===
-          principal + BigInt(deposit.expectedInterest.amountMinor) &&
+        principal + BigInt(deposit.expectedInterest.amountMinor) &&
         renewalOriginValid &&
         renewalChainValid;
       if (difference !== 0n || !invariantValid) {
@@ -5224,10 +5478,24 @@ export class BankingSystem {
     user: UserRecord,
     familyId: string,
     deviceId: string,
+    deviceName?: string,
   ): LoginResponse {
     const accessToken = createOpaqueToken();
     const refreshToken = createOpaqueToken();
     const now = this.clock();
+    const nowTimestamp = new Date(now).toISOString();
+    const deviceKey = `${user.id}:${deviceId}`;
+    const existingDevice = this.customerDevices.get(deviceKey);
+    this.customerDevices.set(deviceKey, {
+      id: existingDevice?.id ?? createId("device"),
+      customerId: user.id,
+      deviceId,
+      deviceName: deviceName?.trim() || existingDevice?.deviceName || "Thiết bị NOVA",
+      attestationStatus: existingDevice?.attestationStatus === "REVOKED" ? "PENDING" : (existingDevice?.attestationStatus ?? "PENDING"),
+      createdAt: existingDevice?.createdAt ?? nowTimestamp,
+      lastSeenAt: nowTimestamp,
+      revokedAt: null,
+    });
     this.accessSessions.set(hashOpaqueToken(accessToken), {
       userId: user.id,
       familyId,
@@ -5279,9 +5547,9 @@ export class BankingSystem {
       const quote = this.quotes.get(resourceId);
       return quote
         ? fingerprint({
-            quoteId: quote.quote.quoteId,
-            amountMinor: quote.quote.amount.amountMinor,
-          })
+          quoteId: quote.quote.quoteId,
+          amountMinor: quote.quote.amount.amountMinor,
+        })
         : null;
     }
     if (purpose === "SAVINGS_OPENING") {
@@ -5422,27 +5690,27 @@ export class BankingSystem {
     const activeBiometric =
       method === "BIOMETRIC" && deviceId?.trim()
         ? [...this.biometricCredentials.values()].find(
-            (credential) =>
-              credential.customerId === userId &&
-              credential.deviceId === this.normalizeDeviceId(deviceId) &&
-              credential.status === "ACTIVE",
-          )
+          (credential) =>
+            credential.customerId === userId &&
+            credential.deviceId === this.normalizeDeviceId(deviceId) &&
+            credential.status === "ACTIVE",
+        )
         : undefined;
     const valid =
       method === "OTP" || method === "TOTP"
         ? challenge.proofDigest !== null && this.otpDigestKeyring.verify(
-            challengeHash,
-            proof,
-            challenge.proofDigest,
-            challenge.digestKeyId ?? undefined,
-          )
+          challengeHash,
+          proof,
+          challenge.proofDigest,
+          challenge.digestKeyId ?? undefined,
+        )
         : activeBiometric && proof.startsWith("biometric-v1.")
           ? verifyBiometricAssertion(proof, activeBiometric.biometricSecret, {
-              challengeId,
-              deviceId: this.normalizeDeviceId(deviceId),
-              purpose,
-              resourceId,
-            })
+            challengeId,
+            deviceId: this.normalizeDeviceId(deviceId),
+            purpose,
+            resourceId,
+          })
           : this.allowUnsafeDirectSandboxStepUp && proof === "sandbox-biometric";
     if (!valid) {
       this.recordChallengeFailure(challengeHash, challenge);

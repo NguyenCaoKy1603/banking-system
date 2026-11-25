@@ -55,6 +55,7 @@ export type PersistentStepUpPurpose = Extract<
   | "RECOVERY_CODE_ROTATION"
   | "MFA_FACTOR_CHANGE"
   | "MFA_FACTOR_REMOVAL"
+  | "PASSWORD_CHANGE"
 >;
 
 export async function verifyPersistentStepUp(
@@ -150,6 +151,9 @@ export function isAuthenticatedRoute(
     return true;
   }
   if (
+    (method === "POST" && segments.length === 3 && segments[0] === "auth" && segments[1] === "password" && segments[2] === "change") ||
+    (method === "GET" && segments.length === 2 && segments[0] === "auth" && segments[1] === "devices") ||
+    (method === "DELETE" && segments.length === 3 && segments[0] === "auth" && segments[1] === "devices") ||
     (method === "GET" && segments.length === 3 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "methods") ||
     (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "biometric" && segments[3] === "enroll") ||
     (method === "POST" && segments.length === 4 && segments[0] === "auth" && segments[1] === "mfa" && segments[2] === "totp" && (segments[3] === "enroll" || segments[3] === "confirm")) ||
@@ -171,7 +175,7 @@ export function isAuthenticatedRoute(
   if (
     method === "POST" &&
     segments.length === 2 &&
-    segments[0] === "internal-recipients" &&
+    (segments[0] === "internal-recipients" || segments[0] === "external-recipients") &&
     segments[1] === "lookup"
   ) {
     return true;
@@ -192,15 +196,10 @@ export function isAuthenticatedRoute(
     method === "GET" &&
     segments.length === 3 &&
     segments[0] === "accounts" &&
-    segments[2] === "number"
-  ) {
-    return true;
-  }
-  if (
-    method === "GET" &&
-    segments.length === 3 &&
-    segments[0] === "accounts" &&
-    segments[2] === "transactions"
+    (segments[2] === "number" ||
+      segments[2] === "transactions" ||
+      segments[2] === "summary" ||
+      segments[2] === "statement-export")
   ) {
     return true;
   }

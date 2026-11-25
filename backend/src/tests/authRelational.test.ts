@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import type { PoolClient, QueryConfig, QueryConfigValues, QueryResult, QueryResultRow } from "pg";
 
 import { DatabasePool } from "../database/pool.js";
 import { UnitOfWork } from "../database/unitOfWork.js";
 import { RelationalAuthService } from "../database/relationalAuthService.js";
 import { assertDisposableDatabaseResetAllowed } from "../database/disposableDatabaseGuard.js";
-import { hashOpaqueToken } from "../security.js";
+import { hashOpaqueToken, hashPasswordAsync } from "../security.js";
 import { DomainError } from "../errors.js";
 
 const databaseUrl = process.env.RELATIONAL_DATABASE_URL?.trim();
@@ -488,4 +489,263 @@ test("relational auth suite: logout all sessions, cross-customer isolation, and 
     (err) => (err instanceof DomainError ? err.status : undefined),
   );
   assert.equal(bearerRevokedStatus, 401, "Revoked bearer token cannot pass authentication (HTTP 401)");
+});
+
+class MockAuthPoolClient {
+  public readonly executedSql: string[] = [];
+  public committed = false;
+  public rolledBack = false;
+
+  constructor(
+    private readonly queryHandler: (sql: string, params: unknown[]) => { rows: unknown[] } | Promise<{ rows: unknown[] }>,
+  ) {}
+
+  async query<R extends QueryResultRow = QueryResultRow, I = unknown[]>(
+    queryTextOrConfig: string | QueryConfig<I>,
+    values?: QueryConfigValues<I>,
+  ): Promise<QueryResult<R>> {
+    const text = typeof queryTextOrConfig === "string" ? queryTextOrConfig : queryTextOrConfig.text;
+    const params = Array.isArray(values) ? values : [];
+    this.executedSql.push(text);
+    const trimmed = text.trim();
+    if (trimmed.startsWith("BEGIN")) {
+      return { rows: [] as R[], command: "BEGIN", rowCount: 0, oid: 0, fields: [] };
+    }
+    if (trimmed.startsWith("COMMIT")) {
+      this.committed = true;
+      return { rows: [] as R[], command: "COMMIT", rowCount: 0, oid: 0, fields: [] };
+    }
+    if (trimmed.startsWith("ROLLBACK")) {
+      this.rolledBack = true;
+      return { rows: [] as R[], command: "ROLLBACK", rowCount: 0, oid: 0, fields: [] };
+    }
+    const res = await this.queryHandler(trimmed, params);
+    return {
+      rows: res.rows as R[],
+      command: "SELECT",
+      rowCount: res.rows.length,
+      oid: 0,
+      fields: [],
+    };
+  }
+
+  release(): void {}
+}
+
+class MockAuthDatabasePool extends DatabasePool {
+  constructor(private readonly client: PoolClient) {
+    super({ connectionString: "postgresql://localhost/mock" });
+  }
+
+  override async connect(): Promise<PoolClient> {
+    return this.client;
+  }
+}
+
+test("RelationalAuthService access_status guard: blocks LOCKED customers in login, issueSession, authenticate, and refresh", async () => {
+  const customerId = randomUUID();
+  const familyId = randomUUID();
+  const deviceId = "device-lock-guard";
+  const email = "locked-user@example.test";
+  const password = await hashPasswordAsync("StrongPassword!123");
+  let accessStatus: "ACTIVE" | "LOCKED" = "ACTIVE";
+  const revokedUpdates: string[] = [];
+
+  const mockClient = new MockAuthPoolClient((sql, params) => {
+    if (sql.includes("INSERT INTO rate_limit_buckets")) {
+      return { rows: [] };
+    }
+    if (sql.includes("FROM rate_limit_buckets")) {
+      const keys = params[0] as string[];
+      return {
+        rows: keys.map((bucketKey) => ({
+          bucket_key: bucketKey,
+          blocked_until: null,
+          attempts: 0,
+          retry_after: 600,
+        })),
+      };
+    }
+    if (sql.includes("UPDATE rate_limit_buckets") && sql.includes("RETURNING")) {
+      return { rows: [{ attempts: 1, retry_after: 600 }] };
+    }
+    if (sql.includes("UPDATE rate_limit_buckets")) {
+      return { rows: [] };
+    }
+    if (sql.includes("SELECT * FROM customers WHERE lower(email) = lower($1)")) {
+      return {
+        rows: [
+          {
+            id: customerId,
+            full_name: "Locked Customer",
+            email,
+            phone_number: "0900000001",
+            password_salt: password.salt,
+            password_digest: password.digest,
+            access_status: accessStatus,
+            created_at: new Date().toISOString(),
+          },
+        ],
+      };
+    }
+    if (sql.includes("SELECT * FROM customers WHERE id = $1")) {
+      return {
+        rows: [
+          {
+            id: customerId,
+            full_name: "Locked Customer",
+            email,
+            phone_number: "0900000001",
+            password_salt: password.salt,
+            password_digest: password.digest,
+            access_status: accessStatus,
+            created_at: new Date().toISOString(),
+          },
+        ],
+      };
+    }
+    if (sql.includes("FROM auth_sessions s") && sql.includes("s.access_token_hash = $1")) {
+      return {
+        rows: [
+          {
+            id: customerId,
+            full_name: "Locked Customer",
+            email,
+            phone_number: "0900000001",
+            access_status: accessStatus,
+            created_at: new Date().toISOString(),
+          },
+        ],
+      };
+    }
+    if (sql.includes("FROM auth_sessions s") && sql.includes("FOR UPDATE")) {
+      return {
+        rows: [
+          {
+            id: randomUUID(),
+            customer_id: customerId,
+            device_id: randomUUID(),
+            family_id: familyId,
+            refresh_token_hash: hashOpaqueToken("valid-refresh-token"),
+            revoked_at: null,
+            refresh_expires_at: new Date(Date.now() + 600_000).toISOString(),
+            refresh_revoked_at: null,
+            full_name: "Locked Customer",
+            email,
+            phone_number: "0900000001",
+            access_status: accessStatus,
+            created_at: new Date().toISOString(),
+            bound_device_id: deviceId,
+            device_revoked_at: null,
+          },
+        ],
+      };
+    }
+    if (sql.includes("SET revoked_at = NOW() WHERE family_id = $1")) {
+      revokedUpdates.push(sql);
+      return { rows: [] };
+    }
+    return { rows: [] };
+  });
+
+  const auth = new RelationalAuthService(new UnitOfWork(new MockAuthDatabasePool(mockClient as unknown as PoolClient)));
+
+  // ACTIVE customer can login and authenticate
+  const activeLogin = await auth.loginPasswordOnly(email, "StrongPassword!123", deviceId);
+  assert.equal(activeLogin.id, customerId);
+  const activeAuth = await auth.authenticate("valid-access-token", deviceId);
+  assert.equal(activeAuth.id, customerId);
+
+  // Switch customer to LOCKED
+  accessStatus = "LOCKED";
+
+  // Wrong password while LOCKED must still return 401 (no account-status oracle leak)
+  await assert.rejects(
+    () => auth.loginPasswordOnly(email, "WrongPassword!123", deviceId),
+    (err: unknown) => err instanceof DomainError && err.status === 401 && err.code === "UNAUTHORIZED",
+  );
+
+  // Valid password while LOCKED must reject with 403 CUSTOMER_ACCESS_LOCKED
+  await assert.rejects(
+    () => auth.loginPasswordOnly(email, "StrongPassword!123", deviceId),
+    (err: unknown) => err instanceof DomainError && err.status === 403 && err.code === "CUSTOMER_ACCESS_LOCKED",
+  );
+
+  // issueSession while LOCKED must reject with 403 CUSTOMER_ACCESS_LOCKED
+  await assert.rejects(
+    () => auth.issueSession(customerId, deviceId),
+    (err: unknown) => err instanceof DomainError && err.status === 403 && err.code === "CUSTOMER_ACCESS_LOCKED",
+  );
+
+  // Existing accessToken while LOCKED must reject with 403 CUSTOMER_ACCESS_LOCKED
+  await assert.rejects(
+    () => auth.authenticate("valid-access-token", deviceId),
+    (err: unknown) => err instanceof DomainError && err.status === 403 && err.code === "CUSTOMER_ACCESS_LOCKED",
+  );
+
+  // Existing refreshToken while LOCKED must revoke session family, commit, and reject with 403 CUSTOMER_ACCESS_LOCKED
+  mockClient.committed = false;
+  mockClient.rolledBack = false;
+  await assert.rejects(
+    () => auth.refresh("valid-refresh-token", deviceId),
+    (err: unknown) => err instanceof DomainError && err.status === 403 && err.code === "CUSTOMER_ACCESS_LOCKED",
+  );
+  assert.equal(revokedUpdates.length, 3, "All 3 session tables must be revoked when refreshing a locked customer");
+  assert.equal(mockClient.committed, true, "Session revocation for locked customer refresh must be committed");
+  assert.equal(mockClient.rolledBack, false);
+});
+
+test("relational auth suite: LOCKED customer access_status blocks login, bearer authenticate, and refresh on PostgreSQL", { skip: !databaseUrl }, async (t) => {
+  let pool: DatabasePool | null = new DatabasePool({ connectionString: databaseUrl!, max: 8 });
+  t.after(async () => {
+    if (pool) {
+      await pool.close();
+      pool = null;
+    }
+  });
+
+  const database = pool;
+  const auth = new RelationalAuthService(new UnitOfWork(database));
+  const customerId = randomUUID();
+  const email = `locked-pg-${customerId}@example.test`;
+  const phoneNumber = generateVietnamesePhone();
+  const password = await hashPasswordAsync("StrongPassword!123");
+  const deviceId = `device-pg-lock-${randomUUID()}`;
+
+  await database.query(
+    `INSERT INTO customers (id, full_name, email, phone_number, password_salt, password_digest, access_status, access_version, created_at)
+     VALUES ($1, 'PG Lock Test User', $2, $3, $4, $5, 'ACTIVE', 1, NOW())`,
+    [customerId, email, phoneNumber, password.salt, password.digest],
+  );
+
+  const loginUser = await auth.loginPasswordOnly(email, "StrongPassword!123", deviceId);
+  assert.equal(loginUser.id, customerId);
+
+  const session = await auth.issueSession(customerId, deviceId);
+  const authenticated = await auth.authenticate(session.accessToken, deviceId);
+  assert.equal(authenticated.id, customerId);
+
+  // Lock customer in PostgreSQL
+  await database.query(`UPDATE customers SET access_status = 'LOCKED', access_version = access_version + 1 WHERE id = $1`, [customerId]);
+
+  await assert.rejects(
+    () => auth.loginPasswordOnly(email, "StrongPassword!123", deviceId),
+    (err: unknown) => err instanceof DomainError && err.status === 403 && err.code === "CUSTOMER_ACCESS_LOCKED",
+  );
+
+  await assert.rejects(
+    () => auth.authenticate(session.accessToken, deviceId),
+    (err: unknown) => err instanceof DomainError && err.status === 403 && err.code === "CUSTOMER_ACCESS_LOCKED",
+  );
+
+  await assert.rejects(
+    () => auth.refresh(session.refreshToken, deviceId),
+    (err: unknown) => err instanceof DomainError && err.status === 403 && err.code === "CUSTOMER_ACCESS_LOCKED",
+  );
+
+  const revokedFamilies = await database.query<{ revoked_at: Date | null }>(
+    `SELECT revoked_at FROM refresh_session_families WHERE customer_id = $1`,
+    [customerId],
+  );
+  assert.ok(revokedFamilies.rows.length > 0 && revokedFamilies.rows.every((row) => row.revoked_at !== null));
 });

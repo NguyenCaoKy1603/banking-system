@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { BankingSystem } from "../bankingSystem.js";
 import type { HttpOptions } from "../http.js";
+import { defaultNapasGateway } from "../domain/napas/mockNapasGateway.js";
 import { invalidRequest, notFound, unauthorized } from "../errors.js";
+import { createOpaqueToken } from "../security.js";
 import { defaultRecipientLookupRateLimiter } from "../middlewares/index.js";
 import { header, requireObject, requireDeviceId, writeResponse } from "../routes/httpUtils.js";
 import type { VerifyStepUpFn } from "../routes/transferRoutes.js";
@@ -25,6 +27,40 @@ export async function lookupInternalRecipientController(
     ? await options.relationalHttp.lookupInternalRecipient(userId, data.accountNumber)
     : system.lookupInternalRecipient(userId, data.accountNumber as string);
   writeResponse(response, 200, traceId, { recipient });
+}
+
+export async function lookupExternalRecipientController(
+  response: ServerResponse,
+  userId: string,
+  body: unknown,
+  relationalRoute: boolean,
+  options: HttpOptions,
+  traceId: string,
+): Promise<void> {
+  (options.lookupRateLimiter ?? defaultRecipientLookupRateLimiter).acquire(userId);
+  const data = requireObject(body);
+  if (relationalRoute && options.relationalHttp) {
+    const recipient = await options.relationalHttp.lookupExternalRecipient(userId, {
+      bankBin: data.bankBin,
+      accountNumber: data.accountNumber,
+    });
+    writeResponse(response, 200, traceId, { recipient });
+    return;
+  }
+  const inquiry = defaultNapasGateway.inquireAccount(data.bankBin, data.accountNumber);
+  writeResponse(response, 200, traceId, {
+    recipient: {
+      lookupId: createOpaqueToken(),
+      rail: "NAPAS_IBFT" as const,
+      bankBin: inquiry.bank.bin,
+      bankCode: inquiry.bank.code,
+      accountHolderName: inquiry.accountHolderName,
+      maskedAccountNumber: inquiry.maskedAccountNumber,
+      bankName: inquiry.bank.name,
+      status: "ACTIVE" as const,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    },
+  });
 }
 
 export async function listBeneficiariesController(
@@ -178,13 +214,19 @@ export async function submitTransferController(
     if (verified.customerId !== userId) throw unauthorized("MFA user binding is invalid.");
     const idempotencyKey = header(request, "idempotency-key")?.trim() ?? "";
     if (idempotencyKey.length < 16) throw invalidRequest("Idempotency-Key must contain at least 16 characters.");
-    writeResponse(response, 200, traceId, await options.relationalHttp.submitTransfer({
+    const receipt = await options.relationalHttp.submitTransfer({
       customerId: userId,
       idempotencyKey,
       quoteId,
       requestFingerprint: transferRequestFingerprint,
       traceId,
-    }));
+    });
+    writeResponse(
+      response,
+      receipt.status === "PENDING" ? 202 : 200,
+      traceId,
+      receipt,
+    );
   } else {
     if (options.mfaService) {
       await verifyStepUp(

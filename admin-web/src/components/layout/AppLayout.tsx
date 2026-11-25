@@ -78,7 +78,18 @@ export function AppLayout({
       ],
     },
     {
-      title: "3. Vận hành",
+      title: "3. Phê duyệt",
+      items: [
+        {
+          key: "approvals",
+          label: "Approval Inbox",
+          badge: approvalCount,
+          visible: canReadApprovals,
+        },
+      ],
+    },
+    {
+      title: "4. Vận hành",
       items: [
         {
           key: "operations",
@@ -88,8 +99,13 @@ export function AppLayout({
       ],
     },
     {
-      title: "4. Quản trị",
+      title: "5. Quản trị",
       items: [
+        {
+          key: "policy",
+          label: "Chính sách & Biểu phí",
+          visible: canReadApprovals,
+        },
         {
           key: "staff",
           label: "Nhân sự / Phân quyền (Staff / Roles)",

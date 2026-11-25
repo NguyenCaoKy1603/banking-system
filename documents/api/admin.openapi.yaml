@@ -114,6 +114,34 @@ paths:
   /admin/audit-events/{eventId}: { get: { operationId: adminAuditEventDetail, security: [{ staffCookie: [] }], responses: { '200': { description: Audit event detail } } } }
   /admin/audit-export-requests: { post: { operationId: adminAuditExportRequest, security: [{ staffCookie: [] }], parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }], responses: { '202': { description: Audit export request } } } }
   /admin/audit-exports/{exportId}: { get: { operationId: adminAuditExportStatus, security: [{ staffCookie: [] }], responses: { '200': { description: Audit export status } } } }
+  /admin/control-policy:
+    get:
+      operationId: adminGetControlPolicy
+      security: [{ staffCookie: [] }]
+      responses:
+        '200': { description: Current runtime control policy and fee configuration }
+        '403': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: adminUpdateControlPolicy
+      security: [{ staffCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlPolicyPatchRequest'
+      responses:
+        '200': { description: Control policy updated with audit trail }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /admin/operations/ledger-reconciliation:
+    get:
+      operationId: adminReconcileLedger
+      security: [{ staffCookie: [] }]
+      responses:
+        '200': { description: Core double-entry ledger trial balance reconciliation report }
+        '403': { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
     staffCookie: { type: apiKey, in: cookie, name: __Host-admin_access, description: HttpOnly staff session; never put in localStorage. }
@@ -136,3 +164,18 @@ components:
         code: { type: string }
         message: { type: string }
         traceId: { type: string }
+    ControlPolicyPatchRequest:
+      type: object
+      properties:
+        globalKillSwitch: { type: boolean }
+        transfersEnabled: { type: boolean }
+        maxTransferAmountMinor: { type: string, pattern: '^\d+$' }
+        dailyTransferLimitMinor: { type: string, pattern: '^\d+$' }
+        transferFeeMinor: { type: string, pattern: '^\d+$' }
+        savingsEnabled: { type: boolean }
+        maxSavingsAmountMinor: { type: string, pattern: '^\d+$' }
+        creditEnabled: { type: boolean }
+        creditPaymentsEnabled: { type: boolean }
+        cardControlsEnabled: { type: boolean }
+        maxCreditPaymentAmountMinor: { type: string, pattern: '^\d+$' }
+        reasonCode: { type: string, maxLength: 64 }

@@ -462,6 +462,127 @@ paths:
           description: All sessions owned by the authenticated user were revoked.
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /auth/password/change:
+    post:
+      tags: [Auth]
+      operationId: changePassword
+      summary: Change authenticated customer password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Password changed and all active customer sessions revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangePasswordResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Customer access is locked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorPayload'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /auth/password/forgot:
+    post:
+      tags: [Auth]
+      operationId: forgotPassword
+      summary: Request password reset email OTP challenge
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '202':
+          description: Password reset challenge issued without disclosing account existence.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthChallengeResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /auth/password/reset:
+    post:
+      tags: [Auth]
+      operationId: resetPassword
+      summary: Verify password reset OTP and set a new password
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/DeviceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '200':
+          description: Password reset succeeded and all prior customer sessions were revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetPasswordResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Customer access is locked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorPayload'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /auth/devices:
+    get:
+      tags: [Auth]
+      operationId: listAuthDevices
+      summary: List active login devices for the authenticated customer
+      responses:
+        '200':
+          description: Active devices ordered with current device first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerDevicesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /auth/devices/{deviceId}:
+    delete:
+      tags: [Auth]
+      operationId: revokeAuthDevice
+      summary: Revoke a login device and all sessions bound to it
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '204':
+          description: Device and all associated sessions revoked.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /mobile/control-policy:
     get:
       tags: [Control]
@@ -607,6 +728,31 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/ServerError'
+  /external-recipients/lookup:
+    post:
+      tags: [Recipients]
+      operationId: lookupExternalRecipient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExternalRecipientLookupRequest'
+      responses:
+        '200':
+          description: Short-lived interbank recipient confirmation data via NAPAS IBFT.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalRecipientLookupResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /accounts/{accountId}/number:
     get:
       tags: [Accounts]
@@ -643,6 +789,34 @@ paths:
             minimum: 1
             maximum: 100
             default: 20
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [SUCCEEDED, PENDING, FAILED, REVERSED]
+        - name: direction
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT]
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 120
       responses:
         '200':
           description: Cursor-paginated transaction history.
@@ -654,6 +828,73 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /accounts/{accountId}/summary:
+    get:
+      tags: [Accounts]
+      operationId: getAccountMonthlySummary
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - name: month
+          in: query
+          required: false
+          description: Target month formatted as YYYY-MM (defaults to current UTC month).
+          schema:
+            type: string
+            pattern: '^\d{4}-(0[1-9]|1[0-2])$'
+      responses:
+        '200':
+          description: Server-computed monthly cash flow summary.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountMonthlySummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /accounts/{accountId}/statement-export:
+    get:
+      tags: [Accounts]
+      operationId: exportAccountStatement
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [csv, html]
+            default: csv
+      responses:
+        '200':
+          description: Exported account statement in CSV (with UTF-8 BOM) or HTML format.
+          content:
+            text/csv:
+              schema:
+                type: string
+            text/html:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
   /accounts/{accountId}/transactions/{transactionId}:
     get:
       tags: [Accounts]
@@ -1807,7 +2048,7 @@ components:
       properties:
         challengeId: { type: string, minLength: 1 }
         expiresAt: { type: string, format: date-time }
-        purpose: { type: string, enum: [REGISTRATION_VERIFY, REGISTRATION_EMAIL_VERIFY, LOGIN, TRANSFER, SAVINGS_OPENING, SAVINGS_WITHDRAWAL, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, CARD_REPORT_LOST, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
+        purpose: { type: string, enum: [REGISTRATION_VERIFY, REGISTRATION_EMAIL_VERIFY, PASSWORD_RESET, PASSWORD_CHANGE, LOGIN, TRANSFER, SAVINGS_OPENING, SAVINGS_WITHDRAWAL, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, CARD_REPORT_LOST, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
         methods:
           type: array
           minItems: 1
@@ -2007,7 +2248,7 @@ components:
         resourceId: quote-example
         requestFingerprint: fingerprint-example
       properties:
-        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, SAVINGS_WITHDRAWAL, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, CARD_REPORT_LOST, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL] }
+        purpose: { type: string, enum: [TRANSFER, SAVINGS_OPENING, SAVINGS_WITHDRAWAL, CREDIT_APPLICATION, CARD_ACTIVATION, CREDIT_PAYMENT, CARD_UNLOCK, CARD_REPORT_LOST, RECOVERY_CODE_ROTATION, MFA_FACTOR_CHANGE, MFA_FACTOR_REMOVAL, PASSWORD_CHANGE] }
         resourceId:
           oneOf:
             - { type: string }
@@ -2047,6 +2288,30 @@ components:
       required: [recipient]
       properties:
         recipient: { $ref: '#/components/schemas/InternalRecipientLookup' }
+    ExternalRecipientLookupRequest:
+      type: object
+      required: [bankBin, accountNumber]
+      properties:
+        bankBin: { type: string, pattern: '^\d{6}$' }
+        accountNumber: { type: string, pattern: '^\d{6,34}$', writeOnly: true }
+    ExternalRecipientLookup:
+      type: object
+      required: [lookupId, rail, bankBin, bankCode, accountHolderName, maskedAccountNumber, bankName, status, expiresAt]
+      properties:
+        lookupId: { type: string }
+        rail: { type: string, enum: [NAPAS_IBFT] }
+        bankBin: { type: string }
+        bankCode: { type: string }
+        accountHolderName: { type: string }
+        maskedAccountNumber: { type: string }
+        bankName: { type: string }
+        status: { type: string, enum: [ACTIVE, BLOCKED] }
+        expiresAt: { type: string, format: date-time }
+    ExternalRecipientLookupResponse:
+      type: object
+      required: [recipient]
+      properties:
+        recipient: { $ref: '#/components/schemas/ExternalRecipientLookup' }
     VerifyAuthChallengeRequest:
       type: object
       required: [challengeId, method, proof]
@@ -2291,6 +2556,20 @@ components:
           oneOf:
             - { type: string }
             - { type: 'null' }
+    AccountMonthlySummary:
+      type: object
+      required: [accountId, month, monthLabel, currency, totalIncomeMinor, totalExpenseMinor, netMinor, succeededCount, creditCount, debitCount]
+      properties:
+        accountId: { type: string }
+        month: { type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$' }
+        monthLabel: { type: string }
+        currency: { type: string, enum: [VND] }
+        totalIncomeMinor: { type: string, pattern: '^\d+$' }
+        totalExpenseMinor: { type: string, pattern: '^\d+$' }
+        netMinor: { type: string, pattern: '^-?\d+$' }
+        succeededCount: { type: integer, minimum: 0 }
+        creditCount: { type: integer, minimum: 0 }
+        debitCount: { type: integer, minimum: 0 }
     TransactionDetail:
       allOf:
         - $ref: '#/components/schemas/Transaction'
@@ -3373,3 +3652,74 @@ components:
       properties:
         decision: { type: string, enum: [CONFIRMED_SAFE, REPORTED_SUSPICIOUS] }
         note: { type: string, maxLength: 500 }
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      example:
+        currentPassword: <provided-by-test-secret>
+        newPassword: <provided-by-test-secret>
+        stepUp:
+          method: TOTP
+          challengeId: chal-pw-change-example
+          proof: '123456'
+      properties:
+        currentPassword: { type: string, minLength: 1, writeOnly: true }
+        newPassword: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
+        challengeId: { type: string, minLength: 1 }
+        code: { type: string, pattern: '^\d{6}$', writeOnly: true }
+        stepUp:
+          type: object
+          required: [method, challengeId, proof]
+          properties:
+            method: { type: string, enum: [TOTP, BIOMETRIC] }
+            challengeId: { type: string, minLength: 1 }
+            proof: { type: string, minLength: 1, writeOnly: true }
+    ChangePasswordResponse:
+      type: object
+      required: [status, sessionsRevoked]
+      properties:
+        status: { type: string, enum: [PASSWORD_CHANGED] }
+        sessionsRevoked: { type: boolean }
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      example:
+        email: tester@example.com
+      properties:
+        email: { type: string, format: email }
+    ResetPasswordRequest:
+      type: object
+      required: [challengeId, proof, newPassword]
+      example:
+        challengeId: chal-pw-reset-example
+        proof: '123456'
+        newPassword: <provided-by-test-secret>
+      properties:
+        challengeId: { type: string, minLength: 1 }
+        proof: { type: string, minLength: 1, writeOnly: true }
+        newPassword: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
+    ResetPasswordResponse:
+      type: object
+      required: [status, sessionsRevoked]
+      properties:
+        status: { type: string, enum: [PASSWORD_RESET] }
+        sessionsRevoked: { type: boolean }
+    CustomerDevice:
+      type: object
+      required: [id, deviceId, deviceName, attestationStatus, isCurrentDevice, lastSeenAt, createdAt, activeSessionCount]
+      properties:
+        id: { type: string, format: uuid }
+        deviceId: { type: string }
+        deviceName: { type: string }
+        attestationStatus: { type: string, enum: [PENDING, VERIFIED, REVOKED] }
+        isCurrentDevice: { type: boolean }
+        lastSeenAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        activeSessionCount: { type: integer, minimum: 0 }
+    CustomerDevicesResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CustomerDevice' }

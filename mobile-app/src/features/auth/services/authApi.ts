@@ -1,7 +1,13 @@
+import { Platform } from "react-native";
+
 import type {
   AuthChallengeResponse,
   BiometricEnrollmentRequest,
   BiometricEnrollmentResponse,
+  ChangePasswordRequest,
+  ChangePasswordResponse,
+  CustomerDevicesResponse,
+  ForgotPasswordRequest,
   LoginRequest,
   LoginResponse,
   LogoutRequest,
@@ -13,6 +19,8 @@ import type {
   RegisterResponse,
   RefreshTokenRequest,
   RefreshTokenResponse,
+  ResetPasswordRequest,
+  ResetPasswordResponse,
   TotpConfirmationResponse,
   TotpEnrollmentResponse,
   VerifyAuthChallengeRequest,
@@ -20,6 +28,8 @@ import type {
 import {
   isAuthChallengeResponse,
   isBiometricEnrollmentResponse,
+  isChangePasswordResponse,
+  isCustomerDevicesResponse,
   isLoginResponse,
   isMfaMethodsResponse,
   isRecoveryCompletedResponse,
@@ -27,6 +37,7 @@ import {
   isRegisterResponse,
   isRegistrationChallengeResponse,
   isRefreshTokenResponse,
+  isResetPasswordResponse,
   isTotpConfirmationResponse,
   isTotpEnrollmentResponse,
 } from "@/features/auth/services/authResponseValidators";
@@ -81,7 +92,10 @@ export function login(
   return requestJson<LoginResponse>("/auth/login", {
     method: "POST",
     body,
-    headers: createDeviceHeaders(options),
+    headers: {
+      ...createDeviceHeaders(options),
+      "X-Device-Name": `NOVA App (${Platform.OS})`,
+    },
   }, isLoginResponse);
 }
 
@@ -333,6 +347,74 @@ export function confirmRecoveryTotpEnrollment(
   );
 }
 
+export function changePassword(
+  request: ChangePasswordRequest,
+  options: AuthenticatedRequestOptions,
+): Promise<ChangePasswordResponse> {
+  return requestJson<ChangePasswordResponse>(
+    "/auth/password/change",
+    { method: "POST", body: request, auth: requireAuthenticated(options) },
+    isChangePasswordResponse,
+  );
+}
+
+export function forgotPassword(
+  request: ForgotPasswordRequest,
+  options: AuthRequestOptions,
+): Promise<AuthChallengeResponse> {
+  return requestJson<AuthChallengeResponse>(
+    "/auth/password/forgot",
+    {
+      method: "POST",
+      body: { email: requireNonEmpty(request.email, "email") },
+      headers: createDeviceHeaders(options),
+    },
+    (payload): payload is AuthChallengeResponse =>
+      isAuthChallengeResponse(payload) && payload.purpose === "PASSWORD_RESET",
+  );
+}
+
+export function resetPassword(
+  request: ResetPasswordRequest,
+  options: AuthRequestOptions,
+): Promise<ResetPasswordResponse> {
+  return requestJson<ResetPasswordResponse>(
+    "/auth/password/reset",
+    {
+      method: "POST",
+      body: {
+        challengeId: requireNonEmpty(request.challengeId, "challengeId"),
+        proof: requireNonEmpty(request.proof, "proof"),
+        newPassword: request.newPassword,
+      },
+      headers: createDeviceHeaders(options),
+    },
+    isResetPasswordResponse,
+  );
+}
+
+export function listDevices(
+  options: AuthenticatedRequestOptions,
+): Promise<CustomerDevicesResponse> {
+  return requestJson<CustomerDevicesResponse>(
+    "/auth/devices",
+    { method: "GET", auth: requireAuthenticated(options) },
+    isCustomerDevicesResponse,
+  );
+}
+
+export async function revokeDevice(
+  deviceId: string,
+  options: AuthenticatedRequestOptions,
+): Promise<void> {
+  const normalizedId = requireNonEmpty(deviceId, "deviceId");
+  await requestJson<null>(
+    `/auth/devices/${encodeURIComponent(normalizedId)}`,
+    { method: "DELETE", auth: requireAuthenticated(options) },
+    (payload): payload is null => payload === null,
+  );
+}
+
 export const authApi = {
   login,
   register,
@@ -353,4 +435,9 @@ export const authApi = {
   completeMfaRecovery,
   beginRecoveryTotpEnrollment,
   confirmRecoveryTotpEnrollment,
+  changePassword,
+  forgotPassword,
+  resetPassword,
+  listDevices,
+  revokeDevice,
 };

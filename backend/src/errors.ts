@@ -33,6 +33,10 @@ export function unauthorized(message = "Unauthorized."): DomainError {
   return new DomainError(401, "UNAUTHORIZED", message);
 }
 
+export function forbiddenWithCode(code: string, message: string): DomainError {
+  return new DomainError(403, code, message);
+}
+
 export function notFound(message = "Resource not found."): DomainError {
   return new DomainError(404, "NOT_FOUND", message);
 }

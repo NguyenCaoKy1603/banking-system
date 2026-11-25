@@ -206,6 +206,8 @@ const PUBLIC_OPERATIONS = new Set([
   "POST /auth/refresh",
   "POST /auth/verify",
   "POST /auth/logout",
+  "POST /auth/password/forgot",
+  "POST /auth/password/reset",
   "POST /auth/mfa/recover",
   "POST /auth/mfa/recover/verify",
   "POST /auth/mfa/recover/complete",
@@ -256,6 +258,8 @@ for (const [method, routePath] of [
   ["post", "/auth/verify"],
   ["post", "/auth/refresh"],
   ["post", "/auth/logout"],
+  ["post", "/auth/password/forgot"],
+  ["post", "/auth/password/reset"],
 ]) {
   const pathItem = document.paths?.[routePath];
   const operation = pathItem?.[method];

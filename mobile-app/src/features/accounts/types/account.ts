@@ -61,3 +61,26 @@ export type TransactionDetail = Transaction & {
   createdAt: string;
   completedAt: string | null;
 };
+
+export type TransactionFilterParams = {
+  status?: TransactionStatus;
+  direction?: TransactionDirection;
+  from?: string;
+  to?: string;
+  q?: string;
+};
+
+export type AccountMonthlySummary = {
+  accountId: string;
+  month: string;
+  monthLabel: string;
+  currency: "VND";
+  totalIncomeMinor: string;
+  totalExpenseMinor: string;
+  netMinor: string;
+  succeededCount: number;
+  creditCount: number;
+  debitCount: number;
+};
+
+export type StatementExportFormat = "csv" | "html";

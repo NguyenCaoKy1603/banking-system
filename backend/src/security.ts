@@ -9,6 +9,7 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { isIP } from "node:net";
+import { invalidRequest } from "./errors.js";
 
 function pbkdf2Async(
   password: string,
@@ -160,4 +161,28 @@ export function computeRegistrationNetworkFingerprint(
   return createHmac("sha256", secretKey)
     .update(`${DOMAIN_SEPARATION_PREFIX}${normalizedAddress}`)
     .digest("hex");
+}
+
+export function validateStrongPassword(password: unknown, fieldName = "newPassword"): string {
+  if (typeof password !== "string" || password.length < 12 || password.length > 128) {
+    throw invalidRequest("Mật khẩu mới phải có từ 12 đến 128 ký tự.", {
+      [fieldName]: "Mật khẩu phải có từ 12 đến 128 ký tự.",
+    });
+  }
+  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+    throw invalidRequest(
+      "Mật khẩu mới cần chứa chữ thường, chữ hoa, chữ số và ký tự đặc biệt.",
+      {
+        [fieldName]: "Cần có chữ thường, chữ hoa, chữ số và ký tự đặc biệt.",
+      },
+    );
+  }
+  return password;
+}
+
+export function maskEmailAddress(email: string): string {
+  const [local, domain] = email.trim().toLowerCase().split("@", 2);
+  if (!local || !domain) return "masked destination";
+  const visible = local.length <= 2 ? local.slice(0, 1) : local.slice(0, 2);
+  return `${visible}${"*".repeat(Math.max(1, local.length - visible.length))}@${domain}`;
 }

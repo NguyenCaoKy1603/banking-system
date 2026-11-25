@@ -102,3 +102,117 @@ export function validateRegisterForm(
     isValid: Object.keys(errors).length === 0,
   };
 }
+
+export function validateStrongPasswordPolicy(password: string): string | undefined {
+  if (!password) {
+    return "Mật khẩu mới là bắt buộc.";
+  }
+  if (password.length < 12 || password.length > 128) {
+    return "Mật khẩu mới phải có từ 12 đến 128 ký tự.";
+  }
+  if (
+    !/[a-z]/.test(password) ||
+    !/[A-Z]/.test(password) ||
+    !/\d/.test(password) ||
+    !/[^A-Za-z0-9]/.test(password)
+  ) {
+    return "Mật khẩu mới cần chứa chữ thường, chữ hoa, chữ số và ký tự đặc biệt.";
+  }
+  return undefined;
+}
+
+export type ChangePasswordFormValues = {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+};
+
+export type ChangePasswordFieldErrors = Partial<Record<keyof ChangePasswordFormValues, string>>;
+
+export function validateChangePasswordForm(
+  input: ChangePasswordFormValues,
+): ValidationResult<ChangePasswordFormValues, ChangePasswordFieldErrors> {
+  const values: ChangePasswordFormValues = {
+    currentPassword: input.currentPassword,
+    newPassword: input.newPassword,
+    confirmPassword: input.confirmPassword,
+  };
+  const errors: ChangePasswordFieldErrors = {};
+
+  if (!values.currentPassword) {
+    errors.currentPassword = "Mật khẩu hiện tại là bắt buộc.";
+  }
+
+  const strengthError = validateStrongPasswordPolicy(values.newPassword);
+  if (strengthError) {
+    errors.newPassword = strengthError;
+  } else if (values.newPassword === values.currentPassword) {
+    errors.newPassword = "Mật khẩu mới phải khác mật khẩu hiện tại.";
+  }
+
+  if (!values.confirmPassword) {
+    errors.confirmPassword = "Xác nhận mật khẩu mới là bắt buộc.";
+  } else if (values.confirmPassword !== values.newPassword) {
+    errors.confirmPassword = "Xác nhận mật khẩu mới không khớp.";
+  }
+
+  return {
+    values,
+    errors,
+    isValid: Object.keys(errors).length === 0,
+  };
+}
+
+export function validateForgotPasswordEmail(email: string): {
+  normalizedEmail: string;
+  error?: string;
+} {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return { normalizedEmail, error: "Email là bắt buộc." };
+  }
+  if (!EMAIL_PATTERN.test(normalizedEmail)) {
+    return { normalizedEmail, error: "Email không đúng định dạng." };
+  }
+  return { normalizedEmail };
+}
+
+export type ResetPasswordFormValues = {
+  otpCode: string;
+  newPassword: string;
+  confirmPassword: string;
+};
+
+export type ResetPasswordFieldErrors = Partial<Record<keyof ResetPasswordFormValues, string>>;
+
+export function validateResetPasswordForm(
+  input: ResetPasswordFormValues,
+): ValidationResult<ResetPasswordFormValues, ResetPasswordFieldErrors> {
+  const values: ResetPasswordFormValues = {
+    otpCode: input.otpCode.trim(),
+    newPassword: input.newPassword,
+    confirmPassword: input.confirmPassword,
+  };
+  const errors: ResetPasswordFieldErrors = {};
+
+  if (!/^\d{6}$/.test(values.otpCode)) {
+    errors.otpCode = "Mã OTP email phải gồm đúng 6 chữ số.";
+  }
+
+  const strengthError = validateStrongPasswordPolicy(values.newPassword);
+  if (strengthError) {
+    errors.newPassword = strengthError;
+  }
+
+  if (!values.confirmPassword) {
+    errors.confirmPassword = "Xác nhận mật khẩu mới là bắt buộc.";
+  } else if (values.confirmPassword !== values.newPassword) {
+    errors.confirmPassword = "Xác nhận mật khẩu mới không khớp.";
+  }
+
+  return {
+    values,
+    errors,
+    isValid: Object.keys(errors).length === 0,
+  };
+}

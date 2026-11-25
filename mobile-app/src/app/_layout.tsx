@@ -183,6 +183,8 @@ function RootNavigator() {
           <Stack.Screen name="kyc" />
           <Stack.Screen name="qr" />
           <Stack.Screen name="mfa" />
+          <Stack.Screen name="change-password" />
+          <Stack.Screen name="devices" />
           <Stack.Screen name="savings" />
           <Stack.Screen name="savings/open" />
           <Stack.Screen name="savings/[depositId]" />

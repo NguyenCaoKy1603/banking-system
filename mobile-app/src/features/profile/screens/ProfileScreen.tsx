@@ -101,6 +101,8 @@ export function ProfileScreen() {
             <ListRow icon="alert" onPress={() => router.push("/anomalies")} subtitle="Phát hiện và xác nhận giao dịch có dấu hiệu lạ" testID="profile-anomalies" title="Cảnh báo giao dịch bất thường" />
             <ListRow icon="profile" onPress={() => router.push("/kyc")} subtitle="Theo dõi trạng thái định danh" testID="profile-kyc" title="Hồ sơ định danh" />
             <ListRow icon="shield" onPress={() => router.push("/mfa")} subtitle="Authenticator và khôi phục MFA" testID="profile-mfa" title="Bảo mật tài khoản" />
+            <ListRow icon="lock" onPress={() => router.push("/change-password")} subtitle="Cập nhật mật khẩu đăng nhập" testID="profile-change-password" title="Đổi mật khẩu" />
+            <ListRow icon="devices" onPress={() => router.push("/devices")} subtitle="Xem và thu hồi thiết bị đang đăng nhập" testID="profile-devices" title="Thiết bị đăng nhập" />
           </Card>
         </View>
 

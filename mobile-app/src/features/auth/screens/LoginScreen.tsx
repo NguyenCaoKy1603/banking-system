@@ -205,6 +205,14 @@ export function LoginScreen() {
               </Card>
 
               <View style={styles.footer}>
+                <Link href="./forgot-password" asChild>
+                  <Pressable accessibilityRole="link" hitSlop={8} testID="login-forgot-password">
+                    <Text style={styles.link}>Quên mật khẩu?</Text>
+                  </Pressable>
+                </Link>
+              </View>
+
+              <View style={styles.footer}>
                 <Text style={styles.footerText}>Chưa có tài khoản?</Text>
                 <Link href="./register" asChild>
                   <Pressable accessibilityRole="link" hitSlop={8} testID="login-register">

@@ -34,6 +34,21 @@ export type AccountTransactionRow = {
   kind: string | null;
 };
 
+export type RepositoryTransactionFilters = {
+  status?: AccountTransactionRow["status"] | null;
+  direction?: AccountTransactionRow["direction"] | null;
+  fromIso?: string | null;
+  toIso?: string | null;
+  qPattern?: string | null;
+};
+
+export type AccountMonthlyAggregateRow = {
+  totalIncomeMinor: string;
+  totalExpenseMinor: string;
+  creditCount: number;
+  debitCount: number;
+};
+
 function mapAccount(row: Record<string, unknown>): AccountRow {
   return {
     id: requireUuid(row.id),
@@ -187,10 +202,20 @@ export class AccountRepository {
     return mapAccount(result.rows[0] as Record<string, unknown>);
   }
 
-  async listTransactions(accountId: string, cursor?: { occurredAt: string; id: string } | null, limit = 101): Promise<AccountTransactionRow[]> {
+  async listTransactions(
+    accountId: string,
+    cursor?: { occurredAt: string; id: string } | null,
+    limit = 101,
+    filters?: RepositoryTransactionFilters,
+  ): Promise<AccountTransactionRow[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1001) throw new Error("limit must be between 1 and 1000.");
-    const result = await this.client.query(
-      `
+    const hasFilters = Boolean(
+      filters &&
+        (filters.status || filters.direction || filters.fromIso || filters.toIso || filters.qPattern),
+    );
+    if (!hasFilters) {
+      const result = await this.client.query(
+        `
         SELECT * FROM account_transactions
         WHERE account_id = $1
           AND ($2::timestamptz IS NULL
@@ -199,9 +224,72 @@ export class AccountRepository {
         ORDER BY occurred_at DESC, id DESC
         LIMIT $4
       `,
-      [requireUuid(accountId, "accountId"), cursor?.occurredAt ?? null, cursor?.id ?? null, limit],
+        [requireUuid(accountId, "accountId"), cursor?.occurredAt ?? null, cursor?.id ?? null, limit],
+      );
+      return result.rows.map((row) => mapTransaction(row as Record<string, unknown>));
+    }
+    const result = await this.client.query(
+      `
+        SELECT * FROM account_transactions
+        WHERE account_id = $1
+          AND ($2::timestamptz IS NULL
+            OR occurred_at < $2::timestamptz
+            OR (occurred_at = $2::timestamptz AND id < $3::uuid))
+          AND ($5::text IS NULL OR status = $5)
+          AND ($6::text IS NULL OR direction = $6)
+          AND ($7::timestamptz IS NULL OR occurred_at >= $7::timestamptz)
+          AND ($8::timestamptz IS NULL OR occurred_at <= $8::timestamptz)
+          AND (
+            $9::text IS NULL
+            OR reference ILIKE $9 ESCAPE '\\'
+            OR description ILIKE $9 ESCAPE '\\'
+            OR COALESCE(counterparty_name, '') ILIKE $9 ESCAPE '\\'
+          )
+        ORDER BY occurred_at DESC, id DESC
+        LIMIT $4
+      `,
+      [
+        requireUuid(accountId, "accountId"),
+        cursor?.occurredAt ?? null,
+        cursor?.id ?? null,
+        limit,
+        filters?.status ?? null,
+        filters?.direction ?? null,
+        filters?.fromIso ?? null,
+        filters?.toIso ?? null,
+        filters?.qPattern ?? null,
+      ],
     );
     return result.rows.map((row) => mapTransaction(row as Record<string, unknown>));
+  }
+
+  async summarizeMonthlyTransactions(
+    accountId: string,
+    monthStartIso: string,
+    nextMonthStartIso: string,
+  ): Promise<AccountMonthlyAggregateRow> {
+    const result = await this.client.query(
+      `
+        SELECT
+          COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN amount_minor ELSE 0 END), 0)::text AS total_income_minor,
+          COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN amount_minor ELSE 0 END), 0)::text AS total_expense_minor,
+          COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN 1 ELSE 0 END), 0)::int AS credit_count,
+          COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN 1 ELSE 0 END), 0)::int AS debit_count
+        FROM account_transactions
+        WHERE account_id = $1
+          AND status = 'SUCCEEDED'
+          AND occurred_at >= $2::timestamptz
+          AND occurred_at < $3::timestamptz
+      `,
+      [requireUuid(accountId, "accountId"), monthStartIso, nextMonthStartIso],
+    );
+    const row = (result.rows[0] ?? {}) as Record<string, unknown>;
+    return {
+      totalIncomeMinor: asBigIntString(row.total_income_minor ?? "0", "total_income_minor"),
+      totalExpenseMinor: asBigIntString(row.total_expense_minor ?? "0", "total_expense_minor"),
+      creditCount: Number(row.credit_count ?? 0),
+      debitCount: Number(row.debit_count ?? 0),
+    };
   }
 
   async findTransaction(accountId: string, transactionId: string): Promise<AccountTransactionRow | null> {

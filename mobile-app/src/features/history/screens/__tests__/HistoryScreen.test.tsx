@@ -1,8 +1,11 @@
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import { Share } from "react-native";
 
 import { HistoryScreen } from "@/features/history/screens/HistoryScreen";
 import { useAuth } from "@/features/auth/context/AuthContext";
 import {
+  exportAccountStatement,
+  getAccountSummary,
   listAccounts,
   listTransactions,
 } from "@/features/accounts/services/accountsApi";
@@ -22,6 +25,10 @@ jest.mock("expo-router", () => {
   };
 });
 
+jest.mock("expo-clipboard", () => ({
+  setStringAsync: jest.fn().mockResolvedValue(true),
+}));
+
 jest.mock("@/features/auth/context/AuthContext", () => ({
   useAuth: jest.fn(),
 }));
@@ -29,11 +36,15 @@ jest.mock("@/features/auth/context/AuthContext", () => ({
 jest.mock("@/features/accounts/services/accountsApi", () => ({
   listAccounts: jest.fn(),
   listTransactions: jest.fn(),
+  getAccountSummary: jest.fn(),
+  exportAccountStatement: jest.fn(),
 }));
 
 const useAuthMock = jest.mocked(useAuth);
 const listAccountsMock = jest.mocked(listAccounts);
 const listTransactionsMock = jest.mocked(listTransactions);
+const getAccountSummaryMock = jest.mocked(getAccountSummary);
+const exportAccountStatementMock = jest.mocked(exportAccountStatement);
 
 let renderer: ReactTestRenderer | null = null;
 
@@ -185,5 +196,101 @@ describe("HistoryScreen monthly summary and multi-account support", () => {
     );
     expect(renderer!.root.findByProps({ testID: "history-summary-net" }).props.children).toBe("−200.000 ₫");
     expect(renderer!.root.findByProps({ testID: "history-load-more" })).toBeTruthy();
+  });
+
+  it("supports server-side keyword/period filtering, server summary, and statement export", async () => {
+    const shareSpy = jest.spyOn(Share, "share").mockResolvedValue({ action: "sharedAction" } as never);
+    listAccountsMock.mockResolvedValue({
+      accounts: [
+        {
+          id: "acc-1",
+          displayName: "Tài khoản chính",
+          maskedNumber: "••••1111",
+          bankName: "NOVA",
+          currency: "VND",
+          heldAmount: { currency: "VND", amountMinor: "0" },
+          availableBalance: { currency: "VND", amountMinor: "3000000" },
+          currentBalance: { currency: "VND", amountMinor: "3000000" },
+          status: "ACTIVE",
+          updatedAt: "2026-11-01T00:00:00.000Z",
+        },
+      ],
+    });
+    listTransactionsMock.mockResolvedValue({
+      items: [
+        {
+          id: "tx-1",
+          accountId: "acc-1",
+          direction: "CREDIT",
+          amount: { currency: "VND", amountMinor: "1500000" },
+          fee: { currency: "VND", amountMinor: "0" },
+          status: "SUCCEEDED",
+          description: "Nhận lương",
+          counterpartyName: "Cong ty ABC",
+          occurredAt: "2026-11-05T08:00:00.000Z",
+        },
+      ],
+      nextCursor: null,
+    });
+    getAccountSummaryMock.mockResolvedValue({
+      accountId: "acc-1",
+      month: "2026-11",
+      monthLabel: "11/2026",
+      currency: "VND",
+      totalIncomeMinor: "9000000",
+      totalExpenseMinor: "1000000",
+      netMinor: "8000000",
+      succeededCount: 12,
+      creditCount: 7,
+      debitCount: 5,
+    });
+    exportAccountStatementMock.mockResolvedValue("\uFEFFMã tham chiếu,Nội dung\r\nREF-1,Nhận lương");
+
+    act(() => {
+      renderer = create(<HistoryScreen />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(renderer!.root.findByProps({ testID: "history-summary-income" }).props.children).toEqual(["+", "9.000.000 ₫"]);
+    expect(renderer!.root.findByProps({ testID: "history-summary-net" }).props.children).toBe("+8.000.000 ₫");
+
+    const searchInput = renderer!.root.findByProps({ testID: "history-search-input" });
+    await act(async () => {
+      searchInput.props.onChangeText("REF-LUONG");
+    });
+    const searchBtn = renderer!.root.findByProps({ testID: "history-search-submit" });
+    await act(async () => {
+      searchBtn.props.onPress();
+    });
+
+    expect(listTransactionsMock).toHaveBeenLastCalledWith(
+      "acc-1",
+      expect.objectContaining({ q: "REF-LUONG" }),
+    );
+
+    const thisMonthChip = renderer!.root.findByProps({ testID: "history-period-this_month" });
+    await act(async () => {
+      thisMonthChip.props.onPress();
+    });
+    expect(listTransactionsMock).toHaveBeenLastCalledWith(
+      "acc-1",
+      expect.objectContaining({ from: "2026-11-01", to: "2026-11-30" }),
+    );
+
+    const exportBtn = renderer!.root.findByProps({ testID: "history-export-statement" });
+    await act(async () => {
+      await exportBtn.props.onPress();
+    });
+
+    expect(exportAccountStatementMock).toHaveBeenCalledWith(
+      "acc-1",
+      expect.objectContaining({ format: "csv", from: "2026-11-01", to: "2026-11-30" }),
+    );
+    expect(shareSpy).toHaveBeenCalled();
+    expect(renderer!.root.findByProps({ testID: "history-export-notice" })).toBeTruthy();
+    shareSpy.mockRestore();
   });
 });

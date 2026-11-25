@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { AdminActionEngine } from "../admin/actions/actionEngine.js";
-import { InMemoryAdminRepository, type AdminAccount, type StaffRecord } from "../admin/repositories/adminRepository.js";
+import { InMemoryAdminRepository, type AdminAccount, type CustomerSummary, type StaffRecord } from "../admin/repositories/adminRepository.js";
 import type { AdminSubject } from "../admin/authorization/permissionRegistry.js";
 
 const operations: AdminSubject = { staffId: "operations-staff", status: "ACTIVE", authorizationVersion: 1, roles: [{ role: "OPERATIONS", environmentScope: "preview", expiresAt: null }] };
@@ -101,4 +101,137 @@ test("changed target version returns ACTION_STALE", async () => {
   const privateAccounts = repository as unknown as { accounts: Map<string, AdminAccount> };
   privateAccounts.accounts.get(account.id)!.version += 1;
   await assert.rejects(() => actions.approve({ subject: control, requestId: created.id, body: { fingerprint: created.requestFingerprint, reasonCode: "CHECK" }, traceId: "trace-7" }), { code: "ACTION_STALE" });
+});
+
+test("Operations cannot bypass Maker-Checker with client-supplied directExecution flag when ADMIN_DIRECT_EXECUTION=false", async () => {
+  const previousDirectExec = process.env.ADMIN_DIRECT_EXECUTION;
+  process.env.ADMIN_DIRECT_EXECUTION = "false";
+  const customer: CustomerSummary = {
+    id: "customer-1",
+    fullName: "Synthetic Customer",
+    email: "cust@example.test",
+    phoneNumber: "0900000000",
+    accessStatus: "ACTIVE",
+    accessVersion: 1,
+    createdAt: new Date().toISOString(),
+  };
+  const repository = new InMemoryAdminRepository({ accounts: [account], customers: [customer] });
+  await repository.initialize();
+  const actions = new AdminActionEngine(repository);
+  try {
+    const fundingAction = await actions.create({
+      subject: operations,
+      actionType: "SIMULATION_FUNDING",
+      targetType: "ACCOUNT",
+      targetId: account.id,
+      body: {
+        amountMinor: "500000",
+        ticketReference: "BYPASS-TEST-1",
+        reasonCode: "ACCOUNT_FUNDING",
+        description: "Attempted bypass",
+        directExecution: true,
+      },
+      idempotencyKey: "bypass-funding-1",
+      traceId: "trace-bypass-1",
+    });
+    assert.equal(fundingAction.status, "PENDING_APPROVAL");
+    assert.equal((await repository.findAccount(account.id))?.availableMinor, "0");
+
+    // Even an ADMIN with both request & approve permissions on CUSTOMER_ACCESS_LOCK must stay PENDING_APPROVAL when ADMIN_DIRECT_EXECUTION=false
+    const adminLockAction = await actions.create({
+      subject: control,
+      actionType: "CUSTOMER_ACCESS_LOCK",
+      targetType: "CUSTOMER",
+      targetId: customer.id,
+      body: {
+        reasonCode: "ACCOUNT_SECURITY",
+        description: "Attempted direct lock while disabled",
+        directExecution: true,
+      },
+      idempotencyKey: "bypass-lock-1",
+      traceId: "trace-bypass-2",
+    });
+    assert.equal(adminLockAction.status, "PENDING_APPROVAL");
+    assert.equal((await repository.findCustomer(customer.id))?.accessStatus, "ACTIVE");
+  } finally {
+    if (previousDirectExec === undefined) delete process.env.ADMIN_DIRECT_EXECUTION;
+    else process.env.ADMIN_DIRECT_EXECUTION = previousDirectExec;
+    await repository.close();
+  }
+});
+
+test("when ADMIN_DIRECT_EXECUTION=true, Operations still stays PENDING_APPROVAL while MFA-verified Admin with approval permission can direct-execute", async () => {
+  const previousDirectExec = process.env.ADMIN_DIRECT_EXECUTION;
+  process.env.ADMIN_DIRECT_EXECUTION = "true";
+  const customer: CustomerSummary = {
+    id: "customer-1",
+    fullName: "Synthetic Customer",
+    email: "cust@example.test",
+    phoneNumber: "0900000000",
+    accessStatus: "ACTIVE",
+    accessVersion: 1,
+    createdAt: new Date().toISOString(),
+  };
+  const repository = new InMemoryAdminRepository({ accounts: [account], customers: [customer] });
+  await repository.initialize();
+  const actions = new AdminActionEngine(repository);
+  try {
+    const opsFunding = await actions.create({
+      subject: { ...operations, mfaVerifiedAt: new Date().toISOString(), stepUpVerifiedAt: new Date().toISOString() },
+      actionType: "SIMULATION_FUNDING",
+      targetType: "ACCOUNT",
+      targetId: account.id,
+      body: {
+        amountMinor: "500000",
+        ticketReference: "DIRECT-OPS-1",
+        reasonCode: "ACCOUNT_FUNDING",
+        description: "Ops must still require Admin approval",
+        directExecution: true,
+      },
+      idempotencyKey: "direct-ops-funding-1",
+      traceId: "trace-direct-ops-1",
+    });
+    assert.equal(opsFunding.status, "PENDING_APPROVAL");
+    assert.equal((await repository.findAccount(account.id))?.availableMinor, "0");
+
+    const adminWithoutMfa: AdminSubject = {
+      staffId: "admin-no-mfa",
+      status: "ACTIVE",
+      authorizationVersion: 1,
+      roles: [{ role: "ADMIN", environmentScope: "preview", expiresAt: null }],
+    };
+    const lockWithoutMfa = await actions.create({
+      subject: adminWithoutMfa,
+      actionType: "CUSTOMER_ACCESS_LOCK",
+      targetType: "CUSTOMER",
+      targetId: customer.id,
+      body: {
+        reasonCode: "ACCOUNT_SECURITY",
+        description: "Admin without MFA cannot direct-execute",
+      },
+      idempotencyKey: "direct-admin-no-mfa-1",
+      traceId: "trace-direct-admin-no-mfa",
+    });
+    assert.equal(lockWithoutMfa.status, "PENDING_APPROVAL");
+    assert.equal((await repository.findCustomer(customer.id))?.accessStatus, "ACTIVE");
+
+    const adminLock = await actions.create({
+      subject: control,
+      actionType: "CUSTOMER_ACCESS_LOCK",
+      targetType: "CUSTOMER",
+      targetId: customer.id,
+      body: {
+        reasonCode: "ACCOUNT_SECURITY",
+        description: "MFA-verified Admin direct lock in local demo mode",
+      },
+      idempotencyKey: "direct-admin-mfa-1",
+      traceId: "trace-direct-admin-mfa",
+    });
+    assert.equal(adminLock.status, "SUCCEEDED");
+    assert.equal((await repository.findCustomer(customer.id))?.accessStatus, "LOCKED");
+  } finally {
+    if (previousDirectExec === undefined) delete process.env.ADMIN_DIRECT_EXECUTION;
+    else process.env.ADMIN_DIRECT_EXECUTION = previousDirectExec;
+    await repository.close();
+  }
 });

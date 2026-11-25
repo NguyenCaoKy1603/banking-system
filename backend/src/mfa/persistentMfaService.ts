@@ -5,9 +5,11 @@ import {
 } from "node:crypto";
 
 import { conflictWithCode, invalidRequest, notFound, rateLimited, unauthorized } from "../errors.js";
+import { AnomalyRepository } from "../database/repositories/anomalyRepository.js";
 import { UnitOfWork } from "../database/unitOfWork.js";
 import { MfaRepository, type MfaChallengeRow, type MfaCredentialRow } from "../database/repositories/mfaRepository.js";
 import { OutboxRepository } from "../database/repositories/outboxRepository.js";
+import { evaluateTransferAnomaly } from "../domain/anomaly/index.js";
 import { createId, createOpaqueToken, fingerprint, hashOpaqueToken } from "../security.js";
 import {
   buildTotpUri,
@@ -34,11 +36,14 @@ const RESEND_COOLDOWN_MS = 60 * 1000;
 const RECOVERY_CODE_COUNT = 10;
 const DEFAULT_RECOVERY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const RECOVERY_REQUEST_TTL_MS = 15 * 60 * 1000;
+export const BIOMETRIC_TRANSFER_MAX_AMOUNT_MINOR = 1_000_000n;
 
 export type MfaChallengePurpose =
   | "REGISTRATION_EMAIL_VERIFY"
   | "EMAIL_CHANGE_VERIFY"
   | "RECOVERY_EMAIL_VERIFY"
+  | "PASSWORD_RESET"
+  | "PASSWORD_CHANGE"
   | "LOGIN"
   | "TRANSFER"
   | "SAVINGS_OPENING"
@@ -139,7 +144,12 @@ function assertSixDigits(value: string): string {
 }
 
 function challengePurposeRequiresConflict(purpose: string): boolean {
-  return purpose !== "LOGIN" && !purpose.startsWith("REGISTRATION_") && !purpose.startsWith("EMAIL_");
+  return (
+    purpose !== "LOGIN" &&
+    purpose !== "PASSWORD_RESET" &&
+    !purpose.startsWith("REGISTRATION_") &&
+    !purpose.startsWith("EMAIL_")
+  );
 }
 
 export class PersistentMfaService {
@@ -528,6 +538,60 @@ export class PersistentMfaService {
       if (!credential || credential.customerId !== input.customerId || credential.status !== "ACTIVE") {
         throw unauthorized("Biometric credential is not active for this device.");
       }
+      if (input.purpose === "TRANSFER" && input.resourceId) {
+        const quoteResult = await client.query<{
+          customer_id: string;
+          source_account_id: string;
+          destination_account_id: string | null;
+          beneficiary_id: string | null;
+          amount_minor: string;
+          fee_minor: string;
+        }>(
+          `SELECT customer_id, source_account_id, destination_account_id,
+                  beneficiary_id, amount_minor::text, fee_minor::text
+             FROM transfer_quotes
+            WHERE id = $1`,
+          [input.resourceId],
+        );
+        const quote = quoteResult.rows[0];
+        if (quote && String(quote.customer_id) === input.customerId) {
+          const amountMinor = BigInt(String(quote.amount_minor));
+          if (amountMinor >= BIOMETRIC_TRANSFER_MAX_AMOUNT_MINOR) {
+            throw conflictWithCode(
+              "BIOMETRIC_TIER_LIMIT_EXCEEDED",
+              "Giao dịch từ 1.000.000 VND trở lên bắt buộc xác thực bằng mã TOTP.",
+            );
+          }
+          if (quote.destination_account_id) {
+            const accountResult = await client.query<{ available_minor: string }>(
+              `SELECT available_minor::text FROM payment_accounts WHERE id = $1`,
+              [quote.source_account_id],
+            );
+            const availableMinor = BigInt(String(accountResult.rows[0]?.available_minor ?? "0"));
+            const nowIso = new Date(this.clock()).toISOString();
+            const riskSignals = await new AnomalyRepository(client).getTransferRiskSignals({
+              customerId: input.customerId,
+              destinationAccountId: String(quote.destination_account_id),
+              now: nowIso,
+            });
+            const anomaly = evaluateTransferAnomaly({
+              amountMinor,
+              feeMinor: BigInt(String(quote.fee_minor)),
+              availableBalanceMinor: availableMinor,
+              isNewRecipient: !quote.beneficiary_id && !riskSignals.hasPriorRelationship,
+              recentTransfersLast10mCount: riskSignals.recentTransfersLast10mCount,
+              sameRecipientLast15mCount: riskSignals.sameRecipientLast15mCount,
+              occurredAt: nowIso,
+            });
+            if (anomaly.riskLevel === "HIGH" || anomaly.riskLevel === "CRITICAL") {
+              throw conflictWithCode(
+                "BIOMETRIC_HIGH_RISK_NOT_ALLOWED",
+                "Giao dịch có cảnh báo rủi ro cao bắt buộc xác thực bằng mã TOTP.",
+              );
+            }
+          }
+        }
+      }
       const customerRate = await repository.atomicRateLimit({
         bucketKey: `mfa-challenge:customer:${input.customerId}:${input.purpose}`,
         windowSeconds: 600,
@@ -737,11 +801,8 @@ export class PersistentMfaService {
         });
         return { ok: true as const, reason: "ok" as const, customerId: challenge.customerId, credentialId: null, timeStep: null };
       }
-      if (
-        challenge.method === "BIOMETRIC" ||
-        (challenge.method === "TOTP" && typeof input.proof === "string" && input.proof.startsWith("biometric-v1."))
-      ) {
-        const matchedBiometric = challenge.method === "BIOMETRIC" && challenge.credentialId
+      if (challenge.method === "BIOMETRIC") {
+        const matchedBiometric = challenge.credentialId
           ? await repository.lockCredential(challenge.credentialId)
           : await repository.findActiveBiometric(challenge.customerId ?? "", input.deviceId);
         const credential = matchedBiometric && matchedBiometric.id !== challenge.credentialId

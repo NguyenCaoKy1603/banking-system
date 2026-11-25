@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { URL } from "node:url";
 
 import { DomainError, invalidRequest, notFound, unauthorized } from "../../errors.js";
-import { requirePermission, requireStaffSession } from "../authorization/authorization.js";
+import { requireFreshStepUp, requirePermission, requireStaffSession } from "../authorization/authorization.js";
 import { ADMIN_ROUTES, type AdminRouteDefinition } from "../authorization/permissionRegistry.js";
 import { StaffAuthService } from "../auth/staffAuthService.js";
 import { AdminActionEngine } from "../actions/actionEngine.js";
@@ -111,7 +111,7 @@ export async function handleAdminRequest(request: IncomingMessage, response: Ser
   if (fetchSite === "cross-site" && origin && !options.allowedOrigins?.includes(origin)) { writeError(response, traceId, new DomainError(403, "CORS_ORIGIN_DENIED", "Cross-site Admin request is not allowed.")); return; }
   if (origin && options.allowedOrigins?.includes(origin)) { response.setHeader("Access-Control-Allow-Origin", origin); response.setHeader("Access-Control-Allow-Credentials", "true"); response.setHeader("Vary", "Origin"); }
   const url = new URL(request.url ?? "/", "http://localhost");
-  if (request.method === "OPTIONS") { write(response, 204, traceId, undefined, { "Access-Control-Allow-Origin": origin ?? "null", "Access-Control-Allow-Credentials": "true", "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token, X-Request-ID, Idempotency-Key, traceparent, tracestate", "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS" }); return; }
+  if (request.method === "OPTIONS") { write(response, 204, traceId, undefined, { "Access-Control-Allow-Origin": origin ?? "null", "Access-Control-Allow-Credentials": "true", "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token, X-Request-ID, Idempotency-Key, traceparent, tracestate", "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS" }); return; }
   const metadata = options.runtimeMetadata ?? {
     service: "banking-admin-api",
     releaseId: process.env.RELEASE_ID?.trim() || "local",
@@ -259,6 +259,28 @@ export async function handleAdminRequest(request: IncomingMessage, response: Ser
     if (request.method === "GET" && pathname.startsWith("/admin/audit-exports/")) { const exportId = requireId(pathParam(route.path, pathname, "exportId"), "exportId"); const items = await options.repository.listAudit(100); await options.repository.appendAudit({ id: crypto.randomUUID(), actorStaffId: authContext!.staff.id, action: "AUDIT_EXPORT_READ", targetType: "AUDIT_EXPORT", targetId: exportId, outcome: "SUCCEEDED", reasonCode: "AUDIT_EXPORT", requestId: null, traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: { resultCount: items.length } }); write(response, 200, traceId, { status: "REFERENCE_EXPORT_PENDING", items }); return; }
     if (request.method === "GET" && pathname.startsWith("/admin/audit-events/")) { const events = await options.repository.listAudit(1000); const eventId = requireId(pathParam(route.path, pathname, "eventId"), "eventId"); const event = events.find((item) => item.id === eventId); if (!event) throw notFound("Audit event not found."); await options.repository.appendAudit({ id: crypto.randomUUID(), actorStaffId: authContext!.staff.id, action: "AUDIT_DETAIL_READ", targetType: "AUDIT_EVENT", targetId: eventId, outcome: "SUCCEEDED", reasonCode: "AUDIT_READ", requestId: null, traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: {} }); write(response, 200, traceId, { event }); return; }
     if (request.method === "POST" && pathname === "/admin/audit-export-requests") { requireCommandIdempotency(request); requireBodyFields(body, ["reasonCode"]); const reasonCode = typeof body.reasonCode === "string" ? body.reasonCode : ""; if (!/^[A-Z0-9_-]{3,64}$/.test(reasonCode)) throw invalidRequest("A normalized reason code is required."); await options.repository.appendAudit({ id: crypto.randomUUID(), actorStaffId: authContext!.staff.id, action: "AUDIT_EXPORT_REQUESTED", targetType: "AUDIT", targetId: null, outcome: "PENDING", reasonCode, requestId: null, traceId, correlationId: null, beforeVersion: null, afterVersion: null, metadata: {} }); write(response, 202, traceId, { status: "REFERENCE_EXPORT_PENDING" }); return; }
+    if (request.method === "GET" && pathname === "/admin/control-policy") {
+      const policy = await options.repository.getControlPolicy();
+      await auditRead(options, authContext!.staff.id, "CONTROL_POLICY_READ", "CONTROL_POLICY", "singleton", traceId);
+      write(response, 200, traceId, { policy });
+      return;
+    }
+    if (request.method === "PATCH" && pathname === "/admin/control-policy") {
+      requireFreshStepUp(authContext!.subject);
+      const policy = await options.repository.updateControlPolicy(body, authContext!.staff.id, traceId);
+      write(response, 200, traceId, { policy });
+      return;
+    }
+    if (request.method === "GET" && pathname === "/admin/operations/ledger-reconciliation") {
+      const reconciliation = await options.repository.reconcileLedger();
+      await auditRead(options, authContext!.staff.id, "LEDGER_RECONCILIATION_READ", "LEDGER", null, traceId, {
+        status: reconciliation.status,
+        unbalancedJournalCount: reconciliation.unbalancedJournalCount,
+        discrepancyMinor: reconciliation.discrepancyMinor,
+      });
+      write(response, 200, traceId, { reconciliation });
+      return;
+    }
     if (request.method === "POST" && pathname.includes("/staff/") && pathname.endsWith("/role-change-requests")) { const staffId = requireId(pathParam(route.path, pathname, "staffId"), "staffId"); const action = await options.actions.create({ subject: authContext!.subject, actionType: "STAFF_ROLE_CHANGE", targetType: "STAFF", targetId: staffId, body, idempotencyKey: header(request, "idempotency-key") ?? "", traceId }); write(response, 202, traceId, { action }); return; }
     if (request.method === "POST" && pathname.includes("/staff/") && pathname.endsWith("/disable-requests")) { const staffId = requireId(pathParam(route.path, pathname, "staffId"), "staffId"); const action = await options.actions.create({ subject: authContext!.subject, actionType: "STAFF_DISABLE", targetType: "STAFF", targetId: staffId, body, idempotencyKey: header(request, "idempotency-key") ?? "", traceId }); write(response, 202, traceId, { action }); return; }
     throw notFound("Admin API route is not implemented for this reference dataset.");

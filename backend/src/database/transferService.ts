@@ -9,9 +9,20 @@ import { LedgerRepository } from "./repositories/ledgerRepository.js";
 import { OutboxRepository } from "./repositories/outboxRepository.js";
 import { TransferRepository, type TransferRow } from "./repositories/transferRepository.js";
 import { evaluateTransferAnomaly } from "../domain/anomaly/index.js";
-import { fingerprint, hashOpaqueToken } from "../security.js";
+import {
+  defaultNapasGateway,
+  type MockNapasGateway,
+  type NapasSettlementResult,
+} from "../domain/napas/mockNapasGateway.js";
+import { createOpaqueToken, fingerprint, hashOpaqueToken } from "../security.js";
 import { parseMoney, toMoney } from "../domain/money.js";
-import type { Beneficiary, TransferAnomalyAssessment, TransferQuote, TransferReceipt } from "../types.js";
+import type {
+  Beneficiary,
+  InternalRecipientLookup,
+  TransferAnomalyAssessment,
+  TransferQuote,
+  TransferReceipt,
+} from "../types.js";
 import { conflict, invalidRequest, notFound } from "../errors.js";
 import { ControlPolicyRepository } from "./controlPolicyRepository.js";
 
@@ -40,8 +51,16 @@ export type TransferCommandInput = {
   now?: string;
   description?: string;
   counterpartyName?: string | null;
+  confirmHighRisk?: boolean;
   traceId?: string;
+  napasGateway?: MockNapasGateway;
   fault?: (point: TransferFaultPoint) => void | Promise<void>;
+};
+
+export type ExternalRecipientLookupResult = InternalRecipientLookup & {
+  rail: "NAPAS_IBFT";
+  bankBin: string;
+  bankCode: string;
 };
 
 export type TransferQuoteCommandInput = {
@@ -91,7 +110,59 @@ function publicTransfer(row: TransferRowWithAssessment): TransferReceipt {
  * Every repository in the command receives the UnitOfWork's single client.
  */
 export class RelationalTransferService {
-  constructor(private readonly unitOfWork: UnitOfWork) {}
+  constructor(
+    private readonly unitOfWork: UnitOfWork,
+    private readonly napasGateway: MockNapasGateway = defaultNapasGateway,
+  ) {}
+
+  async lookupExternalRecipient(
+    customerId: string,
+    input: { bankBin: unknown; accountNumber: unknown },
+    gateway: MockNapasGateway = this.napasGateway,
+  ): Promise<ExternalRecipientLookupResult> {
+    const inquiry = gateway.inquireAccount(input.bankBin, input.accountNumber);
+    return this.unitOfWork.transaction(async ({ client }) => {
+      await client.query("DELETE FROM recipient_lookups WHERE expires_at <= NOW()");
+      const lookupId = createOpaqueToken();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      await client.query(
+        `INSERT INTO recipient_lookups
+          (token_hash, customer_id, destination_account_id, destination_owner_id,
+           account_holder_name, masked_account_number, bank_name, status, expires_at,
+           rail, bank_bin, external_account_number)
+         VALUES ($1, $2, NULL, NULL, $3, $4, $5, 'ACTIVE', $6, 'NAPAS_IBFT', $7, $8)`,
+        [
+          hashOpaqueToken(lookupId),
+          customerId,
+          inquiry.accountHolderName,
+          inquiry.maskedAccountNumber,
+          inquiry.bank.name,
+          expiresAt,
+          inquiry.bank.bin,
+          inquiry.accountNumber,
+        ],
+      );
+      await new AuditRepository(client).append({
+        id: randomUUID(),
+        eventType: "EXTERNAL_RECIPIENT_LOOKED_UP",
+        actorCustomerId: customerId,
+        resourceId: `${inquiry.bank.bin}:${inquiry.maskedAccountNumber}`,
+        occurredAt: new Date().toISOString(),
+        payload: { bankBin: inquiry.bank.bin, bankCode: inquiry.bank.code },
+      });
+      return {
+        lookupId,
+        rail: "NAPAS_IBFT",
+        bankBin: inquiry.bank.bin,
+        bankCode: inquiry.bank.code,
+        accountHolderName: inquiry.accountHolderName,
+        maskedAccountNumber: inquiry.maskedAccountNumber,
+        bankName: inquiry.bank.name,
+        status: "ACTIVE",
+        expiresAt,
+      };
+    });
+  }
 
   async createQuote(input: TransferQuoteCommandInput): Promise<TransferQuote> {
     assertUuid(input.sourceAccountId, "sourceAccountId");
@@ -102,9 +173,10 @@ export class RelationalTransferService {
     const amountMinor = parseMoney(input.amount, "amount");
     if (amountMinor <= 0n) throw conflict("Transfer amount is outside the sandbox limit.");
     const now = input.now ?? new Date().toISOString();
-    const feeMinor = 1_000n;
     return this.unitOfWork.transaction(async ({ client }) => {
-      await new ControlPolicyRepository(client).assertTransferAllowed(input.customerId, amountMinor);
+      const policyRepo = new ControlPolicyRepository(client);
+      const policy = await policyRepo.assertTransferAllowed(input.customerId, amountMinor);
+      const feeMinor = policyRepo.getTransferFeeMinor(policy);
       const accounts = new AccountRepository(client);
       const transfers = new TransferRepository(client);
       const source = await accounts.findOwnedAccount(input.customerId, input.sourceAccountId);
@@ -115,6 +187,88 @@ export class RelationalTransferService {
         : await transfers.findRecipientLookup(input.customerId, hashOpaqueToken(input.lookupId!));
       if (!destination) throw notFound("Beneficiary not found.");
       if (String(destination.status) !== "ACTIVE") throw conflict("Beneficiary is not active.");
+
+      const rail = String(destination.rail ?? "INTERNAL") === "NAPAS_IBFT" ? "NAPAS_IBFT" : "INTERNAL";
+      if (rail === "NAPAS_IBFT") {
+        const externalBankBin = String(destination.bank_bin ?? "");
+        const externalBankName = String(destination.bank_name ?? "NAPAS");
+        const externalAccountNumber = String(destination.external_account_number ?? "");
+        const accountHolderName = String(destination.account_holder_name ?? "");
+        const beneficiary: Beneficiary = {
+          id: input.lookupId!,
+          displayName: accountHolderName,
+          accountHolderName,
+          maskedAccountNumber: String(destination.masked_account_number),
+          bankName: externalBankName,
+          status: String(destination.status) as Beneficiary["status"],
+        };
+        const quoteId = randomUUID();
+        const expiresAt = new Date(Date.parse(now) + 5 * 60 * 1000).toISOString();
+        const requestFingerprint = fingerprint({ quoteId, amountMinor: amountMinor.toString() });
+        await client.query(
+          `INSERT INTO transfer_quotes
+            (id, customer_id, source_account_id, beneficiary_id, amount_minor,
+             fee_minor, currency, expires_at, created_at, request_fingerprint,
+             beneficiary_snapshot, destination_account_id, destination_owner_id,
+             destination_owner_name, rail, external_bank_bin, external_bank_name,
+             external_account_number)
+           VALUES ($1, $2, $3, NULL, $4, $5, 'VND', $6, NOW(), $7, $8::jsonb, NULL, NULL, $9, 'NAPAS_IBFT', $10, $11, $12)`,
+          [
+            quoteId,
+            input.customerId,
+            source.id,
+            amountMinor.toString(),
+            feeMinor.toString(),
+            expiresAt,
+            requestFingerprint,
+            JSON.stringify(beneficiary),
+            accountHolderName,
+            externalBankBin,
+            externalBankName,
+            externalAccountNumber,
+          ],
+        );
+        const velocityResult = await client.query<{ recent_10m: number; same_recipient_15m: number }>(
+          `SELECT
+             COUNT(*) FILTER (WHERE created_at >= ($2::timestamptz - interval '10 minutes'))::int AS recent_10m,
+             COUNT(*) FILTER (
+               WHERE external_bank_bin = $3
+                 AND external_account_number = $4
+                 AND created_at >= ($2::timestamptz - interval '15 minutes')
+             )::int AS same_recipient_15m
+           FROM transfers
+           WHERE customer_id = $1`,
+          [input.customerId, now, externalBankBin, externalAccountNumber],
+        );
+        const anomalyAssessment = evaluateTransferAnomaly({
+          amountMinor,
+          feeMinor,
+          availableBalanceMinor: BigInt(source.availableMinor),
+          isNewRecipient: true,
+          recentTransfersLast10mCount: Number(velocityResult.rows[0]?.recent_10m ?? 0),
+          sameRecipientLast15mCount: Number(velocityResult.rows[0]?.same_recipient_15m ?? 0),
+          occurredAt: now,
+        });
+        await new AuditRepository(client).append({
+          id: randomUUID(),
+          eventType: "TRANSFER_QUOTED",
+          actorCustomerId: input.customerId,
+          resourceId: quoteId,
+          occurredAt: now,
+          payload: { rail: "NAPAS_IBFT", bankBin: externalBankBin },
+        });
+        return {
+          quoteId,
+          sourceAccountId: source.id,
+          beneficiary,
+          amount: toMoney(amountMinor),
+          fee: toMoney(feeMinor),
+          totalDebit: toMoney(amountMinor + feeMinor),
+          expiresAt,
+          anomalyAssessment,
+        };
+      }
+
       if (hasBeneficiary && String(destination.destination_status) !== "ACTIVE") throw conflict("The recipient account is not active.");
       const destinationAccountId = String(destination.destination_account_id ?? destination.destination_account_id);
       if (destinationAccountId === source.id) throw conflict("A transfer cannot be sent to the source account.");
@@ -235,10 +389,197 @@ export class RelationalTransferService {
           throw new RelationalConflictError("QUOTE_EXPIRED", "Transfer quote has expired.");
         }
         if (!quote.destinationAccountId || !quote.destinationOwnerId) {
-          throw new RelationalConflictError(
-            "RECIPIENT_NOT_FOUND",
-            "The transfer quote has no internal destination account.",
+          const quoteMetaResult = await client.query<{
+            rail?: string;
+            external_bank_bin?: string | null;
+            external_bank_name?: string | null;
+            external_account_number?: string | null;
+            destination_owner_name?: string | null;
+          }>(
+            `SELECT rail, external_bank_bin, external_bank_name, external_account_number, destination_owner_name
+               FROM transfer_quotes
+              WHERE id = $1`,
+            [quote.id],
           );
+          const quoteMeta = quoteMetaResult.rows[0];
+          if (
+            !quoteMeta ||
+            quoteMeta.rail !== "NAPAS_IBFT" ||
+            !quoteMeta.external_bank_bin ||
+            !quoteMeta.external_account_number
+          ) {
+            throw new RelationalConflictError(
+              "RECIPIENT_NOT_FOUND",
+              "The transfer quote has no internal destination account.",
+            );
+          }
+
+          await new ControlPolicyRepository(client).assertTransferAllowed(
+            input.customerId,
+            BigInt(quote.amountMinor),
+          );
+
+          const source = await accounts.lockById(quote.sourceAccountId);
+          if (!source || source.customerId !== input.customerId) {
+            throw new RelationalNotFoundError("Transfer account not found.");
+          }
+          if (source.status !== "ACTIVE") {
+            throw new RelationalConflictError("ACCOUNT_NOT_ACTIVE", "Source account must be active.");
+          }
+
+          const amount = BigInt(quote.amountMinor);
+          const fee = BigInt(quote.feeMinor);
+          const totalDebit = amount + fee;
+          if (amount <= 0n || fee < 0n || totalDebit <= 0n) {
+            throw new RelationalConflictError("INVALID_AMOUNT", "Transfer amount and fee are invalid.");
+          }
+          const preTransferAvailableMinor = BigInt(source.availableMinor);
+          if (preTransferAvailableMinor < totalDebit) {
+            throw new RelationalConflictError("INSUFFICIENT_BALANCE", "Insufficient available balance.");
+          }
+
+          const externalBankBin = String(quoteMeta.external_bank_bin);
+          const externalBankName = String(quoteMeta.external_bank_name ?? "NAPAS");
+          const externalAccountNumber = String(quoteMeta.external_account_number);
+          const externalHolderName = String(quoteMeta.destination_owner_name ?? quote.destinationOwnerName ?? "");
+
+          const velocityResult = await client.query<{ recent_10m: number; same_recipient_15m: number }>(
+            `SELECT
+               COUNT(*) FILTER (WHERE created_at >= ($2::timestamptz - interval '10 minutes'))::int AS recent_10m,
+               COUNT(*) FILTER (
+                 WHERE external_bank_bin = $3
+                   AND external_account_number = $4
+                   AND created_at >= ($2::timestamptz - interval '15 minutes')
+               )::int AS same_recipient_15m
+             FROM transfers
+             WHERE customer_id = $1`,
+            [input.customerId, now, externalBankBin, externalAccountNumber],
+          );
+          const anomalyAssessment = evaluateTransferAnomaly({
+            amountMinor: amount,
+            feeMinor: fee,
+            availableBalanceMinor: preTransferAvailableMinor,
+            isNewRecipient: true,
+            recentTransfersLast10mCount: Number(velocityResult.rows[0]?.recent_10m ?? 0),
+            sameRecipientLast15mCount: Number(velocityResult.rows[0]?.same_recipient_15m ?? 0),
+            occurredAt: now,
+          });
+          if (anomalyAssessment.riskLevel === "CRITICAL" && !input.confirmHighRisk) {
+            throw new RelationalConflictError(
+              "CRITICAL_ANOMALY_BLOCKED",
+              "Giao dịch có dấu hiệu bất thường nghiêm trọng (CRITICAL) và đã bị chặn theo chính sách an toàn.",
+            );
+          }
+
+          // Phase 1: Reserve funds into held_minor and create PENDING interbank transfer
+          const transferId = input.transferId ?? randomUUID();
+          const reference = input.reference ?? `NAPAS-${transferId.slice(-12).toUpperCase()}`;
+          const sourceTransactionId = randomUUID();
+          const phase1Account = await accounts.updateBalances(source.id, {
+            availableMinor: (preTransferAvailableMinor - totalDebit).toString(),
+            currentMinor: source.currentMinor,
+            heldMinor: (BigInt(source.heldMinor) + totalDebit).toString(),
+            expectedVersion: source.version,
+          });
+
+          const transferInsert = await client.query(
+            `INSERT INTO transfers
+              (id, customer_id, source_account_id, quote_id, idempotency_key,
+               request_fingerprint, reference, amount_minor, fee_minor, currency,
+               status, created_at, updated_at, destination_account_id,
+               destination_owner_id, source_transaction_id, destination_transaction_id,
+               ledger_journal_id, held_minor, rail, external_bank_bin,
+               external_bank_name, external_account_number, external_account_holder_name)
+             VALUES
+              ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'VND',
+               'PENDING', $10, $10, NULL, NULL, $11, NULL, NULL, $12,
+               'NAPAS_IBFT', $13, $14, $15, $16)
+             RETURNING *`,
+            [
+              transferId,
+              input.customerId,
+              source.id,
+              quote.id,
+              input.idempotencyKey,
+              input.requestFingerprint,
+              reference,
+              amount.toString(),
+              fee.toString(),
+              now,
+              sourceTransactionId,
+              totalDebit.toString(),
+              externalBankBin,
+              externalBankName,
+              externalAccountNumber,
+              externalHolderName,
+            ],
+          );
+          void transferInsert;
+
+          if (!(await transfers.consumeQuote(quote.id, transferId))) {
+            throw new RelationalConflictError("QUOTE_ALREADY_CONSUMED", "Transfer quote was consumed concurrently.");
+          }
+          await client.query(
+            "DELETE FROM recipient_lookups WHERE customer_id = $1 AND rail = 'NAPAS_IBFT' AND external_account_number = $2",
+            [input.customerId, externalAccountNumber],
+          );
+
+          await accounts.appendTransaction({
+            id: sourceTransactionId,
+            accountId: source.id,
+            transferId,
+            direction: "DEBIT",
+            amountMinor: amount.toString(),
+            feeMinor: fee.toString(),
+            status: "PENDING",
+            description: input.description ?? `Chuyển nhanh NAPAS 24/7 tới ${externalBankName}`,
+            counterpartyName: externalHolderName || null,
+            reference,
+            occurredAt: now,
+            completedAt: null,
+            kind: "TRANSFER",
+          });
+
+          const gateway = input.napasGateway ?? this.napasGateway;
+          const settlement = gateway.settleTransfer({
+            transferId,
+            reference,
+            bankBin: externalBankBin,
+            accountNumber: externalAccountNumber,
+            amountMinor: amount.toString(),
+            description: input.description ?? `Chuyển nhanh NAPAS 24/7 tới ${externalBankName}`,
+          });
+
+          const finalizedRow = await this.finalizeInterbankSettlement(client, {
+            transferId,
+            customerId: input.customerId,
+            quoteId: quote.id,
+            idempotencyKey: input.idempotencyKey,
+            requestFingerprint: input.requestFingerprint,
+            reference,
+            sourceTransactionId,
+            source: phase1Account,
+            amount,
+            fee,
+            totalDebit,
+            externalBankBin,
+            externalBankName,
+            externalHolderName,
+            settlement,
+            now,
+            traceId: input.traceId,
+          });
+
+          const resultWithAssessment: TransferRowWithAssessment = {
+            ...finalizedRow,
+            anomalyAssessment,
+          };
+          await transfers.completeCommandIdempotency(input.customerId, "TRANSFER_SUBMIT", input.idempotencyKey, {
+            aggregateId: finalizedRow.id,
+            status: finalizedRow.status,
+            responsePayload: resultWithAssessment,
+          });
+          return resultWithAssessment;
         }
         if (quote.sourceAccountId === quote.destinationAccountId) {
           throw new RelationalConflictError("SELF_TRANSFER", "A transfer cannot be sent to the source account.");
@@ -296,6 +637,12 @@ export class RelationalTransferService {
           sameRecipientLast15mCount: riskSignals.sameRecipientLast15mCount,
           occurredAt: now,
         });
+        if (anomalyAssessment.riskLevel === "CRITICAL" && !input.confirmHighRisk) {
+          throw new RelationalConflictError(
+            "CRITICAL_ANOMALY_BLOCKED",
+            "Giao dịch có dấu hiệu bất thường nghiêm trọng (CRITICAL) và đã bị chặn theo chính sách an toàn.",
+          );
+        }
 
         const transferId = input.transferId ?? randomUUID();
         const reference = input.reference ?? `REF-${transferId.slice(-12).toUpperCase()}`;
@@ -387,14 +734,14 @@ export class RelationalTransferService {
         const ledgerEntries = [
           {
             lineNumber: 1,
-            accountRef: source.id,
+            accountRef: `payment-account:${source.id}`,
             side: "DEBIT" as const,
             amountMinor: totalDebit.toString(),
             entryId: randomUUID(),
           },
           {
             lineNumber: 2,
-            accountRef: destination.id,
+            accountRef: `payment-account:${destination.id}`,
             side: "CREDIT" as const,
             amountMinor: amount.toString(),
             entryId: randomUUID(),
@@ -537,6 +884,374 @@ export class RelationalTransferService {
       },
       { traceId: input.traceId, maxRetries: 1 },
     );
+  }
+
+  async reconcilePendingInterbankTransfers(
+    asOf = new Date().toISOString(),
+    limit = 50,
+    gateway: MockNapasGateway = this.napasGateway,
+  ): Promise<number> {
+    const pendingIds = await this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query<{ id: string }>(
+        `SELECT id
+           FROM transfers
+          WHERE rail = 'NAPAS_IBFT'
+            AND status = 'PENDING'
+            AND held_minor > 0
+          ORDER BY created_at, id
+          LIMIT $1
+          FOR UPDATE SKIP LOCKED`,
+        [limit],
+      );
+      return result.rows.map((row) => row.id);
+    });
+
+    let reconciled = 0;
+    for (const transferId of pendingIds) {
+      const updated = await this.unitOfWork.transaction(async ({ client }) => {
+        const result = await client.query<Record<string, unknown>>(
+          "SELECT * FROM transfers WHERE id = $1 FOR UPDATE",
+          [transferId],
+        );
+        const row = result.rows[0];
+        if (!row || String(row.status) !== "PENDING" || String(row.rail) !== "NAPAS_IBFT") {
+          return false;
+        }
+        const accounts = new AccountRepository(client);
+        const source = await accounts.lockById(String(row.source_account_id));
+        if (!source) return false;
+
+        const amount = BigInt(String(row.amount_minor));
+        const fee = BigInt(String(row.fee_minor));
+        const totalDebit = amount + fee;
+        const settlement = gateway.inquirePendingSettlement({
+          reference: String(row.reference),
+          accountNumber: String(row.external_account_number ?? ""),
+          napasTraceId: row.napas_trace_id ? String(row.napas_trace_id) : null,
+        });
+        if (settlement.status === "PENDING") return false;
+
+        await this.finalizeInterbankSettlement(client, {
+          transferId: String(row.id),
+          customerId: String(row.customer_id),
+          quoteId: String(row.quote_id),
+          idempotencyKey: String(row.idempotency_key),
+          requestFingerprint: String(row.request_fingerprint),
+          reference: String(row.reference),
+          sourceTransactionId: String(row.source_transaction_id),
+          source,
+          amount,
+          fee,
+          totalDebit,
+          externalBankBin: String(row.external_bank_bin ?? ""),
+          externalBankName: String(row.external_bank_name ?? "NAPAS"),
+          externalHolderName: String(row.external_account_holder_name ?? ""),
+          settlement,
+          now: asOf,
+        });
+        return true;
+      }, { maxRetries: 1 });
+      if (updated) reconciled += 1;
+    }
+    return reconciled;
+  }
+
+  private async finalizeInterbankSettlement(
+    client: import("pg").PoolClient,
+    params: {
+      transferId: string;
+      customerId: string;
+      quoteId: string;
+      idempotencyKey: string;
+      requestFingerprint: string;
+      reference: string;
+      sourceTransactionId: string;
+      source: import("./repositories/accountRepository.js").AccountRow;
+      amount: bigint;
+      fee: bigint;
+      totalDebit: bigint;
+      externalBankBin: string;
+      externalBankName: string;
+      externalHolderName: string;
+      settlement: NapasSettlementResult;
+      now: string;
+      traceId?: string;
+    },
+  ): Promise<TransferRow> {
+    const accounts = new AccountRepository(client);
+    const transfers = new TransferRepository(client);
+    const ledger = new LedgerRepository(client);
+    const audit = new AuditRepository(client);
+    const outbox = new OutboxRepository(client);
+
+    if (params.settlement.status === "SUCCEEDED") {
+      await accounts.updateBalances(params.source.id, {
+        availableMinor: params.source.availableMinor,
+        currentMinor: (BigInt(params.source.currentMinor) - params.totalDebit).toString(),
+        heldMinor: (BigInt(params.source.heldMinor) - params.totalDebit).toString(),
+        expectedVersion: params.source.version,
+      });
+
+      const journalId = randomUUID();
+      await ledger.appendJournal({
+        id: journalId,
+        aggregateId: params.transferId,
+        journalType: "NAPAS_TRANSFER",
+        occurredAt: params.now,
+      });
+      const ledgerEntries = [
+        {
+          lineNumber: 1,
+          accountRef: `payment-account:${params.source.id}`,
+          side: "DEBIT" as const,
+          amountMinor: params.totalDebit.toString(),
+          entryId: randomUUID(),
+        },
+        {
+          lineNumber: 2,
+          accountRef: "napas-clearing:VND",
+          side: "CREDIT" as const,
+          amountMinor: params.amount.toString(),
+          entryId: randomUUID(),
+        },
+      ];
+      if (params.fee > 0n) {
+        ledgerEntries.push({
+          lineNumber: 3,
+          accountRef: "fee-income:VND",
+          side: "CREDIT" as const,
+          amountMinor: params.fee.toString(),
+          entryId: randomUUID(),
+        });
+      }
+      await ledger.appendEntries(journalId, ledgerEntries);
+
+      await client.query(
+        `UPDATE transfers
+            SET status = 'SUCCEEDED',
+                held_minor = 0,
+                ledger_journal_id = $2,
+                napas_trace_id = $3,
+                updated_at = $4
+          WHERE id = $1`,
+        [params.transferId, journalId, params.settlement.napasTraceId, params.now],
+      );
+      await client.query(
+        `UPDATE account_transactions
+            SET status = 'SUCCEEDED',
+                completed_at = $2
+          WHERE id = $1`,
+        [params.sourceTransactionId, params.now],
+      );
+      await audit.append({
+        id: randomUUID(),
+        eventType: "TRANSFER_NAPAS_SUCCEEDED",
+        actorCustomerId: params.customerId,
+        resourceId: params.transferId,
+        occurredAt: params.now,
+        payload: {
+          traceId: params.traceId ?? null,
+          napasTraceId: params.settlement.napasTraceId,
+          bankBin: params.externalBankBin,
+        },
+      });
+      const notificationId = randomUUID();
+      await client.query(
+        `INSERT INTO notifications
+           (id, customer_id, notification_type, title, body, resource_id,
+            resource_account_id, is_read, created_at)
+         VALUES
+           ($1, $2, 'TRANSFER', 'Chuyển nhanh NAPAS 24/7 thành công', $3, $4, $5, false, $6)`,
+        [
+          notificationId,
+          params.customerId,
+          `Giao dịch tới ${params.externalHolderName} (${params.externalBankName}) đã hoàn tất.`,
+          params.sourceTransactionId,
+          params.source.id,
+          params.now,
+        ],
+      );
+      await outbox.append({
+        id: randomUUID(),
+        eventType: "TRANSFER_SUCCEEDED",
+        aggregateId: params.transferId,
+        deduplicationKey: `TRANSFER_SUCCEEDED:${params.transferId}`,
+        occurredAt: params.now,
+        payload: {
+          transferId: params.transferId,
+          reference: params.reference,
+          rail: "NAPAS_IBFT",
+          napasTraceId: params.settlement.napasTraceId,
+        },
+        traceId: params.traceId,
+        subjectCustomerIds: [params.customerId],
+        notificationIds: [notificationId],
+      });
+    } else if (params.settlement.status === "FAILED") {
+      await accounts.updateBalances(params.source.id, {
+        availableMinor: (BigInt(params.source.availableMinor) + params.totalDebit).toString(),
+        currentMinor: params.source.currentMinor,
+        heldMinor: (BigInt(params.source.heldMinor) - params.totalDebit).toString(),
+        expectedVersion: params.source.version,
+      });
+
+      const reversalJournalId = randomUUID();
+      await ledger.appendJournal({
+        id: reversalJournalId,
+        aggregateId: params.transferId,
+        journalType: "NAPAS_TRANSFER_REVERSAL",
+        occurredAt: params.now,
+      });
+      await ledger.appendEntries(reversalJournalId, [
+        {
+          lineNumber: 1,
+          accountRef: "napas-hold-clearing:VND",
+          side: "DEBIT" as const,
+          amountMinor: params.totalDebit.toString(),
+          entryId: randomUUID(),
+        },
+        {
+          lineNumber: 2,
+          accountRef: `payment-account:${params.source.id}`,
+          side: "CREDIT" as const,
+          amountMinor: params.totalDebit.toString(),
+          entryId: randomUUID(),
+        },
+      ]);
+
+      await client.query(
+        `UPDATE transfers
+            SET status = 'REVERSED',
+                refunded = true,
+                held_minor = 0,
+                ledger_journal_id = $2,
+                napas_trace_id = $3,
+                failure_reason = $4,
+                updated_at = $5
+          WHERE id = $1`,
+        [
+          params.transferId,
+          reversalJournalId,
+          params.settlement.napasTraceId,
+          params.settlement.failureReason ?? "NAPAS_SETTLEMENT_FAILED",
+          params.now,
+        ],
+      );
+      await client.query(
+        `UPDATE account_transactions
+            SET status = 'REVERSED',
+                completed_at = $2
+          WHERE id = $1`,
+        [params.sourceTransactionId, params.now],
+      );
+      const refundTx = await accounts.appendTransaction({
+        id: randomUUID(),
+        accountId: params.source.id,
+        transferId: params.transferId,
+        direction: "CREDIT",
+        amountMinor: params.totalDebit.toString(),
+        feeMinor: "0",
+        status: "SUCCEEDED",
+        description: `Hoàn tiền chuyển nhanh liên ngân hàng NAPAS thất bại (${params.externalBankName})`,
+        counterpartyName: params.externalHolderName || null,
+        reference: `REV-${params.reference}`,
+        occurredAt: params.now,
+        completedAt: params.now,
+        kind: "TRANSFER_NAPAS_REVERSAL",
+      });
+      await audit.append({
+        id: randomUUID(),
+        eventType: "TRANSFER_NAPAS_REVERSED",
+        actorCustomerId: params.customerId,
+        resourceId: params.transferId,
+        occurredAt: params.now,
+        payload: {
+          traceId: params.traceId ?? null,
+          napasTraceId: params.settlement.napasTraceId,
+          failureReason: params.settlement.failureReason,
+          refundTransactionId: refundTx.id,
+        },
+      });
+      const notificationId = randomUUID();
+      await client.query(
+        `INSERT INTO notifications
+           (id, customer_id, notification_type, title, body, resource_id,
+            resource_account_id, is_read, created_at)
+         VALUES
+           ($1, $2, 'TRANSFER', 'Hoàn tiền chuyển nhanh NAPAS', $3, $4, $5, false, $6)`,
+        [
+          notificationId,
+          params.customerId,
+          `Giao dịch tới ${params.externalBankName} không thành công. Số tiền đã được hoàn trả về tài khoản của bạn.`,
+          refundTx.id,
+          params.source.id,
+          params.now,
+        ],
+      );
+      await outbox.append({
+        id: randomUUID(),
+        eventType: "TRANSFER_REVERSED",
+        aggregateId: params.transferId,
+        deduplicationKey: `TRANSFER_REVERSED:${params.transferId}`,
+        occurredAt: params.now,
+        payload: {
+          transferId: params.transferId,
+          reference: params.reference,
+          failureReason: params.settlement.failureReason,
+        },
+        traceId: params.traceId,
+        subjectCustomerIds: [params.customerId],
+        notificationIds: [notificationId],
+      });
+    } else {
+      await client.query(
+        `UPDATE transfers
+            SET napas_trace_id = $2,
+                updated_at = $3
+          WHERE id = $1`,
+        [params.transferId, params.settlement.napasTraceId, params.now],
+      );
+      await audit.append({
+        id: randomUUID(),
+        eventType: "TRANSFER_NAPAS_PENDING",
+        actorCustomerId: params.customerId,
+        resourceId: params.transferId,
+        occurredAt: params.now,
+        payload: {
+          traceId: params.traceId ?? null,
+          napasTraceId: params.settlement.napasTraceId,
+        },
+      });
+    }
+
+    const updated = await transfers.findById(params.transferId);
+    if (updated) return updated;
+    return {
+      id: params.transferId,
+      customerId: params.customerId,
+      sourceAccountId: params.source.id,
+      quoteId: params.quoteId,
+      idempotencyKey: params.idempotencyKey,
+      requestFingerprint: params.requestFingerprint,
+      reference: params.reference,
+      amountMinor: params.amount.toString(),
+      feeMinor: params.fee.toString(),
+      status:
+        params.settlement.status === "SUCCEEDED"
+          ? "SUCCEEDED"
+          : params.settlement.status === "FAILED"
+            ? "REVERSED"
+            : "PENDING",
+      destinationAccountId: null,
+      destinationOwnerId: null,
+      sourceTransactionId: params.sourceTransactionId,
+      destinationTransactionId: null,
+      ledgerJournalId: null,
+      refunded: params.settlement.status === "FAILED",
+      heldMinor: params.settlement.status === "PENDING" ? params.totalDebit.toString() : "0",
+      createdAt: params.now,
+      updatedAt: params.now,
+    };
   }
 
   async get(customerId: string, transferId: string): Promise<TransferReceipt> {

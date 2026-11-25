@@ -4,8 +4,12 @@ import type {
   RegisterRequest,
 } from "@/features/auth/types/auth";
 import {
+  validateChangePasswordForm,
+  validateForgotPasswordEmail,
   validateLoginForm,
   validateRegisterForm,
+  validateResetPasswordForm,
+  validateStrongPasswordPolicy,
 } from "@/features/auth/validation/authValidation";
 
 const validLoginForm: LoginFormValues = {
@@ -249,5 +253,53 @@ describe("validateRegisterForm", () => {
     } satisfies RegisterRequest;
 
     expect(request).not.toHaveProperty("confirmPassword");
+  });
+});
+
+describe("validateStrongPasswordPolicy & password reset/change forms", () => {
+  it("yêu cầu mật khẩu mới tối thiểu 12 ký tự và đủ 4 nhóm ký tự", () => {
+    expect(validateStrongPasswordPolicy("Short!1")).toBeDefined();
+    expect(validateStrongPasswordPolicy("lowercaseonly12!")).toBeDefined();
+    expect(validateStrongPasswordPolicy("NoSpecialChar123")).toBeDefined();
+    expect(validateStrongPasswordPolicy("StrongPass!2026")).toBeUndefined();
+  });
+
+  it("kiểm tra form đổi mật khẩu và từ chối mật khẩu trùng mật khẩu cũ", () => {
+    const same = validateChangePasswordForm({
+      currentPassword: "StrongPass!2026",
+      newPassword: "StrongPass!2026",
+      confirmPassword: "StrongPass!2026",
+    });
+    expect(same.isValid).toBe(false);
+    expect(same.errors.newPassword).toBeDefined();
+
+    const valid = validateChangePasswordForm({
+      currentPassword: "OldStrongPass!1",
+      newPassword: "NewStrongPass!2",
+      confirmPassword: "NewStrongPass!2",
+    });
+    expect(valid.isValid).toBe(true);
+    expect(valid.errors).toEqual({});
+  });
+
+  it("chuẩn hóa email quên mật khẩu và kiểm tra OTP + mật khẩu đặt lại", () => {
+    const emailRes = validateForgotPasswordEmail("  USER@Example.com ");
+    expect(emailRes.normalizedEmail).toBe("user@example.com");
+    expect(emailRes.error).toBeUndefined();
+
+    const badOtp = validateResetPasswordForm({
+      otpCode: "123",
+      newPassword: "NewStrongPass!2",
+      confirmPassword: "NewStrongPass!2",
+    });
+    expect(badOtp.isValid).toBe(false);
+    expect(badOtp.errors.otpCode).toBeDefined();
+
+    const okReset = validateResetPasswordForm({
+      otpCode: "654321",
+      newPassword: "NewStrongPass!2",
+      confirmPassword: "NewStrongPass!2",
+    });
+    expect(okReset.isValid).toBe(true);
   });
 });

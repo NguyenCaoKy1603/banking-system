@@ -9,6 +9,7 @@ export type CustomerRow = {
   phoneNumber: string;
   passwordSalt: string;
   passwordDigest: string;
+  accessStatus?: "ACTIVE" | "LOCKED";
   createdAt: string;
 };
 
@@ -18,7 +19,9 @@ export type DeviceRow = {
   id: string;
   customerId: string;
   deviceId: string;
+  deviceName: string | null;
   attestationStatus: "PENDING" | "VERIFIED" | "REVOKED";
+  lastSeenAt: string | null;
   createdAt: string;
   revokedAt: string | null;
 };
@@ -62,6 +65,7 @@ function mapCustomer(row: Record<string, unknown>): CustomerRow {
     phoneNumber: asString(row.phone_number),
     passwordSalt: asString(row.password_salt),
     passwordDigest: asString(row.password_digest),
+    accessStatus: row.access_status === "LOCKED" ? "LOCKED" : "ACTIVE",
     createdAt: asIso(row.created_at, "created_at"),
   };
 }
@@ -71,7 +75,9 @@ function mapDevice(row: Record<string, unknown>): DeviceRow {
     id: requireUuid(row.id),
     customerId: requireUuid(row.customer_id, "customer_id"),
     deviceId: asString(row.device_id),
+    deviceName: row.device_name === null || row.device_name === undefined ? null : asString(row.device_name),
     attestationStatus: asString(row.attestation_status) as DeviceRow["attestationStatus"],
+    lastSeenAt: asNullableIso(row.last_seen_at, "last_seen_at"),
     createdAt: asIso(row.created_at, "created_at"),
     revokedAt: asNullableIso(row.revoked_at, "revoked_at"),
   };
@@ -122,19 +128,44 @@ export class CustomerRepository {
     id: string;
     customerId: string;
     deviceId: string;
+    deviceName?: string;
     attestationStatus?: DeviceRow["attestationStatus"];
   }): Promise<DeviceRow> {
+    const normalizedName = input.deviceName?.trim() ? input.deviceName.trim().slice(0, 80) : null;
     const result = await this.client.query(
       `
-        INSERT INTO customer_devices (id, customer_id, device_id, attestation_status, created_at)
-        VALUES ($1, $2, $3, COALESCE($4, 'PENDING'), NOW())
+        INSERT INTO customer_devices (id, customer_id, device_id, device_name, attestation_status, last_seen_at, created_at)
+        VALUES ($1, $2, $3, $5, COALESCE($4, 'PENDING'), NOW(), NOW())
         ON CONFLICT (customer_id, device_id)
-        DO UPDATE SET revoked_at = NULL
+        DO UPDATE SET
+          revoked_at = NULL,
+          attestation_status = CASE
+            WHEN customer_devices.attestation_status = 'REVOKED' THEN 'PENDING'
+            ELSE customer_devices.attestation_status
+          END,
+          last_seen_at = NOW(),
+          device_name = COALESCE(NULLIF($5, ''), customer_devices.device_name)
         RETURNING *
       `,
-      [requireUuid(input.id), requireUuid(input.customerId, "customerId"), input.deviceId, input.attestationStatus ?? null],
+      [
+        requireUuid(input.id),
+        requireUuid(input.customerId, "customerId"),
+        input.deviceId,
+        input.attestationStatus ?? null,
+        normalizedName,
+      ],
     );
     return mapDevice(result.rows[0] as Record<string, unknown>);
+  }
+
+  async updateCustomerPassword(customerId: string, passwordSalt: string, passwordDigest: string): Promise<void> {
+    await this.client.query(
+      `UPDATE customers
+          SET password_salt = $2,
+              password_digest = $3
+        WHERE id = $1`,
+      [requireUuid(customerId, "customerId"), passwordSalt, passwordDigest],
+    );
   }
 
   async createSession(input: SessionCreateInput): Promise<void> {

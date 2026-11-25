@@ -9,6 +9,7 @@ import type {
   BeneficiariesResponse,
   BeneficiaryResponse,
   CreateBeneficiaryRequest,
+  ExternalRecipientLookupResponse,
   InternalRecipientLookupResponse,
   RenameBeneficiaryRequest,
   SubmitTransferRequest,
@@ -175,6 +176,54 @@ export function lookupInternalRecipient(
   );
 }
 
+export function lookupExternalRecipient(
+  bankBin: string,
+  accountNumber: string,
+  auth: RequestAuth,
+): Promise<ExternalRecipientLookupResponse> {
+  const normalizedBin = bankBin.replace(/\s+/g, "");
+  const normalizedAccount = accountNumber.replace(/\s+/g, "");
+  if (!/^\d{6}$/.test(normalizedBin)) {
+    throw new TypeError("bankBin phải gồm 6 chữ số.");
+  }
+  if (!/^\d{6,34}$/.test(normalizedAccount)) {
+    throw new TypeError("accountNumber phải có từ 6 đến 34 chữ số.");
+  }
+  return requestJson<ExternalRecipientLookupResponse>(
+    "/external-recipients/lookup",
+    {
+      method: "POST",
+      body: { bankBin: normalizedBin, accountNumber: normalizedAccount },
+      auth,
+    },
+    (payload): payload is ExternalRecipientLookupResponse => {
+      if (!payload || typeof payload !== "object" || !("recipient" in payload)) {
+        return false;
+      }
+      const recipient = (payload as { recipient?: unknown }).recipient;
+      if (!recipient || typeof recipient !== "object") {
+        return false;
+      }
+      const value = recipient as Record<string, unknown>;
+      return (
+        typeof value.lookupId === "string" &&
+        value.lookupId.trim().length > 0 &&
+        value.rail === "NAPAS_IBFT" &&
+        typeof value.bankBin === "string" &&
+        typeof value.bankCode === "string" &&
+        typeof value.accountHolderName === "string" &&
+        value.accountHolderName.trim().length > 0 &&
+        typeof value.maskedAccountNumber === "string" &&
+        value.maskedAccountNumber.trim().length > 0 &&
+        typeof value.bankName === "string" &&
+        value.bankName.trim().length > 0 &&
+        (value.status === "ACTIVE" || value.status === "BLOCKED") &&
+        typeof value.expiresAt === "string"
+      );
+    },
+  );
+}
+
 export function quoteTransfer(
   request: TransferQuoteRequest,
   auth: RequestAuth,
@@ -231,4 +280,5 @@ export const transfersApi = {
   submitTransfer,
   getTransfer,
   lookupInternalRecipient,
+  lookupExternalRecipient,
 };

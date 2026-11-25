@@ -77,7 +77,7 @@ export function hasPermission(subject: AdminSubject, permission: AdminPermission
 }
 
 export type AdminRouteDefinition = {
-  method: "GET" | "POST" | "DELETE";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   permission?: AdminPermission;
   stateChanging?: boolean;
@@ -146,6 +146,9 @@ export const ADMIN_ROUTES: readonly AdminRouteDefinition[] = [
   { method: "GET", path: "/admin/audit-events/{eventId}", permission: "audit.read" },
   { method: "POST", path: "/admin/audit-export-requests", permission: "audit.export", stateChanging: true },
   { method: "GET", path: "/admin/audit-exports/{exportId}", permission: "audit.export" },
+  { method: "GET", path: "/admin/control-policy", permission: "audit.read" },
+  { method: "PATCH", path: "/admin/control-policy", permission: "audit.read", stateChanging: true },
+  { method: "GET", path: "/admin/operations/ledger-reconciliation", permission: "outbox.read" },
 ];
 
 export function assertAdminRouteRegistry(): void {

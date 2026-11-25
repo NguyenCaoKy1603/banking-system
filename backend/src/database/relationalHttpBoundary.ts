@@ -1,10 +1,28 @@
-import type { AuthUser, Beneficiary, LoginResponse, PaymentAccount, Transaction, TransactionAnomaly, TransactionDetail, TransferQuote, TransferReceipt } from "../types.js";
+import type {
+  AccountMonthlySummary,
+  AccountStatementExport,
+  AuthUser,
+  Beneficiary,
+  CustomerDeviceSummary,
+  LoginResponse,
+  PaymentAccount,
+  Transaction,
+  TransactionAnomaly,
+  TransactionDetail,
+  TransactionListFilters,
+  TransferQuote,
+  TransferReceipt,
+} from "../types.js";
 import { RelationalAccountReadService } from "./relationalAccountReadService.js";
 import { RelationalAnomalyService } from "./anomalyService.js";
 import { RelationalAuthService } from "./relationalAuthService.js";
 import { RelationalRegistrationService, type RegistrationBeginInput } from "./registrationService.js";
 import { RelationalBeneficiaryService } from "./relationalBeneficiaryService.js";
-import { RelationalTransferService, type TransferQuoteCommandInput } from "./transferService.js";
+import {
+  RelationalTransferService,
+  type ExternalRecipientLookupResult,
+  type TransferQuoteCommandInput,
+} from "./transferService.js";
 import { RelationalSavingsService } from "./savingsService.js";
 import type { SavingsListResult, SavingsQuoteRequest, SubmitSavingsOpeningRequest } from "../bankingSystem.js";
 import type { MaturityInstruction, SavingsDeposit, SavingsOpening, SavingsProduct, SavingsQuote, SavingsWithdrawalReceipt } from "../domain/savings/index.js";
@@ -72,6 +90,11 @@ export class RelationalHttpBoundary {
       ["POST", ["auth", "refresh"]],
       ["POST", ["auth", "logout"]],
       ["POST", ["auth", "logout-all"]],
+      ["POST", ["auth", "password", "change"]],
+      ["POST", ["auth", "password", "forgot"]],
+      ["POST", ["auth", "password", "reset"]],
+      ["GET", ["auth", "devices"]],
+      ["DELETE", ["auth", "devices", "00000000-0000-4000-8000-000000000000"]],
       ["POST", ["auth", "register"]],
       ["POST", ["auth", "register", "verify"]],
       ["GET", ["auth", "mfa", "methods"]],
@@ -92,6 +115,7 @@ export class RelationalHttpBoundary {
       ["POST", ["credit", "payment-quotes"]],
       ["POST", ["credit", "payments"]],
       ["POST", ["internal-recipients", "lookup"]],
+      ["POST", ["external-recipients", "lookup"]],
       ["GET", ["notifications"]],
       ["POST", ["notifications", "00000000-0000-4000-8000-000000000000", "read"]],
       ["GET", ["mobile", "control-policy"]],
@@ -107,11 +131,14 @@ export class RelationalHttpBoundary {
     const verb = (method ?? "").toUpperCase();
     if (this.routes.has("auth") && verb === "GET" && segments.length === 2 && segments[0] === "mobile" && segments[1] === "control-policy") return true;
     if (this.routes.has("auth") && segments[0] === "auth") {
-      // Session routes use the relational auth boundary. Registration and MFA
-      // lifecycle routes are selected by their dedicated route groups below.
+      // Session, password and device routes use the relational auth boundary.
+      // Registration and MFA lifecycle routes are selected by their dedicated route groups below.
       const sessionRoutes =
         (verb === "POST" && segments.length === 2 && ["login", "verify", "refresh", "logout"].includes(segments[1] ?? "")) ||
-        (verb === "POST" && segments.length === 2 && segments[1] === "logout-all");
+        (verb === "POST" && segments.length === 2 && segments[1] === "logout-all") ||
+        (verb === "POST" && segments.length === 3 && segments[1] === "password" && ["change", "forgot", "reset"].includes(segments[2] ?? "")) ||
+        (verb === "GET" && segments.length === 2 && segments[1] === "devices") ||
+        (verb === "DELETE" && segments.length === 3 && segments[1] === "devices");
       if (sessionRoutes) return true;
     }
     if (this.routes.has("mfa") && segments[0] === "auth") {
@@ -167,7 +194,13 @@ export class RelationalHttpBoundary {
           (verb === "GET" && segments.length === 5 && segments[1] === "accounts" && segments[3] === "statements");
       }
     }
-    if (this.routes.has("recipients") && verb === "POST" && segments.length === 2 && segments[0] === "internal-recipients" && segments[1] === "lookup") return true;
+    if (
+      this.routes.has("recipients") &&
+      verb === "POST" &&
+      segments.length === 2 &&
+      (segments[0] === "internal-recipients" || segments[0] === "external-recipients") &&
+      segments[1] === "lookup"
+    ) return true;
     if (this.routes.has("notifications")) {
       if (verb === "GET" && segments.length === 1 && segments[0] === "notifications") return true;
       if (verb === "POST" && segments.length === 3 && segments[0] === "notifications" && segments[2] === "read") return true;
@@ -179,7 +212,15 @@ export class RelationalHttpBoundary {
     }
     if (!this.routes.has("accounts")) return false;
     if (verb === "GET" && segments.length === 1 && segments[0] === "accounts") return true;
-    if (verb === "GET" && segments.length === 3 && segments[0] === "accounts" && (segments[2] === "number" || segments[2] === "transactions")) return true;
+    if (
+      verb === "GET" &&
+      segments.length === 3 &&
+      segments[0] === "accounts" &&
+      (segments[2] === "number" ||
+        segments[2] === "transactions" ||
+        segments[2] === "summary" ||
+        segments[2] === "statement-export")
+    ) return true;
     if (verb === "GET" && segments.length === 4 && segments[0] === "accounts" && segments[2] === "transactions") return true;
     return false;
   }
@@ -197,8 +238,8 @@ export class RelationalHttpBoundary {
     return { user: await this.auth.getUser(completed.customerId) };
   }
 
-  issueMfaSession(customerId: string, deviceId: string): Promise<LoginResponse> {
-    return this.auth.issueSession(customerId, deviceId);
+  issueMfaSession(customerId: string, deviceId: string, deviceName?: string): Promise<LoginResponse> {
+    return this.auth.issueSession(customerId, deviceId, deviceName);
   }
 
   authenticate(accessToken: string, deviceId: string): Promise<AuthUser> {
@@ -217,6 +258,12 @@ export class RelationalHttpBoundary {
         transfersEnabled: Boolean(row.transfers_enabled),
         allowlisted: Boolean(row.allowlist_enabled),
         maxTransferAmountMinor: String(row.max_transfer_amount_minor),
+        ...(row.daily_transfer_limit_minor !== undefined && row.daily_transfer_limit_minor !== null
+          ? { dailyTransferLimitMinor: String(row.daily_transfer_limit_minor) }
+          : {}),
+        ...(row.transfer_fee_minor !== undefined && row.transfer_fee_minor !== null
+          ? { transferFeeMinor: String(row.transfer_fee_minor) }
+          : {}),
         stepUpMethods: list(row.step_up_methods),
         savingsEnabled: Boolean(row.savings_enabled),
         savingsAllowlisted: Boolean(row.savings_allowlist_enabled),
@@ -248,14 +295,56 @@ export class RelationalHttpBoundary {
 
   revokeAllSessions(customerId: string): Promise<void> { return this.auth.revokeAllSessions(customerId); }
 
+  changePassword(input: { customerId: string; currentPassword: string; newPassword: string; deviceId: string }): Promise<void> {
+    return this.auth.changePassword(input);
+  }
+
+  preparePasswordReset(email: string, networkFingerprint: string): Promise<{ normalizedEmail: string; customer: { id: string; email: string } | null }> {
+    return this.auth.preparePasswordReset(email, networkFingerprint);
+  }
+
+  resetPassword(input: { customerId: string; newPassword: string; deviceId: string }): Promise<void> {
+    return this.auth.resetPassword(input);
+  }
+
+  listDevices(customerId: string, currentDeviceId: string): Promise<CustomerDeviceSummary[]> {
+    return this.auth.listDevices(customerId, currentDeviceId);
+  }
+
+  revokeDevice(customerId: string, targetDeviceId: string, currentDeviceId: string): Promise<void> {
+    return this.auth.revokeDevice(customerId, targetDeviceId, currentDeviceId);
+  }
+
   listAccounts(customerId: string): Promise<PaymentAccount[]> { return this.accounts.listAccounts(customerId); }
 
   getAccountNumber(customerId: string, accountId: string): Promise<string> {
     return this.accounts.getAccountNumber(customerId, accountId);
   }
 
-  listTransactions(customerId: string, accountId: string, cursor?: string, limit?: number): Promise<{ items: Transaction[]; nextCursor: string | null }> {
-    return this.accounts.listTransactions(customerId, accountId, cursor, limit);
+  listTransactions(
+    customerId: string,
+    accountId: string,
+    cursor?: string,
+    limit?: number,
+    filters?: TransactionListFilters,
+  ): Promise<{ items: Transaction[]; nextCursor: string | null }> {
+    return this.accounts.listTransactions(customerId, accountId, cursor, limit, filters);
+  }
+
+  getAccountMonthlySummary(
+    customerId: string,
+    accountId: string,
+    month?: string,
+  ): Promise<AccountMonthlySummary> {
+    return this.accounts.getMonthlySummary(customerId, accountId, month);
+  }
+
+  exportAccountStatement(
+    customerId: string,
+    accountId: string,
+    options?: { from?: string; to?: string; format?: string },
+  ): Promise<AccountStatementExport> {
+    return this.accounts.exportStatement(customerId, accountId, options);
   }
 
   getTransaction(customerId: string, accountId: string, transactionId: string): Promise<TransactionDetail> {
@@ -288,6 +377,13 @@ export class RelationalHttpBoundary {
 
   lookupInternalRecipient(customerId: string, accountNumber: unknown): Promise<InternalRecipientLookup> {
     return this.remaining.lookupRecipient(customerId, accountNumber);
+  }
+
+  lookupExternalRecipient(
+    customerId: string,
+    input: { bankBin: unknown; accountNumber: unknown },
+  ): Promise<ExternalRecipientLookupResult> {
+    return this.transfers.lookupExternalRecipient(customerId, input);
   }
 
   listNotifications(customerId: string): Promise<Notification[]> {

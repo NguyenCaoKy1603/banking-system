@@ -1,5 +1,7 @@
 import {
+  exportAccountStatement,
   getAccountNumber,
+  getAccountSummary,
   listAccounts,
   listTransactions,
 } from "@/features/accounts/services/accountsApi";
@@ -97,6 +99,63 @@ describe("accounts/transfers API services", () => {
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "http://10.0.2.2:5000/api/v1/accounts/account%2F1/transactions?cursor=next%20cursor&limit=50",
+    );
+  });
+
+  it("gửi các filter server-side, gọi /summary và /statement-export", async () => {
+    fetchMock
+      .mockResolvedValueOnce(createJsonResponse({ items: [], nextCursor: null }))
+      .mockResolvedValueOnce(
+        createJsonResponse({
+          accountId: "account-1",
+          month: "2026-11",
+          monthLabel: "11/2026",
+          currency: "VND",
+          totalIncomeMinor: "5000000",
+          totalExpenseMinor: "1200000",
+          netMinor: "3800000",
+          succeededCount: 4,
+          creditCount: 2,
+          debitCount: 2,
+        }),
+      )
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: jest.fn().mockResolvedValue("\uFEFFMã tham chiếu,Nội dung\r\nREF-1,Lương"),
+      } as unknown as Response);
+
+    await listTransactions("account-1", {
+      auth: { accessToken: "access-token", deviceId: "dev-1" },
+      status: "SUCCEEDED",
+      direction: "CREDIT",
+      from: "2026-11-01",
+      to: "2026-11-30",
+      q: "Lương",
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "http://10.0.2.2:5000/api/v1/accounts/account-1/transactions?status=SUCCEEDED&direction=CREDIT&from=2026-11-01&to=2026-11-30&q=L%C6%B0%C6%A1ng",
+    );
+
+    const summary = await getAccountSummary("account-1", {
+      auth: { accessToken: "access-token", deviceId: "dev-1" },
+      month: "2026-11",
+    });
+    expect(summary.totalIncomeMinor).toBe("5000000");
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "http://10.0.2.2:5000/api/v1/accounts/account-1/summary?month=2026-11",
+    );
+
+    const csv = await exportAccountStatement("account-1", {
+      auth: { accessToken: "access-token", deviceId: "dev-1" },
+      from: "2026-11-01",
+      to: "2026-11-30",
+      format: "csv",
+    });
+    expect(csv).toContain("REF-1");
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      "http://10.0.2.2:5000/api/v1/accounts/account-1/statement-export?format=csv&from=2026-11-01&to=2026-11-30",
     );
   });
 

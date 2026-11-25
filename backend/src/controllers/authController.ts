@@ -5,7 +5,7 @@ import type { RelationalHttpBoundary } from "../database/relationalHttpBoundary.
 import type { PersistentMfaService } from "../mfa/persistentMfaService.js";
 import type { OtpPurpose } from "../types.js";
 import { conflictWithCode, invalidRequest, unauthorized } from "../errors.js";
-import { computeRegistrationNetworkFingerprint, fingerprint } from "../security.js";
+import { computeRegistrationNetworkFingerprint, createOpaqueToken, fingerprint, maskEmailAddress, validateStrongPassword } from "../security.js";
 import { header, requireObject, requireDeviceId, writeResponse } from "../routes/httpUtils.js";
 import type { RequireBearerFn } from "../routes/authRoutes.js";
 
@@ -20,6 +20,14 @@ export function getRateLimitKey(request: IncomingMessage, registrationFingerprin
 export function getMfaClientAddress(request: IncomingMessage): string {
   const forwardedFor = header(request, "x-forwarded-for")?.split(",")[0]?.trim();
   return forwardedFor || request.socket.remoteAddress || "unknown-client";
+}
+
+function extractDeviceName(request: IncomingMessage): string | undefined {
+  const explicit = header(request, "x-device-name")?.trim();
+  if (explicit) return explicit.slice(0, 80);
+  const ua = header(request, "user-agent")?.trim();
+  if (ua) return ua.slice(0, 80);
+  return undefined;
 }
 
 export async function verifyMfaLifecycleChallenge(
@@ -169,8 +177,8 @@ export async function loginController(
     200,
     traceId,
     relationalAuth
-      ? await relationalAuth.issueMfaSession(user.id, requireDeviceId(request))
-      : system.issueMfaSession(user.id, requireDeviceId(request)),
+      ? await relationalAuth.issueMfaSession(user.id, requireDeviceId(request), extractDeviceName(request))
+      : system.issueMfaSession(user.id, requireDeviceId(request), extractDeviceName(request)),
   );
 }
 
@@ -650,6 +658,7 @@ export async function createOtpChallengeController(
       "RECOVERY_CODE_ROTATION",
       "MFA_FACTOR_CHANGE",
       "MFA_FACTOR_REMOVAL",
+      "PASSWORD_CHANGE",
     ]);
     if (typeof data.purpose !== "string" || !supportedPurposes.has(data.purpose as PersistentStepUpPurpose)) {
       throw invalidRequest("purpose is not supported for persistent TOTP step-up.");
@@ -665,30 +674,30 @@ export async function createOtpChallengeController(
     const directCreditApplicationCutover = purpose === "CREDIT_APPLICATION" && options.relationalHttp?.isRouteEnabled("POST", ["credit", "applications"]);
     const directCreditActivationCutover = purpose === "CARD_ACTIVATION" && resourceId && options.relationalHttp?.isRouteEnabled("POST", ["credit", "applications", resourceId, "activate"]);
     const directMfaLifecycle = options.relationalHttp?.isRouteEnabled("POST", ["auth", "otp", "challenges"]) &&
-      ["MFA_FACTOR_CHANGE", "MFA_FACTOR_REMOVAL", "RECOVERY_CODE_ROTATION"].includes(purpose);
+      ["MFA_FACTOR_CHANGE", "MFA_FACTOR_REMOVAL", "RECOVERY_CODE_ROTATION", "PASSWORD_CHANGE"].includes(purpose);
     const requestFingerprint = directTransferCutover && options.relationalHttp
       ? await options.relationalHttp.getTransferStepUpRequestFingerprint(resourceId)
       : directSavingsCutover && options.relationalHttp
         ? await options.relationalHttp.getSavingsStepUpRequestFingerprint(resourceId)
         : directSavingsWithdrawalCutover
           ? fingerprint({ depositId: resourceId, action: "EARLY_WITHDRAWAL" })
-        : directCreditPaymentCutover && options.relationalHttp
-          ? await options.relationalHttp.getCreditPaymentStepUpRequestFingerprint(resourceId)
-          : directCreditCardCutover
-            ? fingerprint({ cardId: resourceId })
-          : directCardLostCutover
-            ? fingerprint({ cardId: resourceId, action: "REPORT_LOST" })
-          : directCreditApplicationCutover
-              ? (typeof data.requestFingerprint === "string" ? data.requestFingerprint : null)
-              : directCreditActivationCutover
-                ? fingerprint({ applicationId: resourceId })
-      : directMfaLifecycle
-        ? (typeof data.requestFingerprint === "string" ? data.requestFingerprint : null)
-        : system.getStepUpRequestFingerprint(
-          purpose as OtpPurpose,
-          resourceId,
-          typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
-        );
+          : directCreditPaymentCutover && options.relationalHttp
+            ? await options.relationalHttp.getCreditPaymentStepUpRequestFingerprint(resourceId)
+            : directCreditCardCutover
+              ? fingerprint({ cardId: resourceId })
+              : directCardLostCutover
+                ? fingerprint({ cardId: resourceId, action: "REPORT_LOST" })
+                : directCreditApplicationCutover
+                  ? (typeof data.requestFingerprint === "string" ? data.requestFingerprint : null)
+                  : directCreditActivationCutover
+                    ? fingerprint({ applicationId: resourceId })
+                    : directMfaLifecycle
+                      ? (typeof data.requestFingerprint === "string" ? data.requestFingerprint : null)
+                      : system.getStepUpRequestFingerprint(
+                        purpose as OtpPurpose,
+                        resourceId,
+                        typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
+                      );
     const requestedMethod = typeof data.method === "string" ? data.method : undefined;
     const deviceId = requireDeviceId(request);
     const activeCredentials = await options.mfaService.listCredentials(userId);
@@ -834,4 +843,267 @@ export async function createOtpChallengeController(
       typeof data.requestFingerprint === "string" ? data.requestFingerprint : null,
     ),
   );
+}
+
+// ==========================================
+// PASSWORD CHANGE, RESET & DEVICE MANAGEMENT
+// ==========================================
+
+export async function changePasswordController(
+  request: IncomingMessage,
+  response: ServerResponse,
+  userId: string,
+  body: unknown,
+  options: HttpOptions,
+  system: BankingSystem,
+  relationalAuth: RelationalHttpBoundary | undefined,
+  traceId: string,
+): Promise<void> {
+  const data = requireObject(body);
+  const deviceId = requireDeviceId(request);
+  const currentPassword = typeof data.currentPassword === "string" ? data.currentPassword : "";
+  const newPassword = typeof data.newPassword === "string" ? data.newPassword : "";
+
+  if (!currentPassword) {
+    throw invalidRequest("Mật khẩu hiện tại là bắt buộc.", {
+      currentPassword: "Mật khẩu hiện tại là bắt buộc.",
+    });
+  }
+  const validatedNew = validateStrongPassword(newPassword, "newPassword");
+  if (validatedNew === currentPassword) {
+    throw invalidRequest("Mật khẩu mới phải khác mật khẩu hiện tại.", {
+      newPassword: "Mật khẩu mới phải khác mật khẩu hiện tại.",
+    });
+  }
+
+  const currentValid = relationalAuth
+    ? await relationalAuth.verifyCurrentPassword(userId, currentPassword)
+    : system.verifyCurrentPassword(userId, currentPassword);
+  if (!currentValid) {
+    throw unauthorized("Mật khẩu hiện tại không chính xác.");
+  }
+
+  if (options.mfaService) {
+    const credentials = await options.mfaService.listCredentials(userId);
+    const hasActiveTotp = credentials.some((c) => c.status === "ACTIVE" && c.credentialType === "TOTP");
+    if (hasActiveTotp) {
+      const stepUp =
+        data.stepUp && typeof data.stepUp === "object" && !Array.isArray(data.stepUp)
+          ? (data.stepUp as Record<string, unknown>)
+          : null;
+      const challengeId =
+        typeof stepUp?.challengeId === "string"
+          ? stepUp.challengeId
+          : typeof data.challengeId === "string"
+            ? data.challengeId
+            : "";
+      const proof =
+        typeof stepUp?.proof === "string"
+          ? stepUp.proof
+          : typeof data.code === "string"
+            ? data.code
+            : "";
+
+      if (!challengeId.trim() || !proof.trim()) {
+        throw conflictWithCode(
+          "MFA_STEP_UP_REQUIRED",
+          "Tài khoản đã bật TOTP. Vui lòng xác thực mã OTP từ ứng dụng Authenticator để đổi mật khẩu.",
+        );
+      }
+      const verified = await options.mfaService.verifyChallenge({
+        challengeId: challengeId.trim(),
+        customerId: userId,
+        deviceId,
+        proof: proof.trim(),
+        purpose: "PASSWORD_CHANGE",
+        resourceId: null,
+        requestFingerprint: null,
+      });
+      if (verified.customerId !== userId) {
+        throw unauthorized("MFA user binding is invalid.");
+      }
+    }
+  }
+
+  if (relationalAuth) {
+    await relationalAuth.changePassword({
+      customerId: userId,
+      currentPassword,
+      newPassword: validatedNew,
+      deviceId,
+    });
+  } else {
+    await system.changePasswordAsync({
+      customerId: userId,
+      currentPassword,
+      newPassword: validatedNew,
+      deviceId,
+    });
+  }
+
+  writeResponse(response, 200, traceId, {
+    status: "PASSWORD_CHANGED",
+    sessionsRevoked: true,
+  });
+}
+
+function buildSyntheticPasswordResetChallenge(email: string) {
+  const now = Date.now();
+  return {
+    challengeId: createOpaqueToken(),
+    method: "EMAIL_OTP" as const,
+    methods: ["EMAIL_OTP" as const],
+    purpose: "PASSWORD_RESET" as const,
+    expiresAt: new Date(now + 5 * 60 * 1000).toISOString(),
+    resendAfter: new Date(now + 60 * 1000).toISOString(),
+    maskedDestination: maskEmailAddress(email),
+  };
+}
+
+export async function forgotPasswordController(
+  request: IncomingMessage,
+  response: ServerResponse,
+  body: unknown,
+  options: HttpOptions,
+  system: BankingSystem,
+  relationalAuth: RelationalHttpBoundary | undefined,
+  traceId: string,
+): Promise<void> {
+  const data = requireObject(body);
+  const deviceId = requireDeviceId(request);
+  const email = typeof data.email === "string" ? data.email : "";
+  const networkFingerprint = getRateLimitKey(request, options.registrationFingerprintKey);
+
+  if (options.mfaService) {
+    const prepared = relationalAuth
+      ? await relationalAuth.preparePasswordReset(email, networkFingerprint)
+      : system.preparePasswordReset(email, networkFingerprint);
+    if (prepared.customer) {
+      const challenge = await options.mfaService.createEmailChallenge({
+        customerId: prepared.customer.id,
+        deviceId,
+        purpose: "PASSWORD_RESET",
+        destination: prepared.customer.email,
+        networkFingerprint,
+      });
+      writeResponse(response, 202, traceId, challenge);
+      return;
+    }
+    writeResponse(response, 202, traceId, buildSyntheticPasswordResetChallenge(prepared.normalizedEmail));
+    return;
+  }
+
+  writeResponse(
+    response,
+    202,
+    traceId,
+    system.issuePasswordResetChallenge(email, deviceId, networkFingerprint),
+  );
+}
+
+export async function resetPasswordController(
+  request: IncomingMessage,
+  response: ServerResponse,
+  body: unknown,
+  options: HttpOptions,
+  system: BankingSystem,
+  relationalAuth: RelationalHttpBoundary | undefined,
+  traceId: string,
+): Promise<void> {
+  const data = requireObject(body);
+  const deviceId = requireDeviceId(request);
+  const challengeId = typeof data.challengeId === "string" ? data.challengeId.trim() : "";
+  const proof =
+    typeof data.proof === "string"
+      ? data.proof.trim()
+      : typeof data.code === "string"
+        ? data.code.trim()
+        : "";
+
+  if (!challengeId) {
+    throw invalidRequest("challengeId is required.", {
+      challengeId: "challengeId must be a non-empty string.",
+    });
+  }
+  if (!proof) {
+    throw invalidRequest("proof is required.", {
+      proof: "Mã OTP là bắt buộc.",
+    });
+  }
+  const validatedNew = validateStrongPassword(data.newPassword, "newPassword");
+
+  if (relationalAuth && options.mfaService) {
+    const verified = await options.mfaService.verifyChallenge({
+      challengeId,
+      deviceId,
+      proof,
+      purpose: "PASSWORD_RESET",
+    });
+    if (!verified.customerId) {
+      throw unauthorized("MFA challenge is invalid or expired.");
+    }
+    await relationalAuth.resetPassword({
+      customerId: verified.customerId,
+      newPassword: validatedNew,
+      deviceId,
+    });
+  } else if (options.mfaService) {
+    const verified = await options.mfaService.verifyChallenge({
+      challengeId,
+      deviceId,
+      proof,
+      purpose: "PASSWORD_RESET",
+    });
+    if (!verified.customerId) {
+      throw unauthorized("MFA challenge is invalid or expired.");
+    }
+    await system.resetPasswordAsync({
+      customerId: verified.customerId,
+      newPassword: validatedNew,
+      deviceId,
+    });
+  } else {
+    await system.resetPasswordWithChallengeAsync(challengeId, proof, validatedNew, deviceId);
+  }
+
+  writeResponse(response, 200, traceId, {
+    status: "PASSWORD_RESET",
+    sessionsRevoked: true,
+  });
+}
+
+export async function listDevicesController(
+  request: IncomingMessage,
+  response: ServerResponse,
+  userId: string,
+  relationalAuth: RelationalHttpBoundary | undefined,
+  system: BankingSystem,
+  traceId: string,
+): Promise<void> {
+  const currentDeviceId = requireDeviceId(request);
+  const items = relationalAuth
+    ? await relationalAuth.listDevices(userId, currentDeviceId)
+    : system.listDevices(userId, currentDeviceId);
+  writeResponse(response, 200, traceId, { items });
+}
+
+export async function revokeDeviceController(
+  request: IncomingMessage,
+  response: ServerResponse,
+  userId: string,
+  targetDeviceId: string | undefined,
+  relationalAuth: RelationalHttpBoundary | undefined,
+  system: BankingSystem,
+  traceId: string,
+): Promise<void> {
+  if (!targetDeviceId?.trim()) {
+    throw invalidRequest("deviceId path parameter is required.");
+  }
+  const currentDeviceId = requireDeviceId(request);
+  if (relationalAuth) {
+    await relationalAuth.revokeDevice(userId, targetDeviceId, currentDeviceId);
+  } else {
+    system.revokeDevice(userId, targetDeviceId, currentDeviceId);
+  }
+  writeResponse(response, 204, traceId);
 }

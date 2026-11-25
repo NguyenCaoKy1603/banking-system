@@ -3,6 +3,7 @@ import type { BankingSystem } from "../bankingSystem.js";
 import type { HttpOptions, PersistentStepUpPurpose } from "../http.js";
 import type { PersistentMfaService } from "../mfa/persistentMfaService.js";
 import {
+  lookupExternalRecipientController,
   lookupInternalRecipientController,
   listBeneficiariesController,
   getBeneficiaryController,
@@ -50,7 +51,12 @@ export async function handleTransferRoute(
   verifyStepUp: VerifyStepUpFn,
 ): Promise<boolean> {
   const root = segments[0];
-  if (root !== "transfers" && root !== "beneficiaries" && root !== "internal-recipients") {
+  if (
+    root !== "transfers" &&
+    root !== "beneficiaries" &&
+    root !== "internal-recipients" &&
+    root !== "external-recipients"
+  ) {
     return false;
   }
 
@@ -62,6 +68,17 @@ export async function handleTransferRoute(
     segments[1] === "lookup"
   ) {
     await lookupInternalRecipientController(response, userId, body, relationalRoute, options, system, traceId);
+    return true;
+  }
+
+  // POST /external-recipients/lookup
+  if (
+    request.method === "POST" &&
+    segments.length === 2 &&
+    segments[0] === "external-recipients" &&
+    segments[1] === "lookup"
+  ) {
+    await lookupExternalRecipientController(response, userId, body, relationalRoute, options, traceId);
     return true;
   }
 

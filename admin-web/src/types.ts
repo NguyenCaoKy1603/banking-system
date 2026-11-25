@@ -237,6 +237,39 @@ export type PermissionDefinition = {
   description: string;
 };
 
+export type AdminControlPolicy = {
+  configVersion: number;
+  globalKillSwitch: boolean;
+  transfersEnabled: boolean;
+  maxTransferAmountMinor: string;
+  dailyTransferLimitMinor: string;
+  transferFeeMinor: string;
+  savingsEnabled: boolean;
+  maxSavingsAmountMinor: string;
+  creditEnabled: boolean;
+  creditPaymentsEnabled: boolean;
+  cardControlsEnabled: boolean;
+  maxCreditPaymentAmountMinor: string;
+  updatedAt: string;
+};
+
+export type LedgerReconciliation = {
+  status: "BALANCED" | "MISMATCH";
+  checkedAt: string;
+  unbalancedJournalCount: number;
+  totalJournalsChecked: number;
+  paymentAccountsTotalMinor: string;
+  ledgerPaymentAccountsNetMinor: string;
+  discrepancyMinor: string;
+  unbalancedJournals: Array<{
+    journalId: string;
+    journalType: string;
+    aggregateId: string;
+    debitMinor: string;
+    creditMinor: string;
+  }>;
+};
+
 export type NavTab =
   | "overview"
   | "approvals"
@@ -246,5 +279,6 @@ export type NavTab =
   | "transfers"
   | "fraud"
   | "operations"
+  | "policy"
   | "staff"
   | "audit";

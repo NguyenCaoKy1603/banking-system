@@ -11,14 +11,17 @@ import { Login } from "./features/auth/Login";
 import { Customers } from "./features/customers/Customers";
 import { Operations } from "./features/operations/Operations";
 import { Overview } from "./features/overview/Overview";
+import { PolicyView } from "./features/policy/PolicyView";
 import { StaffView } from "./features/staff/StaffView";
 import { Transfers } from "./features/transfers/Transfers";
 import { useRouter } from "./router";
 import type {
   Action,
+  AdminControlPolicy,
   Application,
   AuditEvent,
   Job,
+  LedgerReconciliation,
   NavTab,
   OutboxEvent,
   Staff,
@@ -40,6 +43,8 @@ function AppShell() {
   const [outboxEvents, setOutboxEvents] = useState<OutboxEvent[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [staffList, setStaffList] = useState<Staff[]>([]);
+  const [controlPolicy, setControlPolicy] = useState<AdminControlPolicy | null>(null);
+  const [reconciliation, setReconciliation] = useState<LedgerReconciliation | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
@@ -51,12 +56,28 @@ function AppShell() {
       try {
         if (target === "overview" || target === "approvals") {
           const approvalPromise = canReadApprovals ? adminFetch<{ items: Action[] }>("/admin/approvals") : Promise.resolve({ items: [] as Action[] });
-          const [approvalResult, summaryResult] = await Promise.all([
+          const reconciliationPromise = target === "overview"
+            ? adminFetch<{ reconciliation: LedgerReconciliation }>("/admin/operations/ledger-reconciliation").catch(() => ({ reconciliation: null }))
+            : Promise.resolve({ reconciliation: null });
+          const [approvalResult, summaryResult, reconciliationResult] = await Promise.all([
             approvalPromise,
             adminFetch<{ summary: Record<string, number> }>("/admin/operations/outbox/summary"),
+            reconciliationPromise,
           ]);
           setActions(approvalResult.items);
           setSummary(summaryResult.summary);
+          if (target === "overview") {
+            setReconciliation(reconciliationResult.reconciliation);
+          }
+        }
+
+        if (target === "policy") {
+          const [policyResult, reconciliationResult] = await Promise.all([
+            canReadApprovals ? adminFetch<{ policy: AdminControlPolicy }>("/admin/control-policy") : Promise.resolve({ policy: null }),
+            adminFetch<{ reconciliation: LedgerReconciliation }>("/admin/operations/ledger-reconciliation"),
+          ]);
+          setControlPolicy(policyResult.policy);
+          setReconciliation(reconciliationResult.reconciliation);
         }
 
         if (target === "operations") {
@@ -137,7 +158,17 @@ function AppShell() {
         <Overview
           actions={actions}
           summary={summary}
+          reconciliation={reconciliation}
           onNavigate={navigate}
+        />
+      ) : null}
+
+      {tab === "policy" ? (
+        <PolicyView
+          policy={controlPolicy}
+          reconciliation={reconciliation}
+          onReload={() => load("policy")}
+          loading={loading}
         />
       ) : null}
 
@@ -145,7 +176,13 @@ function AppShell() {
         <Customers onRefresh={() => void load("overview")} />
       ) : null}
 
-      {/* Approval Inbox đã được gỡ bỏ theo yêu cầu: các thao tác chuyển sang thực thi trực tiếp */}
+      {tab === "approvals" ? (
+        <Approvals
+          actions={actions}
+          onReload={() => load("approvals")}
+          loading={loading}
+        />
+      ) : null}
 
       {tab === "kyc" || tab === "credit" ? (
         <Applications

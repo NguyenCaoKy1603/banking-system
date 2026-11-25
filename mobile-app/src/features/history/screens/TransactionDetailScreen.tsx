@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import * as Clipboard from "expo-clipboard";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, Share, StyleSheet, Text, View } from "react-native";
 
 import { AppHeader } from "@/components/ui/AppHeader";
 import { AppIcon } from "@/components/ui/AppIcon";
+import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Screen } from "@/components/ui/Screen";
 import { StateCard } from "@/components/ui/StateCard";
@@ -78,6 +80,8 @@ export function TransactionDetailScreen() {
   );
   const [detail, setDetail] = useState<TransactionDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSharingReceipt, setIsSharingReceipt] = useState(false);
+  const [receiptNotice, setReceiptNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
 
   const loadDetail = useCallback(async () => {
@@ -100,6 +104,42 @@ export function TransactionDetailScreen() {
   useEffect(() => {
     void Promise.resolve().then(() => loadDetail());
   }, [loadDetail]);
+
+  const handleShareReceipt = useCallback(async () => {
+    if (!detail || isSharingReceipt) return;
+    setIsSharingReceipt(true);
+    setReceiptNotice(null);
+    const amountText = `${detail.direction === "CREDIT" ? "+" : "−"}${formatVndMinor(detail.amount.amountMinor)}`;
+    const receiptMessage = [
+      "BIÊN LAI GIAO DỊCH - NOVA DIGITAL BANKING",
+      `Mã tham chiếu: ${detail.reference}`,
+      `Trạng thái: ${getStatusLabel(detail.status)}`,
+      `Loại giao dịch: ${getDirectionLabel(detail.direction)}`,
+      `Số tiền: ${amountText}`,
+      `Phí giao dịch: ${formatVndMinor(detail.fee.amountMinor)}`,
+      `Đối tác: ${detail.counterpartyName ?? "Không có thông tin"}`,
+      `Nội dung: ${detail.description}`,
+      `Thời gian tạo: ${formatDate(detail.createdAt)}`,
+      `Thời gian hoàn tất: ${detail.completedAt ? formatDate(detail.completedAt) : "Chưa hoàn tất"}`,
+    ].join("\n");
+
+    try {
+      try {
+        await Clipboard.setStringAsync(receiptMessage);
+      } catch {
+        // Clipboard may not be available in all test/device contexts
+      }
+      await Share.share({
+        title: `Biên lai giao dịch ${detail.reference}`,
+        message: receiptMessage,
+      });
+      setReceiptNotice(`Đã mở chia sẻ biên lai ${detail.reference}.`);
+    } catch {
+      setReceiptNotice("Không thể chia sẻ biên lai lúc này.");
+    } finally {
+      setIsSharingReceipt(false);
+    }
+  }, [detail, isSharingReceipt]);
 
   return (
     <Screen>
@@ -173,6 +213,20 @@ export function TransactionDetailScreen() {
               </View>
             </Card>
 
+            <Button
+              label="Tải / Chia sẻ biên lai"
+              loading={isSharingReceipt}
+              onPress={() => void handleShareReceipt()}
+              testID="transaction-share-receipt"
+              variant="outline"
+            />
+
+            {receiptNotice ? (
+              <Text style={styles.receiptNotice} testID="transaction-receipt-notice">
+                {receiptNotice}
+              </Text>
+            ) : null}
+
           </>
         ) : (
           <StateCard icon="history" message="Giao dịch không còn khả dụng." title="Không có dữ liệu" />
@@ -242,4 +296,10 @@ const styles = StyleSheet.create({
   },
   detailLabel: { ...typography.body, color: colors.muted },
   detailValue: { flex: 1, ...typography.bodyStrong, color: colors.text, textAlign: "right" },
+  receiptNotice: {
+    ...typography.caption,
+    color: colors.success,
+    textAlign: "center",
+    fontWeight: "600",
+  },
 });

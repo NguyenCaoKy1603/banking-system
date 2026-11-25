@@ -4,7 +4,7 @@ import { conflictWithCode, invalidRequest, notFound } from "../../errors.js";
 import { fingerprint } from "../../security.js";
 import { redactAdminMetadata } from "../audit/redaction.js";
 import { requireFreshStepUp, requirePermission } from "../authorization/authorization.js";
-import { ADMIN_ROLES, type AdminPermission, type AdminSubject } from "../authorization/permissionRegistry.js";
+import { ADMIN_ROLES, hasPermission, type AdminPermission, type AdminSubject } from "../authorization/permissionRegistry.js";
 import type { AdminActionRecord, AdminRepository } from "../repositories/adminRepository.js";
 
 const APPROVAL_PERMISSION: Record<string, AdminPermission> = {
@@ -72,7 +72,7 @@ export class AdminActionEngine {
     rejectUnknownFields(input.actionType, input.body);
     const reasonCode = requireReason(input.body);
     const payload: Record<string, unknown> = { ...input.body, reasonCode };
-    delete payload.token; delete payload.password; delete payload.otp; delete payload.totpSecret;
+    delete payload.token; delete payload.password; delete payload.otp; delete payload.totpSecret; delete payload.directExecution;
     const safePayload = redactAdminMetadata(payload) as Record<string, unknown>;
     if (input.actionType === "SIMULATION_FUNDING" || input.actionType === "SIMULATION_FUNDING_REVERSAL") {
       const amount = typeof safePayload.amountMinor === "string" || typeof safePayload.amountMinor === "number" ? String(safePayload.amountMinor) : "";
@@ -159,8 +159,16 @@ export class AdminActionEngine {
     if (action.requestFingerprint !== requestFingerprint) throw conflictWithCode("IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used with a different Admin command.");
     await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "ADMIN_ACTION_CREATED", targetType: input.targetType, targetId: input.targetId, outcome: "PENDING_APPROVAL", reasonCode, requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: expectedTargetVersion, afterVersion: null, metadata: { actionType: input.actionType, ticketReference: safePayload.ticketReference ?? null } });
 
-    // Direct execution: execute immediately if requested or configured without requiring Approval Inbox
-    if (Boolean((input.body as Record<string, unknown>)?.directExecution) || process.env.ADMIN_DIRECT_EXECUTION === "true") {
+    // Direct execution is strictly controlled by server-side config and requires
+    // both the corresponding approval permission and verified MFA. Client-supplied
+    // `directExecution` flags can never bypass Maker-Checker.
+    const approvalPermission = APPROVAL_PERMISSION[input.actionType];
+    const mfaVerifiedAt = input.subject.stepUpVerifiedAt ?? input.subject.mfaVerifiedAt ?? null;
+    const canDirectExecute =
+      process.env.ADMIN_DIRECT_EXECUTION === "true" &&
+      Boolean(approvalPermission && hasPermission(input.subject, approvalPermission)) &&
+      Boolean(mfaVerifiedAt);
+    if (canDirectExecute && mfaVerifiedAt) {
       try {
         await this.repository.decideAction({
           requestId: action.id,
@@ -169,7 +177,7 @@ export class AdminActionEngine {
           approvedFingerprint: requestFingerprint,
           reasonCode,
           comment: "Direct Execution",
-          mfaVerifiedAt: new Date().toISOString(),
+          mfaVerifiedAt,
         });
         const executed = await this.repository.executeApprovedAction({
           requestId: action.id,

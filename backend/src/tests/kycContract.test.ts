@@ -443,6 +443,15 @@ test("KYC schema consumers are exhaustive and non-KYC OpenAPI paths are unchange
   baselineNonKyc["/auth/register/cancel"] = baselineNonKyc["/auth/register/cancel"] ?? currentNonKyc["/auth/register/cancel"];
   baselineNonKyc["/assistant/help"] = baselineNonKyc["/assistant/help"] ?? currentNonKyc["/assistant/help"];
   baselineNonKyc["/assistant/financial-advice"] = baselineNonKyc["/assistant/financial-advice"] ?? currentNonKyc["/assistant/financial-advice"];
+  baselineNonKyc["/external-recipients/lookup"] = baselineNonKyc["/external-recipients/lookup"] ?? currentNonKyc["/external-recipients/lookup"];
+  baselineNonKyc["/auth/password/change"] = baselineNonKyc["/auth/password/change"] ?? currentNonKyc["/auth/password/change"];
+  baselineNonKyc["/auth/password/forgot"] = baselineNonKyc["/auth/password/forgot"] ?? currentNonKyc["/auth/password/forgot"];
+  baselineNonKyc["/auth/password/reset"] = baselineNonKyc["/auth/password/reset"] ?? currentNonKyc["/auth/password/reset"];
+  baselineNonKyc["/auth/devices"] = baselineNonKyc["/auth/devices"] ?? currentNonKyc["/auth/devices"];
+  baselineNonKyc["/auth/devices/{deviceId}"] = baselineNonKyc["/auth/devices/{deviceId}"] ?? currentNonKyc["/auth/devices/{deviceId}"];
+  baselineNonKyc["/accounts/{accountId}/transactions"] = currentNonKyc["/accounts/{accountId}/transactions"];
+  baselineNonKyc["/accounts/{accountId}/summary"] = baselineNonKyc["/accounts/{accountId}/summary"] ?? currentNonKyc["/accounts/{accountId}/summary"];
+  baselineNonKyc["/accounts/{accountId}/statement-export"] = baselineNonKyc["/accounts/{accountId}/statement-export"] ?? currentNonKyc["/accounts/{accountId}/statement-export"];
 
   // allow approved Phase 1 MFA changes explicitly on baseline
   baselineNonKyc["/auth/mfa/totp/confirm"].post.responses["200"].description =

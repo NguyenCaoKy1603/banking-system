@@ -1,6 +1,7 @@
 const EXCLUDED_ROUTES = new Set([
   "/login",
   "/register",
+  "/forgot-password",
   "/recover",
   "/+not-found",
   "/_sitemap",
