@@ -12,7 +12,7 @@ const operationIds = new Set();
 for (const [route, operations] of Object.entries(paths)) {
   if (!route.startsWith("/admin/")) throw new Error(`Admin OpenAPI route outside /admin namespace: ${route}`);
   for (const [method, operation] of Object.entries(operations)) {
-    if (!['get','post','delete'].includes(method)) continue;
+    if (!['get','post','patch','delete'].includes(method)) continue;
     if (!operation || typeof operation !== 'object' || typeof operation.operationId !== 'string') throw new Error(`Admin route ${method.toUpperCase()} ${route} needs operationId.`);
     if (operationIds.has(operation.operationId)) throw new Error(`Duplicate Admin operationId ${operation.operationId}.`);
     operationIds.add(operation.operationId); entries.push(`${method.toUpperCase()} ${route}`);

@@ -4,8 +4,10 @@ import {
   parseReceiveQrPayload,
 } from "@/features/qr/validation/qrPayload";
 import {
+  buildTlv,
   crc16CcittFalse,
   decodeVietQr,
+  encodeVietQr,
   parseTlvMap,
   DEFAULT_NOVA_BIN,
 } from "@/features/qr/validation/vietQrCodec";
@@ -103,6 +105,36 @@ describe("VietQR EMVCo codec & validation", () => {
     const invalid = "00020101021153037045802VN6304";
     const crc = crc16CcittFalse(invalid);
     expect(() => decodeVietQr(invalid + crc)).toThrow(/Tag 38/i);
+  });
+
+  it("handles Unicode CRC-16, TLV validation errors, and invalid VietQR fields", () => {
+    expect(crc16CcittFalse("Tiếng Việt 😀")).toHaveLength(4);
+    expect(() => buildTlv("62", "x".repeat(100))).toThrow(/99/);
+    expect(() => parseTlvMap("000")).toThrow(/header/i);
+    expect(() => parseTlvMap("AA01x")).toThrow(/2 chữ số/i);
+    expect(() => parseTlvMap("0005ab")).toThrow(/vượt quá/i);
+
+    expect(() => encodeVietQr({ bankBin: "12", accountNumber: "123456" })).toThrow(/BIN/);
+    expect(() => encodeVietQr({ bankBin: "970400", accountNumber: "12" })).toThrow(/Số tài khoản/);
+
+    expect(() => decodeVietQr("990201010211530370463040000")).toThrow(/Tag 00/);
+    expect(() => decodeVietQr("00020101021153037045802VN63030000")).toThrow(/Tag 63/);
+
+    const sign = (body: string) => `${body}6304${crc16CcittFalse(`${body}6304`)}`;
+    expect(() => decodeVietQr(sign("00020101029938040000"))).toThrow(/Tag 01/);
+    expect(() =>
+      decodeVietQr(sign(`000201010211${buildTlv("38", buildTlv("00", "A000000727"))}`)),
+    ).toThrow(/Tag 38\.01/);
+    const badBinTag38 = buildTlv(
+      "38",
+      buildTlv("00", "A000000727") + buildTlv("01", buildTlv("00", "12") + buildTlv("01", "123456")),
+    );
+    expect(() => decodeVietQr(sign(`000201010211${badBinTag38}`))).toThrow(/BIN/);
+    const badAccTag38 = buildTlv(
+      "38",
+      buildTlv("00", "A000000727") + buildTlv("01", buildTlv("00", "970400") + buildTlv("01", "12")),
+    );
+    expect(() => decodeVietQr(sign(`000201010211${badAccTag38}`))).toThrow(/Số tài khoản/i);
   });
 });
 

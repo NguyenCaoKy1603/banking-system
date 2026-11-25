@@ -270,6 +270,8 @@ const PUBLIC_OPERATIONS = new Set([
   "POST /auth/mfa/recover/verify",
   "POST /auth/mfa/recover/complete",
   "POST /auth/mfa/recover/enroll",
+  "POST /auth/password/forgot",
+  "POST /auth/password/reset",
 ]);
 for (const [routePath, pathItem] of Object.entries(document.paths ?? {})) {
   for (const [method, operation] of Object.entries(pathItem ?? {})) {
@@ -316,6 +318,8 @@ for (const [method, routePath] of [
   ["post", "/auth/verify"],
   ["post", "/auth/refresh"],
   ["post", "/auth/logout"],
+  ["post", "/auth/password/forgot"],
+  ["post", "/auth/password/reset"],
 ]) {
   const pathItem = document.paths?.[routePath];
   const operation = pathItem?.[method];

@@ -47,7 +47,7 @@ async function main() {
         (SELECT COUNT(*) FROM fraud_report_idempotency i LEFT JOIN fraud_reports r ON r.id = i.report_id
           WHERE i.report_id IS NOT NULL AND r.id IS NULL) AS orphan_fraud_idempotency,
         (SELECT COUNT(*) FROM recipient_lookups l LEFT JOIN payment_accounts a ON a.id = l.destination_account_id
-          WHERE a.id IS NULL) AS orphan_recipient_lookups
+          WHERE l.destination_account_id IS NOT NULL AND a.id IS NULL) AS orphan_recipient_lookups
     `);
     const row = invariants.rows[0];
     for (const [key, value] of Object.entries(row)) {

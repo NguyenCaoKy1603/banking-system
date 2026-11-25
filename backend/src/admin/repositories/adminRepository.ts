@@ -2050,7 +2050,7 @@ export class PostgresAdminRepository implements AdminRepository {
                 credit_payments_enabled = $9,
                 card_controls_enabled = $10,
                 max_credit_payment_amount_minor = $11,
-                config_version = config_version + 1,
+                config_version = $12,
                 updated_at = NOW()
           WHERE singleton = true
           RETURNING *`,
@@ -2066,6 +2066,7 @@ export class PostgresAdminRepository implements AdminRepository {
           next.creditPaymentsEnabled,
           next.cardControlsEnabled,
           next.maxCreditPaymentAmountMinor,
+          String(next.configVersion),
         ],
       );
       const after = mapControlPolicyRow(updated.rows[0] as Record<string, unknown>);

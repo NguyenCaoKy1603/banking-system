@@ -258,6 +258,7 @@ describe("validateRegisterForm", () => {
 
 describe("validateStrongPasswordPolicy & password reset/change forms", () => {
   it("yêu cầu mật khẩu mới tối thiểu 12 ký tự và đủ 4 nhóm ký tự", () => {
+    expect(validateStrongPasswordPolicy("")).toBeDefined();
     expect(validateStrongPasswordPolicy("Short!1")).toBeDefined();
     expect(validateStrongPasswordPolicy("lowercaseonly12!")).toBeDefined();
     expect(validateStrongPasswordPolicy("NoSpecialChar123")).toBeDefined();
@@ -265,6 +266,24 @@ describe("validateStrongPasswordPolicy & password reset/change forms", () => {
   });
 
   it("kiểm tra form đổi mật khẩu và từ chối mật khẩu trùng mật khẩu cũ", () => {
+    const emptyFields = validateChangePasswordForm({
+      currentPassword: "",
+      newPassword: "short",
+      confirmPassword: "",
+    });
+    expect(emptyFields.isValid).toBe(false);
+    expect(emptyFields.errors.currentPassword).toBeDefined();
+    expect(emptyFields.errors.newPassword).toBeDefined();
+    expect(emptyFields.errors.confirmPassword).toBeDefined();
+
+    const mismatch = validateChangePasswordForm({
+      currentPassword: "OldStrongPass!1",
+      newPassword: "NewStrongPass!2",
+      confirmPassword: "DifferentPass!2",
+    });
+    expect(mismatch.isValid).toBe(false);
+    expect(mismatch.errors.confirmPassword).toBeDefined();
+
     const same = validateChangePasswordForm({
       currentPassword: "StrongPass!2026",
       newPassword: "StrongPass!2026",
@@ -283,17 +302,29 @@ describe("validateStrongPasswordPolicy & password reset/change forms", () => {
   });
 
   it("chuẩn hóa email quên mật khẩu và kiểm tra OTP + mật khẩu đặt lại", () => {
+    expect(validateForgotPasswordEmail("   ").error).toBeDefined();
+    expect(validateForgotPasswordEmail("not-an-email").error).toBeDefined();
     const emailRes = validateForgotPasswordEmail("  USER@Example.com ");
     expect(emailRes.normalizedEmail).toBe("user@example.com");
     expect(emailRes.error).toBeUndefined();
 
     const badOtp = validateResetPasswordForm({
       otpCode: "123",
-      newPassword: "NewStrongPass!2",
-      confirmPassword: "NewStrongPass!2",
+      newPassword: "weak",
+      confirmPassword: "",
     });
     expect(badOtp.isValid).toBe(false);
     expect(badOtp.errors.otpCode).toBeDefined();
+    expect(badOtp.errors.newPassword).toBeDefined();
+    expect(badOtp.errors.confirmPassword).toBeDefined();
+
+    const resetMismatch = validateResetPasswordForm({
+      otpCode: "654321",
+      newPassword: "NewStrongPass!2",
+      confirmPassword: "OtherStrongPass!2",
+    });
+    expect(resetMismatch.isValid).toBe(false);
+    expect(resetMismatch.errors.confirmPassword).toBeDefined();
 
     const okReset = validateResetPasswordForm({
       otpCode: "654321",
