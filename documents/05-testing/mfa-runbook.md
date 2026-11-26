@@ -28,15 +28,16 @@ EMAIL_PROVIDER_TOKEN=<local-app-password>
 
 ## Kiểm tra thủ công
 
-1. Chạy migration và kiểm tra `mfa_credentials`, `auth_challenges`, `mfa_recovery_codes`, `mfa_recovery_requests`, `auth_security_events`.
+1. Chạy migration (`001`–`051`) và kiểm tra `mfa_credentials`, `auth_challenges`, `mfa_recovery_codes`, `mfa_recovery_requests`, `auth_security_events`, `customer_devices`.
 2. Enroll TOTP, lưu recovery codes ngoại tuyến một lần, rồi đóng response setup.
-3. Đăng nhập customer bằng email + password; TOTP chỉ còn dùng cho các thao tác step-up được yêu cầu.
-4. Với transfer/savings/credit, tạo quote → tạo challenge → nhập TOTP → submit đúng `challengeId`; sửa quote hoặc resource phải bị từ chối.
-5. Khóa thẻ khẩn cấp chỉ cần phiên/device hợp lệ. Mở khóa phải dùng purpose `CARD_UNLOCK`; báo mất phải dùng `CARD_REPORT_LOST`; challenge của action này không được dùng cho action kia.
-6. Dùng resend chỉ sau cooldown; challenge ID cũ phải thất bại.
-7. Dùng lại cùng TOTP time-step phải nhận `MFA_REPLAY_DETECTED`.
-8. Rotate recovery codes sau current MFA; code cũ phải bị vô hiệu hóa.
-9. Đọc `GET /metrics` trên mạng nội bộ để kiểm tra các counter MFA không có label định danh; cảnh báo ngưỡng (rate-limit/replay/provider failure/recovery spike) phải do Prometheus/Alertmanager của môi trường triển khai đảm nhiệm.
+3. Enroll sinh trắc học gắn thiết bị (`POST /api/v1/auth/mfa/biometric/enroll` trên màn hình `/mfa`), xác nhận lưu secret mã hóa ở server và SecureStore trên thiết bị; kiểm tra step-up `BIOMETRIC` (`biometric-v1.<sha256>`) thành công cho giao dịch ≤ 1.000.000 VND và bị từ chối khi vượt ngưỡng hoặc dùng trên challenge TOTP.
+4. Đăng nhập customer bằng email + password; kiểm tra đổi mật khẩu (`POST /auth/password/change` yêu cầu TOTP khi đã bật TOTP, purpose `PASSWORD_CHANGE`), quên/đặt lại mật khẩu (`POST /auth/password/forgot` + `/reset`, purpose `PASSWORD_RESET`), và liệt kê/thu hồi thiết bị (`GET/DELETE /auth/devices`).
+5. Với transfer (nội bộ & mock NAPAS IBFT)/savings/credit, tạo quote → tạo challenge → nhập TOTP (hoặc Biometric với chuyển tiền ≤ 1.000.000 VND) → submit đúng `challengeId`; sửa quote hoặc resource phải bị từ chối.
+6. Khóa thẻ khẩn cấp chỉ cần phiên/device hợp lệ. Mở khóa phải dùng purpose `CARD_UNLOCK`; báo mất phải dùng `CARD_REPORT_LOST`; challenge của action này không được dùng cho action kia.
+7. Dùng resend chỉ sau cooldown; challenge ID cũ phải thất bại.
+8. Dùng lại cùng TOTP time-step phải nhận `MFA_REPLAY_DETECTED`.
+9. Rotate recovery codes sau current MFA; code cũ phải bị vô hiệu hóa.
+10. Đọc `GET /metrics` trên mạng nội bộ để kiểm tra các counter MFA không có label định danh; cảnh báo ngưỡng (rate-limit/replay/provider failure/recovery spike) phải do Prometheus/Alertmanager của môi trường triển khai đảm nhiệm.
 
 ## Sự cố provider
 

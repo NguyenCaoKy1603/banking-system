@@ -9,7 +9,9 @@
 | Simulation funding / reversal requests | ✓ | — |
 | KYC and credit review requests | ✓ | xem / phê duyệt |
 | Pending transfer read / action requests | ✓ | xem / phê duyệt |
-| Outbox and job read / retry requests | ✓ | xem / phê duyệt |
+| Transaction anomaly queue read / resolve (`/admin/anomalies`) | ✓ (`transfer.pending.read`, `transfer.action.request`) | xem (`transfer.pending.read`) |
+| Outbox, jobs & ledger reconciliation read (`/admin/operations/ledger-reconciliation`) | ✓ (`outbox.read`, `job.read`) | xem / phê duyệt |
+| Runtime control policy & fee config (`GET/PATCH /admin/control-policy`) | — | ✓ (`audit.read`, PATCH yêu cầu fresh TOTP Step-up) |
 | Tạo trực tiếp tài khoản OPERATIONS / role / disable requests | xem staff | ✓ |
 | Approval Inbox and audit read/export | — | ✓ |
 | Approve own eligible requests | — | ✓, fresh step-up MFA required |

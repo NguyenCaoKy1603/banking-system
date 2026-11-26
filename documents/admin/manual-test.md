@@ -103,8 +103,11 @@ Checklist kiểm thử thủ công và hướng dẫn nghiệm thu thực tế c
 
 ---
 
-## 6. Giao dịch, Vận hành và Kiểm toán
+## 6. Giao dịch, Cảnh báo bất thường, Vận hành và Kiểm toán
 - [x] **Giao dịch**: Bộ lọc trạng thái hoạt động chính xác (Tất cả, PENDING, FAILED, SUCCEEDED). Nút Cancel request cho PENDING, Retry request cho FAILED, Reversal request cho SUCCEEDED.
+- [x] **Hàng đợi Cảnh báo bất thường (`GET /admin/anomalies`, `POST /admin/anomalies/:id/resolve`)**:
+  - Khu vực cảnh báo bất thường trên tab Giao dịch hiển thị các giao dịch bị chấm điểm `MEDIUM` / `HIGH` / `CRITICAL`, lý do quy tắc (`ruleCodes`) và trạng thái phản hồi của khách hàng (`OPEN`, `CONFIRMED_SAFE`, `REPORTED_SUSPICIOUS`, `RESOLVED`).
+  - Nhân viên có quyền `transfer.action.request` bấm đánh dấu xử lý kèm `Idempotency-Key`; trạng thái chuyển sang `RESOLVED` và ghi nhận nhật ký kiểm toán.
 - [x] **Outbox & Jobs**: Hiển thị tổng quan Pending, Processing, Dead, Skipped. Tạo yêu cầu Requeue outbox event (`DEAD`, `SKIPPED`) và Retry background job (`FAILED`, `DEAD`) yêu cầu reason code và tạo action Approval Inbox. Hỗ trợ **Tự động làm mới (Auto-Refresh 15s)**.
 - [x] **Nhật ký Kiểm toán (Audit) & Xuất báo cáo**:
   - Xem danh sách sự kiện append-only; metadata hiển thị đã lọc sạch token, OTP, mật khẩu và cookie.
@@ -113,6 +116,16 @@ Checklist kiểm thử thủ công và hướng dẫn nghiệm thu thực tế c
 
 ---
 
-## 7. Browser E2E (đã gỡ)
+## 7. Chính sách vận hành, Biểu phí động & Đối soát Sổ cái (`#/policy`)
+- [x] **Phân quyền truy cập**: Chỉ vai trò `ADMIN` (`audit.read`) mới thấy mục *Chính sách & Biểu phí* và gọi được `GET/PATCH /admin/control-policy`; `OPERATIONS` không được phép thay đổi chính sách.
+- [x] **Đối soát Sổ cái kép (`GET /admin/operations/ledger-reconciliation`)**:
+  - Hiển thị trạng thái `BALANCED` / `MISMATCH`, số lượng journal bị lệch Nợ ≠ Có (`unbalancedJournalCount / totalJournalsChecked`), tổng số dư `SUM(current_minor)` của `payment_accounts`, tổng ròng `SUM(CREDIT) - SUM(DEBIT)` của `payment-account:*` và độ lệch `discrepancyMinor`.
+- [x] **Cập nhật Chính sách & Biểu phí kèm TOTP Step-up (`PATCH /admin/control-policy`)**:
+  - Thay đổi `globalKillSwitch`, bật/tắt dịch vụ (`transfersEnabled`, `savingsEnabled`, `creditEnabled`), `maxTransferAmountMinor`, `dailyTransferLimitMinor`, `transferFeeMinor` và `reasonCode`.
+  - Khi phiên Step-up chưa tươi, giao diện yêu cầu mã TOTP 6 chữ số (`POST /admin/auth/step-up`) trước khi lưu; lưu thành công tăng `configVersion` và ghi audit `CONTROL_POLICY_UPDATED`.
 
-Ngày 2026-10-11, bộ kiểm thử trình duyệt Playwright và fixture server của Admin Web đã được gỡ theo yêu cầu. Các hướng dẫn và tài khoản fixture trong phần này không còn dùng được. Để kiểm tra thủ công, dùng mục 1–6 với một môi trường local/preview đã được chuẩn bị dữ liệu tổng hợp riêng.\n
+---
+
+## 8. Browser E2E (đã gỡ)
+
+Ngày 2026-10-11, bộ kiểm thử trình duyệt Playwright và fixture server của Admin Web đã được gỡ theo yêu cầu. Các hướng dẫn và tài khoản fixture trong phần này không còn dùng được. Để kiểm tra thủ công, dùng mục 1–7 với một môi trường local/preview đã được chuẩn bị dữ liệu tổng hợp riêng.

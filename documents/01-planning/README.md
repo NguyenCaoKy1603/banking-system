@@ -2,7 +2,7 @@
 
 ## Điểm bắt đầu
 
-- [Trạng thái hiện tại](current-status.md) — bản tóm tắt của working tree được rà soát ngày 2026-10-14; phân biệt source với bằng chứng đã chạy.
+- [Trạng thái hiện tại](current-status.md) — bản tóm tắt của working tree được rà soát ngày 2026-11-25; phân biệt source với bằng chứng đã chạy.
 - [Bản đồ repository hiện tại](repository-map-current.md) — entrypoint và ranh giới từng app/process.
 
 ## Hồ sơ và cách dùng

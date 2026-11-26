@@ -224,7 +224,31 @@ dịch hoặc thao tác bảo mật sau khi đã đăng nhập.
 - Mobile gửi `X-Device-ID` để backend thực thi device binding; ID không phải secret và không thay thế authorization.
 - Session restoration và local logout đã thuộc foundation mobile; reference backend đã có server-side revoke và refresh rotation để kiểm chứng contract. Việc bật trên môi trường tiền thật vẫn cần Identity/Backend và legal/compliance phê duyệt.
 
-## 6. Session extension và trạng thái phê duyệt
+## 6. Quản lý mật khẩu, Thiết bị & Sinh trắc học gắn thiết bị (DRAFT)
+
+Các endpoint mở rộng bên dưới đã có reference implementation trong `backend/src/routes/authRoutes.ts` và khai báo trong [`banking-mvp.openapi.yaml`](./banking-mvp.openapi.yaml), vẫn giữ trạng thái DRAFT:
+
+### 6.1 Đổi mật khẩu — `POST /auth/password/change` (Authenticated)
+- Yêu cầu `Authorization: Bearer <accessToken>` và `X-Device-ID`.
+- Body: `{ currentPassword, newPassword (12–128 ký tự), stepUp?: { method: "TOTP" | "BIOMETRIC", challengeId, proof } }` (khi tài khoản có TOTP `ACTIVE`, bắt buộc xác thực step-up purpose `PASSWORD_CHANGE`).
+- Response `200 OK`: `{ status: "PASSWORD_CHANGED", sessionsRevoked: true }`. Toàn bộ phiên đăng nhập hiện có bị thu hồi.
+
+### 6.2 Quên & Đặt lại mật khẩu — `POST /auth/password/forgot` và `POST /auth/password/reset` (Pre-auth)
+- Bắt buộc header `X-Device-ID`, không cần Bearer token.
+- `POST /auth/password/forgot` nhận `{ email }` và trả `202 Accepted` với `AuthChallengeResponse` (purpose `PASSWORD_RESET`) mà không tiết lộ sự tồn tại của tài khoản.
+- `POST /auth/password/reset` nhận `{ challengeId, proof, newPassword (12–128 ký tự) }` và trả `200 OK` `{ status: "PASSWORD_RESET", sessionsRevoked: true }`.
+
+### 6.3 Quản lý thiết bị đăng nhập — `GET /auth/devices` và `DELETE /auth/devices/{deviceId}` (Authenticated)
+- `GET /auth/devices` trả `{ items: CustomerDevice[] }` sắp xếp thiết bị hiện tại lên đầu (`id`, `deviceId`, `deviceName`, `attestationStatus`, `isCurrentDevice`, `lastSeenAt`, `createdAt`, `activeSessionCount`).
+- `DELETE /auth/devices/{deviceId}` thu hồi thiết bị và toàn bộ phiên gắn với thiết bị đó, trả `204 No Content`.
+
+### 6.4 Đăng ký sinh trắc học gắn thiết bị — `POST /auth/mfa/biometric/enroll` (Authenticated)
+- Yêu cầu `Authorization: Bearer <accessToken>` và `X-Device-ID`.
+- Body: `{ password, displayName?, challengeId?, code? }`.
+- Response `201 Created`: `{ credentialId, credentialType: "BIOMETRIC", deviceId, displayName, status: "ACTIVE", biometricSecret, enrolledAt }`.
+- `biometricSecret` chỉ trả một lần (`writeOnly`), lưu mã hóa AES-256-GCM ở DB và SecureStore trên thiết bị để ký challenge-response `biometric-v1.<sha256>` (không ghi log).
+
+## 7. Session extension và trạng thái phê duyệt
 
 Các endpoint session mở rộng đã có reference implementation và mobile integration. Contract chi tiết vẫn ở trạng thái DRAFT cho đến khi Backend/Identity và legal/compliance phê duyệt môi trường tiền thật, xem [auth-session-api-contract.md](./auth-session-api-contract.md):
 

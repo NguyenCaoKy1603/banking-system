@@ -4,7 +4,7 @@
 
 Đây là backend reference cho mobile app. Runtime mặc định dùng PostgreSQL persistent relational reference adapter; in-memory lưu trạng thái trong RAM. PBKDF2 và core-banking adapter nội bộ phục vụ contract, state machine, refresh rotation, idempotency, audit/outbox và reconciliation.
 
-Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql), phần mở rộng reference runtime ở [`database/005_relational_reference_runtime.sql`](database/005_relational_reference_runtime.sql). Các migration P0 `006`–`011` và `029`–`044` bổ sung command idempotency, identity/MFA, transfer, Savings, Credit, remaining customer routes, scheduled lifecycle, policy/rate-limit, beneficiary lifecycle, counterparty snapshot, KYC runtime, lifecycle suspense/keyset indexes, card-security case, Admin two-role/operations direct creation và savings early withdrawal. Local Compose hiện dùng boundary relational-v2 trực tiếp cho các route customer đã duyệt; `reference_runtime_records` chỉ còn cho migration/regression và không phải source of truth của HTTP relational-v2.
+Database boundary PostgreSQL dạng DRAFT nằm tại [`database/001_banking_mvp.sql`](database/001_banking_mvp.sql), phần mở rộng reference runtime ở [`database/005_relational_reference_runtime.sql`](database/005_relational_reference_runtime.sql). Các migration P0 `006`–`011` và `029`–`051` bổ sung command idempotency, identity/MFA, transfer, Savings, Credit, remaining customer routes, scheduled lifecycle, policy/rate-limit, beneficiary lifecycle, counterparty snapshot, KYC runtime, lifecycle suspense/keyset indexes, card-security case, Admin two-role/operations direct creation, savings early withdrawal, phát hiện giao dịch bất thường (`045`), xác thực sinh trắc học gắn thiết bị (`046`), chuẩn hóa `ledger_entries.account_ref` (`047`), hạn mức chuyển tiền theo ngày (`048`), chuyển khoản liên ngân hàng mô phỏng NAPAS IBFT & `held_minor` (`049`), quên/đổi mật khẩu & metadata thiết bị (`050`) và biểu phí chuyển tiền động (`051`). Local Compose hiện dùng boundary relational-v2 trực tiếp cho các route customer đã duyệt; `reference_runtime_records` chỉ còn cho migration/regression và không phải source of truth của HTTP relational-v2.
 
 ## PostgreSQL persistent mode
 
@@ -75,9 +75,10 @@ Hệ thống Backend được tổ chức theo kiến trúc phân tầng rõ rà
 backend/src/
 ├── routes/                  # [TẦNG 1: ROUTING] Ánh xạ URL & phương thức HTTP tới Controller tương ứng
 │   ├── systemRoutes.ts      # Health checks (/livez, /readyz, /startupz, /metrics)
-│   ├── authRoutes.ts        # Route Đăng ký, Đăng nhập, MFA/TOTP
-│   ├── accountRoutes.ts     # Route Tài khoản thanh toán & Lịch sử giao dịch
-│   ├── transferRoutes.ts    # Route Chuyển tiền, Báo giá, Danh bạ thụ hưởng
+│   ├── authRoutes.ts        # Route Đăng ký, Đăng nhập, Đổi/Quên mật khẩu, Thiết bị, MFA/TOTP & Biometric
+│   ├── accountRoutes.ts     # Route Tài khoản, Lịch sử lọc server, Thống kê tháng (/summary), Xuất sao kê (/statement-export)
+│   ├── transferRoutes.ts    # Route Chuyển tiền nội bộ & NAPAS IBFT mô phỏng, Tra cứu nội bộ/ngoài, Báo giá, Danh bạ thụ hưởng
+│   ├── anomalyRoutes.ts     # Route Cảnh báo giao dịch bất thường (/anomalies, /:id, /:id/acknowledge)
 │   ├── cardRoutes.ts        # Route Thẻ ATM/Debit, Thẻ tín dụng
 │   ├── savingsRoutes.ts     # Route Tiết kiệm có kỳ hạn
 │   ├── kycRoutes.ts         # Route Định danh eKYC
@@ -87,9 +88,10 @@ backend/src/
 │   ├── httpUtils.ts         # Tiện ích HTTP chung, đệm buffer và đọc stream JSON
 │   └── index.ts             # Barrel export cho toàn bộ Router
 ├── controllers/             # [TẦNG 2: CONTROLLERS] Tiếp nhận Request, bóc tách tham số, gọi Service & trả Response
-│   ├── accountController.ts # Xử lý xem tài khoản, lịch sử giao dịch
-│   ├── transferController.ts# Xử lý báo giá, thực hiện chuyển tiền, quản lý danh bạ
-│   ├── authController.ts    # Xử lý đăng ký, đăng nhập, MFA/TOTP, khôi phục tài khoản
+│   ├── accountController.ts # Xử lý xem tài khoản, lọc lịch sử, thống kê tháng, xuất sao kê CSV/HTML
+│   ├── transferController.ts# Xử lý tra cứu nội bộ/NAPAS, báo giá, thực hiện chuyển tiền, quản lý danh bạ
+│   ├── anomalyController.ts # Xử lý xem & xác nhận cảnh báo giao dịch bất thường
+│   ├── authController.ts    # Xử lý đăng ký, đăng nhập, đổi/quên mật khẩu, thiết bị, MFA/TOTP & Biometric
 │   ├── savingsController.ts # Xử lý mở sổ tiết kiệm, tính lãi, tất toán trước hạn
 │   ├── cardController.ts    # Xử lý thẻ ATM, khóa/mở thẻ, hạn mức tín dụng, sao kê
 │   ├── kycController.ts     # Xử lý định danh điện tử eKYC
@@ -99,7 +101,7 @@ backend/src/
 │   └── index.ts             # Barrel export cho Controllers
 ├── middlewares/             # [TẦNG TIỆN ÍCH CHUNG: MIDDLEWARES] Xử lý các quy tắc xuyên suốt (Cross-cutting Concerns)
 │   ├── corsMiddleware.ts    # Quản lý chính sách nguồn gốc CORS và OPTIONS preflight
-│   ├── authMiddleware.ts    # Kiểm tra Bearer Token, ràng buộc thiết bị, Step-Up TOTP
+│   ├── authMiddleware.ts    # Kiểm tra Bearer Token, ràng buộc thiết bị, Step-Up TOTP & Biometric
 │   ├── errorMiddleware.ts   # Bắt lỗi tập trung, mapping DomainError và DatabaseCommandError
 │   ├── recipientLookupRateLimiter.ts # Giới hạn tần suất tra cứu tài khoản thụ hưởng
 │   └── index.ts             # Barrel export cho Middlewares
@@ -109,6 +111,9 @@ backend/src/
 ├── domain/                  # [TẦNG 4: DOMAIN] Quy tắc tài chính thuần túy (Pure Rules)
 │   ├── ledger.ts            # Sổ cái kế toán kép (Double-entry Ledger) cân bằng Nợ/Có
 │   ├── money.ts             # Tính toán tiền tệ VND an toàn (minor units, không làm tròn sai)
+│   ├── anomaly/             # [Domain Anomaly] Chấm điểm rủi ro giao dịch tất định bằng BigInt (6 quy tắc)
+│   ├── napas/               # [Domain NAPAS Mock] Cổng mô phỏng liên ngân hàng NAPAS IBFT (8 mã BIN VN)
+│   │   └── mockNapasGateway.ts
 │   ├── savings/             # [Domain Tiết kiệm] Quy tắc tiền gửi, tính lãi & ngày đáo hạn
 │   │   ├── types.ts         # Khai báo thực thể & danh mục gói tiết kiệm
 │   │   ├── calculations.ts  # Thuật toán tính lãi suất, ngày đáo hạn, tất toán trước hạn
@@ -121,15 +126,18 @@ backend/src/
 │   │   └── index.ts         # Barrel export cho module Credit
 │   └── index.ts             # Barrel export cho Domain
 ├── database/                # [TẦNG 5: INFRASTRUCTURE] Lưu trữ bền vững PostgreSQL & Repositories
-│   ├── repositories/        # Các repository lưu trữ theo domain
+│   ├── repositories/        # Các repository lưu trữ theo domain (gồm anomalyRepository, accountRepository, auditRepository, ...)
 │   ├── postgresRelationalRepository.ts # Bộ điều hợp lưu trữ quan hệ PostgreSQL & snapshot bridge
 │   ├── postgresSnapshotRepository.ts   # Bộ điều hợp lưu trữ snapshot JSON
 │   ├── unitOfWork.ts        # Quản lý transaction PostgreSQL UnitOfWork
-│   ├── transferService.ts   # Xử lý chuyển tiền transactional qua SQL
+│   ├── controlPolicyRepository.ts      # Chính sách động: Kill-Switch, hạn mức ngày, biểu phí chuyển tiền
+│   ├── transferService.ts   # Xử lý chuyển tiền nội bộ & NAPAS 2 pha held_minor, anomaly scoring
+│   ├── anomalyService.ts    # Xử lý danh sách & xác nhận cảnh báo giao dịch bất thường
 │   ├── savingsService.ts    # Xử lý tiết kiệm transactional qua SQL
 │   ├── creditService.ts     # Xử lý thẻ tín dụng transactional qua SQL
 │   └── pool.ts              # Quản lý kết nối PostgreSQL
-├── mfa/                     # [TẦNG 4: INFRASTRUCTURE] Hạ tầng bảo mật xác thực 2 lớp (TOTP/Email)
+├── admin/                   # [ADMIN CONTROL PLANE] Staff auth, 63-route RBAC, Maker-Checker, Policy & Ledger Reconciliation
+├── mfa/                     # [TẦNG 4: INFRASTRUCTURE] Hạ tầng bảo mật xác thực 2 lớp (TOTP, Email OTP, Biometric v1)
 ├── secrets/                 # [TẦNG 4: INFRASTRUCTURE] Quản lý khóa bí mật (Secret Manager)
 └── observability/           # [TẦNG 4: INFRASTRUCTURE] Giám sát hệ thống (Logger, Prometheus Metrics)
 ```
@@ -138,15 +146,16 @@ backend/src/
 
 | Tính năng nghiệp vụ | Router (Tầng 1) | Controller (Tầng 2) | Service & Domain (Tầng 3 & 4) |
 | :--- | :--- | :--- | :--- |
-| **Đăng ký, Đăng nhập, MFA/TOTP** | [`src/routes/authRoutes.ts`](src/routes/authRoutes.ts) | [`src/controllers/authController.ts`](src/controllers/authController.ts) | `relationalAuth` / `system` / `mfa/` |
-| **Chuyển tiền & Danh bạ thụ hưởng** | [`src/routes/transferRoutes.ts`](src/routes/transferRoutes.ts) | [`src/controllers/transferController.ts`](src/controllers/transferController.ts) | `services/coreBanking.ts` / `transferService.ts` |
-| **Xem tài khoản & Lịch sử giao dịch** | [`src/routes/accountRoutes.ts`](src/routes/accountRoutes.ts) | [`src/controllers/accountController.ts`](src/controllers/accountController.ts) | `services/coreBanking.ts` / `relationalAccountReadService.ts` |
+| **Đăng ký, Đăng nhập, Đổi/Quên MK, Thiết bị, MFA/Biometric** | [`src/routes/authRoutes.ts`](src/routes/authRoutes.ts) | [`src/controllers/authController.ts`](src/controllers/authController.ts) | `relationalAuthService.ts` / `mfa/` (`crypto.ts`, `persistentMfaService.ts`) |
+| **Chuyển tiền (Nội bộ & NAPAS IBFT) & Danh bạ** | [`src/routes/transferRoutes.ts`](src/routes/transferRoutes.ts) | [`src/controllers/transferController.ts`](src/controllers/transferController.ts) | `database/transferService.ts` / [`src/domain/napas/mockNapasGateway.ts`](src/domain/napas/mockNapasGateway.ts) |
+| **Phát hiện & Xử lý giao dịch bất thường** | [`src/routes/anomalyRoutes.ts`](src/routes/anomalyRoutes.ts) | [`src/controllers/anomalyController.ts`](src/controllers/anomalyController.ts) | `database/anomalyService.ts` / [`src/domain/anomaly/`](src/domain/anomaly/) |
+| **Tài khoản, Lọc lịch sử, Thống kê tháng & Xuất sao kê** | [`src/routes/accountRoutes.ts`](src/routes/accountRoutes.ts) | [`src/controllers/accountController.ts`](src/controllers/accountController.ts) | `database/relationalAccountReadService.ts` / `services/coreBanking.ts` |
 | **Tiết kiệm có kỳ hạn & Tính lãi** | [`src/routes/savingsRoutes.ts`](src/routes/savingsRoutes.ts) | [`src/controllers/savingsController.ts`](src/controllers/savingsController.ts) | `database/savingsService.ts` / [`src/domain/savings/`](src/domain/savings/) |
 | **Thẻ ghi nợ & Thẻ tín dụng** | [`src/routes/cardRoutes.ts`](src/routes/cardRoutes.ts) | [`src/controllers/cardController.ts`](src/controllers/cardController.ts) | `database/creditService.ts` / [`src/domain/credit/`](src/domain/credit/) |
 | **Định danh điện tử eKYC** | [`src/routes/kycRoutes.ts`](src/routes/kycRoutes.ts) | [`src/controllers/kycController.ts`](src/controllers/kycController.ts) | `database/kycService.ts` |
-| **Thông báo biến động số dư** | [`src/routes/notificationRoutes.ts`](src/routes/notificationRoutes.ts) | [`src/controllers/notificationController.ts`](src/controllers/notificationController.ts) | `database/` / `system` |
+| **Thông báo biến động số dư** | [`src/routes/notificationRoutes.ts`](src/routes/notificationRoutes.ts) | [`src/controllers/notificationController.ts`](src/controllers/notificationController.ts) | `database/remainingService.ts` / `system` |
 | **Trợ lý AI & Lời khuyên tài chính** | [`src/routes/assistantRoutes.ts`](src/routes/assistantRoutes.ts) | [`src/controllers/assistantController.ts`](src/controllers/assistantController.ts) | `assistant/` / `financialAdvice/` |
-| **Chính sách ứng dụng Mobile** | [`src/routes/mobileRoutes.ts`](src/routes/mobileRoutes.ts) | [`src/controllers/mobileController.ts`](src/controllers/mobileController.ts) | `system` / `relationalHttp` |
+| **Chính sách động, Đối soát Sổ cái & Admin** | [`src/routes/mobileRoutes.ts`](src/routes/mobileRoutes.ts) / `src/admin/http/adminHttp.ts` | [`src/controllers/mobileController.ts`](src/controllers/mobileController.ts) | `database/controlPolicyRepository.ts` / `admin/repositories/adminRepository.ts` |
 | **CORS, Bảo vệ Auth & Bắt lỗi** | — | — | [`src/middlewares/`](src/middlewares/) |
 | **Sổ cái kế toán kép (Double-entry)** | — | — | [`src/domain/ledger.ts`](src/domain/ledger.ts) |
 | **Tính toán tiền tệ VND an toàn** | — | — | [`src/domain/money.ts`](src/domain/money.ts) |
@@ -183,4 +192,4 @@ docker compose --env-file .env.compose up -d --build
 docker compose --env-file .env.compose exec backend node scripts/container-smoke.cjs
 ```
 
-`.env.compose` chỉ dành cho preview local và bị ignore. Database chỉ bind loopback local; cloud preview phải dùng PostgreSQL private/secret manager. Workflow [`../.github/workflows/preview-container-smoke.yml`](../.github/workflows/preview-container-smoke.yml) tái hiện build, migration database rỗng, health, smoke flow và restart-login trên GitHub Actions.
+`.env.compose` chỉ dành cho preview local và bị ignore. Trong `compose.yaml`, Customer Backend publish trên `0.0.0.0:5000` để thiết bị trong mạng LAN nội bộ có thể thử nghiệm Mobile/web local, trong khi PostgreSQL và Admin API chỉ bind loopback local (`127.0.0.1`); cloud preview phải dùng PostgreSQL private/secret manager và HTTPS. Workflow [`../.github/workflows/preview-container-smoke.yml`](../.github/workflows/preview-container-smoke.yml) tái hiện build, migration database rỗng, health, smoke flow và restart-login trên GitHub Actions.

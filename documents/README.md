@@ -1,6 +1,6 @@
 # Tài liệu dự án Banking System / NOVA
 
-> Cập nhật nội dung: 2026-10-14. Tài liệu này mô tả source đang có trong workspace tại HEAD **a5bf4a6** cộng với các thay đổi chưa commit. Đây không phải hồ sơ của một bản release đã đóng dấu.
+> Cập nhật nội dung: 2026-11-25. Tài liệu này mô tả source đang có trong workspace trên nhánh `main` tại commit **220bb4d**. Đây không phải hồ sơ của một bản release đã đóng dấu.
 
 ## Đọc nhanh
 
@@ -55,18 +55,19 @@ flowchart LR
 
 | Nhóm | Tình trạng trong source | Giới hạn cần giữ rõ |
 | --- | --- | --- |
-| Identity và MFA | Registration, login/session, TOTP và recovery flows | Provider email/OTP và thiết bị thật phụ thuộc cấu hình; không suy ra đã đạt staging |
-| Accounts và history | Số dư, transaction history/detail, masked account number | Server là nguồn sự thật; không dùng số dư mock làm trạng thái authoritative |
-| Transfer | Beneficiary, recipient lookup, quote, step-up, idempotency và trạng thái giao dịch | Chuyển nội bộ reference; không có payment rail/core thật |
-| Savings | Quote, mở khoản, danh sách/chi tiết và lifecycle reference | Không phải sản phẩm tiền gửi đã được phê duyệt |
-| Credit và Cards | Credit account/statement/payment và card controls trong sandbox | Không phải processor hoặc card issuer thật |
+| Identity, MFA & Thiết bị | Registration 2 bước, login/session rotation, TOTP MFA & recovery, sinh trắc học gắn thiết bị (`biometric-v1`), đổi/quên/đặt lại mật khẩu, liệt kê & thu hồi thiết bị đăng nhập | Provider email/OTP và hardware attestation/passkey phụ thuộc cấu hình; không suy ra đã đạt staging |
+| Accounts, History & Export | Số dư thực, lịch sử lọc phía server (`status`, `direction`, `from`, `to`, `q`), thống kê thu/chi tháng, xuất sao kê CSV/HTML, mở che số tài khoản theo yêu cầu | Server là nguồn sự thật; không dùng số dư mock làm trạng thái authoritative |
+| Transfer & Mock NAPAS | Beneficiary, tra cứu nội bộ & liên ngân hàng mô phỏng NAPAS IBFT (8 mã BIN), quote với phí động & hạn mức ngày từ `control_policy`, step-up (TOTP hoặc Biometric ≤ 1.000.000 VND), idempotency, hạch toán 2 pha `held_minor` & đối soát scheduler | Chuyển nội bộ và `MockNapasGateway` chỉ là reference sandbox; không kết nối payment rail/core banking thật |
+| Anomaly Detection | Bộ chấm điểm bất thường tất định dùng `BigInt` (`LOW`/`MEDIUM`/`HIGH`/`CRITICAL`), chặn/xác nhận khi rủi ro cao, khách hàng xác nhận/báo nghi ngờ (`anomalies`), nhân viên xem & xử lý trên Admin Web | Quy tắc heuristic cục bộ trên dữ liệu synthetic; không thay thế hệ thống phòng chống gian lận thời gian thực (FDS/AML) |
+| Savings | Quote, mở khoản, danh sách/chi tiết, đổi phương án đáo hạn, tất toán trước hạn lãi không kỳ hạn 0,20%/năm và lifecycle đáo hạn | Không phải sản phẩm tiền gửi đã được phê duyệt |
+| Credit và Cards | Đăng ký thẻ (bắt buộc KYC `APPROVED`), kích hoạt, tài khoản/sao kê/thanh toán và khóa/mở/báo mất thẻ trong sandbox | Không phải processor hoặc card issuer thật |
 | KYC | Customer draft/submit và Admin review | Không có identity/KYC provider thật |
-| QR | Tạo và quét thông tin nhận tiền có version | Payload luôn chưa xác minh; quét QR không tự tạo payment |
-| Notifications | Danh sách, đọc, deep link và outbox plumbing | Push/email delivery thật chưa được xác minh |
-| Assistant Help | FAQ catalog có controlled selection; Radox AI là provider runtime (yêu cầu ASSISTANT_RADOX_API_KEY) | Selector có thể chọn sai FAQ; đánh giá đã lưu vẫn partial |
+| QR & VietQR | Tạo và quét mã **VietQR (EMVCo TLV + CRC-16/CCITT-FALSE)** động/tĩnh và NOVA QR v2; dẫn sang `/transfer` để server tự đối soát người nhận | Payload luôn chưa xác minh trước khi server đối soát; quét QR không tự tạo lệnh trừ tiền |
+| Notifications | Danh sách, đọc, deep link và outbox plumbing (kèm sự kiện cảnh báo bất thường) | Push/email delivery thật chưa được xác minh |
+| Assistant Help | FAQ catalog có controlled selection; Radox AI là provider runtime (yêu cầu `ASSISTANT_RADOX_API_KEY`) | Selector có thể chọn sai FAQ; đánh giá đã lưu vẫn partial |
 | Financial Advice | Tính toán từ dữ liệu người dùng nhập, lựa chọn phương án có giới hạn và fallback | Không phải tư vấn ngân hàng được duyệt; không lấy balance thật làm input |
-| Admin | Staff login, permissions, KYC/Credit/transfer operations, approvals, audit và outbox views | Không thay thế cổng vận hành ngân hàng thật |
-| Fraud reporting | Đã gỡ customer flow và Admin workflow khỏi source hiện hành | Schema/migration cũ còn lại chỉ để bảo toàn dữ liệu lịch sử |
+| Admin & Governance | Staff login 2 vai trò (`OPERATIONS`/`ADMIN`), KYC/Credit/transfer operations, hàng đợi anomaly, quản trị chính sách & biểu phí động (`PolicyView`), đối soát sổ cái kép (Trial Balance), approvals, audit và outbox views | Không thay thế cổng vận hành ngân hàng thật |
+| Legacy Fraud reporting | Đã gỡ customer fraud-report cũ và Admin Fraud queue cũ khỏi source hiện hành (D-39); luồng cảnh báo bất thường mới dùng bảng `transaction_anomalies` riêng | Schema/migration `fraud_reports` cũ còn lại chỉ để bảo toàn dữ liệu lịch sử |
 
 Chi tiết theo feature và evidence nằm trong [bản đồ chức năng](02-design/function-scope.md) và [trạng thái hiện tại](01-planning/current-status.md).
 
@@ -100,9 +101,9 @@ Không sửa backend, schema, Mobile, Admin hoặc CI chỉ để tài liệu kh
 | Thư mục | Nội dung và điểm bắt đầu |
 | --- | --- |
 | 01-planning | [README](01-planning/README.md), current status, repository map, quyết định và quản trị rủi ro |
-| 02-design | [README](02-design/README.md), kiến trúc, phạm vi tính năng, sequence và ERD demo |
+| 02-design | [README](02-design/README.md), kiến trúc, phạm vi tính năng, đặc tả 40 use-case, sequence và ERD demo |
 | 04-code-process | Git, review, CI và quy trình thay đổi |
-| 05-testing | [README](05-testing/README.md), hướng dẫn seed dữ liệu E2E và sổ tay kiểm thử MFA |
+| 05-testing | [README](05-testing/README.md), quality gates theo thành phần và sổ tay kiểm thử MFA |
 | 06-security-ai | [README](06-security-ai/README.md), assistant, financial advice, privacy, threat model và evaluation |
 | 07-architecture | ADR cho PostgreSQL relational-v2 và outbox worker |
 | 07-release | [README](07-release/README.md), environment, secret, migration, backup, rollback và preview runbooks |

@@ -46,8 +46,9 @@ admin-web/
 │   │   │   ├── Approvals.tsx      # Giao diện Approval Inbox, AutoRefreshControl và hộp thoại thẩm định
 │   │   │   └── approvalsLogic.ts  # Mapping quyền duyệt theo actionType, resolve decision endpoint
 │   │   ├── applications/          # Hồ sơ Định danh và Hạn mức Tín dụng (claim, modal xem chi tiết hồ sơ định danh/Credit)
-│   │   ├── transfers/             # Giám sát giao dịch theo trạng thái, yêu cầu cancel/retry/reversal
+│   │   ├── transfers/             # Giám sát giao dịch theo trạng thái, yêu cầu cancel/retry/reversal và Hàng đợi cảnh báo bất thường (Anomaly Queue)
 │   │   ├── operations/            # Giám sát Transactional Outbox, Background Jobs, requeue/retry, AutoRefreshControl
+│   │   ├── policy/                # Chính sách vận hành, biểu phí động (TOTP Step-up) và Đối soát Sổ cái kép (Trial Balance Reconciliation)
 │   │   ├── staff/                 # Danh sách nhân sự, tạo Operations trực tiếp, đổi vai trò và vô hiệu hóa
 │   │   └── audit/                 # Nhật ký kiểm toán append-only bất biến, xuất báo cáo CSV/JSON, AutoRefreshControl
 │   ├── App.tsx                    # Điểm lắp ghép ứng dụng chính và điều hướng
@@ -69,7 +70,7 @@ Giao diện được phân nhóm theo chuẩn nghiệp vụ ngân hàng dựa tr
    - *Khách hàng (`#/customers`)*: Tìm kiếm dữ liệu đã che (`customer.read.masked`), xem tài khoản (`account.read`). Hỗ trợ thao tác **Cấp tiền (Nạp tiền)** với các nút chọn nhanh số tiền (`+1M`, `+5M`, `+10M`, `+50M`, `100M`), xem trước định dạng VND, dropdown mã lý do nghiệp vụ chuẩn (`CASH_DEPOSIT`, `ACCOUNT_FUNDING`, `PROMOTION_REWARD`, `CUSTOMER_COMPENSATION`, `OPERATIONS_REVIEW`, `ACCOUNT_SECURITY`), nút **Hoàn tác nạp tiền**, và thao tác **Khóa/Mở khóa**. Toàn bộ modal đã được tinh giản, không hiển thị trường Ticket Reference. Hỗ trợ cả chế độ thực thi trực tiếp lẫn chế độ 2 bước có bước Xem lại (Review Step) và **Badge `⏳ Đang chờ duyệt`**. Cung cấp nút *Tải lại danh sách* có generation guard bảo vệ chống response cũ ghi đè.
    - *Hồ sơ định danh (`#/kyc`)*: Quản lý hồ sơ định danh (`kyc.read`, `kyc.review`, `kyc.decision.request`). Hỗ trợ nút **Xem hồ sơ** mở Modal trực quan chi tiết (Thẻ Căn cước công dân gắn chip mockup, avatar, chỉ số đối soát sinh trắc học khuôn mặt 98.6%, Liveness check). Khi ở chế độ Direct Execution, hỗ trợ nút **Phê duyệt** trực tiếp 1 chạm ngay trong modal.
    - *Hồ sơ tín dụng (`#/credit`)*: Quản lý hồ sơ hạn mức tín dụng (`credit-application.read`, `credit-application.review`). Hỗ trợ nút **Xem hồ sơ** mở Modal trực quan chi tiết (Thẻ tín dụng EMV mockup, Điểm tín dụng CIC 735 Hạng A). Hỗ trợ nút **Phê duyệt** trực tiếp 1 chạm khi bật Direct Execution.
-   - *Giao dịch (`#/transfers`)*: Bộ lọc trạng thái (`ALL`, `PENDING`, `FAILED`, `SUCCEEDED`, `CANCELLED`), xem timeline. Hỗ trợ thao tác **Hoàn tiền giao dịch** trực tiếp vào Core Banking mà không yêu cầu nhập ticket thủ công.
+   - *Giao dịch (`#/transfers`)*: Bộ lọc trạng thái (`ALL`, `PENDING`, `FAILED`, `SUCCEEDED`, `CANCELLED`), xem timeline, thao tác **Hoàn tiền / Thử lại / Hủy giao dịch**, kèm **Hàng đợi Cảnh báo giao dịch bất thường** (`GET /admin/anomalies`) cho phép nhân viên có quyền `transfer.action.request` kiểm tra và đánh dấu xử lý (`POST /admin/anomalies/{id}/resolve`).
 3. **Phê duyệt (`#/approvals`)**:
    - Chỉ `ADMIN` có `audit.read` nên Operations không thấy mục Approval Inbox.
    - Hỗ trợ bộ điều khiển **Tự động làm mới (Auto-Refresh 15s)** với Checkbox bật/tắt và đèn nhấp nháy chỉ báo trạng thái thời gian thực.
@@ -80,6 +81,7 @@ Giao diện được phân nhóm theo chuẩn nghiệp vụ ngân hàng dựa tr
    - Hỗ trợ **Tự động làm mới (Auto-Refresh 15s)** hỗ trợ giám sát liên tục trạng thái hàng đợi và worker.
    - Tạo yêu cầu Requeue cho outbox event hoặc Retry cho background job bị lỗi với giao diện tinh giản đã loại bỏ trường ticket reference.
 5. **Quản trị**:
+   - *Chính sách & Biểu phí (`#/policy`)*: Dành riêng cho `ADMIN` (`audit.read`). Hiển thị bảng **Đối soát Sổ cái kép (Trial Balance Reconciliation)** (`GET /admin/operations/ledger-reconciliation`) kiểm tra số journal lệch Nợ ≠ Có, tổng số dư `payment_accounts`, tổng ròng `payment-account:*` trên sổ cái và độ lệch đối soát; đồng thời cho phép cấu hình động `globalKillSwitch`, `transfersEnabled`, `savingsEnabled`, `creditEnabled`, `maxTransferAmountMinor`, `dailyTransferLimitMinor`, `transferFeeMinor` kèm `reasonCode` và xác thực **TOTP Step-up** (`PATCH /admin/control-policy`, ghi audit `CONTROL_POLICY_UPDATED`).
    - *Nhân viên & Vai trò (`#/staff`)*: Admin tạo trực tiếp tài khoản Operations, đặt mật khẩu ban đầu và cấu hình TOTP mà không gửi email mời hay tạo approval. Đổi vai trò (`STAFF_ROLE_CHANGE`) và vô hiệu hóa (`STAFF_DISABLE`) vẫn tạo yêu cầu để Admin xử lý trong Approval Inbox.
    - *Nhật ký kiểm toán (`#/audit`)*: Xem lịch sử truy cập và thao tác append-only đã lọc bỏ thông tin nhạy cảm. Hỗ trợ **Xuất báo cáo kiểm toán** (`audit.export`) ra file định dạng **CSV** hoặc **JSON** tải trực tiếp về máy trạm kèm nhật ký tuân thủ, và bộ điều khiển **Tự động làm mới (Auto-Refresh 15s)**.
 
@@ -121,5 +123,4 @@ npm run audit
 
 ## 4. Demo và kiểm tra thủ công
 
-Admin Web không kèm sẵn tài khoản đăng nhập hoặc browser fixture. Để demo, kết nối với backend local theo [runbook](../documents/admin/runbook.md) và chuẩn bị người dùng cùng dữ liệu cần thiết. Các bước kiểm tra thủ công nằm trong [manual-test checklist](../documents/admin/manual-test.md), mục 1–6.
-\n
+Admin Web không kèm sẵn tài khoản đăng nhập hoặc browser fixture. Để demo, kết nối với backend local theo [runbook](../documents/admin/runbook.md) và chuẩn bị người dùng cùng dữ liệu cần thiết. Các bước kiểm tra thủ công nằm trong [manual-test checklist](../documents/admin/manual-test.md), mục 1–7.

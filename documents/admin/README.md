@@ -24,4 +24,4 @@ Admin Web và Admin API là một control plane riêng với staff session, cook
 
 ## Giới hạn
 
-Admin hiện vận hành trên dữ liệu reference/virtual. Không có fraud queue hiện hành; legacy schema không đồng nghĩa workflow còn được support. Không coi local Admin test, local PostgreSQL hoặc browser screenshot là staging/production evidence.
+Admin hiện vận hành trên dữ liệu reference/virtual (`63` routes trong `permissionRegistry.ts`, bao gồm quản trị `control_policy`, đối soát sổ cái kép `ledger-reconciliation` và hàng đợi cảnh báo bất thường `anomalies`). Legacy `fraud_reports` queue cũ đã bị gỡ (D-39); luồng mới xử lý cảnh báo bất thường từ bảng `transaction_anomalies`. Không coi local Admin test, local PostgreSQL hoặc browser screenshot là staging/production evidence.

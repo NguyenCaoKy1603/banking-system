@@ -29,18 +29,20 @@ type ControlPolicy = {
   transfersEnabled: boolean;
   allowlisted: boolean;
   maxTransferAmountMinor: string;
-  stepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  dailyTransferLimitMinor?: string; // hạn mức lũy kế ngày (migration 048, mặc định 50000000)
+  transferFeeMinor?: string; // phí chuyển tiền động (migration 051, mặc định 1000)
+  stepUpMethods: Array<"OTP" | "TOTP" | "BIOMETRIC">;
   savingsEnabled: boolean;
   savingsAllowlisted: boolean;
   maxSavingsAmountMinor: string;
-  savingsStepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  savingsStepUpMethods: Array<"OTP" | "TOTP" | "BIOMETRIC">;
   creditEnabled: boolean;
   creditAllowlisted: boolean;
   creditPaymentsEnabled: boolean;
   cardControlsEnabled: boolean;
   maxCreditPaymentAmountMinor: string;
-  creditPaymentStepUpMethods: Array<"OTP" | "BIOMETRIC">;
-  cardUnlockStepUpMethods: Array<"OTP" | "BIOMETRIC">;
+  creditPaymentStepUpMethods: Array<"OTP" | "TOTP" | "BIOMETRIC">;
+  cardUnlockStepUpMethods: Array<"OTP" | "TOTP" | "BIOMETRIC">;
   updatedAt: string;
 };
 ```
@@ -142,14 +144,20 @@ type AccountNumberResponse = {
 
 Server phải kiểm tra bearer token, device binding và ownership trước khi trả số đầy đủ. Không ghi số tài khoản vào log, telemetry hoặc audit payload; audit chỉ lưu sự kiện reveal và `accountId`.
 
-## 6. GET `/accounts/{accountId}/transactions`
+## 6. GET `/accounts/{accountId}/transactions`, `/summary` và `/statement-export`
 
-Trả lịch sử giao dịch theo cursor.
+### 6.1 GET `/accounts/{accountId}/transactions`
+
+Trả lịch sử giao dịch theo keyset cursor và bộ lọc phía server.
 
 Query:
 
 - `cursor`: tùy chọn, opaque string.
 - `limit`: tùy chọn, số nguyên từ 1 đến 100; mặc định 20.
+- `status`: tùy chọn (`SUCCEEDED` | `PENDING` | `FAILED` | `REVERSED`).
+- `direction`: tùy chọn (`CREDIT` | `DEBIT`).
+- `from`, `to`: tùy chọn, chuỗi ngày ISO `YYYY-MM-DD` hoặc ISO-8601 UTC (`from <= to`).
+- `q`: tùy chọn, từ khóa tìm kiếm tối đa 120 ký tự.
 
 ### Response `200 OK`
 
@@ -181,6 +189,29 @@ type TransactionDetail = Transaction & {
   completedAt: string | null;
 };
 ```
+
+### 6.2 GET `/accounts/{accountId}/summary`
+
+Thống kê dòng tiền Thu/Chi theo tháng do server tính bằng `BigInt`. Query tùy chọn `month=YYYY-MM` (mặc định tháng UTC hiện tại).
+
+```ts
+type AccountMonthlySummary = {
+  accountId: string;
+  month: string; // YYYY-MM
+  monthLabel: string; // MM/YYYY
+  currency: "VND";
+  totalIncomeMinor: string;
+  totalExpenseMinor: string;
+  netMinor: string; // có thể âm
+  succeededCount: number;
+  creditCount: number;
+  debitCount: number;
+};
+```
+
+### 6.3 GET `/accounts/{accountId}/statement-export`
+
+Xuất sao kê giao dịch tài khoản (tối đa 1.000 dòng). Query tùy chọn: `from`, `to`, `format` (`csv` mặc định hoặc `html`). CSV đính kèm UTF-8 BOM và chống formula injection (`=`, `+`, `-`, `@`); HTML escape đầy đủ. Trả `200 OK` với `Content-Type: text/csv; charset=utf-8` hoặc `text/html; charset=utf-8`.
 
 ## 7. Beneficiary directory
 
@@ -214,16 +245,24 @@ type BeneficiaryResponse = {
 };
 ```
 
+## 7.1 POST `/internal-recipients/lookup` và POST `/external-recipients/lookup`
+
+- `POST /internal-recipients/lookup` tra cứu tài khoản nội bộ NOVA theo `accountNumber` (6–34 chữ số), cấp `lookupId` ngắn hạn (TTL 5 phút, lưu hash SHA-256).
+- `POST /external-recipients/lookup` tra cứu người nhận liên ngân hàng mô phỏng qua `MockNapasGateway` (`rail: "NAPAS_IBFT"`):
+  - Request: `{ bankBin: string (6 chữ số thuộc 8 BIN VN hỗ trợ), accountNumber: string (6–34 chữ số) }`.
+  - Response `200 OK`: `{ recipient: { lookupId, rail: "NAPAS_IBFT", bankBin, bankCode, accountHolderName, maskedAccountNumber, bankName, status, expiresAt } }`.
+
 ## 8. POST `/transfers/quote`
 
-Tạo báo giá có thời hạn trước khi submit chuyển tiền.
+Tạo báo giá có thời hạn (5 phút) trước khi submit chuyển tiền (hỗ trợ cả nội bộ `INTERNAL` lẫn liên ngân hàng mô phỏng `NAPAS_IBFT`). Server kiểm tra chính sách, hạn mức giao dịch, hạn mức lũy kế ngày (`daily_transfer_limit_minor`), tính phí động (`transfer_fee_minor`) và đánh giá rủi ro bất thường sơ bộ (`anomalyAssessment`).
 
 ### Request
 
 ```ts
 type TransferQuoteRequest = {
   sourceAccountId: string;
-  beneficiaryId: string;
+  beneficiaryId?: string; // cung cấp đúng một trong hai: beneficiaryId hoặc lookupId
+  lookupId?: string;
   amount: Money;
 };
 ```
@@ -239,6 +278,7 @@ type TransferQuote = {
   fee: Money;
   totalDebit: Money;
   expiresAt: string;
+  anomalyAssessment?: TransferAnomalyAssessment;
 };
 ```
 
@@ -246,7 +286,7 @@ Quote hết hạn hoặc sai currency/amount phải bị server từ chối; cli
 
 ## 9. POST `/transfers`
 
-Submit một quote sau step-up authentication.
+Submit một quote sau step-up authentication (`TOTP` hoặc `BIOMETRIC` gắn thiết bị với giao dịch đủ điều kiện).
 
 ### Headers bắt buộc
 
@@ -261,15 +301,17 @@ Key của Transfer, Savings opening và Credit payment có tối thiểu 16 ký 
 ```ts
 type SubmitTransferRequest = {
   quoteId: string;
+  description?: string;
+  confirmHighRisk?: boolean; // bắt buộc true nếu giao dịch bị chấm mức CRITICAL và người dùng chủ động xác nhận
   stepUp: {
-    method: "OTP" | "BIOMETRIC";
-    proof: string; // opaque, không log
+    method: "OTP" | "TOTP" | "BIOMETRIC";
+    proof: string; // opaque (mã TOTP 6 số hoặc biometric-v1.<sha256>), không log
     challengeId: string; // one-time challenge bind đúng purpose/resource/fingerprint
   };
 };
 ```
 
-Transfer, Savings opening, Savings withdrawal và mọi Credit command có step-up đều phải gửi `challengeId` do server cấp. Endpoint customer `POST /auth/otp/challenges` chỉ nhận các purpose tài chính/thẻ (`TRANSFER`, `SAVINGS_OPENING`, `SAVINGS_WITHDRAWAL`, `CREDIT_PAYMENT`, `CARD_UNLOCK`, `CARD_REPORT_LOST`), không cấp `LOGIN` hoặc `REGISTRATION_VERIFY`; tối đa 10 challenge/user/device/phút và challenge mới cùng purpose/resource làm challenge cũ hết hiệu lực. Challenge phải bind đồng thời user, device, purpose, resource và request fingerprint; sai/hết hạn trả `409 STEP_UP_VERIFICATION_FAILED`, còn vượt ngưỡng thử/cấp challenge trả `429 RATE_LIMITED`. `401` chỉ biểu thị bearer/session không hợp lệ, vì client có thể refresh/replay khi gặp mã này và tuyệt đối không được làm vậy chỉ vì OTP/challenge giao dịch sai.
+Transfer, Savings opening, Savings withdrawal, Change password (khi có TOTP) và mọi Credit command có step-up đều phải gửi `challengeId` do server cấp. Endpoint customer `POST /auth/otp/challenges` chỉ nhận các purpose bảo mật/tài chính (`TRANSFER`, `SAVINGS_OPENING`, `SAVINGS_WITHDRAWAL`, `CREDIT_APPLICATION`, `CARD_ACTIVATION`, `CREDIT_PAYMENT`, `CARD_UNLOCK`, `CARD_REPORT_LOST`, `RECOVERY_CODE_ROTATION`, `MFA_FACTOR_CHANGE`, `MFA_FACTOR_REMOVAL`, `PASSWORD_CHANGE`), không cấp `LOGIN` hoặc `REGISTRATION_VERIFY`; tối đa 10 challenge/user/device/phút và challenge mới cùng purpose/resource làm challenge cũ hết hiệu lực. Challenge phải bind đồng thời user, device, purpose, resource và request fingerprint; sai/hết hạn trả `409 STEP_UP_VERIFICATION_FAILED`, còn vượt ngưỡng thử/cấp challenge trả `429 RATE_LIMITED`. `401` chỉ biểu thị bearer/session không hợp lệ, vì client có thể refresh/replay khi gặp mã này và tuyệt đối không được làm vậy chỉ vì OTP/challenge giao dịch sai.
 
 ### Response `202 Accepted` hoặc `200 OK`
 
@@ -282,14 +324,21 @@ type TransferReceipt = {
   fee: Money;
   createdAt: string;
   updatedAt: string;
+  anomalyAssessment?: TransferAnomalyAssessment;
 };
 ```
 
-`PENDING` là kết quả hợp lệ. Mobile phải truy vấn trạng thái sau crash/restart thay vì hiển thị thành công.
+`PENDING` là kết quả hợp lệ (đặc biệt với giao dịch `NAPAS_IBFT` đang giữ tạm tiền ở `held_minor` chờ đối soát). Nếu giao dịch bị đánh giá mức `CRITICAL` mà `confirmHighRisk` chưa bật, server từ chối `409 CRITICAL_ANOMALY_BLOCKED` trước khi trừ số dư. Mobile phải truy vấn trạng thái sau crash/restart thay vì hiển thị thành công.
 
 ## 10. GET `/transfers/{transferId}`
 
 Trả `TransferReceipt` mới nhất. Endpoint là nguồn sự thật để resume giao dịch đang xử lý.
+
+## 10.1 Cảnh báo giao dịch bất thường — `/anomalies`
+
+- `GET /anomalies?status=OPEN|CONFIRMED_SAFE|REPORTED_SUSPICIOUS|RESOLVED`: trả `{ items: TransactionAnomaly[] }` thuộc customer hiện tại.
+- `GET /anomalies/{anomalyId}`: trả `{ anomaly: TransactionAnomaly }` chi tiết gồm `riskLevel` (`MEDIUM` | `HIGH` | `CRITICAL`), `riskScore` (1–100), `ruleCodes`, `flags`, `status`, `customerNote`, `acknowledgedAt`, `resolutionCode`, `resolvedAt`.
+- `POST /anomalies/{anomalyId}/acknowledge`: nhận `{ decision: "CONFIRMED_SAFE" | "REPORTED_SUSPICIOUS", note?: string (<= 500 ký tự) }`. Khi chọn `REPORTED_SUSPICIOUS`, server ghi audit `TRANSACTION_ANOMALY_ACKNOWLEDGED`, tạo thông báo `SECURITY` và outbox event `SECURITY_ANOMALY_ACKNOWLEDGED` để Admin kiểm tra trên `/admin/anomalies`.
 
 ## 11. Notifications
 

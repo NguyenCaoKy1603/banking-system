@@ -2,15 +2,15 @@
 
 > **Tài liệu đặc tả nghiệp vụ & ca sử dụng toàn diện**
 > 
-> Ngày lập: 14/10/2026.  
-> Căn cứ đối chiếu: Mã nguồn thực tế tại `mobile-app/`, `backend/`, `admin-web/`, hợp đồng API OpenAPI (`documents/api/`) và 43 migrations PostgreSQL (`backend/database/`).  
+> Ngày cập nhật: 25/11/2026 (`main` @ `220bb4d`).  
+> Căn cứ đối chiếu: Mã nguồn thực tế tại `mobile-app/`, `backend/`, `admin-web/`, hợp đồng API OpenAPI (`documents/api/banking-mvp.openapi.yaml` — 70 paths / 77 operations; `documents/api/admin.openapi.yaml` — 62 paths / 63 operations) và **51 migrations PostgreSQL (`001`–`051`)** tại `backend/database/`.  
 > Tài liệu này phản ánh **100% các chức năng thực tế có implementation trong mã nguồn**, phân định rõ ràng giữa 3 tác nhân: **Khách hàng (Customer Mobile)**, **Nhân viên / Quản trị viên (Bank Staff / Admin)** và **Hệ thống ngầm (System / Background Worker)**.
 
 ---
 
 ## 1. TỔNG QUAN HỆ THỐNG USE CASE
 
-Toàn bộ hệ thống gồm **33 Use Cases** hoàn chỉnh được chia thành 3 phân hệ theo tác nhân:
+Toàn bộ hệ thống gồm **40 Use Cases** hoàn chỉnh được chia thành 3 phân hệ theo tác nhân:
 
 ```mermaid
 graph TD
@@ -20,27 +20,28 @@ graph TD
         System["Hệ thống ngầm (Worker / Scheduler)"]
     end
 
-    subgraph CustomerDomains["Phân hệ Khách hàng (19 UCs)"]
-        C_Auth["1. Định danh & Bảo mật (UC-C01 -> UC-C04)"]
-        C_Core["2. Tài khoản & Giao dịch (UC-C05 -> UC-C10)"]
+    subgraph CustomerDomains["Phân hệ Khách hàng (23 UCs)"]
+        C_Auth["1. Định danh, MFA, Biometric, Mật khẩu & Thiết bị (UC-C01 -> UC-C04, UC-C20 -> UC-C21)"]
+        C_Core["2. Tài khoản, Sao kê, Chuyển tiền Nội bộ/NAPAS & VietQR (UC-C05 -> UC-C10, UC-C22 -> UC-C23)"]
         C_Savings["3. Tiết kiệm có kỳ hạn (UC-C11 -> UC-C12)"]
         C_Credit["4. Thẻ & Tín dụng (UC-C13 -> UC-C16)"]
         C_Notify["5. Thông báo & Tiện ích (UC-C17)"]
         C_AI["6. Trợ lý AI & Tài chính (UC-C18 -> UC-C19)"]
     end
 
-    subgraph StaffDomains["Phân hệ Vận hành Admin (11 UCs)"]
+    subgraph StaffDomains["Phân hệ Vận hành & Quản trị Admin (13 UCs)"]
         A_Staff["1. Nhân sự & Phân quyền (UC-A01 -> UC-A02)"]
         A_Control["2. Kiểm soát khách hàng & Vốn ảo (UC-A03 -> UC-A04)"]
-        A_Review["3. Thẩm định hồ sơ (UC-A05 -> UC-A06)"]
-        A_Ops["4. Vận hành giao dịch & Outbox (UC-A07, UC-A09, UC-A10)"]
-        A_Audit["5. Phê duyệt 4 mắt & Kiểm toán (UC-A08, UC-A11)"]
+        A_Review["3. Thẩm định hồ sơ KYC & Tín dụng (UC-A05 -> UC-A06)"]
+        A_Ops["4. Giao dịch, Cảnh báo bất thường & Outbox/Jobs (UC-A07, UC-A09, UC-A10, UC-A13)"]
+        A_Audit["5. Phê duyệt 4 mắt, Chính sách/Biểu phí, Đối soát Sổ cái & Kiểm toán (UC-A08, UC-A11, UC-A12)"]
     end
 
-    subgraph SystemDomains["Phân hệ Tự động hóa Worker (3 UCs)"]
+    subgraph SystemDomains["Phân hệ Tự động hóa Worker (4 UCs)"]
         S_Outbox["1. Transactional Outbox Dispatcher (UC-S01)"]
         S_Savings["2. Đáo hạn & Tái tục Tiết kiệm (UC-S02)"]
         S_Credit["3. Chốt sao kê & Quá hạn Thẻ tín dụng (UC-S03)"]
+        S_Napas["4. Đối soát giao dịch liên ngân hàng NAPAS treo (UC-S04)"]
     end
 
     Customer --> CustomerDomains
@@ -50,7 +51,7 @@ graph TD
 
 ---
 
-## 2. PHÂN HỆ KHÁCH HÀNG — CUSTOMER MOBILE (19 USE CASES)
+## 2. PHÂN HỆ KHÁCH HÀNG — CUSTOMER MOBILE (23 USE CASES)
 
 ### Nhóm 1: Định danh, Xác thực & Bảo mật (Onboarding & Security)
 
@@ -144,20 +145,18 @@ graph TD
   - Backend: `backend/src/database/relationalAccountReadService.ts`
   - Tables: `accounts`.
 
-#### UC-C06: Tra cứu lịch sử & Chi tiết giao dịch (Transaction History)
+#### UC-C06: Tra cứu lịch sử, Lọc nâng cao, Thống kê tháng & Xuất sao kê (Transaction History, Summary & Statement Export)
 - **Tác nhân:** Khách hàng đã đăng nhập.
 - **Luồng sự kiện chính:**
-  1. Mở màn hình `HistoryScreen` hoặc lịch sử tài khoản.
-  2. Gọi `GET /api/v1/accounts/{id}/transactions?cursor=...&limit=...`.
-  3. Phân trang bằng Keyset Cursor (`cursor-based pagination`) giúp đảm bảo danh sách không bị lặp hoặc sót bản ghi khi có giao dịch mới chèn vào giữa.
-  4. Hiển thị danh sách giao dịch với ký hiệu chiều tiền rõ ràng:
-     - Dấu `+` (Ghi có / Nhận tiền).
-     - Dấu `-` (Ghi nợ / Chuyển tiền, thanh toán).
-  5. Bấm vào từng giao dịch để xem chi tiết biên lai tại `TransactionDetailScreen`: mã tham chiếu `reference`, phân loại (`TRANSFER`, `SAVINGS_DEPOSIT`, `CREDIT_REPAYMENT`), thời gian ghi nhận và tài khoản đối ứng.
+  1. Mở màn hình `HistoryScreen` hoặc lịch sử tài khoản, hỗ trợ chuyển đổi giữa các tài khoản thanh toán.
+  2. **Lọc giao dịch phía server & Keyset Pagination:** Gọi `GET /api/v1/accounts/{id}/transactions?cursor=...&limit=...&status=...&direction=...&from=...&to=...&q=...`. Phân trang bằng Keyset Cursor (`cursor-based pagination`) đảm bảo không lặp hoặc sót bản ghi khi có giao dịch mới; hỗ trợ lọc theo trạng thái (`SUCCEEDED`/`PENDING`/`FAILED`/`REVERSED`), chiều giao dịch (`CREDIT`/`DEBIT`), khoảng thời gian (`Tháng này`, `Tháng trước`, `Tùy chọn`) và từ khóa `q` (tối đa 120 ký tự).
+  3. **Thống kê dòng tiền Thu/Chi theo tháng:** Gọi `GET /api/v1/accounts/{id}/summary?month=YYYY-MM`. Server tính bằng `BigInt` các chỉ số `totalIncomeMinor`, `totalExpenseMinor`, `netMinor`, `succeededCount`, `creditCount`, `debitCount`.
+  4. **Xuất & Chia sẻ sao kê (CSV / HTML):** Gọi `GET /api/v1/accounts/{id}/statement-export?from=...&to=...&format=csv|html` (tối đa 1.000 dòng). CSV có UTF-8 BOM và chống formula injection (`=`, `+`, `-`, `@`); HTML escape đầy đủ để in/chia sẻ an toàn.
+  5. Bấm vào từng giao dịch để xem chi tiết biên lai tại `TransactionDetailScreen` (`GET /api/v1/accounts/{id}/transactions/{transactionId}`): mã tham chiếu `reference`, chiều tiền `+`/`−`, phí, thời gian ghi nhận và tài khoản đối ứng.
 - **Mã nguồn liên quan:**
-  - Mobile: `mobile-app/src/features/history/screens/HistoryScreen.tsx`, `TransactionDetailScreen.tsx`
-  - Backend: `backend/src/database/relationalAccountReadService.ts`
-  - Tables: `transactions`.
+  - Mobile: `mobile-app/src/features/history/screens/HistoryScreen.tsx`, `TransactionDetailScreen.tsx`, `accountsApi.ts`
+  - Backend: `backend/src/database/relationalAccountReadService.ts`, `backend/src/routes/accountRoutes.ts`, `backend/src/controllers/accountController.ts`
+  - Tables: `account_transactions`, `payment_accounts`.
 
 #### UC-C07: Quản lý danh bạ người thụ hưởng (Beneficiary Management)
 - **Tác nhân:** Khách hàng đã đăng nhập.
@@ -190,21 +189,22 @@ graph TD
 - **Tiền điều kiện:** 
   - Tài khoản thanh toán nguồn (`payment_accounts`) ở trạng thái `ACTIVE` và có đủ số dư khả dụng (`availableMinor >= totalDebit = amountMinor + feeMinor`).
   - Tài khoản người nhận ở trạng thái `ACTIVE` và khác tài khoản nguồn.
-  - Tuân thủ chính sách kiểm soát rủi ro `control_policy` (chuyển tiền được bật, không kích hoạt kill switch, người dùng trong allowlist, số tiền không vượt `maxTransferAmountMinor` - mặc định 5,000,000 VND).
+  - Tuân thủ chính sách kiểm soát rủi ro `control_policy`: chuyển tiền được bật, không kích hoạt `globalKillSwitch`, người dùng trong allowlist, số tiền không vượt hạn mức mỗi giao dịch (`maxTransferAmountMinor`) và **tổng chuyển trong ngày không vượt `dailyTransferLimitMinor`** (migration `048`, mặc định 50.000.000 VND). Phí chuyển tiền đọc động từ **`control_policy.transfer_fee_minor`** (migration `051`, mặc định 1.000 VND).
 - **Kiến trúc thực thi (Dual-Engine Execution):**
-  - **Relational PostgreSQL Engine ([`RelationalTransferService`](file:///c:/Projects/banking-system/backend/src/database/transferService.ts)):** Engine chuẩn vận hành qua cờ cutover `RelationalHttpBoundary`, thực thi giao dịch nguyên tử trong 1 Database Transaction duy nhất qua `UnitOfWork`.
+  - **Relational PostgreSQL Engine ([`RelationalTransferService`](file:///c:/Projects/banking-system/backend/src/database/transferService.ts)):** Engine chuẩn vận hành qua cờ cutover `RelationalHttpBoundary`, thực thi giao dịch nguyên tử trong 1 Database Transaction duy nhất qua `UnitOfWork`, kèm chấm điểm anomaly thời gian thực (UC-C22).
   - **In-Memory Sandbox Engine ([`InMemoryCoreBanking`](file:///c:/Projects/banking-system/backend/src/services/coreBanking.ts)):** Engine mô phỏng sandbox local, hỗ trợ cơ chế 2-pha với trạng thái `PENDING` (tiền bị phong tỏa tạm thời vào `heldMinor` trước khi settle thành `SUCCEEDED`).
 - **Luồng sự kiện chính (Theo Relational Core):**
   1. **Bước 1: Lấy báo giá chuyển tiền (Quote):**
      - Client gửi yêu cầu `POST /api/v1/transfers/quote` kèm `sourceAccountId`, `amount` (`{ currency: "VND", amountMinor: string }`), và đúng một trong hai: `beneficiaryId` (người nhận đã lưu trong danh bạ) hoặc `lookupId` (mã định danh tra cứu nhanh UC-C08).
-     - Server kiểm tra chính sách lần 1 (`ControlPolicyRepository.assertTransferAllowed`), tính toán phí cố định (`feeMinor = 1_000n` / 1,000 VND), tạo `transfer_quotes` với thời hạn 5 phút (`expiresAt = now + 5 phút`).
+     - Server kiểm tra chính sách lần 1 (`ControlPolicyRepository.assertTransferAllowed` gồm cả hạn mức lũy kế ngày), lấy phí động (`getTransferFeeMinor`), đánh giá rủi ro bất thường (`anomalyAssessment`), tạo `transfer_quotes` với thời hạn 5 phút (`expiresAt = now + 5 phút`).
      - Lưu trữ snapshot bất biến của người thụ hưởng (`destination_owner_name`, `destination_account_id`, `destination_owner_id`), tính toán chuỗi hash `requestFingerprint` và ghi nhật ký `audit_events` (`TRANSFER_QUOTED`).
-     - Trả về `TransferQuote` gồm: `quoteId`, `fee`, `totalDebit = amount + fee`, `expiresAt`.
-  2. **Bước 2: Chuẩn bị Intent & Xác thực tăng cường (Step-Up Challenge):**
+     - Trả về `TransferQuote` gồm: `quoteId`, `fee`, `totalDebit = amount + fee`, `expiresAt`, `anomalyAssessment`.
+  2. **Bước 2: Chuẩn bị Intent & Xác thực tăng cường (Step-Up TOTP / Biometric):**
      - Client sinh mã duy nhất `Idempotency-Key` (chuỗi ngẫu nhiên tối thiểu 16 ký tự).
      - Client lưu trạng thái ban đầu `DRAFT_QUOTE` vào `SecureStore` (phân vùng theo tài khoản: `banking.transfer.intent.v2:<userId>`).
      - Client gọi `POST /api/v1/auth/otp/challenges` để tạo challenge xác thực giao dịch (`purpose: "TRANSFER"`, `resourceId: quoteId`).
-     - Khách hàng thực hiện xác thực bước 2 (MFA TOTP). Backend kiểm tra ràng buộc nghiêm ngặt qua `mfaService.verifyChallenge`: đối chiếu `deviceId` (header `x-device-id`), `purpose`, `resourceId` và **bắt buộc `requestFingerprint` phải khớp chính xác với fingerprint của quote đã lưu trên DB** nhằm chống giả mạo hay tráo đổi nội dung giao dịch sau khi xin mã.
+     - Khách hàng thực hiện xác thực bước 2 bằng **TOTP** hoặc **Biometric gắn thiết bị (`biometric-v1`)** (trên Mobile chỉ cho phép Biometric với giao dịch ≤ 1.000.000 VND). Backend kiểm tra ràng buộc nghiêm ngặt qua `mfaService.verifyChallenge`: đối chiếu `deviceId` (header `x-device-id`), `purpose`, `resourceId` và **bắt buộc `requestFingerprint` phải khớp chính xác với fingerprint của quote đã lưu trên DB**.
+     - Nếu `anomalyAssessment.riskLevel === "CRITICAL"` và chưa có `confirmHighRisk: true`, server từ chối với `409 CRITICAL_ANOMALY_BLOCKED` trước khi khóa tài khoản hay trừ số dư; nếu giao dịch được gắn cờ `MEDIUM`/`HIGH`/`CRITICAL` khi commit, server đồng thời ghi bản ghi vào `transaction_anomalies` và phát sự kiện `security.anomaly_detected`.
   3. **Bước 3: Thực thi lệnh chuyển tiền & Cơ chế chống Crash (Intent Safety Lifecycle):**
      - **Quy tắc an toàn Client:** Client chuyển trạng thái Intent sang `SUBMIT_UNKNOWN` và lưu bền vững vào `SecureStore` **trước khi** gửi request HTTP `POST /api/v1/transfers` (kèm `quoteId`, `stepUp` proof và header `Idempotency-Key`).
      - Nếu ứng dụng gặp sự cố mạng, sập nguồn hoặc crash giữa chừng: khi mở lại ứng dụng, hàm `restoreTransferIntent` phát hiện `SUBMIT_UNKNOWN`, lập tức kích hoạt cờ **`recoveryBlocked = true`** khóa màn hình giao diện không cho tạo lệnh mới (ngăn ngừa tuyệt đối rủi ro double-spend), đồng thời hiển thị hộp thoại cứu hộ để tự động truy vấn đối soát `GET /api/v1/transfers/{id}` hoặc chuyển sang quy trình Manual Review nếu có mã lỗi nghi vấn.
@@ -252,40 +252,29 @@ graph TD
   6. *Bài toán Chống tráo đổi dữ liệu & Chống TOCTOU (Context-Bound Fingerprint & Two-Phase Policy Check):* Toàn bộ nội dung Quote được băm thành `requestFingerprint` và bắt buộc đối chiếu khi xác thực mã TOTP. Server áp dụng cơ chế kiểm tra chính sách rủi ro 2 lần: một lần lúc lấy Quote và một lần nữa ngay trong transaction khi Submit, chặn đứng nguy cơ thay đổi hạn mức hoặc kích hoạt Kill Switch giữa chừng.
 - **Đánh giá chuẩn học thuật & Hướng dẫn bảo vệ đồ án:**
   - *Mức độ hoàn thiện đồ án:* Vượt xa yêu cầu đồ án sinh viên thông thường (thường chỉ làm CRUD số dư đơn giản). Chức năng này đạt chuẩn kiến trúc tham chiếu ngân hàng (Bank-grade Reference Architecture) với đầy đủ cơ chế bảo vệ tính toán, đồng thời, kế toán kép và phục hồi sự cố.
-  - *Ranh giới phạm vi học thuật (Academic Scope Boundary):* Dự án là Academic Reference Sandbox chạy local/emulator, chưa kết nối với lõi Core Banking thực (Temenos T24, Oracle Flexcube), chưa tích hợp mạng lưới liên ngân hàng (NAPAS 247, VietQR) và chưa qua kiểm định phần cứng bảo mật HSM / PCI-DSS. Việc hiểu và trình bày rõ ràng ranh giới này thể hiện tư duy kỹ sư chín chắn trước Hội đồng bảo vệ.
+  - *Ranh giới phạm vi học thuật (Academic Scope Boundary):* Dự án là Academic Reference Sandbox chạy local/emulator, chưa kết nối với lõi Core Banking thực (Temenos T24, Oracle Flexcube), chưa tích hợp mạng lưới NAPAS 247 thật (`MockNapasGateway` là cổng mô phỏng tất định local) và chưa qua kiểm định phần cứng bảo mật HSM / PCI-DSS. Việc hiểu và trình bày rõ ràng ranh giới này thể hiện tư duy kỹ sư chín chắn trước Hội đồng bảo vệ.
 
-#### UC-C10: Tạo & Quét mã QR thông tin nhận tiền (Receive Information QR)
+#### UC-C10: Tạo & Quét mã QR thông tin nhận tiền — VietQR EMVCo & NOVA QR v2 (Receive QR & VietQR)
 - **Tác nhân:** Khách hàng chia sẻ thông tin nhận tiền hoặc quét đọc thông tin người nhận.
-- **Tiền điều kiện:** Đã đăng nhập vào ứng dụng; có tài khoản thanh toán khả dụng.
+- **Tiền điều kiện:** Đã đăng nhập vào ứng dụng; có tài khoản thanh toán `ACTIVE`.
 - **Luồng sự kiện chính:**
   1. **Tạo mã QR nhận tiền ("QR của tôi"):**
-     - Mở tab QR (`mode="my"`), ứng dụng tự động lấy danh sách tài khoản (`GET /api/v1/accounts`) và gọi API lấy số tài khoản đầy đủ (`GET /api/v1/accounts/{id}/number`).
-     - Đóng gói dữ liệu bằng `createReceiveQrPayload` với cấu trúc JSON version 2 chuẩn hóa (`ReceiveQrPayload`):
-       ```json
-       {
-         "version": 2,
-         "kind": "RECEIVE_MONEY",
-         "accountNumber": "<số_tài_khoản_đầy_đủ>",
-         "displayName": "<tên_chủ_tài_khoản>",
-         "maskedAccountNumber": "<số_tài_khoản_che>",
-         "bankName": "<tên_ngân_hàng>",
-         "currency": "VND"
-       }
-       ```
+     - Mở tab QR (`mode="my"`), ứng dụng lấy danh sách tài khoản (`GET /api/v1/accounts`), cho phép chọn tài khoản thanh toán và gọi `GET /api/v1/accounts/{id}/number`.
+     - Hỗ trợ 2 chuẩn chuyển đổi linh hoạt:
+       + **Chuẩn VietQR (EMVCo Merchant Presented Mode — mặc định):** Mã hóa bằng `encodeVietQr` (`vietQrCodec.ts`) theo chuẩn TLV (`Tag 00=01`, `Tag 01=11` tĩnh hoặc `12` động, `Tag 38` chứa GUID `A000000727` + BIN `970400` + STK + `QRIBFTTA`, `Tag 53=704` VND, `Tag 54` số tiền động tùy chọn, `Tag 58=VN`, `Tag 59` tên chủ TK, `Tag 62.08` nội dung chuyển khoản tùy chọn, và `Tag 63` mã kiểm tra **CRC-16/CCITT-FALSE**).
+       + **Chuẩn nội bộ NOVA v2 (`ReceiveQrPayload` JSON):** Đóng gói `version: 2`, `kind: "RECEIVE_MONEY"`, `accountNumber`, `displayName`, `maskedAccountNumber`, `bankName`, `currency: "VND"`.
      - Validate an toàn trước khi vẽ: kiểm tra regex số tài khoản `^\d{6,34}$`, loại bỏ ký tự điều khiển Unicode ẩn (`\u0000-\u001f`) và chống Unicode Bidi override spoofing (`\u202e`).
-     - Hiển thị QR vector bằng `react-native-qrcode-svg` trên nền surface kèm cảnh báo: *"Đây không phải QR thanh toán và không tự tạo giao dịch. Luôn đối chiếu tên và tài khoản người nhận trước khi chuyển tiền."*
   2. **Quét & Phân tích mã QR ("Quét QR"):**
-     - Khách hàng cấp quyền camera (`useCameraPermissions`) và quét mã bằng `CameraView` (`expo-camera`); **hoặc** nhập/dán chuỗi text payload thủ công vào ô "Nội dung mã QR" và bấm "Đọc thông tin QR" (Manual Fallback cho máy ảo Emulator / CI / khi không có camera).
-     - Phân tích payload qua `parseReceiveQrPayload`: kiểm tra giới hạn độ dài `<= 4096`, cú pháp JSON, kiểm tra tập key nghiêm ngặt (`hasOnlyReceiveQrKeys`), phiên bản `version === 2`, `kind === "RECEIVE_MONEY"`, `currency === "VND"`.
-     - Gán nhãn an toàn: `trust: "UNVERIFIED"`.
-     - Hiển thị thông tin người nhận đã giải mã (Tên, số tài khoản che, ngân hàng) kèm hộp cảnh báo an toàn bị khóa chuyển tiền trực tiếp (`testID="qr-transfer-blocked"`): *"Cần xác minh trước khi chuyển. Mã này mới được kiểm tra định dạng. Hãy chọn người nhận đã xác minh trong màn hình Chuyển tiền."*
+     - Tự động kiểm tra/xin quyền camera (`useCameraPermissions`), bật camera sau (`facing="back"`) quét mã bằng `CameraView` (`expo-camera`), hỗ trợ mở Cài đặt OS khi bị từ chối quyền và tự kiểm tra lại khi quay về app; đồng thời giữ **Manual Fallback** dán chuỗi payload thủ công cho Emulator/CI.
+     - Giải mã tự động cả chuỗi **VietQR EMVCo** (xác minh cấu trúc TLV và đối chiếu **CRC-16/CCITT-FALSE**) lẫn **NOVA JSON v2** qua `parseReceiveQrPayload`.
+     - Phát hiện tự quét tài khoản của chính mình (`isSelfAccount`) để chặn tự chuyển tiền.
+     - Gán nhãn an toàn `trust: "UNVERIFIED"` kèm cảnh báo `qr-transfer-blocked`. Khi người dùng bấm "Chuyển tiền tới tài khoản này" (`qr-continue-transfer`), ứng dụng điều hướng sang `/transfer` truyền `accountNumber`, `bankBin`, `amountMinor`, `description` để màn hình Chuyển tiền **bắt buộc gọi server đối soát lại người nhận** (`lookupInternalRecipient` cho BIN NOVA `970400` hoặc `lookupExternalRecipient` cho 8 BIN liên ngân hàng NAPAS).
 - **Ranh giới an toàn (Trust Boundary - Quyết định D-20):**
-  - Quét mã QR tuyệt đối **không tự động phát sinh lệnh chuyển tiền** và **không có shortcut điều hướng trực tiếp sang chuyển tiền**.
-  - Mã QR không chứa `beneficiaryId` hay `amount` để ngăn chặn tấn công giả mạo người thụ hưởng từ nguồn dữ liệu không tin cậy bên ngoài. Khách hàng bắt buộc phải thực hiện luồng chuyển tiền độc lập (UC-C09) qua danh bạ hoặc tra cứu nội bộ trên server.
+  - Quét mã QR tuyệt đối **không tự động phát sinh lệnh chuyển tiền** và không tin cậy trực tiếp dữ liệu giải mã trên thiết bị; mọi thông tin người nhận phải được server xác minh lại qua lookup trước khi tạo quote và xác thực step-up.
 - **Mã nguồn liên quan:**
   - Mobile UI & Route: `mobile-app/src/app/(tabs)/qr.tsx`, `mobile-app/src/features/qr/screens/QrScreen.tsx`
-  - Types & Validation: `mobile-app/src/features/qr/types/qr.ts`, `mobile-app/src/features/qr/validation/qrPayload.ts`
-  - Unit Tests: `mobile-app/src/features/qr/validation/__tests__/qrPayload.test.ts`
+  - Types & Validation: `mobile-app/src/features/qr/types/qr.ts`, `mobile-app/src/features/qr/validation/qrPayload.ts`, `mobile-app/src/features/qr/validation/vietQrCodec.ts`
+  - Unit Tests: `mobile-app/src/features/qr/validation/__tests__/qrPayload.test.ts`, `mobile-app/src/features/qr/screens/__tests__/QrScreen.test.tsx`
 
 ---
 
@@ -561,7 +550,64 @@ graph TD
 
 ---
 
-## 3. PHÂN HỆ VẬN HÀNH & QUẢN TRỊ — ADMIN WEB (11 USE CASES)
+### Nhóm 7: Bảo mật mở rộng, Sinh trắc học, Cảnh báo bất thường & Liên ngân hàng mô phỏng (UC-C20 → UC-C23)
+
+#### UC-C20: Đổi mật khẩu, Quên/Đặt lại mật khẩu & Quản lý thiết bị đăng nhập (Password & Device Management)
+- **Tác nhân:** Khách hàng (đã đăng nhập cho Đổi mật khẩu / Thiết bị; chưa đăng nhập cho Quên mật khẩu).
+- **Luồng sự kiện chính:**
+  1. **Đổi mật khẩu (`ChangePasswordScreen`, `/change-password`):** Khách hàng nhập mật khẩu hiện tại và mật khẩu mới (12–128 ký tự). Nếu tài khoản đang bật TOTP `ACTIVE`, ứng dụng tạo challenge `PASSWORD_CHANGE` và yêu cầu xác thực TOTP step-up trước khi gửi `POST /api/v1/auth/password/change`. Thành công sẽ đổi mật khẩu và thu hồi toàn bộ phiên đăng nhập cũ (`sessionsRevoked: true`).
+  2. **Quên & Đặt lại mật khẩu (`ForgotPasswordScreen`, `/(auth)/forgot-password`):** Khách hàng nhập email → `POST /api/v1/auth/password/forgot` nhận challenge `PASSWORD_RESET` (không tiết lộ tài khoản có tồn tại hay không) → nhập mã Email OTP 6 số và mật khẩu mới → `POST /api/v1/auth/password/reset` đặt mật khẩu mới và thu hồi toàn bộ phiên cũ.
+  3. **Quản lý & Thu hồi thiết bị (`DevicesScreen`, `/devices`):** Gọi `GET /api/v1/auth/devices` hiển thị danh sách thiết bị đã đăng nhập (`deviceName`, `lastSeenAt`, `activeSessionCount`, đánh dấu thiết bị hiện tại). Chọn thu hồi gửi `DELETE /api/v1/auth/devices/{deviceId}` để chấm dứt mọi phiên trên thiết bị đó (nếu là thiết bị hiện tại sẽ tự động đăng xuất cục bộ).
+- **Mã nguồn liên quan:**
+  - Mobile: `mobile-app/src/features/auth/screens/ChangePasswordScreen.tsx`, `ForgotPasswordScreen.tsx`, `mobile-app/src/features/profile/screens/DevicesScreen.tsx`
+  - Backend: `backend/src/routes/authRoutes.ts`, `backend/src/controllers/authController.ts`, `backend/src/database/relationalAuthService.ts`
+  - Migration & Tables: `050_password_reset_and_device_metadata.sql`, `customer_devices`, `auth_challenges`, `auth_sessions`, `refresh_session_families`.
+
+#### UC-C21: Xác thực sinh trắc học gắn thiết bị (Device-Bound Biometric MFA)
+- **Tác nhân:** Khách hàng đã đăng nhập trên thiết bị hỗ trợ sinh trắc học (`expo-local-authentication`).
+- **Luồng sự kiện chính:**
+  1. **Đăng ký Biometric (`MfaMethodsScreen`, `/mfa`):** Khách hàng nhập mật khẩu hiện tại (và TOTP nếu đã bật factor trước đó), xác thực sinh trắc học cục bộ rồi gọi `POST /api/v1/auth/mfa/biometric/enroll` kèm `X-Device-ID`.
+  2. Server sinh `biometricSecret` 256-bit, mã hóa AES-256-GCM lưu vào `mfa_credentials` (`credential_type = 'BIOMETRIC'`, unique active theo `customer_id, device_id`), trả về secret một lần duy nhất; Mobile lưu an toàn trong `biometricCredentialStorage.ts` (SecureStore).
+  3. **Sử dụng Biometric Step-Up & Mở khóa ứng dụng:** Khi khóa phiên trên `_layout.tsx` khách hàng có thể bấm "Mở khóa bằng Sinh trắc học" trước khi refresh phiên; khi chuyển tiền ≤ 1.000.000 VND, Mobile xác thực sinh trắc học cục bộ rồi tạo chữ ký `biometric-v1.<sha256(biometric-v1:secret:challengeId:deviceId:purpose:resourceId)>` để server đối chiếu bằng `timingSafeEqual`.
+  4. **Thu hồi:** Khách hàng gỡ phương thức tại `/mfa` (`DELETE /api/v1/auth/mfa/methods/{id}`), xóa cả bản ghi SecureStore cục bộ.
+- **Mã nguồn liên quan:**
+  - Mobile: `mobile-app/src/services/security/biometricAuth.ts`, `mobile-app/src/features/auth/storage/biometricCredentialStorage.ts`, `MfaMethodsScreen.tsx`, `src/app/_layout.tsx`
+  - Backend: `backend/src/mfa/crypto.ts`, `backend/src/mfa/persistentMfaService.ts`, `backend/src/database/repositories/mfaRepository.ts`
+  - Migration & Tables: `046_biometric_authentication.sql`, `mfa_credentials`, `auth_challenges`.
+
+#### UC-C22: Cảnh báo & Phản hồi giao dịch bất thường (Transaction Anomaly Alerts)
+- **Tác nhân:** Khách hàng có giao dịch bị hệ thống chấm điểm rủi ro (`MEDIUM` / `HIGH` / `CRITICAL`).
+- **Luồng sự kiện chính:**
+  1. Khi báo giá và thực thi chuyển tiền, `evaluateTransferAnomaly` (`backend/src/domain/anomaly/calculations.ts`) đánh giá 6 quy tắc tất định dùng `BigInt`: `HIGH_VALUE_TRANSFER` (≥ 3,5M VND, +35), `LARGE_BALANCE_DRAIN` (≥ 1M và rút ≥ 80% số dư khả dụng, +30), `NEW_RECIPIENT_HIGH_AMOUNT` (≥ 3M cho người nhận mới, +30), `VELOCITY_SPIKE` (≥ 3 lệnh trong 10 phút, +40), `RAPID_REPEATED_RECIPIENT` (lặp lại cùng người nhận trong 15 phút, +35), `UNUSUAL_NIGHT_HOUR` (≥ 3M trong khung 00:00–05:00 giờ VN, +25).
+  2. Mức `CRITICAL` (điểm ≥ 75) bị chặn `409 CRITICAL_ANOMALY_BLOCKED` nếu chưa bật `confirmHighRisk`. Các giao dịch có điểm ≥ 25 (`MEDIUM`/`HIGH`/`CRITICAL`) được ghi vào bảng `transaction_anomalies` kèm sự kiện outbox `security.anomaly_detected`.
+  3. Khách hàng mở màn hình Cảnh báo (`/anomalies`, `AnomalyAlertsScreen.tsx`) gọi `GET /api/v1/anomalies` và `GET /api/v1/anomalies/{id}` để xem lý do chi tiết và lọc theo trạng thái (`OPEN`, `CONFIRMED_SAFE`, `REPORTED_SUSPICIOUS`, `RESOLVED`).
+  4. Khách hàng gửi phản hồi qua `POST /api/v1/anomalies/{id}/acknowledge`: chọn `CONFIRMED_SAFE` (xác nhận giao dịch hợp lệ) hoặc `REPORTED_SUSPICIOUS` (báo nghi ngờ kèm ghi chú tối đa 500 ký tự — phát thông báo `SECURITY` & outbox `SECURITY_ANOMALY_ACKNOWLEDGED` đẩy lên hàng đợi Admin UC-A13).
+- **Mã nguồn liên quan:**
+  - Mobile: `mobile-app/src/app/anomalies.tsx`, `mobile-app/src/features/anomalies/screens/AnomalyAlertsScreen.tsx`, `anomalyApi.ts`
+  - Backend: `backend/src/routes/anomalyRoutes.ts`, `anomalyController.ts`, `database/anomalyService.ts`, `database/repositories/anomalyRepository.ts`, `domain/anomaly/`
+  - Migration & Tables: `045_transaction_anomaly_detection.sql`, `transaction_anomalies`, `notifications`, `outbox_events`, `audit_events`.
+
+#### UC-C23: Tra cứu & Chuyển khoản liên ngân hàng mô phỏng NAPAS IBFT (Mock NAPAS Interbank Transfer)
+- **Tác nhân:** Khách hàng chuyển tiền tới tài khoản thuộc 8 ngân hàng Việt Nam ngoài hệ thống NOVA (`VCB`, `TCB`, `MB`, `TPB`, `ACB`, `BIDV`, `VietinBank`, `Agribank`).
+- **Luồng sự kiện chính:**
+  1. Trên `TransferScreen` (chọn tab Liên ngân hàng hoặc đi từ quét VietQR có BIN ≠ `970400`), khách hàng chọn ngân hàng (mã BIN 6 chữ số) và nhập số tài khoản đích (6–34 chữ số).
+  2. Ứng dụng gửi `POST /api/v1/external-recipients/lookup`. Server gọi `MockNapasGateway.inquireAccount` và lưu `recipient_lookups` với `rail = 'NAPAS_IBFT'` (TTL 5 phút).
+  3. Khách hàng nhập số tiền và tạo báo giá (`POST /api/v1/transfers/quote` kèm `lookupId`), nhận phí động từ `control_policy`, xác thực step-up (TOTP hoặc Biometric ≤ 1M VND) và submit (`POST /api/v1/transfers` + `Idempotency-Key`).
+  4. **Hạch toán 2 pha `held_minor` nguyên tử:**
+     - *Pha 1:* Giảm `available_minor` của tài khoản nguồn, tăng `held_minor += totalDebit` (giữ nguyên `current_minor`), tạo bản ghi `transfers` trạng thái `PENDING` với `rail = 'NAPAS_IBFT'`.
+     - *Pha 2:* Gọi `MockNapasGateway.settleTransfer`:
+       + `SUCCEEDED` (mã `00`): giảm `current_minor` và giải phóng `held_minor`, ghi sổ cái kép cân bằng và chuyển trạng thái `SUCCEEDED`.
+       + `FAILED` (ví dụ STK đuôi `9999`, mã `68`): hoàn lại `available_minor`, giải phóng `held_minor`, ghi `failure_reason` và chuyển `FAILED`.
+       + `PENDING` (STK đuôi `8888`/`8899`, mã `09`): giữ nguyên trạng thái `PENDING` và `held_minor` để worker đối soát tự động (UC-S04).
+- **Ranh giới học thuật:** `MockNapasGateway` là cổng mô phỏng tất định local; không gửi lệnh ra mạng lưới NAPAS 247 thật.
+- **Mã nguồn liên quan:**
+  - Mobile: `mobile-app/src/features/transfers/screens/TransferScreen.tsx`, `TransferStepViews.tsx`, `transfersApi.ts`
+  - Backend: `backend/src/domain/napas/mockNapasGateway.ts`, `backend/src/database/transferService.ts`, `backend/src/routes/transferRoutes.ts`
+  - Migration & Tables: `049_interbank_transfers_and_held_funds.sql`, `recipient_lookups`, `transfer_quotes`, `transfers`, `payment_accounts`, `ledger_journals`, `ledger_entries`.
+
+---
+
+## 3. PHÂN HỆ VẬN HÀNH & QUẢN TRỊ — ADMIN WEB (13 USE CASES)
 
 #### UC-A01: Xác thực nhân viên & Quản lý phiên làm việc (Staff Authentication)
 - **Tác nhân:** Nhân viên ngân hàng (Vai trò: `OPERATIONS` hoặc `ADMIN`).
@@ -724,9 +770,35 @@ graph TD
   - Backend: `backend/src/admin/http/adminHttp.ts`
   - Tables: `audit_events`.
 
+#### UC-A12: Quản trị Chính sách vận hành, Biểu phí động & Đối soát Sổ cái kép (Control Policy & Ledger Reconciliation)
+- **Tác nhân:** Quản trị viên cấp cao (`ADMIN` với quyền `audit.read` cho chính sách; `outbox.read` cho đối soát sổ cái).
+- **Giao diện & Đường dẫn:** Menu **"Chính sách & Biểu phí"** (`#/policy`) trong nhóm *5. Quản trị* (`admin-web/src/features/policy/PolicyView.tsx`).
+- **Luồng sự kiện chính:**
+  1. **Đối soát Sổ cái kép (Trial Balance Reconciliation):** Màn hình gọi `GET /admin/operations/ledger-reconciliation`. Server kiểm tra toàn bộ bút toán trong `ledger_journals` / `ledger_entries` (phát hiện journal có $\sum \text{DEBIT} \neq \sum \text{CREDIT}$) và so khớp tổng số dư `SUM(current_minor)` trên `payment_accounts` với tổng ròng `SUM(CREDIT) - SUM(DEBIT)` của tất cả `ledger_entries` mang `account_ref LIKE 'payment-account:%'` (đã chuẩn hóa tại migration `047`), trả về trạng thái `BALANCED` hoặc `MISMATCH` cùng độ lệch `discrepancyMinor`.
+  2. **Xem & Cập nhật Chính sách vận hành động:** Gọi `GET /admin/control-policy` để hiển thị phiên bản cấu hình hiện tại (`configVersion`), `globalKillSwitch`, công tắc dịch vụ (`transfersEnabled`, `savingsEnabled`, `creditEnabled`), hạn mức mỗi giao dịch (`maxTransferAmountMinor`), hạn mức lũy kế ngày (`dailyTransferLimitMinor`, migration `048`) và biểu phí chuyển tiền (`transferFeeMinor`, migration `051`).
+  3. Khi Admin lưu thay đổi, hệ thống kiểm tra phiên Step-up; nếu chưa tươi thì bật hộp thoại nhập mã TOTP 6 số (`POST /admin/auth/step-up`), sau đó gửi `PATCH /admin/control-policy` kèm `reasonCode`.
+  4. Server xác thực fresh step-up MFA, cập nhật singleton `control_policy`, tăng `configVersion` và ghi nhật ký kiểm toán `CONTROL_POLICY_UPDATED`.
+- **Mã nguồn liên quan:**
+  - Admin Web: `admin-web/src/features/policy/PolicyView.tsx`, `admin-web/src/components/layout/AppLayout.tsx`, `admin-web/src/router.ts`
+  - Backend: `backend/src/admin/http/adminHttp.ts`, `backend/src/admin/repositories/adminRepository.ts`, `backend/src/database/controlPolicyRepository.ts`
+  - Migrations & Tables: `047_normalize_ledger_account_refs.sql`, `048_daily_transfer_limit_policy.sql`, `051_dynamic_transfer_fee_policy.sql`, `control_policy`, `payment_accounts`, `ledger_journals`, `ledger_entries`, `audit_events`.
+
+#### UC-A13: Giám sát & Xử lý hàng đợi Cảnh báo giao dịch bất thường (Admin Anomaly Queue & Resolution)
+- **Tác nhân:** Nhân viên vận hành & Quản trị (`transfer.pending.read` để xem; `transfer.action.request` để đánh dấu xử lý).
+- **Giao diện & Đường dẫn:** Khu vực **Anomaly Detection Queue** tích hợp trên trang **Giao dịch** (`#/transfers`, `admin-web/src/features/transfers/Transfers.tsx`).
+- **Luồng sự kiện chính:**
+  1. Nhân viên truy cập trang Giao dịch; hệ thống gọi `GET /admin/anomalies` lấy danh sách cảnh báo giao dịch bất thường sắp theo mức độ rủi ro và thời gian.
+  2. Xem điểm rủi ro (`riskScore`), mức độ (`MEDIUM`/`HIGH`/`CRITICAL`), danh sách mã quy tắc kích hoạt (`ruleCodes`) và trạng thái phản hồi từ khách hàng (`OPEN`, `CONFIRMED_SAFE`, `REPORTED_SUSPICIOUS`, `RESOLVED`).
+  3. Nhân viên kiểm tra và bấm đánh dấu xử lý: gửi `POST /admin/anomalies/{anomalyId}/resolve` kèm header `Idempotency-Key`, `reasonCode` (`FRAUD_VERIFIED_REVIEWED` hoặc `ANOMALY_REVIEWED`) và ghi chú.
+  4. Server cập nhật `transaction_anomalies.status = 'RESOLVED'`, lưu `resolved_by_staff_id`, `resolution_code`, `resolved_at` và ghi log kiểm toán.
+- **Mã nguồn liên quan:**
+  - Admin Web: `admin-web/src/features/transfers/Transfers.tsx`
+  - Backend: `backend/src/admin/http/adminHttp.ts`, `backend/src/admin/authorization/permissionRegistry.ts`, `backend/src/admin/repositories/adminRepository.ts`
+  - Migration & Tables: `045_transaction_anomaly_detection.sql`, `transaction_anomalies`, `audit_events`.
+
 ---
 
-## 4. PHÂN HỆ HỆ THỐNG NGẦM TỰ ĐỘNG — SYSTEM WORKER (3 USE CASES)
+## 4. PHÂN HỆ HỆ THỐNG NGẦM TỰ ĐỘNG — SYSTEM WORKER (4 USE CASES)
 
 #### UC-S01: Xử lý hàng đợi sự kiện giao dịch (Transactional Outbox Dispatcher)
 - **Tác nhân:** `worker.ts` process chạy ngầm độc lập.
@@ -771,62 +843,82 @@ graph TD
   - Backend: [`lifecycleService.ts`](file:///c:/Projects/banking-system/backend/src/database/lifecycleService.ts)
   - Tables: `credit_accounts`, `credit_cards`, `credit_statements`, `credit_lifecycle_operations`.
 
+#### UC-S04: Tự động đối soát giao dịch liên ngân hàng NAPAS treo (Pending Interbank Transfer Reconciliation)
+- **Tác nhân:** `RelationalLifecycleScheduler` chạy ngầm trong tiến trình Worker.
+- **Luồng sự kiện chính:**
+  1. Ở mỗi chu kỳ `runTick`, sau khi xử lý đáo hạn tiết kiệm/suspense và vòng đời thẻ tín dụng, scheduler gọi `RelationalTransferService.reconcilePendingInterbankTransfers(asOf, batchSize)`.
+  2. Truy vấn theo lô các giao dịch `transfers` có `rail = 'NAPAS_IBFT'` và `status = 'PENDING'` (đang phong tỏa số tiền trong `held_minor`).
+  3. Gọi `MockNapasGateway.inquirePendingSettlement` để lấy kết quả đối soát cuối cùng từ cổng mô phỏng:
+     - Nếu `SUCCEEDED`: thực hiện pha 2 trừ `current_minor`, giải phóng `held_minor`, ghi bút toán sổ cái kép và cập nhật `transfers`/`account_transactions` sang `SUCCEEDED`.
+     - Nếu `FAILED` (ví dụ STK đuôi `8899`/`9999`): hoàn trả `available_minor`, giải phóng `held_minor`, ghi `failure_reason` và cập nhật trạng thái `FAILED`.
+  4. Cập nhật Prometheus metric `scheduled_lifecycle_jobs_succeeded_total` kèm trạng thái sức khỏe scheduler.
+- **Mã nguồn liên quan:**
+  - Backend: [`lifecycleScheduler.ts`](file:///c:/Projects/banking-system/backend/src/workers/lifecycleScheduler.ts), [`transferService.ts`](file:///c:/Projects/banking-system/backend/src/database/transferService.ts), [`mockNapasGateway.ts`](file:///c:/Projects/banking-system/backend/src/domain/napas/mockNapasGateway.ts)
+  - Tables: `transfers`, `payment_accounts`, `account_transactions`, `ledger_journals`, `ledger_entries`, `notifications`, `outbox_events`.
+
 ---
 
 ## 5. BẢNG ĐỐI CHIẾU MÃ NGUỒN VÀ OPENAPI CONTRACT
 
 | Mã Use Case | Tên Use Case | Tác nhân | Entrypoint / UI Code | API Endpoint / Route | Database Table chính (Active Runtime) |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **UC-C01** | Đăng ký tài khoản mới | Khách hàng | `mobile-app/src/app/(auth)/register.tsx` | `POST /auth/register`, `POST /auth/register/verify` | `customers`, `pending_registrations`, `registration_completions`, `accounts`, `customer_devices`, `rate_limit_buckets` |
-| **UC-C02** | Đăng nhập & Quản lý phiên | Khách hàng | `mobile-app/src/app/(auth)/login.tsx` | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout` | `auth_sessions`, `refresh_session_families`, `refresh_session_records`, `auth_security_events`, `rate_limit_buckets` |
+| **UC-C01** | Đăng ký tài khoản mới | Khách hàng | `mobile-app/src/app/(auth)/register.tsx` | `POST /auth/register`, `POST /auth/register/verify` | `customers`, `pending_registrations`, `registration_completions`, `payment_accounts`, `customer_devices`, `rate_limit_buckets` |
+| **UC-C02** | Đăng nhập & Quản lý phiên | Khách hàng | `mobile-app/src/app/(auth)/login.tsx` | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/logout-all` | `auth_sessions`, `refresh_session_families`, `refresh_session_records`, `auth_security_events`, `rate_limit_buckets` |
 | **UC-C03** | Xác thực MFA TOTP & Khôi phục | Khách hàng | `mobile-app/src/app/mfa.tsx` | `POST /auth/mfa/totp/enroll`, `POST /auth/mfa/recover` | `mfa_credentials`, `mfa_recovery_codes`, `mfa_recovery_requests`, `auth_security_events` |
 | **UC-C04** | Khai báo & Theo dõi hồ sơ định danh | Khách hàng | `mobile-app/src/app/kyc.tsx` | `GET /kyc/application`, `POST /kyc/application/submit` | `kyc_applications`, `kyc_reviews`, `case_assignments` |
-| **UC-C05** | Xem tài khoản & Số dư | Khách hàng | `mobile-app/src/app/(tabs)/index.tsx` | `GET /accounts`, `GET /accounts/{id}/number` | `accounts` |
-| **UC-C06** | Lịch sử & Chi tiết giao dịch | Khách hàng | `mobile-app/src/app/history.tsx` | `GET /accounts/{id}/transactions`, `GET .../transactions/{id}` | `transactions` |
-| **UC-C07** | Quản lý người thụ hưởng | Khách hàng | `mobile-app/src/app/beneficiaries.tsx` | `GET /beneficiaries`, `POST /beneficiaries`, `DELETE ...` | `beneficiaries` |
+| **UC-C05** | Xem tài khoản & Số dư | Khách hàng | `mobile-app/src/app/(tabs)/index.tsx` | `GET /accounts`, `GET /accounts/{id}/number` | `payment_accounts` |
+| **UC-C06** | Lịch sử, Lọc nâng cao, Thống kê tháng & Xuất sao kê | Khách hàng | `mobile-app/src/app/history.tsx` | `GET /accounts/{id}/transactions`, `GET .../summary`, `GET .../statement-export` | `account_transactions`, `payment_accounts` |
+| **UC-C07** | Quản lý người thụ hưởng | Khách hàng | `mobile-app/src/app/beneficiaries.tsx` | `GET /beneficiaries`, `POST /beneficiaries`, `PATCH/DELETE ...` | `beneficiaries` |
 | **UC-C08** | Tra cứu người nhận nội bộ | Khách hàng | `mobile-app/src/app/transfer.tsx` | `POST /internal-recipients/lookup` | `recipient_lookups` |
-| **UC-C09** | Chuyển tiền nội bộ NOVA | Khách hàng | `mobile-app/src/app/transfer.tsx` | `POST /transfers/quote`, `POST /transfers` | `transfers`, `transfer_quotes`, `payment_accounts`, `account_transactions`, `ledger_entries`, `command_idempotency` |
-| **UC-C10** | Tạo & Quét mã QR thanh toán | Khách hàng | `mobile-app/src/app/(tabs)/qr.tsx` | Client-side QR Parser & Payload Validator | `accounts` (Client-side parser & format validator) |
+| **UC-C09** | Chuyển tiền nội bộ NOVA | Khách hàng | `mobile-app/src/app/transfer.tsx` | `POST /transfers/quote`, `POST /transfers` | `transfers`, `transfer_quotes`, `payment_accounts`, `account_transactions`, `ledger_entries`, `command_idempotency`, `control_policy` |
+| **UC-C10** | Tạo & Quét mã QR (VietQR EMVCo & NOVA v2) | Khách hàng | `mobile-app/src/app/(tabs)/qr.tsx` | Client-side VietQR TLV/CRC-16 & NOVA v2 Parser → `/transfer` lookup | `payment_accounts` (Client codec + server lookup) |
 | **UC-C11** | Mở sổ tiết kiệm có kỳ hạn | Khách hàng | `mobile-app/src/app/savings/open.tsx` | `GET /savings/products`, `POST /savings/quotes`, `POST /savings/deposits` | `savings_products`, `savings_quotes`, `savings_deposits`, `savings_openings`, `savings_idempotency` |
-| **UC-C12** | Quản lý danh mục, Đổi đáo hạn & Tất toán trước hạn | Khách hàng | `mobile-app/src/app/savings/index.tsx` | `GET /savings/deposits`, `GET /savings/deposits/{id}`, `PATCH .../deposits/{id}`, `POST .../deposits/{id}/withdraw` | `savings_deposits`, `payment_accounts`, `account_transactions`, `ledger_entries`, `auth_challenges` |
-| **UC-C13** | Đăng ký & Kích hoạt thẻ tín dụng | Khách hàng | `mobile-app/src/app/cards/apply.tsx` | `POST /credit/applications`, `POST .../activate` | `credit_applications`, `credit_accounts`, `credit_cards`, `credit_idempotency` |
-| **UC-C14** | Quản lý an toàn thẻ tín dụng | Khách hàng | `mobile-app/src/app/cards.tsx` | `POST /cards/{id}/lock`, `POST /cards/{id}/unlock` | `credit_cards`, `card_security_cases` |
-| **UC-C15** | Tra cứu thẻ & Sao kê tín dụng | Khách hàng | `mobile-app/src/app/cards/[cardId]/statements.tsx` | `GET /credit/accounts/{id}/statements` | `credit_accounts`, `credit_statements`, `credit_transactions`, `credit_statement_items` |
+| **UC-C12** | Quản lý danh mục, Đổi đáo hạn & Tất toán trước hạn | Khách hàng | `mobile-app/src/app/savings/index.tsx` | `GET /savings/deposits`, `PATCH .../deposits/{id}`, `POST .../deposits/{id}/withdraw` | `savings_deposits`, `payment_accounts`, `account_transactions`, `ledger_entries`, `auth_challenges` |
+| **UC-C13** | Đăng ký & Kích hoạt thẻ tín dụng | Khách hàng | `mobile-app/src/app/cards/apply.tsx` | `POST /credit/applications`, `POST .../activate` | `credit_applications`, `credit_accounts`, `credit_cards`, `credit_idempotency`, `kyc_applications` |
+| **UC-C14** | Quản lý an toàn thẻ tín dụng | Khách hàng | `mobile-app/src/app/cards.tsx` | `POST /cards/{id}/lock`, `POST .../unlock`, `POST .../report-lost` | `credit_cards`, `card_security_cases` |
+| **UC-C15** | Tra cứu thẻ & Sao kê tín dụng | Khách hàng | `mobile-app/src/app/cards/[cardId]/statements.tsx` | `GET /credit/accounts/{id}/statements`, `GET .../transactions` | `credit_accounts`, `credit_statements`, `credit_transactions`, `credit_statement_items` |
 | **UC-C16** | Thanh toán dư nợ thẻ tín dụng | Khách hàng | `mobile-app/src/app/cards/[cardId]/pay.tsx` | `POST /credit/payment-quotes`, `POST /credit/payments` | `credit_statements`, `credit_payments`, `credit_payment_quotes`, `payment_accounts`, `credit_idempotency` |
 | **UC-C17** | Quản lý thông báo người dùng | Khách hàng | `mobile-app/src/app/notifications.tsx` | `GET /notifications`, `POST /notifications/{id}/read` | `notifications`, `notification_endpoints`, `notification_preferences` |
 | **UC-C18** | Trợ lý giải đáp NOVA Help | Khách hàng | `mobile-app/src/app/assistant.tsx` | `POST /assistant/help` | Knowledge Catalog (Read-only / No DB mutation) |
 | **UC-C19** | Tư vấn lập kế hoạch tài chính | Khách hàng | `mobile-app/src/app/financial-advice.tsx` | `POST /assistant/financial-advice` | Deterministic BigInt Math (No DB mutation) |
+| **UC-C20** | Đổi/Quên/Đặt lại mật khẩu & Quản lý thiết bị | Khách hàng | `change-password.tsx`, `(auth)/forgot-password.tsx`, `devices.tsx` | `POST /auth/password/change`, `/forgot`, `/reset`, `GET/DELETE /auth/devices` | `customers`, `customer_devices`, `auth_challenges`, `auth_sessions`, `refresh_session_families` |
+| **UC-C21** | Xác thực sinh trắc học gắn thiết bị (`biometric-v1`) | Khách hàng | `mobile-app/src/app/mfa.tsx`, `src/app/_layout.tsx` | `POST /auth/mfa/biometric/enroll`, `DELETE /auth/mfa/methods/{id}` | `mfa_credentials`, `auth_challenges`, `auth_security_events` |
+| **UC-C22** | Cảnh báo & Phản hồi giao dịch bất thường | Khách hàng | `mobile-app/src/app/anomalies.tsx` | `GET /anomalies`, `GET /anomalies/{id}`, `POST /anomalies/{id}/acknowledge` | `transaction_anomalies`, `notifications`, `outbox_events`, `audit_events` |
+| **UC-C23** | Tra cứu & Chuyển khoản liên ngân hàng mô phỏng NAPAS IBFT | Khách hàng | `mobile-app/src/app/transfer.tsx` | `POST /external-recipients/lookup`, `POST /transfers/quote`, `POST /transfers` | `recipient_lookups`, `transfer_quotes`, `transfers`, `payment_accounts`, `ledger_journals`, `ledger_entries` |
 | **UC-A01** | Xác thực nhân viên & Quản lý phiên | Nhân viên | `admin-web/src/features/auth/Login.tsx` | `POST /admin/auth/login`, `GET /admin/me`, `POST /admin/auth/logout` | `staff_users`, `staff_sessions`, `staff_mfa_credentials`, `staff_auth_challenges`, `admin_bootstrap_state` |
-| **UC-A02** | Quản lý nhân sự & Phân quyền | Admin | `admin-web/src/features/staff/StaffView.tsx` | `GET /admin/staff`, `POST .../role-change-requests` | `staff_users`, `staff_roles`, `admin_staff_account_creation_requests`, `staff_role_change_requests` |
-| **UC-A03** | Kiểm soát tài khoản khách hàng | Nhân viên | `admin-web/src/features/customers/Customers.tsx` | `POST .../access-lock-requests`, `POST .../block-requests` | `customers`, `accounts`, `customer_access_change_requests`, `account_status_change_requests`, `status_history` |
-| **UC-A04** | Cấp vốn thử nghiệm & Đảo ngược | Nhân viên | `admin-web/src/features/customers/Customers.tsx` | `POST .../funding-requests`, `POST .../funding-reversal` | `simulation_funding_requests`, `simulation_funding_reversals` |
-| **UC-A05** | Thẩm định & Phê duyệt hồ sơ định danh | Nhân viên | `admin-web/src/features/applications/Applications.tsx` | `POST /admin/kyc-applications/{id}/claim`, `.../decisions` | `kyc_applications`, `kyc_reviews`, `case_assignments`, `application_decision_requests` |
-| **UC-A06** | Thẩm định & Phê duyệt hồ sơ tín dụng | Nhân viên | `admin-web/src/features/applications/Applications.tsx` | `POST /admin/credit-applications/{id}/claim`, `.../decisions` | `credit_applications`, `case_assignments`, `application_decision_requests` |
-| **UC-A07** | Giám sát & Xử lý sự cố chuyển tiền | Nhân viên | `admin-web/src/features/transfers/Transfers.tsx` | `GET /admin/transfers/{id}/timeline`, `POST .../reversal` | `transfers`, `transfer_operation_requests` |
-| **UC-A08** | Hòm thư phê duyệt Maker-Checker | Checker | `admin-web/src/features/approvals/Approvals.tsx` | `GET /admin/approvals`, `POST .../{id}/approve` | `admin_action_requests`, `admin_action_decisions`, `admin_action_execution_attempts` |
+| **UC-A02** | Quản lý nhân sự & Phân quyền | Admin | `admin-web/src/features/staff/StaffView.tsx` | `GET /admin/staff`, `POST /admin/staff/operations-accounts`, `POST .../role-change-requests` | `staff_users`, `staff_roles`, `admin_staff_account_creation_requests`, `staff_role_change_requests` |
+| **UC-A03** | Kiểm soát tài khoản khách hàng | Nhân viên | `admin-web/src/features/customers/Customers.tsx` | `POST .../access-lock-requests`, `POST .../block-requests` | `customers`, `payment_accounts`, `customer_access_change_requests`, `account_status_change_requests`, `status_history` |
+| **UC-A04** | Cấp vốn thử nghiệm & Đảo ngược | Nhân viên | `admin-web/src/features/customers/Customers.tsx` | `POST .../funding-requests`, `POST .../funding-reversal-requests` | `simulation_funding_requests`, `simulation_funding_reversals` |
+| **UC-A05** | Thẩm định & Phê duyệt hồ sơ định danh | Nhân viên | `admin-web/src/features/applications/Applications.tsx` | `POST /admin/kyc-applications/{id}/claim`, `.../review-recommendations` | `kyc_applications`, `kyc_reviews`, `case_assignments`, `application_decision_requests` |
+| **UC-A06** | Thẩm định & Phê duyệt hồ sơ tín dụng | Nhân viên | `admin-web/src/features/applications/Applications.tsx` | `POST /admin/credit-applications/{id}/claim`, `.../review-recommendations` | `credit_applications`, `case_assignments`, `application_decision_requests` |
+| **UC-A07** | Giám sát & Xử lý sự cố chuyển tiền | Nhân viên | `admin-web/src/features/transfers/Transfers.tsx` | `GET /admin/transfers/{id}/timeline`, `POST .../reversal-requests` | `transfers`, `transfer_operation_requests` |
+| **UC-A08** | Hòm thư phê duyệt Maker-Checker | Checker | `admin-web/src/features/approvals/Approvals.tsx` | `GET /admin/approvals`, `POST .../{id}/approve`, `/reject` | `admin_action_requests`, `admin_action_decisions`, `admin_action_execution_attempts` |
 | **UC-A09** | Giám sát Outbox & Dead-Letter | Nhân viên | `admin-web/src/features/operations/Operations.tsx` | `GET .../outbox/dead-letters`, `POST .../requeue-requests` | `outbox_events`, `dead_letter_events`, `outbox_requeue_requests` |
 | **UC-A10** | Giám sát & Thử lại Background Jobs | Nhân viên | `admin-web/src/features/operations/Operations.tsx` | `GET /admin/operations/jobs`, `POST .../retry-requests` | `background_jobs`, `job_retry_requests`, `job_retry_history` |
 | **UC-A11** | Kiểm tra nhật ký & Xuất kiểm toán | Cán bộ kiểm toán | `admin-web/src/features/audit/AuditView.tsx` | `GET /admin/audit-events`, `POST /admin/audit-export-requests` | `audit_events` (Triggers immutable) |
+| **UC-A12** | Quản trị Chính sách, Biểu phí động & Đối soát Sổ cái kép | Admin | `admin-web/src/features/policy/PolicyView.tsx` | `GET/PATCH /admin/control-policy`, `GET /admin/operations/ledger-reconciliation` | `control_policy`, `payment_accounts`, `ledger_journals`, `ledger_entries`, `audit_events` |
+| **UC-A13** | Giám sát & Xử lý hàng đợi Cảnh báo bất thường | Nhân viên / Admin | `admin-web/src/features/transfers/Transfers.tsx` | `GET /admin/anomalies`, `POST /admin/anomalies/{id}/resolve` | `transaction_anomalies`, `audit_events` |
 | **UC-S01** | Transactional Outbox Dispatcher | Hệ thống | `backend/src/workers/workerRuntime.ts` | Daemon Polling & Exponential Backoff Dispatcher | `outbox_events`, `notification_deliveries`, `worker_instances` |
 | **UC-S02** | Đáo hạn & Tái tục Tiết kiệm | Hệ thống | `backend/src/database/lifecycleService.ts` | Scheduled Lifecycle Daemon: Maturity & Suspense | `savings_deposits`, `savings_maturity_operations`, `savings_maturity_suspense` |
 | **UC-S03** | Chốt sao kê & Quá hạn Thẻ tín dụng | Hệ thống | `backend/src/database/lifecycleService.ts` | Scheduled Lifecycle Daemon: Statement & Delinquency | `credit_statements`, `credit_accounts`, `credit_cards`, `credit_lifecycle_operations` |
+| **UC-S04** | Đối soát giao dịch liên ngân hàng NAPAS treo | Hệ thống | `backend/src/workers/lifecycleScheduler.ts` | Scheduled Lifecycle Daemon: `reconcilePendingInterbankTransfers` | `transfers`, `payment_accounts`, `account_transactions`, `ledger_journals`, `ledger_entries` |
 
 ---
 
-### 5.1 Danh mục 79 Bảng Cơ sở Dữ liệu Nghiệp vụ Đang Vận hành (Active Runtime)
+### 5.1 Nhóm Bảng Cơ sở Dữ liệu Nghiệp vụ Đang Vận hành (Migrations `001`–`051`)
 
-Hệ thống cơ sở dữ liệu PostgreSQL 16 hiện vận hành chính xác **79 bảng nghiệp vụ**, được phân bổ khoa học theo 8 miền chức năng để phục vụ toàn diện 33 Use Cases:
+Hệ thống PostgreSQL 16 (gồm **51 migration forward-only** `001`–`051`, tổng cộng 94 lệnh `CREATE TABLE` qua toàn bộ lịch sử schema) vận hành các nhóm bảng nghiệp vụ chủ chốt theo 8 miền chức năng phục vụ 40 Use Cases:
 
-1. *Khách hàng & Hồ sơ định danh (10 bảng):* `customers`, `customer_devices`, `pending_registrations`, `registration_completions`, `kyc_applications`, `kyc_reviews`, `case_assignments`, `application_decision_requests`, `customer_feature_entitlements`, `rate_limit_buckets`.
-2. *Xác thực & Phiên làm việc (8 bảng):* `auth_sessions`, `refresh_session_families`, `refresh_session_records`, `mfa_credentials`, `mfa_recovery_codes`, `mfa_recovery_requests`, `auth_security_events`, `auth_challenges`.
-3. *Tài khoản, Sổ cái kép & Giao dịch thanh toán (13 bảng):* `accounts`, `payment_accounts`, `account_transactions`, `transactions`, `beneficiaries`, `recipient_lookups`, `transfers`, `transfer_quotes`, `command_idempotency`, `transfer_operation_requests`, `ledger_journals`, `ledger_entries`, `balance_snapshots`.
-4. *Tiết kiệm có kỳ hạn (7 bảng):* `savings_products`, `savings_quotes`, `savings_deposits`, `savings_openings`, `savings_idempotency`, `savings_maturity_operations`, `savings_maturity_suspense`.
-5. *Thẻ & Tín dụng cá nhân (11 bảng):* `credit_applications`, `credit_accounts`, `credit_cards`, `credit_transactions`, `credit_statements`, `credit_statement_items`, `credit_payments`, `credit_payment_quotes`, `credit_idempotency`, `card_security_cases`, `credit_lifecycle_operations`.
-6. *Quản trị & Phê duyệt 4 mắt Maker-Checker (14 bảng):* `staff_users`, `staff_roles`, `staff_user_roles`, `staff_permissions`, `staff_sessions`, `staff_mfa_credentials`, `staff_auth_challenges`, `admin_bootstrap_state`, `admin_action_requests`, `admin_action_decisions`, `admin_action_execution_attempts`, `admin_staff_account_creation_requests`, `staff_role_change_requests`, `customer_access_change_requests`, `account_status_change_requests`.
-7. *Thông báo, Outbox & Tác vụ ngầm (10 bảng):* `notifications`, `notification_endpoints`, `notification_preferences`, `notification_deliveries`, `outbox_events`, `dead_letter_events`, `outbox_requeue_requests`, `background_jobs`, `job_retry_requests`, `job_retry_history`, `worker_instances`.
-8. *Kiểm toán & Mô phỏng Sandbox (6 bảng):* `audit_events`, `simulation_funding_requests`, `simulation_funding_reversals`, `customer_access_status_history`, `account_status_history`, `status_history`.
+1. *Khách hàng & Hồ sơ định danh:* `customers`, `customer_devices` (kèm `device_name`, `last_seen_at` ở `050`), `pending_registrations`, `registration_completions`, `kyc_applications`, `kyc_reviews`, `case_assignments`, `application_decision_requests`, `customer_feature_entitlements`, `rate_limit_buckets`.
+2. *Xác thực, MFA & Phiên làm việc:* `auth_sessions`, `refresh_session_families`, `refresh_session_records`, `mfa_credentials` (hỗ trợ `TOTP` & `BIOMETRIC` theo `046`), `mfa_recovery_codes`, `mfa_recovery_requests`, `auth_security_events`, `auth_challenges` (hỗ trợ `BIOMETRIC`, `PASSWORD_RESET`, `PASSWORD_CHANGE` theo `046`, `050`).
+3. *Tài khoản, Sổ cái kép, Giao dịch & Cảnh báo bất thường:* `payment_accounts`, `account_transactions`, `beneficiaries`, `recipient_lookups` (`INTERNAL` & `NAPAS_IBFT` theo `049`), `transfers`, `transfer_quotes`, `command_idempotency`, `transfer_operation_requests`, `ledger_journals`, `ledger_entries` (chuẩn hóa `payment-account:<uuid>` ở `047`), `balance_snapshots`, **`transaction_anomalies`** (`045`), **`control_policy`** (`033`, `048`, `051`).
+4. *Tiết kiệm có kỳ hạn:* `savings_products`, `savings_quotes`, `savings_deposits` (kèm tất toán trước hạn ở `044`), `savings_openings`, `savings_idempotency`, `savings_maturity_operations`, `savings_maturity_suspense`.
+5. *Thẻ & Tín dụng cá nhân:* `credit_applications`, `credit_accounts`, `credit_cards`, `credit_transactions`, `credit_statements`, `credit_statement_items`, `credit_payments`, `credit_payment_quotes`, `credit_idempotency`, `card_security_cases`, `credit_lifecycle_operations`.
+6. *Quản trị & Phê duyệt 4 mắt Maker-Checker:* `staff_users`, `staff_roles`, `staff_user_roles`, `staff_permissions`, `staff_sessions`, `staff_mfa_credentials`, `staff_auth_challenges`, `admin_bootstrap_state`, `admin_action_requests`, `admin_action_decisions`, `admin_action_execution_attempts`, `admin_staff_account_creation_requests`, `staff_role_change_requests`, `customer_access_change_requests`, `account_status_change_requests`.
+7. *Thông báo, Outbox & Tác vụ ngầm:* `notifications`, `notification_endpoints`, `notification_preferences`, `notification_deliveries`, `outbox_events`, `dead_letter_events`, `outbox_requeue_requests`, `background_jobs`, `job_retry_requests`, `job_retry_history`, `worker_instances`.
+8. *Kiểm toán & Cấp vốn thử nghiệm:* `audit_events`, `simulation_funding_requests`, `simulation_funding_reversals`, `customer_access_status_history`, `account_status_history`, `status_history`.
 
-> **Ghi chú kiến trúc:** Toàn bộ 79 bảng trên đều có mã nguồn truy vấn trực tiếp trong `backend/src/`. Hệ thống tuân thủ nguyên tắc Forward-Only Migration; các bảng phác thảo từ những tuần đầu được lưu giữ nguyên trạng trong lịch sử migration mà không kích hoạt tại runtime.
+> **Ghi chú kiến trúc:** Hệ thống tuân thủ nguyên tắc Forward-Only Migration (`001`–`051`); các bảng phác thảo/legacy (như `fraud_reports`, `reference_state_snapshots`, `reference_runtime_records`) được giữ nguyên trong lịch sử migration để bảo toàn checksum và không kích hoạt luồng cũ tại runtime `relational-v2`.
 
 ---
 

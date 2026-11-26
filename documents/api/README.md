@@ -2,15 +2,16 @@
 
 ## Customer-facing API
 
-- [Banking MVP OpenAPI](banking-mvp.openapi.yaml) — API shape for customer banking routes.
-- [Banking MVP narrative](banking-mvp-api-contract.md) — use-case and behavior notes.
-- [Auth/session API](auth-session-api-contract.md) — identity, challenge and session details.
+- [Banking MVP OpenAPI](banking-mvp.openapi.yaml) — API shape cho toàn bộ customer banking routes (`70` paths / `77` operations, gồm auth/password/devices/biometric, accounts/summary/statement-export, internal & mock NAPAS external lookup/transfers, anomalies, savings, credit/cards, KYC, notifications, assistant & financial advice).
+- [Banking MVP narrative](banking-mvp-api-contract.md) — use-case, invariants và behavior notes (đã cập nhật filter/summary/export, mock NAPAS, dynamic policy/fee và anomaly alerts).
+- [Auth API contract](auth-api-contract.md) — đăng ký 2 bước, đăng nhập, đổi/quên/đặt lại mật khẩu, quản lý thiết bị và đăng ký Biometric MFA.
+- [Auth/session API](auth-session-api-contract.md) — refresh rotation, session lock và server-side revoke details.
 
 ## Admin API
 
-- [Admin OpenAPI](admin.openapi.yaml) — staff control-plane API.
-- Admin implementation and permission source: backend/src/admin/http/adminHttp.ts, backend/src/admin/authorization/permissionRegistry.ts and backend/src/admin/actions/actionEngine.ts.
-- Admin Web source: admin-web/src.
+- [Admin OpenAPI](admin.openapi.yaml) — staff control-plane API (`62` paths / `63` operations, gồm anomaly queue/resolve, `GET/PATCH /admin/control-policy` và `GET /admin/operations/ledger-reconciliation`).
+- Admin implementation and permission source: `backend/src/admin/http/adminHttp.ts`, `backend/src/admin/authorization/permissionRegistry.ts` và `backend/src/admin/actions/actionEngine.ts`.
+- Admin Web source: `admin-web/src`.
 
 ## Contract status
 
