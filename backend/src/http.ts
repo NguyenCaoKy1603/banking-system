@@ -578,6 +578,9 @@ export function createPersistentBankingServer(
           return;
         }
         if (process.env.BANKING_PERSISTENCE_MODE?.trim() === "relational-v2") {
+          if (handleCorsMiddleware(request, bufferedResponse as unknown as ServerResponse, resolvedOptions.allowedOrigins, requestContext.requestId)) {
+            return;
+          }
           writeError(bufferedResponse as unknown as ServerResponse, 503, requestContext.requestId, new DomainError(503, "RELATIONAL_ROUTE_NOT_CUTOVER", "This HTTP route is not part of the approved relational-v2 boundary."));
           return;
         }
@@ -620,6 +623,9 @@ export function createPersistentBankingServer(
       .then(() => bufferedResponse.flush())
       .catch((error: unknown) => {
         if (!response.headersSent) {
+          if (handleCorsMiddleware(request, response, resolvedOptions.allowedOrigins, traceId)) {
+            return;
+          }
           if (error instanceof DomainError) {
             writeError(response, error.status, traceId, error);
             return;

@@ -39,7 +39,7 @@ export function handleCorsMiddleware(
   response.setHeader("Vary", "Origin");
   response.setHeader(
     "Access-Control-Allow-Headers",
-    "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Request-ID, traceparent, tracestate",
+    "Authorization, Content-Type, Idempotency-Key, X-Device-ID, X-Device-Name, X-Request-ID, traceparent, tracestate",
   );
   response.setHeader("Access-Control-Allow-Methods", "DELETE,GET,PATCH,POST,OPTIONS");
 

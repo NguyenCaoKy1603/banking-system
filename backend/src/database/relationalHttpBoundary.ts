@@ -97,6 +97,7 @@ export class RelationalHttpBoundary {
       ["DELETE", ["auth", "devices", "00000000-0000-4000-8000-000000000000"]],
       ["POST", ["auth", "register"]],
       ["POST", ["auth", "register", "verify"]],
+      ["POST", ["auth", "register", "cancel"]],
       ["GET", ["auth", "mfa", "methods"]],
       ["POST", ["auth", "otp", "challenges"]],
       ["GET", ["accounts"]],
@@ -155,7 +156,7 @@ export class RelationalHttpBoundary {
       if (mfaLifecycleRoute) return true;
     }
     if (this.routes.has("registration") && verb === "POST" && segments[0] === "auth" && segments[1] === "register") {
-      return segments.length === 2 || (segments.length === 3 && segments[2] === "verify");
+      return segments.length === 2 || (segments.length === 3 && (segments[2] === "verify" || segments[2] === "cancel"));
     }
     if (this.routes.has("beneficiaries") && segments[0] === "beneficiaries") {
       return (verb === "GET" && (segments.length === 1 || segments.length === 2)) ||
@@ -236,6 +237,10 @@ export class RelationalHttpBoundary {
   async verifyRegistration(challengeId: string, proof: string, deviceId: string, mfaService: PersistentMfaService): Promise<{ user: AuthUser }> {
     const completed = await this.registration.verify(challengeId, proof, deviceId, mfaService);
     return { user: await this.auth.getUser(completed.customerId) };
+  }
+
+  cancelRegistration(challengeId: string, deviceId: string): Promise<void> {
+    return this.registration.cancel(challengeId, deviceId);
   }
 
   issueMfaSession(customerId: string, deviceId: string, deviceName?: string): Promise<LoginResponse> {

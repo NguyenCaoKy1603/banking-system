@@ -148,7 +148,11 @@ export async function cancelRegistrationController(
   const deviceId = rawDeviceId.trim();
 
   if (relationalAuth) {
-    await (relationalAuth as any).registration.cancel(challengeId, deviceId);
+    if (typeof relationalAuth.cancelRegistration === "function") {
+      await relationalAuth.cancelRegistration(challengeId, deviceId);
+    } else {
+      await (relationalAuth as any).registration.cancel(challengeId, deviceId);
+    }
   } else {
     await (system as any).cancelRegistrationChallenge?.(challengeId, deviceId);
   }

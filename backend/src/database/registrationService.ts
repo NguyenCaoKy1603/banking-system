@@ -280,11 +280,12 @@ export class RelationalRegistrationService {
   }
 
   async cancel(challengeId: string, deviceId: string): Promise<void> {
+    const challengeHash = hashOpaqueToken(challengeId);
     await this.unitOfWork.transaction(async ({ client }) => {
       const mfa = new MfaRepository(client);
       const customers = new CustomerRepository(client);
 
-      const challenge = await mfa.lockChallenge(challengeId);
+      const challenge = await mfa.lockChallenge(challengeHash);
       if (!challenge || String(challenge.device_id) !== deviceId || String(challenge.purpose) !== "REGISTRATION_EMAIL_VERIFY") {
         throw new RelationalNotFoundError("Registration challenge not found or invalid.");
       }
@@ -316,7 +317,7 @@ export class RelationalRegistrationService {
       }
 
       if (needsCancel) {
-        await mfa.cancelChallenge(challengeId);
+        await mfa.cancelChallenge(challengeHash);
       }
     });
   }
