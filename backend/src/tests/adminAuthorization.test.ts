@@ -13,7 +13,9 @@ test("Admin route registry is exact and deny-by-default", () => {
   assert.equal(hasPermission(subject("OPERATIONS"), "account.block.request"), true);
   assert.equal(hasPermission(subject("OPERATIONS"), "simulation-funding.request"), true);
   assert.equal(hasPermission(subject("OPERATIONS"), "customer.access-unlock.request"), true);
-  assert.equal(hasPermission(subject("OPERATIONS"), "customer.access-lock.approve"), false);
+  assert.equal(hasPermission(subject("OPERATIONS"), "customer.access-lock.approve"), true);
+  assert.equal(hasPermission(subject("OPERATIONS"), "simulation-funding.approve"), true);
+  assert.equal(hasPermission(subject("OPERATIONS"), "staff.disable.approve"), false);
   assert.equal(hasPermission(subject("ADMIN"), "simulation-funding.approve"), true);
   assert.equal(hasPermission(subject("ADMIN"), "staff.operations-account.create"), true);
   assert.equal(hasPermission(subject("OPERATIONS"), "staff.operations-account.create"), false);

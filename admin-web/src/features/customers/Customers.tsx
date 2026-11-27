@@ -338,7 +338,7 @@ export function Customers({ onRefresh }: CustomersProps) {
     const payloadToSend = normalizePayload(submittingIntent.payload);
 
     try {
-      const result = await adminFetch<{ action?: { id: string }; actionId?: string }>(submittingIntent.path, {
+      const result = await adminFetch<{ action?: { id: string; status?: string }; actionId?: string }>(submittingIntent.path, {
         method: "POST",
         headers: { "Idempotency-Key": submittingIntent.idempotencyKey },
         body: JSON.stringify(payloadToSend),
@@ -371,17 +371,32 @@ export function Customers({ onRefresh }: CustomersProps) {
           : "actionId" in result
           ? result.actionId
           : "";
+      const isDirectSucceeded = "action" in result && result.action.status === "SUCCEEDED";
       setPendingAccountActions((prev) => {
         const next = new Map(prev);
-        next.set(capturedAccount.id, {
-          kind: capturedKind,
-          actionId: resolvedActionId,
-          amount: capturedKind === "FUND" || capturedKind === "REVERSAL" ? amount : undefined,
-        });
+        if (isDirectSucceeded) {
+          next.delete(capturedAccount.id);
+        } else {
+          next.set(capturedAccount.id, {
+            kind: capturedKind,
+            actionId: resolvedActionId,
+            amount: capturedKind === "FUND" || capturedKind === "REVERSAL" ? amount : undefined,
+          });
+        }
         return next;
       });
+      const actionVerb =
+        capturedKind === "FUND"
+          ? "cấp tiền"
+          : capturedKind === "REVERSAL"
+          ? "hoàn tác cấp tiền"
+          : capturedKind === "BLOCK"
+          ? "khóa tài khoản"
+          : "mở khóa tài khoản";
       setSuccessMessage(
-        `Đã thực hiện ${capturedKind === "FUND" ? "cấp tiền thành công" : capturedKind === "REVERSAL" ? "hoàn tác cấp tiền thành công" : capturedKind === "BLOCK" ? "khóa tài khoản thành công" : "mở khóa tài khoản thành công"} (Mã: ${resolvedActionId}). Số dư và trạng thái tài khoản đã được cập nhật trực tiếp!`
+        isDirectSucceeded
+          ? `Đã thực hiện ${actionVerb} thành công (Mã: ${resolvedActionId}). Số dư và trạng thái tài khoản đã được cập nhật trực tiếp!`
+          : `Đã tạo yêu cầu ${actionVerb} (Mã: ${resolvedActionId}). Chờ ADMIN phê duyệt trong Approval Inbox.`
       );
 
       // Reload accounts from server; report reload error separately without masking command success
@@ -500,6 +515,7 @@ export function Customers({ onRefresh }: CustomersProps) {
         reasonCode: customerReason.trim(),
         ticketReference: customerTicket.trim(),
         description: customerDescription.trim(),
+        directExecution: true,
       };
       const reviewed = enterReviewStep(activeCustomerIntent, snapshot);
       setActiveCustomerIntent(reviewed);
@@ -517,7 +533,7 @@ export function Customers({ onRefresh }: CustomersProps) {
     const payloadToSend = normalizePayload(submittingIntent.payload);
 
     try {
-      const result = await adminFetch<{ action?: { id: string }; actionId?: string }>(submittingIntent.path, {
+      const result = await adminFetch<{ action?: { id: string; status?: string }; actionId?: string }>(submittingIntent.path, {
         method: "POST",
         headers: { "Idempotency-Key": submittingIntent.idempotencyKey },
         body: JSON.stringify(payloadToSend),
@@ -549,16 +565,23 @@ export function Customers({ onRefresh }: CustomersProps) {
           : "actionId" in result
           ? result.actionId
           : "";
+      const isDirectSucceeded = "action" in result && result.action.status === "SUCCEEDED";
       setPendingCustomerActions((prev) => {
         const next = new Map(prev);
-        next.set(capturedCustomer.id, {
-          kind: capturedKind,
-          actionId: resolvedActionId,
-        });
+        if (isDirectSucceeded) {
+          next.delete(capturedCustomer.id);
+        } else {
+          next.set(capturedCustomer.id, {
+            kind: capturedKind,
+            actionId: resolvedActionId,
+          });
+        }
         return next;
       });
       setSuccessMessage(
-        `Đã tạo yêu cầu ${capturedKind === "LOCK" ? "khóa" : "mở khóa"} truy cập khách hàng thành công (Mã: ${resolvedActionId}).`
+        isDirectSucceeded
+          ? `Đã ${capturedKind === "LOCK" ? "khóa" : "mở khóa"} quyền truy cập khách hàng thành công (Mã: ${resolvedActionId}).`
+          : `Đã tạo yêu cầu ${capturedKind === "LOCK" ? "khóa" : "mở khóa"} truy cập khách hàng thành công (Mã: ${resolvedActionId}). Chờ ADMIN phê duyệt.`
       );
 
       try {

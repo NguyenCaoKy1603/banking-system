@@ -12,10 +12,10 @@ Checklist kiểm thử thủ công và hướng dẫn nghiệm thu thực tế c
 - [x] **Dọn sạch Yêu cầu Chưa xác định và Cô lập Phiên làm việc (`SessionScope`)**:
   - Khi nhân viên đăng xuất (`logout()`) hoặc phiên hết hạn (`refreshSession()` 401), hệ thống vô hiệu hóa `SessionScope` ngay lập tức và gọi `clearSessionPendingIntents()` dọn sạch toàn bộ ý định lưu trữ trong bộ nhớ phiên.
   - Store gắn chặt với `SessionScope` (`staffId`, `generation`) của nhân viên hiện tại; đăng xuất rồi đăng nhập lại bằng cùng tài khoản (tạo `generation` mới) hoặc tài khoản khác trên cùng trình duyệt tuyệt đối không khôi phục ý định của phiên trước. Mọi callback bất đồng bộ từ phiên cũ bị chặn đứng, không được phép ghi/xóa store hay cập nhật UI của phiên mới.
-- [x] **Phân tách 2 Vai trò, Menu Điều hướng & Tạo Operations**:
-  - **OPERATIONS**: Có thể tra cứu khách hàng, xem giao dịch/outbox/jobs, tạo yêu cầu nghiệp vụ và tiếp nhận hồ sơ KYC/Credit. Không có quyền `audit.read` hoặc quyền duyệt nên không thấy *Approval Inbox* và *Audit*.
-  - **ADMIN**: Tạo trực tiếp tài khoản OPERATIONS ở *Staff / Roles* bằng mật khẩu ban đầu và khóa Authenticator đã xác minh một lần; tài khoản được tạo ở trạng thái `ACTIVE`, không cần email mời hoặc bước *Approval Inbox*. Operations đăng nhập sau đó chỉ cần mật khẩu. Thay đổi role và vô hiệu hóa staff vẫn theo luồng yêu cầu/phê duyệt; ADMIN mở *Approval Inbox*, xem/xuất audit và duyệt yêu cầu đủ permission sau step-up MFA.
-  - ADMIN có thể tự duyệt yêu cầu do mình tạo nếu có đủ quyền và đã xác thực Step-up MFA; không cần tài khoản ADMIN thứ hai.
+- [x] **Phân tách 2 Vai trò, Menu Điều hướng & Thực thi Trực tiếp (`ADMIN_DIRECT_EXECUTION=true`)**:
+  - **OPERATIONS**: Tra cứu khách hàng, xem giao dịch/outbox/jobs, và **thực thi trực tiếp 1 bước** các nghiệp vụ vận hành (Nạp tiền, Thu hồi tiền, Khóa/Mở tài khoản & khách hàng, Phê duyệt KYC & Thẻ tín dụng, Xử lý giao dịch, Requeue Outbox / Retry Job). Không có quyền quản trị nhân sự, `Control Policy` hay `audit.read` (mọi thao tác của `OPERATIONS` đều được ghi vết đích danh để `ADMIN` kiểm soát trong *Audit Explorer*).
+  - **ADMIN**: Quản trị cấp cao — tạo trực tiếp tài khoản `OPERATIONS` ở *Staff / Roles*, **khóa tài khoản nhân sự trực tiếp ngay tại *Staff / Roles* kèm nhập mã TOTP Step-up 6 số**, cấu hình *Chính sách & Biểu phí* (`#/policy`), và xem/xuất *Nhật ký kiểm toán* (`#/audit`).
+  - Mục *Approval Inbox* được ẩn khỏi Sidebar trong chế độ vận hành trực tiếp (chỉ dùng làm dự phòng khi đặt `ADMIN_DIRECT_EXECUTION=false`).
 - [x] **Kích hoạt Nhân viên (URL `/admin/activate`, gọi API `POST /admin/auth/activate`)**: Nhập token mời từ URL, đặt mật khẩu mới, nạp khóa TOTP bí mật; token mời được dọn sạch khỏi thanh địa chỉ trình duyệt bằng `history.replaceState` ngay sau khi nạp.
 
 ---

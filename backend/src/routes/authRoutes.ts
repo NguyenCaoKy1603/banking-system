@@ -12,6 +12,8 @@ import {
   verifyRegistrationController,
   cancelRegistrationController,
   loginController,
+  beginBiometricLoginChallengeController,
+  verifyBiometricLoginController,
   verifyLoginController,
   refreshController,
   logoutController,
@@ -139,6 +141,34 @@ export async function handlePublicAuthRoute(
     segments[1] === "login"
   ) {
     await loginController(request, response, body, options, system, relationalAuth, traceId);
+    return true;
+  }
+
+  // POST /auth/mfa/biometric/login/challenge
+  if (
+    request.method === "POST" &&
+    segments.length === 5 &&
+    segments[0] === "auth" &&
+    segments[1] === "mfa" &&
+    segments[2] === "biometric" &&
+    segments[3] === "login" &&
+    segments[4] === "challenge"
+  ) {
+    await beginBiometricLoginChallengeController(request, response, body, options, relationalAuth, traceId);
+    return true;
+  }
+
+  // POST /auth/mfa/biometric/login/verify
+  if (
+    request.method === "POST" &&
+    segments.length === 5 &&
+    segments[0] === "auth" &&
+    segments[1] === "mfa" &&
+    segments[2] === "biometric" &&
+    segments[3] === "login" &&
+    segments[4] === "verify"
+  ) {
+    await verifyBiometricLoginController(request, response, body, options, system, relationalAuth, traceId);
     return true;
   }
 

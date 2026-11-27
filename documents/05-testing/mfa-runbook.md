@@ -24,15 +24,17 @@ SMTP_FROM=<dedicated-sender@gmail.com>
 EMAIL_PROVIDER_TOKEN=<local-app-password>
 ```
 
-`SMTP_FROM` phải trùng `SMTP_USER`; địa chỉ nhận là email người đăng ký trong request. Local rehearsal phải dùng database disposable, không dùng `banking_preview`. Provider chỉ gửi email xác nhận đăng ký; đăng nhập customer vẫn password-only.
+`SMTP_FROM` phải trùng `SMTP_USER`; địa chỉ nhận là email người đăng ký trong request. Local rehearsal phải dùng database disposable, không dùng `banking_preview`. Provider email chỉ gửi OTP xác nhận đăng ký / quên mật khẩu; đăng nhập bằng mật khẩu của customer không phát sinh Email OTP, còn thiết bị đã liên kết khóa `BIOMETRIC` có thể đăng nhập nhanh bằng Sinh trắc học / Mã PIN thiết bị.
 
 ## Kiểm tra thủ công
 
 1. Chạy migration (`001`–`051`) và kiểm tra `mfa_credentials`, `auth_challenges`, `mfa_recovery_codes`, `mfa_recovery_requests`, `auth_security_events`, `customer_devices`.
 2. Enroll TOTP, lưu recovery codes ngoại tuyến một lần, rồi đóng response setup.
-3. Enroll sinh trắc học gắn thiết bị (`POST /api/v1/auth/mfa/biometric/enroll` trên màn hình `/mfa`), xác nhận lưu secret mã hóa ở server và SecureStore trên thiết bị; kiểm tra step-up `BIOMETRIC` (`biometric-v1.<sha256>`) thành công cho giao dịch ≤ 1.000.000 VND và bị từ chối khi vượt ngưỡng hoặc dùng trên challenge TOTP.
-4. Đăng nhập customer bằng email + password; kiểm tra đổi mật khẩu (`POST /auth/password/change` yêu cầu TOTP khi đã bật TOTP, purpose `PASSWORD_CHANGE`), quên/đặt lại mật khẩu (`POST /auth/password/forgot` + `/reset`, purpose `PASSWORD_RESET`), và liệt kê/thu hồi thiết bị (`GET/DELETE /auth/devices`).
-5. Với transfer (nội bộ & mock NAPAS IBFT)/savings/credit, tạo quote → tạo challenge → nhập TOTP (hoặc Biometric với chuyển tiền ≤ 1.000.000 VND) → submit đúng `challengeId`; sửa quote hoặc resource phải bị từ chối.
+3. Đăng nhập customer bằng email + password (hoặc đăng nhập nhanh bằng Sinh trắc học / Mã PIN thiết bị qua `POST /auth/mfa/biometric/login/{challenge,verify}` nếu thiết bị đã kích hoạt khóa `BIOMETRIC`); kiểm tra đổi mật khẩu (`POST /auth/password/change` yêu cầu TOTP nếu đang bật, purpose `PASSWORD_CHANGE`), quên/đặt lại mật khẩu (`POST /auth/password/forgot` + `/reset`, purpose `PASSWORD_RESET`), và liệt kê/thu hồi thiết bị (`GET/DELETE /auth/devices` — thu hồi thiết bị đồng thời thu hồi khóa `BIOMETRIC` gắn thiết bị đó).
+4. Kích hoạt Sinh trắc học tại `MfaMethodsScreen` (`POST /api/v1/auth/mfa/biometric/enroll`, hỗ trợ Vân tay, Khuôn mặt và Mã PIN khóa màn hình `SecurityLevel.SECRET`): nhập mật khẩu xác nhận ngay tại khung Sinh trắc học → xác thực OS → lưu `biometricSecret` mã hóa ở server & gắn `deviceId` trong `SecureStore`.
+5. Với transfer (nội bộ & mock NAPAS IBFT)/savings/credit: tạo quote → tạo challenge → xác thực step-up đúng `challengeId` và resource/fingerprint:
+   - Chuyển khoản **từ `1.000.000 VND` trở xuống (`≤ 1.000.000 VND`)** và rủi ro thấp (`LOW`/`MEDIUM`) ưu tiên cho phép xác thực 1 chạm bằng Sinh trắc học / Mã PIN (`biometric-v1.<sha256>`, hoặc tùy chọn chuyển sang nhập mã TOTP 6 số).
+   - Chuyển khoản **trên `1.000.000 VND` (`> 1.000.000 VND`)** hoặc có cảnh báo rủi ro cao (`HIGH`/`CRITICAL`) bắt buộc xác thực bằng mã TOTP 6 số (giao dịch `CRITICAL` đồng thời yêu cầu xác nhận rủi ro cao `confirmHighRisk`); sửa quote hoặc dùng challenge sai mục đích phải bị từ chối.
 6. Khóa thẻ khẩn cấp chỉ cần phiên/device hợp lệ. Mở khóa phải dùng purpose `CARD_UNLOCK`; báo mất phải dùng `CARD_REPORT_LOST`; challenge của action này không được dùng cho action kia.
 7. Dùng resend chỉ sau cooldown; challenge ID cũ phải thất bại.
 8. Dùng lại cùng TOTP time-step phải nhận `MFA_REPLAY_DETECTED`.

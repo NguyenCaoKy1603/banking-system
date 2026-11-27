@@ -1,5 +1,5 @@
 import { Link } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
@@ -19,6 +19,11 @@ import { RequestErrorNotice } from "@/components/ui/RequestErrorNotice";
 import { Screen } from "@/components/ui/Screen";
 import { TextField } from "@/components/ui/TextField";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import {
+  loadBiometricCredential,
+  loadLastBiometricHint,
+  type StoredBiometricHint,
+} from "@/features/auth/storage/biometricCredentialStorage";
 import type { LoginFieldErrors, LoginFormValues } from "@/features/auth/types/auth";
 import { validateLoginForm } from "@/features/auth/validation/authValidation";
 import { ApiError } from "@/services/api/ApiError";
@@ -37,13 +42,85 @@ function isRetryableRequestError(error: unknown): boolean {
 }
 
 export function LoginScreen() {
-  const { clearPendingRecoveryCodes, login, logoutNotice, pendingRecoveryCodes } = useAuth();
+  const {
+    clearPendingRecoveryCodes,
+    deviceId,
+    login,
+    loginWithBiometric,
+    logoutNotice,
+    pendingRecoveryCodes,
+  } = useAuth();
   const [values, setValues] = useState<LoginFormValues>(initialValues);
   const [errors, setErrors] = useState<LoginFieldErrors>({});
   const [serverError, setServerError] = useState<string | undefined>();
   const [requestError, setRequestError] = useState<unknown>();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isBiometricSubmitting, setIsBiometricSubmitting] = useState(false);
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [biometricHint, setBiometricHint] = useState<StoredBiometricHint | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!deviceId || (pendingRecoveryCodes && pendingRecoveryCodes.length > 0)) {
+      return;
+    }
+    void loadLastBiometricHint(deviceId)
+      .then(async (hint) => {
+        if (cancelled || !hint) {
+          if (!cancelled) setBiometricHint(null);
+          return;
+        }
+        const credential = await loadBiometricCredential(hint.userId, deviceId).catch(() => null);
+        if (!cancelled) {
+          setBiometricHint(credential ? hint : null);
+          if (credential) {
+            setValues((current) =>
+              current.email.trim() ? current : { ...current, email: hint.email },
+            );
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setBiometricHint(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId, pendingRecoveryCodes]);
+
+  const activeBiometricHint =
+    deviceId && !(pendingRecoveryCodes && pendingRecoveryCodes.length > 0)
+      ? biometricHint
+      : null;
+
+  async function handleBiometricLogin() {
+    if (!loginWithBiometric || isSubmitting || isBiometricSubmitting) {
+      return;
+    }
+    setServerError(undefined);
+    setRequestError(undefined);
+    setIsBiometricSubmitting(true);
+    try {
+      await loginWithBiometric();
+    } catch (error: unknown) {
+      if (isRetryableRequestError(error)) {
+        setRequestError(error);
+        return;
+      }
+      if (error instanceof ApiError) {
+        if (error.status === 401 && !/locked/i.test(error.message)) {
+          setBiometricHint(null);
+        }
+        setServerError(error.message);
+      } else if (error instanceof Error && error.message.trim()) {
+        setServerError(error.message);
+      } else {
+        setServerError("Đăng nhập bằng Sinh trắc học không thành công.");
+      }
+    } finally {
+      setIsBiometricSubmitting(false);
+    }
+  }
 
   function updateField(field: keyof LoginFormValues, value: string) {
     setValues((currentValues) => ({ ...currentValues, [field]: value }));
@@ -195,13 +272,38 @@ export function LoginScreen() {
                     testID="login-request-error"
                   />
                 ) : null}
-                <Button
-                  disabled={isSubmitting}
-                  label="Đăng nhập"
-                  loading={isSubmitting}
-                  onPress={handleLogin}
-                  testID="login-submit"
-                />
+                <View style={styles.actionRow}>
+                  <View style={styles.loginButtonWrap}>
+                    <Button
+                      disabled={isSubmitting || isBiometricSubmitting}
+                      label="Đăng nhập"
+                      loading={isSubmitting}
+                      onPress={handleLogin}
+                      testID="login-submit"
+                    />
+                  </View>
+                  {activeBiometricHint && loginWithBiometric ? (
+                    <Pressable
+                      accessibilityLabel="Đăng nhập nhanh bằng Sinh trắc học hoặc mã PIN"
+                      accessibilityRole="button"
+                      disabled={isSubmitting || isBiometricSubmitting}
+                      onPress={() => void handleBiometricLogin()}
+                      style={({ pressed }) => [
+                        styles.biometricButton,
+                        pressed ? styles.biometricButtonPressed : null,
+                        (isSubmitting || isBiometricSubmitting) ? styles.biometricButtonDisabled : null,
+                      ]}
+                      testID="login-biometric"
+                    >
+                      <AppIcon color={colors.primary} name="fingerprint" size={26} />
+                    </Pressable>
+                  ) : null}
+                </View>
+                {activeBiometricHint && loginWithBiometric ? (
+                  <Text style={styles.biometricCaption}>
+                    Bấm biểu tượng vân tay để đăng nhập nhanh bằng Sinh trắc học / PIN ({activeBiometricHint.email})
+                  </Text>
+                ) : null}
               </Card>
 
               <View style={styles.footer}>
@@ -277,6 +379,35 @@ const styles = StyleSheet.create({
   formTitle: {
     ...typography.subheading,
     color: colors.text,
+  },
+  actionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
+  loginButtonWrap: {
+    flex: 1,
+  },
+  biometricButton: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  biometricButtonPressed: {
+    opacity: 0.78,
+  },
+  biometricButtonDisabled: {
+    opacity: 0.5,
+  },
+  biometricCaption: {
+    ...typography.caption,
+    color: colors.muted,
+    textAlign: "center",
   },
   footer: {
     flexDirection: "row",

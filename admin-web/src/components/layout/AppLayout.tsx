@@ -84,7 +84,7 @@ export function AppLayout({
           key: "approvals",
           label: "Approval Inbox",
           badge: approvalCount,
-          visible: canReadApprovals,
+          visible: false,
         },
       ],
     },

@@ -208,6 +208,9 @@ export function RegisterScreen() {
           "Tài khoản thanh toán đã được tạo với số dư 0 VND.",
           [{ text: "Đăng nhập", onPress: () => router.replace("/login") }],
         );
+        if (Platform.OS === "web") {
+          router.replace("/login");
+        }
       } catch (error: unknown) {
         // Verify failed — keep CHALLENGE_RECEIVED
         setServerError(

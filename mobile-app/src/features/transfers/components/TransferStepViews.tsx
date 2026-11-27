@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import { AppIcon } from "@/components/ui/AppIcon";
@@ -496,22 +497,28 @@ export function TransferStepUpStep({
   onRenewChallenge: () => void;
   onSubmitTransfer: () => void;
 }) {
+  const [showTotpFallback, setShowTotpFallback] = useState(false);
   const isBiometricVerified =
     stepUpMethod === "BIOMETRIC" && stepUpProof.trim().length > 0;
+  const shouldShowTotpInput =
+    !canUseBiometric ||
+    showTotpFallback ||
+    isTotpError ||
+    (stepUpMethod !== "BIOMETRIC" && stepUpProof.trim().length > 0);
 
   return (
     <View style={stepStyles.formCard}>
       <Text style={stepStyles.stepTitle}>Xác thực giao dịch</Text>
       <Text style={stepStyles.description}>
         {canUseBiometric
-          ? "Chọn xác thực bằng Vân tay / Face ID hoặc nhập mã TOTP gồm 6 chữ số từ Google Authenticator."
+          ? "Ưu tiên xác thực nhanh bằng Vân tay / Face ID / Mã PIN thiết bị, hoặc chuyển sang mã TOTP 6 số nếu cần."
           : stepUpHint ??
             "Mở ứng dụng Google Authenticator trên điện thoại để lấy mã TOTP gồm 6 chữ số."}
       </Text>
       {canUseBiometric && onUseBiometric ? (
         <Button
           disabled={isSubmitting || isTransferChallengeUnavailable || Boolean(manualReviewCode)}
-          icon="shield"
+          icon="fingerprint"
           label={
             isBiometricVerified
               ? "Đã xác thực Vân tay / Face ID — Bấm để quét lại"
@@ -519,7 +526,7 @@ export function TransferStepUpStep({
           }
           onPress={onUseBiometric}
           testID="transfer-step-up-biometric"
-          variant="outline"
+          variant={isBiometricVerified ? "outline" : "primary"}
         />
       ) : null}
       {isBiometricVerified ? (
@@ -527,18 +534,29 @@ export function TransferStepUpStep({
           Đã ký xác nhận sinh trắc học trên thiết bị. Nhấn &quot;Gửi giao dịch&quot; bên dưới để hoàn tất.
         </Text>
       ) : null}
-      <TextField
-        accessibilityLabel="Mã xác thực bước hai"
-        autoCapitalize="none"
-        editable={!manualReviewCode}
-        error={error}
-        label="Mã TOTP"
-        onChangeText={onChangeProof}
-        placeholder="000000"
-        secureTextEntry
-        testID="transfer-step-up-code"
-        value={stepUpMethod === "BIOMETRIC" ? "" : stepUpProof}
-      />
+      {canUseBiometric && !shouldShowTotpInput ? (
+        <Button
+          disabled={isSubmitting || Boolean(manualReviewCode)}
+          label="Hoặc nhập mã TOTP 6 số"
+          onPress={() => setShowTotpFallback(true)}
+          testID="transfer-step-up-toggle-totp"
+          variant="ghost"
+        />
+      ) : null}
+      {shouldShowTotpInput ? (
+        <TextField
+          accessibilityLabel="Mã xác thực bước hai"
+          autoCapitalize="none"
+          editable={!manualReviewCode}
+          error={error}
+          label="Mã TOTP"
+          onChangeText={onChangeProof}
+          placeholder="000000"
+          secureTextEntry
+          testID="transfer-step-up-code"
+          value={stepUpMethod === "BIOMETRIC" ? "" : stepUpProof}
+        />
+      ) : null}
       {manualReviewCode ? (
         <Text style={stepStyles.errorText}>
           Mã đối soát: {manualReviewCode}

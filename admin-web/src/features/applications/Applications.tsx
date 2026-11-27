@@ -6,7 +6,7 @@ import { Modal } from "../../components/common/Modal";
 import { Notice } from "../../components/common/Notice";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { useStaff } from "../../context/StaffContext";
-import type { Application } from "../../types";
+import type { Action, Application } from "../../types";
 
 interface ApplicationsProps {
   items: Application[];
@@ -40,10 +40,10 @@ export function Applications({ items, onReload, loading, tabType }: Applications
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 10;
 
-  const canReviewKyc = hasPermission("kyc.review");
-  const canReviewCredit = hasPermission("credit-application.review");
-  const canDecideKyc = hasPermission("kyc.decision.request");
-  const canDecideCredit = hasPermission("credit-application.review");
+  const canReviewKyc = hasPermission("kyc.review") || hasPermission("kyc.decision.approve");
+  const canReviewCredit = hasPermission("credit-application.review") || hasPermission("credit-application.decision.approve");
+  const canDecideKyc = hasPermission("kyc.decision.request") || hasPermission("kyc.decision.approve");
+  const canDecideCredit = hasPermission("credit-application.review") || hasPermission("credit-application.decision.approve");
 
   const filteredItems = items.filter((item) => {
     if (filterType !== "ALL" && item.applicationType !== filterType) return false;
@@ -124,14 +124,17 @@ export function Applications({ items, onReload, loading, tabType }: Applications
     }
 
     try {
-      await adminFetch<{ action: { id: string } }>(path, {
+      const result = await adminFetch<{ action: Action }>(path, {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey("application-decision") },
         body: JSON.stringify(body),
       });
 
+      const appLabel = selected.applicationType === "KYC" ? "định danh" : "thẻ tín dụng";
       setSuccessNotice(
-        `Đã phê duyệt hồ sơ ${selected.applicationType === "KYC" ? "định danh" : "thẻ tín dụng"} thành công. Hệ thống đã áp dụng trực tiếp!`
+        result.action?.status === "SUCCEEDED"
+          ? `Đã phê duyệt hồ sơ ${appLabel} thành công. Hệ thống đã áp dụng trực tiếp!`
+          : `Đã gửi đề xuất phê duyệt hồ sơ ${appLabel} (Mã: ${result.action?.id ?? "Mới"}). Chờ ADMIN phê duyệt trong Approval Inbox.`
       );
       await onReload();
       setSelected(null);

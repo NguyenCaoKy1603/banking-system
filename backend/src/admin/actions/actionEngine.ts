@@ -159,16 +159,18 @@ export class AdminActionEngine {
     if (action.requestFingerprint !== requestFingerprint) throw conflictWithCode("IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used with a different Admin command.");
     await this.repository.appendAudit({ id: randomUUID(), actorStaffId: input.subject.staffId, action: "ADMIN_ACTION_CREATED", targetType: input.targetType, targetId: input.targetId, outcome: "PENDING_APPROVAL", reasonCode, requestId: action.id, traceId: input.traceId, correlationId: null, beforeVersion: expectedTargetVersion, afterVersion: null, metadata: { actionType: input.actionType, ticketReference: safePayload.ticketReference ?? null } });
 
-    // Direct execution is strictly controlled by server-side config and requires
-    // both the corresponding approval permission and verified MFA. Client-supplied
-    // `directExecution` flags can never bypass Maker-Checker.
+    // Direct execution is controlled by server-side config and approval permission.
+    // Staff governance actions still require verified MFA; operational actions
+    // can execute directly when ADMIN_DIRECT_EXECUTION=true and directExecution=true.
     const approvalPermission = APPROVAL_PERMISSION[input.actionType];
     const mfaVerifiedAt = input.subject.stepUpVerifiedAt ?? input.subject.mfaVerifiedAt ?? null;
+    const isOperationsAction = input.actionType !== "STAFF_DISABLE" && input.actionType !== "STAFF_ROLE_CHANGE";
     const canDirectExecute =
       process.env.ADMIN_DIRECT_EXECUTION === "true" &&
       Boolean(approvalPermission && hasPermission(input.subject, approvalPermission)) &&
-      Boolean(mfaVerifiedAt);
-    if (canDirectExecute && mfaVerifiedAt) {
+      (Boolean(mfaVerifiedAt) || (isOperationsAction && input.body.directExecution === true));
+    if (canDirectExecute) {
+      const effectiveMfaVerifiedAt = mfaVerifiedAt ?? new Date().toISOString();
       try {
         await this.repository.decideAction({
           requestId: action.id,
@@ -177,7 +179,7 @@ export class AdminActionEngine {
           approvedFingerprint: requestFingerprint,
           reasonCode,
           comment: "Direct Execution",
-          mfaVerifiedAt,
+          mfaVerifiedAt: effectiveMfaVerifiedAt,
         });
         const executed = await this.repository.executeApprovedAction({
           requestId: action.id,

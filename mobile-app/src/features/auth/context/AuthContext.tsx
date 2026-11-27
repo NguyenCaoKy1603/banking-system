@@ -11,6 +11,7 @@ import {
 import { AppState, type AppStateStatus } from "react-native";
 
 import {
+  beginBiometricLoginChallenge as beginBiometricLoginChallengeRequest,
   login as loginRequest,
   refreshSession as refreshSessionRequest,
   register as registerRequest,
@@ -18,8 +19,20 @@ import {
   cancelRegistration as cancelRegistrationRequest,
   revokeAllSessions,
   revokeSession,
+  verifyBiometricLogin as verifyBiometricLoginRequest,
   verifyRegistrationChallenge as verifyRegistrationChallengeRequest,
 } from "@/features/auth/services/authApi";
+import {
+  clearBiometricCredential,
+  clearLastBiometricHint,
+  loadBiometricCredential,
+  loadLastBiometricHint,
+  saveLastBiometricHint,
+} from "@/features/auth/storage/biometricCredentialStorage";
+import {
+  createDeviceBoundBiometricAssertion,
+  requestBiometricAuthentication,
+} from "@/services/security/biometricAuth";
 import type {
   AuthChallengeResponse,
   LoginRequest,
@@ -137,6 +150,7 @@ type AuthContextValue = {
   pendingRecoveryCodes: string[] | null;
   refreshAccessToken: RefreshAccessToken;
   login: (request: LoginRequest) => Promise<void>;
+  loginWithBiometric?: () => Promise<void>;
   register: (request: RegisterRequest) => Promise<AuthChallengeResponse>;
   verifyRegistrationChallenge: (request: VerifyAuthChallengeRequest) => Promise<RegisterResponse>;
   resendRegistrationChallenge: (challengeId: string) => Promise<AuthChallengeResponse>;
@@ -483,10 +497,74 @@ export function AuthProvider({ children }: PropsWithChildren) {
       const nextSession = createAuthSession(response);
 
       await saveAuthSession(nextSession);
+      const existingBiometric = await loadBiometricCredential(
+        nextSession.user.id,
+        currentDeviceId,
+      ).catch(() => null);
+      if (existingBiometric) {
+        await saveLastBiometricHint({
+          userId: nextSession.user.id,
+          email: nextSession.user.email,
+          fullName: nextSession.user.fullName,
+          deviceId: currentDeviceId,
+        }).catch(() => undefined);
+      }
       setActiveSession(nextSession, "authenticated");
     },
     [clearBackgroundLockState, ensureDeviceId, setActiveSession],
   );
+
+  const loginWithBiometric = useCallback(async () => {
+    clearBackgroundLockState();
+    clearPendingTotpEnrollment();
+    if (isMountedRef.current) {
+      setLogoutNotice(null);
+      setPendingRecoveryCodes(null);
+    }
+
+    const currentDeviceId = await ensureDeviceId();
+    const hint = await loadLastBiometricHint(currentDeviceId);
+    if (!hint) {
+      throw new Error("Thiết bị chưa liên kết tài khoản Sinh trắc học nào.");
+    }
+    const credential = await loadBiometricCredential(hint.userId, currentDeviceId);
+    if (!credential) {
+      await clearLastBiometricHint(currentDeviceId).catch(() => undefined);
+      throw new Error("Không tìm thấy khóa Sinh trắc học trên thiết bị. Vui lòng đăng nhập bằng mật khẩu.");
+    }
+
+    await requestBiometricAuthentication("Xác thực để đăng nhập nhanh NOVA");
+    const challenge = await beginBiometricLoginChallengeRequest(
+      { email: hint.email },
+      { deviceId: currentDeviceId },
+    );
+    const proof = createDeviceBoundBiometricAssertion({
+      biometricSecret: credential.biometricSecret,
+      challengeId: challenge.challengeId,
+      deviceId: currentDeviceId,
+      purpose: "LOGIN",
+    });
+
+    try {
+      const response = await verifyBiometricLoginRequest(
+        { challengeId: challenge.challengeId, proof },
+        { deviceId: currentDeviceId },
+      );
+      const nextSession = createAuthSession(response);
+      await saveAuthSession(nextSession);
+      setActiveSession(nextSession, "authenticated");
+    } catch (error: unknown) {
+      if (
+        error instanceof ApiError &&
+        error.status === 401 &&
+        !/locked/i.test(error.message)
+      ) {
+        await clearBiometricCredential(hint.userId, currentDeviceId).catch(() => undefined);
+        await clearLastBiometricHint(currentDeviceId).catch(() => undefined);
+      }
+      throw error;
+    }
+  }, [clearBackgroundLockState, ensureDeviceId, setActiveSession]);
 
   const register = useCallback(
     async (request: RegisterRequest) => {
@@ -731,6 +809,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       pendingRecoveryCodes,
       refreshAccessToken,
       login,
+      loginWithBiometric,
       register,
       verifyRegistrationChallenge,
       resendRegistrationChallenge,
@@ -745,6 +824,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       completeMfaRevocation,
       deviceId,
       login,
+      loginWithBiometric,
       logout,
       logoutAll,
       logoutNotice,

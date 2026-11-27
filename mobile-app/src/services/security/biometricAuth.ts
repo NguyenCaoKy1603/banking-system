@@ -7,8 +7,11 @@ export async function requestBiometricAuthentication(
   const isEnrolled = hasHardware
     ? await LocalAuthentication.isEnrolledAsync()
     : false;
+  const enrolledLevel = isEnrolled
+    ? LocalAuthentication.SecurityLevel.BIOMETRIC_STRONG
+    : await LocalAuthentication.getEnrolledLevelAsync();
 
-  if (!hasHardware || !isEnrolled) {
+  if (!isEnrolled && enrolledLevel < LocalAuthentication.SecurityLevel.SECRET) {
     throw new Error("Thiết bị chưa sẵn sàng cho xác thực sinh trắc học.");
   }
 

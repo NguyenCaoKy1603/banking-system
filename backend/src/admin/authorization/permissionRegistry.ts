@@ -37,10 +37,13 @@ const set = (...permissions: AdminPermission[]): ReadonlySet<AdminPermission> =>
 
 export const ROLE_PERMISSIONS: Readonly<Record<AdminRole, ReadonlySet<AdminPermission>>> = Object.freeze({
   OPERATIONS: set(
-    "customer.read.masked", "customer.read.pii", "customer.access-lock.request", "customer.access-unlock.request", "account.read", "account.block.request", "account.unblock.request",
-    "simulation-funding.read", "simulation-funding.request", "simulation-funding.reverse.request", "kyc.read", "kyc.review", "kyc.decision.request",
-    "credit-application.read", "credit-application.review", "transfer.pending.read", "transfer.action.request",
-    "outbox.read", "outbox.requeue.request", "job.read", "job.retry.request", "staff.read",
+    "customer.read.masked", "customer.read.pii", "customer.access-lock.request", "customer.access-unlock.request", "customer.access-lock.approve",
+    "account.read", "account.block.request", "account.block.approve", "account.unblock.request", "account.unblock.approve",
+    "simulation-funding.read", "simulation-funding.request", "simulation-funding.approve", "simulation-funding.reverse.request", "simulation-funding.reverse.approve",
+    "kyc.read", "kyc.review", "kyc.decision.request", "kyc.decision.approve",
+    "credit-application.read", "credit-application.review", "credit-application.decision.approve",
+    "transfer.pending.read", "transfer.action.request", "transfer.action.approve",
+    "outbox.read", "outbox.requeue.request", "outbox.requeue.approve", "job.read", "job.retry.request", "job.retry.approve", "staff.read",
   ),
   ADMIN: set(
     "customer.read.masked", "customer.read.pii", "customer.access-lock.request", "customer.access-unlock.request", "customer.access-lock.approve", "account.read", "account.block.approve", "account.unblock.approve",

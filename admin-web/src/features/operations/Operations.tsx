@@ -168,7 +168,7 @@ export function Operations({
     setBusy(true);
     setError(null);
     try {
-      const result = await adminFetch<{ action: { id: string } }>(
+      const result = await adminFetch<{ action: { id: string; status?: string } }>(
         `/admin/operations/outbox/events/${selectedEvent.id}/requeue-requests`,
         {
           method: "POST",
@@ -177,13 +177,16 @@ export function Operations({
             reasonCode: modalReason.trim() || "INCIDENT_RETRY",
             ticketReference: modalTicket.trim() || "ADMIN-OUTBOX",
             description: modalDescription.trim() || "Canonical outbox requeue",
+            directExecution: true,
           }),
         }
       );
       setSuccessNotice(
-        `Đã tạo yêu cầu Requeue cho Outbox event ${shortId(selectedEvent.id)} (Mã action: ${
-          result.action?.id ?? "Mới"
-        }). Chờ ADMIN phê duyệt trong Approval Inbox.`
+        result.action?.status === "SUCCEEDED"
+          ? `Đã đẩy lại Outbox event ${shortId(selectedEvent.id)} thành công.`
+          : `Đã tạo yêu cầu Requeue cho Outbox event ${shortId(selectedEvent.id)} (Mã action: ${
+              result.action?.id ?? "Mới"
+            }). Chờ ADMIN phê duyệt trong Approval Inbox.`
       );
       closeModal();
       await onReload();
@@ -200,7 +203,7 @@ export function Operations({
     setBusy(true);
     setError(null);
     try {
-      const result = await adminFetch<{ action: { id: string } }>(
+      const result = await adminFetch<{ action: { id: string; status?: string } }>(
         `/admin/operations/jobs/${selectedJob.id}/retry-requests`,
         {
           method: "POST",
@@ -209,13 +212,16 @@ export function Operations({
             reasonCode: modalReason.trim() || "INCIDENT_RETRY",
             ticketReference: modalTicket.trim() || "ADMIN-JOB",
             description: modalDescription.trim() || "Canonical background job retry",
+            directExecution: true,
           }),
         }
       );
       setSuccessNotice(
-        `Đã tạo yêu cầu Retry cho Background Job ${shortId(selectedJob.id)} (Mã action: ${
-          result.action?.id ?? "Mới"
-        }). Chờ ADMIN phê duyệt trong Approval Inbox.`
+        result.action?.status === "SUCCEEDED"
+          ? `Đã kích hoạt chạy lại Background Job ${shortId(selectedJob.id)} thành công.`
+          : `Đã tạo yêu cầu Retry cho Background Job ${shortId(selectedJob.id)} (Mã action: ${
+              result.action?.id ?? "Mới"
+            }). Chờ ADMIN phê duyệt trong Approval Inbox.`
       );
       closeModal();
       await onReload();
@@ -319,9 +325,9 @@ export function Operations({
               </div>
               <div style={{ background: "var(--color-bg, #f8fafc)", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--color-border, #e2e8f0)" }}>
                 <strong style={{ color: "var(--color-text-main, #1e293b)", display: "block", marginBottom: "3px" }}>
-                  🛡️ Cơ chế 4 mắt (Maker-Checker)
+                  🛡️ Thực thi trực tiếp & Audit Log
                 </strong>
-                Mọi lệnh Requeue hoặc Retry đều tạo một Action Request chuyển vào <strong>Approval Inbox</strong> để Admin phê duyệt trước khi máy chủ thực sự chạy lại.
+                Mọi lệnh Requeue hoặc Retry sử dụng payload gốc bất biến (canonical payload) trong cơ sở dữ liệu, thực thi trực tiếp khi bật chế độ vận hành nhanh và ghi nhận đầy đủ vào Nhật ký kiểm toán.
               </div>
             </div>
           </div>
