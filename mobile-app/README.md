@@ -7,21 +7,22 @@
 - Giao diện dùng nhận diện riêng `NOVA Digital Banking`, design token thống nhất cho màu sắc, chữ, khoảng cách, bo góc, bóng đổ và vùng bấm; không sử dụng logo hoặc nội dung tiếp thị của ngân hàng khác.
 - Thanh điều hướng gồm bốn mục `Trang chủ`, `Thẻ`, `QR`, `Thêm`; nút QR được nhấn mạnh nhưng vẫn có nhãn chữ và accessibility label.
 - Trang chủ có đúng ba dịch vụ nhanh: chuyển tiền, tiền gửi và thẻ tín dụng; không có banner quảng cáo hoặc mục ưu đãi.
-- Đăng nhập/đăng ký qua Auth API contract, có server-driven MFA challenge khi policy yêu cầu.
-- Khôi phục session khi mở app và route guard theo trạng thái auth.
+- Đăng nhập/đăng ký qua Auth API contract; hỗ trợ **đăng nhập nhanh bằng Sinh trắc học / Mã PIN thiết bị** ngay tại màn hình Đăng nhập (`LoginScreen`) thông qua cặp challenge/verify gắn chặt `deviceId` (không lưu mật khẩu trên máy).
+- Hỗ trợ xác thực cục bộ linh hoạt qua Vân tay, Nhận diện khuôn mặt (Face ID / Face Unlock) và **Mã PIN khóa màn hình (`SecurityLevel.SECRET`)**; màn hình Bảo mật (`MfaMethodsScreen`) cho phép xác nhận mật khẩu trực tiếp ngay tại thẻ Sinh trắc học.
+- Khôi phục session khi mở app (với cửa sổ ân hạn nền 30 giây `BACKGROUND_LOCK_GRACE_MS` và mở khóa bằng Sinh trắc học) cùng route guard theo trạng thái auth.
 - Lưu session bằng một bản ghi SecureStore nguyên tử, có serialize mutation và migration từ format cũ.
 - Tạo installation ID bằng `expo-crypto`, lưu SecureStore và gửi `X-Device-ID` cho auth/API để backend thực thi device binding.
-- Đăng xuất xóa session cục bộ trên thiết bị; có endpoint logout mọi thiết bị ở server.
+- Đăng xuất xóa session cục bộ trên thiết bị (giữ khóa Sinh trắc học đã liên kết để hỗ trợ đăng nhập nhanh lần sau, và tự dọn nếu khóa bị thu hồi trên server); có endpoint logout mọi thiết bị và quản lý thiết bị (`/auth/devices`).
 - HTTP client có Authorization, timeout, cancel, request ID, idempotency key và refresh single-flight hook.
 - Dashboard có trạng thái rỗng, thao tác nhanh có phản hồi rõ ràng và nội dung cuộn được.
 - Các màn chính dùng cùng một ngôn ngữ giao diện và có trạng thái loading, empty, error/retry, offline hoặc unauthorized phù hợp; tên dài và nội dung cuộn được kiểm tra trên Pixel 7 API 35.
-- Accounts/transactions có cursor pagination, runtime validation và màn hình lịch sử.
+- Accounts/transactions có cursor pagination, bộ lọc server-side, thống kê thu/chi tháng, **xuất sao kê CSV/HTML** và màn hình lịch sử.
 - Home và Account Detail chỉ nhận số tài khoản đã che từ list API; khi bấm `Hiện đầy đủ` hoặc `Sao chép`, app gọi endpoint riêng để hiện và sao chép toàn bộ số tài khoản trong bộ nhớ tạm của phiên màn hình.
-- Có transaction detail và notification giao dịch.
-- Transfer flow có beneficiary lookup, quote/phí, review, persistent TOTP step-up, idempotent submit và receipt state; danh bạ có list/create/rename/delete và chỉ hiển thị số tài khoản đã che.
+- Có transaction detail, notification giao dịch và màn hình **Cảnh báo giao dịch bất thường (`/anomalies`)** cho phép khách hàng xác nhận giao dịch an toàn (`CONFIRMED_SAFE`) hoặc báo nghi ngờ (`REPORTED_SUSPICIOUS`).
+- Transfer flow hỗ trợ chuyển nội bộ & liên ngân hàng NAPAS/VietQR, beneficiary lookup, quote/phí động từ Control Policy, review, **phân tầng Step-up** (giao dịch `< 1.000.000 VND` và rủi ro thấp ưu tiên Sinh trắc học/PIN kèm tùy chọn chuyển sang TOTP; giao dịch `≥ 1.000.000 VND` hoặc rủi ro cao bắt buộc TOTP 6 số), idempotent submit và receipt state.
 - Có eKYC persistent dùng cùng nguồn PostgreSQL với Admin, theo vòng đời DRAFT/SUBMITTED/UNDER_REVIEW/NEEDS_MORE_INFO/APPROVED/REJECTED.
 - Danh sách thẻ không hiển thị thao tác đăng ký thêm khi khách hàng đã có thẻ; hồ sơ đang chờ dẫn về màn hình trạng thái. Khóa khẩn cấp không cần TOTP, còn mở khóa và báo mất dùng purpose TOTP riêng.
-- Có “QR thông tin nhận tiền”, QR code renderer, camera scanner và manual fallback. Payload v2 dùng số tài khoản thay vì UUID nội bộ, chỉ nhận đúng schema đã version hóa và luôn được coi là `UNVERIFIED`; màn hình không khởi tạo giao dịch thanh toán.
+- Có “QR thông tin nhận tiền” hỗ trợ cả chuẩn **NAPAS / VietQR** lẫn nội bộ, QR code renderer, camera scanner và manual fallback. Payload chỉ được coi là `UNVERIFIED`; màn hình không tự khởi tạo giao dịch thanh toán mà chuyển tiếp sang màn hình Chuyển khoản để server đối soát.
 - Notification có list/detail, mark-read và deep link tới transaction detail/profile theo resource của server.
 - Trợ lý hướng dẫn NOVA (`/assistant`): Hỏi đáp câu hỏi thường gặp (FAQ) dựa trên danh mục câu trả lời chuẩn (Response Catalog), lọc tự động dữ liệu nhạy cảm (mật khẩu, CVV, OTP).
 - Kế hoạch tài chính cá nhân (`/financial-advice`): Tính toán thặng dư thu chi và tư vấn phương án tiết kiệm mục tiêu (`SAVINGS_PLAN`) hoặc cân đối ngân sách (`BUDGET_BALANCE`).

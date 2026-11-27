@@ -4,7 +4,7 @@ import { Heading } from "../../components/common/Heading";
 import { Notice } from "../../components/common/Notice";
 import { StatusBadge } from "../../components/common/StatusBadge";
 import { useStaff } from "../../context/StaffContext";
-import type { Staff } from "../../types";
+import type { Action, Staff } from "../../types";
 
 interface StaffViewProps {
   items: Staff[];
@@ -53,7 +53,7 @@ const isFixtureStaff = (item: Staff) =>
   /^[QWERNFSR]-\w+/.test(item.employeeCode);
 
 export function StaffView({ items, onReload, loading }: StaffViewProps) {
-  const { hasPermission } = useStaff();
+  const { hasPermission, stepUpFreshUntil, setStepUpFreshUntil } = useStaff();
 
   // Direct Operations-account setup state
   const [email, setEmail] = useState("");
@@ -76,6 +76,12 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+
+  // Direct staff-disable confirmation + step-up MFA modal state (for ADMIN)
+  const [disableTarget, setDisableTarget] = useState<Staff | null>(null);
+  const [disableReason, setDisableReason] = useState("Admin Web direct disable");
+  const [disableStepUpCode, setDisableStepUpCode] = useState("");
+  const [disableModalError, setDisableModalError] = useState<ApiError | null>(null);
 
   useEffect(() => {
     if (!employeeCode || employeeCode === "EMP-001") {
@@ -202,14 +208,33 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
   // Contract reference: /admin/staff/${id}/role-change-requests
   // (Hệ thống áp dụng kiến trúc 1 Root Admin duy nhất + các tài khoản Operations)
 
+  const canDirectDisable = hasPermission("staff.disable.approve");
+  const isStepUpFresh = Date.now() < stepUpFreshUntil;
+
+  const closeDisableModal = () => {
+    if (busy) return;
+    setDisableTarget(null);
+    setDisableReason("Admin Web direct disable");
+    setDisableStepUpCode("");
+    setDisableModalError(null);
+  };
+
   const handleDisableRequest = async (target: Staff) => {
+    if (canDirectDisable) {
+      setDisableTarget(target);
+      setDisableReason("Admin Web direct disable");
+      setDisableStepUpCode("");
+      setDisableModalError(null);
+      return;
+    }
+
     if (!window.confirm(`Bạn có chắc chắn muốn gửi yêu cầu khóa tài khoản của ${target.displayName} (${target.employeeCode})?`)) {
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const result = await adminFetch<{ action: { id: string } }>(
+      const result = await adminFetch<{ action: Action }>(
         `/admin/staff/${target.id}/disable-requests`,
         {
           method: "POST",
@@ -223,13 +248,69 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
       );
 
       setSuccessNotice(
-        `Đã tạo yêu cầu vô hiệu hóa nhân viên ${target.displayName} (Mã: ${
-          result.action?.id ?? "Mới"
-        }). Chờ ADMIN phê duyệt.`
+        result.action?.status === "SUCCEEDED"
+          ? `Đã vô hiệu hóa tài khoản nhân viên ${target.displayName} (${target.employeeCode}) thành công.`
+          : `Đã tạo yêu cầu vô hiệu hóa nhân viên ${target.displayName} (Mã: ${
+              result.action?.id ?? "Mới"
+            }). Chờ ADMIN phê duyệt.`
       );
       await onReload();
     } catch (caught) {
       setError(caught as ApiError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleConfirmDirectDisable = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!disableTarget) return;
+    const fresh = Date.now() < stepUpFreshUntil;
+    if (!fresh && !/^\d{6}$/.test(disableStepUpCode.trim())) {
+      return;
+    }
+
+    setBusy(true);
+    setDisableModalError(null);
+    setError(null);
+    try {
+      if (!fresh) {
+        await adminFetch("/admin/auth/step-up", {
+          method: "POST",
+          body: JSON.stringify({ code: disableStepUpCode.trim() }),
+        });
+        setStepUpFreshUntil(Date.now() + 5 * 60 * 1000);
+      }
+
+      const result = await adminFetch<{ action: Action }>(
+        `/admin/staff/${disableTarget.id}/disable-requests`,
+        {
+          method: "POST",
+          headers: { "Idempotency-Key": idempotencyKey("staff-disable") },
+          body: JSON.stringify({
+            reasonCode: "STAFF_DISABLE_REVIEW",
+            ticketReference: "ADMIN-STAFF",
+            description: disableReason.trim() || "Admin Web direct disable",
+          }),
+        }
+      );
+
+      const targetName = disableTarget.displayName;
+      const targetCode = disableTarget.employeeCode;
+      setDisableTarget(null);
+      setDisableStepUpCode("");
+      setDisableReason("Admin Web direct disable");
+
+      setSuccessNotice(
+        result.action?.status === "SUCCEEDED"
+          ? `Đã vô hiệu hóa tài khoản nhân viên ${targetName} (${targetCode}) thành công.`
+          : `Đã tạo yêu cầu vô hiệu hóa nhân viên ${targetName} (Mã: ${
+              result.action?.id ?? "Mới"
+            }). Chờ phê duyệt trong Approval Inbox.`
+      );
+      await onReload();
+    } catch (caught) {
+      setDisableModalError(caught as ApiError);
     } finally {
       setBusy(false);
     }
@@ -596,8 +677,94 @@ export function StaffView({ items, onReload, loading }: StaffViewProps) {
       </div>
 
       <div className="notice info">
-        Tài khoản Operations tạo tại đây hoạt động ngay. Yêu cầu vô hiệu hóa nhân sự hiện có vẫn tạo yêu cầu trong Approval Inbox; phiên cũ sẽ bị vô hiệu hóa khi tài khoản bị khóa.
+        Tài khoản Operations tạo tại đây hoạt động ngay. Với quyền Admin, khi bấm Khóa và xác thực mã TOTP Step-up, hệ thống sẽ vô hiệu hóa nhân sự trực tiếp ngay lập tức (hoặc tạo yêu cầu trong Approval Inbox nếu tắt thực thi trực tiếp).
       </div>
+
+      {disableTarget ? (
+        <div className="modal-backdrop">
+          <div className="modal" role="dialog" aria-modal="true" aria-labelledby="disable-staff-title" style={{ maxWidth: "520px" }}>
+            <div className="panel-heading" style={{ marginBottom: "14px" }}>
+              <div>
+                <div style={{ fontSize: "0.78rem", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>
+                  IDENTITY & RBAC · STAFF_DISABLE
+                </div>
+                <h2 id="disable-staff-title" style={{ margin: "4px 0 0 0", fontSize: "1.2rem", color: "#0f172a" }}>
+                  🚫 Khóa tài khoản nhân sự
+                </h2>
+              </div>
+              <button type="button" className="ghost" disabled={busy} onClick={closeDisableModal}>
+                Đóng
+              </button>
+            </div>
+
+            <Notice error={disableModalError} />
+
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "12px", marginBottom: "14px" }}>
+              <div style={{ fontWeight: 600, fontSize: "0.95rem", color: "#0f172a" }}>
+                {disableTarget.displayName} ({disableTarget.employeeCode})
+              </div>
+              <div style={{ fontSize: "0.82rem", color: "#64748b", fontFamily: "var(--font-mono)", marginTop: "2px" }}>
+                {disableTarget.email}
+              </div>
+            </div>
+
+            <form className="stack" onSubmit={(event) => void handleConfirmDirectDisable(event)}>
+              <label>
+                Lý do khóa tài khoản
+                <input
+                  value={disableReason}
+                  onChange={(event) => setDisableReason(event.target.value)}
+                  placeholder="Ví dụ: Nhân sự nghỉ việc / thu hồi quyền"
+                  maxLength={240}
+                  disabled={busy}
+                />
+              </label>
+
+              {!isStepUpFresh ? (
+                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "8px", padding: "12px" }}>
+                  <label style={{ margin: 0 }}>
+                    <span style={{ fontWeight: 700, color: "#1e40af", display: "block", marginBottom: "6px" }}>
+                      🔑 Mã TOTP Step-up (6 số từ Authenticator):
+                    </span>
+                    <input
+                      data-testid="staff-disable-step-up"
+                      inputMode="numeric"
+                      pattern="[0-9]{6}"
+                      maxLength={6}
+                      autoComplete="one-time-code"
+                      value={disableStepUpCode}
+                      onChange={(event) => setDisableStepUpCode(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                      placeholder="123456"
+                      required
+                      disabled={busy}
+                      autoFocus
+                      style={{ fontSize: "1.25rem", letterSpacing: "0.25em", textAlign: "center", fontWeight: 700, background: "#fff" }}
+                    />
+                  </label>
+                </div>
+              ) : (
+                <div className="notice info" style={{ margin: 0 }}>
+                  Phiên Step-up MFA của bạn còn hiệu lực — bấm xác nhận để khóa ngay lập tức.
+                </div>
+              )}
+
+              <div className="button-row" style={{ marginTop: "8px" }}>
+                <button
+                  type="submit"
+                  className="primary"
+                  style={{ background: "var(--color-danger)", borderColor: "var(--color-danger)" }}
+                  disabled={busy || (!isStepUpFresh && !/^\d{6}$/.test(disableStepUpCode.trim()))}
+                >
+                  {busy ? "Đang khóa…" : "Xác nhận khóa ngay"}
+                </button>
+                <button type="button" className="secondary" disabled={busy} onClick={closeDisableModal}>
+                  Hủy
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

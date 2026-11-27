@@ -3,6 +3,10 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 
 import { LoginScreen } from "@/features/auth/screens/LoginScreen";
 import { useAuth } from "@/features/auth/context/AuthContext";
+import {
+  loadBiometricCredential,
+  loadLastBiometricHint,
+} from "@/features/auth/storage/biometricCredentialStorage";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -15,7 +19,14 @@ jest.mock("@/features/auth/context/AuthContext", () => ({
   useAuth: jest.fn(),
 }));
 
+jest.mock("@/features/auth/storage/biometricCredentialStorage", () => ({
+  loadBiometricCredential: jest.fn().mockResolvedValue(null),
+  loadLastBiometricHint: jest.fn().mockResolvedValue(null),
+}));
+
 const useAuthMock = jest.mocked(useAuth);
+const loadBiometricCredentialMock = jest.mocked(loadBiometricCredential);
+const loadLastBiometricHintMock = jest.mocked(loadLastBiometricHint);
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -155,5 +166,57 @@ describe("LoginScreen — Post-revocation recovery codes display", () => {
     const texts = renderer.root.findAllByType("Text" as any);
     const noticeNode = texts.find((t) => t.props.children === noticeText);
     expect(noticeNode).toBeDefined();
+  });
+
+  test("shows biometric quick-login button when device has enrolled biometric credential", async () => {
+    const mockBiometricLogin = jest.fn().mockResolvedValue(undefined);
+    loadLastBiometricHintMock.mockResolvedValueOnce({
+      userId: "user-1",
+      email: "biometric@example.com",
+      fullName: "Biometric User",
+      deviceId: "device-test-uuid",
+    });
+    loadBiometricCredentialMock.mockResolvedValueOnce({
+      credentialId: "cred-1",
+      userId: "user-1",
+      deviceId: "device-test-uuid",
+      biometricSecret: "secret-abc",
+      displayName: "Sinh trắc học",
+      enrolledAt: new Date().toISOString(),
+    });
+
+    useAuthMock.mockReturnValue({
+      deviceId: "device-test-uuid",
+      session: null,
+      status: "anonymous",
+      isAuthenticated: false,
+      logoutNotice: null,
+      pendingRecoveryCodes: null,
+      refreshAccessToken: jest.fn(),
+      login: mockLogin,
+      loginWithBiometric: mockBiometricLogin,
+      register: jest.fn(),
+      verifyRegistrationChallenge: jest.fn(),
+      resendRegistrationChallenge: jest.fn(),
+      completeMfaRevocation: jest.fn(),
+      clearPendingRecoveryCodes: mockClearPendingRecoveryCodes,
+      logout: jest.fn(),
+      logoutAll: jest.fn(),
+    });
+
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(<LoginScreen />);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const bioButton = byTestId(renderer, "login-biometric");
+    expect(bioButton).toBeDefined();
+
+    await act(async () => {
+      await bioButton.props.onPress();
+    });
+
+    expect(mockBiometricLogin).toHaveBeenCalledTimes(1);
   });
 });

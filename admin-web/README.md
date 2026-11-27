@@ -70,18 +70,17 @@ Giao diện được phân nhóm theo chuẩn nghiệp vụ ngân hàng dựa tr
    - *Hồ sơ định danh (`#/kyc`)*: Quản lý hồ sơ định danh (`kyc.read`, `kyc.review`, `kyc.decision.request`). Hỗ trợ nút **Xem hồ sơ** mở Modal trực quan chi tiết (Thẻ Căn cước công dân gắn chip mockup, avatar, chỉ số đối soát sinh trắc học khuôn mặt 98.6%, Liveness check). Khi ở chế độ Direct Execution, hỗ trợ nút **Phê duyệt** trực tiếp 1 chạm ngay trong modal.
    - *Hồ sơ tín dụng (`#/credit`)*: Quản lý hồ sơ hạn mức tín dụng (`credit-application.read`, `credit-application.review`). Hỗ trợ nút **Xem hồ sơ** mở Modal trực quan chi tiết (Thẻ tín dụng EMV mockup, Điểm tín dụng CIC 735 Hạng A). Hỗ trợ nút **Phê duyệt** trực tiếp 1 chạm khi bật Direct Execution.
    - *Giao dịch (`#/transfers`)*: Bộ lọc trạng thái (`ALL`, `PENDING`, `FAILED`, `SUCCEEDED`, `CANCELLED`), xem timeline. Hỗ trợ thao tác **Hoàn tiền giao dịch** trực tiếp vào Core Banking mà không yêu cầu nhập ticket thủ công.
-3. **Phê duyệt (`#/approvals`)**:
-   - Chỉ `ADMIN` có `audit.read` nên Operations không thấy mục Approval Inbox.
-   - Hỗ trợ bộ điều khiển **Tự động làm mới (Auto-Refresh 15s)** với Checkbox bật/tắt và đèn nhấp nháy chỉ báo trạng thái thời gian thực.
-   - Khi ở chế độ Maker-Checker (`ADMIN_DIRECT_EXECUTION=false`), Admin xử lý những loại yêu cầu mà mình có quyền duyệt, sau khi xác thực Step-up MFA. Admin có thể duyệt cả yêu cầu do chính tài khoản đó tạo; thao tác được ghi vào audit.
-   - Khi từ chối, hệ thống bảo toàn quyết định qua bước MFA và gửi lệnh tới endpoint `/reject`.
+3. **Phê duyệt (`#/approvals` — ẩn trên Sidebar ở chế độ thực thi trực tiếp)**:
+   - Mục `Approval Inbox` được ẩn khỏi thanh menu bên trái (`AppLayout.tsx`) vì toàn bộ nghiệp vụ của `OPERATIONS` và `ADMIN` đã được tích hợp thực thi trực tiếp ngay tại từng màn hình tương ứng khi `ADMIN_DIRECT_EXECUTION=true`.
+   - Mã nguồn `Approvals.tsx` và logic Maker-Checker vẫn được bảo toàn đầy đủ cho chế độ `ADMIN_DIRECT_EXECUTION=false`.
 4. **Vận hành (`#/operations`)**:
    - Theo dõi tiến trình xử lý outbox (`PENDING`, `PROCESSING`, `DEAD`, `SKIPPED`) và Background Jobs.
    - Hỗ trợ **Tự động làm mới (Auto-Refresh 15s)** hỗ trợ giám sát liên tục trạng thái hàng đợi và worker.
-   - Tạo yêu cầu Requeue cho outbox event hoặc Retry cho background job bị lỗi với giao diện tinh giản đã loại bỏ trường ticket reference.
+   - Thực thi trực tiếp Requeue cho outbox event hoặc Retry cho background job bị lỗi khi `ADMIN_DIRECT_EXECUTION=true` (ghi đầy đủ vào Audit Log).
 5. **Quản trị**:
-   - *Nhân viên & Vai trò (`#/staff`)*: Admin tạo trực tiếp tài khoản Operations, đặt mật khẩu ban đầu và cấu hình TOTP mà không gửi email mời hay tạo approval. Đổi vai trò (`STAFF_ROLE_CHANGE`) và vô hiệu hóa (`STAFF_DISABLE`) vẫn tạo yêu cầu để Admin xử lý trong Approval Inbox.
-   - *Nhật ký kiểm toán (`#/audit`)*: Xem lịch sử truy cập và thao tác append-only đã lọc bỏ thông tin nhạy cảm. Hỗ trợ **Xuất báo cáo kiểm toán** (`audit.export`) ra file định dạng **CSV** hoặc **JSON** tải trực tiếp về máy trạm kèm nhật ký tuân thủ, và bộ điều khiển **Tự động làm mới (Auto-Refresh 15s)**.
+   - *Chính sách & Biểu phí (`#/policy`)*: Dành riêng cho `ADMIN` xem đối soát sổ cái (`BALANCED` / `MISMATCH`) và cập nhật hạn mức chuyển khoản / biểu phí toàn hệ thống kèm xác thực TOTP Step-up.
+   - *Nhân sự / Phân quyền (`#/staff`)*: `ADMIN` tạo trực tiếp tài khoản `OPERATIONS` (đặt mật khẩu ban đầu + cấu hình TOTP) và **khóa tài khoản nhân sự trực tiếp ngay tại chỗ** kèm hộp thoại xác thực mã TOTP Step-up 6 số (thu hồi tức thì mọi phiên đang mở của nhân sự đó).
+   - *Nhật ký kiểm toán (`#/audit`)*: Dành riêng cho `ADMIN` xem lịch sử truy cập và thao tác append-only (lọc theo `STAFF`, `CUSTOMER`, `SYSTEM`, tìm kiếm theo Mã NV / Họ tên / Email để giám sát mọi thao tác của nhân viên `OPERATIONS`). Hỗ trợ **Xuất báo cáo kiểm toán** (`audit.export`) ra **CSV** hoặc **JSON** và **Tự động làm mới (Auto-Refresh 15s)**.
 
 ---
 

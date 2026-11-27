@@ -4,20 +4,29 @@
 |---|---:|---:|
 | Customer masked read / account read | ✓ | ✓ |
 | Customer PII / case scope | assigned or unassigned cases | all cases |
-| Customer access lock/unlock requests | ✓ | ✓ |
-| Account block/unblock requests | ✓ | — |
-| Simulation funding / reversal requests | ✓ | — |
-| KYC and credit review requests | ✓ | xem / phê duyệt |
-| Pending transfer read / action requests | ✓ | xem / phê duyệt |
-| Outbox and job read / retry requests | ✓ | xem / phê duyệt |
-| Tạo trực tiếp tài khoản OPERATIONS / role / disable requests | xem staff | ✓ |
-| Approval Inbox and audit read/export | — | ✓ |
+| Customer access lock/unlock requests | ✓ (duyệt trực tiếp khi `ADMIN_DIRECT_EXECUTION=true`) | ✓ |
+| Account block/unblock requests | ✓ (duyệt trực tiếp khi `ADMIN_DIRECT_EXECUTION=true`) | — |
+| Simulation funding / reversal requests | ✓ (duyệt trực tiếp khi `ADMIN_DIRECT_EXECUTION=true`) | — |
+| KYC and credit review requests | ✓ (duyệt trực tiếp khi `ADMIN_DIRECT_EXECUTION=true`) | xem / phê duyệt |
+| Pending transfer read / action requests | ✓ (duyệt trực tiếp khi `ADMIN_DIRECT_EXECUTION=true`) | xem / phê duyệt |
+| Outbox and job read / retry requests | ✓ (duyệt trực tiếp khi `ADMIN_DIRECT_EXECUTION=true`) | xem / phê duyệt |
+| Tạo trực tiếp tài khoản OPERATIONS / role / disable requests | xem staff | ✓ (khóa trực tiếp kèm Step-up TOTP tại chỗ khi `ADMIN_DIRECT_EXECUTION=true`) |
+| Control Policy (`/admin/control-policy`) & Ledger Reconciliation | chỉ đọc đối soát | ✓ (sửa policy cần Step-up TOTP) |
+| Audit Explorer read/export (và Approval Inbox dự phòng) | — | ✓ |
 | Approve own eligible requests | — | ✓, fresh step-up MFA required |
 
-`OPERATIONS` combines support and business-operation permissions. `ADMIN`
-combines system administration and approval permissions. Permission checks
-remain server-side and permission-specific; neither the UI nor a role name
-bypasses the approval policy. An ADMIN account can approve its own eligible request after fresh step-up MFA. No second ADMIN account is required.
+`OPERATIONS` combines support and business-operation permissions, and can
+directly execute operational actions (customer/account controls, funding/reversal,
+KYC/credit decisions, transfer operations, outbox/job retries) when
+`ADMIN_DIRECT_EXECUTION=true` (without MFA Step-up). `ADMIN` retains exclusive
+governance permissions (staff creation/disable/role change, control policy,
+audit log & export, and Approval Inbox fallback). Trên giao diện Admin Web hiện
+hành, mục `Approval Inbox` được ẩn khỏi thanh menu điều hướng vì toàn bộ nghiệp
+vụ đã tích hợp thực thi trực tiếp ngay tại từng màn hình (khi bật
+`ADMIN_DIRECT_EXECUTION=true`); mã nguồn `Approvals.tsx` và cơ chế Maker-Checker
+ở server vẫn được giữ nguyên làm lớp dự phòng khi đặt `ADMIN_DIRECT_EXECUTION=false`.
+An ADMIN account can approve its own eligible request after fresh step-up MFA.
+No second ADMIN account is required.
 
 Admin Web tạo tài khoản OPERATIONS ở trạng thái ACTIVE sau khi xác minh mã TOTP
 của tài khoản mới. Đây là luồng tạo trực tiếp; không cần email mời hay phê duyệt.

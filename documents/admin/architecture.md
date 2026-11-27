@@ -60,9 +60,10 @@ Customer search/detail trong P0 trả email/số điện thoại đã che; các 
 1. **Chế độ Phê duyệt 2 bước (`ADMIN_DIRECT_EXECUTION=false`)**:
    `request → authenticate staff → resolve roles/scope → require permission → validate typed body + Idempotency-Key → read/lock target → snapshot version/status + fingerprint → PENDING_APPROVAL + audit → approval by an ADMIN with the action-specific permission and fresh step-up MFA (the requester may be that same ADMIN) → lock action FOR UPDATE → verify permissions/stale/fingerprint → domain mutation + ledger/history + outbox + audit → SUCCEEDED/FAILED → commit`.
 
-2. **Chế độ Thực thi Trực tiếp 1 chạm (`ADMIN_DIRECT_EXECUTION=true`)**:
+2. **Chế độ Thực thi Trực tiếp 1 chạm (`ADMIN_DIRECT_EXECUTION=true` — mặc định local/preview)**:
    `request (directExecution: true) → authenticate staff → resolve roles/scope → require permission → validate typed body + Idempotency-Key → read/lock target → snapshot version/status + fingerprint → domain mutation + ledger/history + outbox + audit (outcome: SUCCEEDED) → commit`.
-   *Chế độ này được thiết kế phục vụ môi trường kiểm thử local, liên thông tức thì giữa Admin Web và Mobile App mà không cần chuyển tài khoản để duyệt hàng đợi.*
+   - `OPERATIONS` được cấp quyền thực thi trực tiếp toàn bộ nghiệp vụ vận hành khách hàng (khóa/mở khách hàng & tài khoản, nạp/thu hồi tiền, duyệt KYC & tín dụng, xử lý chuyển khoản, requeue Outbox / retry Job) và mọi thao tác đều ghi vết đích danh vào `audit_events`.
+   - `ADMIN` giữ độc quyền quản trị hệ thống: tạo & khóa trực tiếp nhân sự (kèm xác thực TOTP Step-up tại chỗ ở `StaffView`), cập nhật `Control Policy` (kèm TOTP Step-up), và tra cứu/xuất `Audit Explorer`. Mục `Approval Inbox` được ẩn trên thanh menu khi vận hành trực tiếp nhưng vẫn giữ nguyên logic dự phòng cho chế độ `ADMIN_DIRECT_EXECUTION=false`.
 
 Giao diện người dùng đã gỡ bỏ hoàn toàn việc bắt buộc nhập mã ticket tham chiếu; hệ thống tự động sinh và đính kèm mã tham chiếu ngầm chuẩn hóa (`OPS-FUNDING`, `OPS-DECISION`, v.v.) nhằm tuân thủ quy tắc dữ liệu của Action Engine.
 

@@ -198,6 +198,18 @@ export class RelationalAuthService {
     });
   }
 
+  async findCustomerIdByEmail(email: string): Promise<string | null> {
+    const normalizedEmail = String(email ?? "").trim().toLowerCase();
+    if (!normalizedEmail) return null;
+    return this.unitOfWork.transaction(async ({ client }) => {
+      const result = await client.query(
+        "SELECT id FROM customers WHERE lower(email) = lower($1) LIMIT 1",
+        [normalizedEmail],
+      );
+      return result.rows[0]?.id ? String(result.rows[0].id) : null;
+    });
+  }
+
   async verifyCurrentPassword(customerId: string, password: string): Promise<boolean> {
     return this.unitOfWork.transaction(async ({ client }) => {
       const customer = await new CustomerRepository(client).findCustomerById(customerId);

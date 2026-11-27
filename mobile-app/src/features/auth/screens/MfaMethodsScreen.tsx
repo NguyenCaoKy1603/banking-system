@@ -37,7 +37,9 @@ import {
 } from "@/features/auth/storage/mfaEnrollmentMemoryCache";
 import {
   clearBiometricCredential,
+  clearLastBiometricHint,
   saveBiometricCredential,
+  saveLastBiometricHint,
 } from "@/features/auth/storage/biometricCredentialStorage";
 import { requestBiometricAuthentication } from "@/services/security/biometricAuth";
 import { ApiError } from "@/services/api/ApiError";
@@ -80,6 +82,8 @@ export function MfaMethodsScreen() {
   const [challengeCode, setChallengeCode] = useState("");
   const [error, setError] = useState<string | undefined>();
   const [notice, setNotice] = useState<string | undefined>();
+  const [biometricPasswordOpen, setBiometricPasswordOpen] = useState(false);
+  const [biometricError, setBiometricError] = useState<string | undefined>();
   const [isLoading, setIsLoading] = useState(false);
   const [isCopiedSecret, setIsCopiedSecret] = useState(false);
 
@@ -261,6 +265,7 @@ export function MfaMethodsScreen() {
           deviceId
         ) {
           await clearBiometricCredential(session.user.id, deviceId).catch(() => undefined);
+          await clearLastBiometricHint(deviceId).catch(() => undefined);
         }
         clearPendingMfaChallenge();
         setPendingAction(null);
@@ -303,15 +308,21 @@ export function MfaMethodsScreen() {
 
   async function handleEnrollBiometric() {
     if (!auth || !session?.user.id || !deviceId) {
-      setError("Phiên đăng nhập chưa sẵn sàng.");
+      const msg = "Phiên đăng nhập chưa sẵn sàng.";
+      setError(msg);
+      setBiometricError(msg);
       return;
     }
     if (!password.trim()) {
-      setError("Nhập mật khẩu hiện tại để kích hoạt Sinh trắc học.");
+      setBiometricPasswordOpen(true);
+      const msg = "Nhập mật khẩu hiện tại để kích hoạt Sinh trắc học.";
+      setError(msg);
+      setBiometricError(msg);
       return;
     }
     setIsLoading(true);
     setError(undefined);
+    setBiometricError(undefined);
     setNotice(undefined);
     try {
       await requestBiometricAuthentication(
@@ -329,11 +340,20 @@ export function MfaMethodsScreen() {
         displayName: enrolled.displayName,
         enrolledAt: enrolled.enrolledAt,
       });
+      await saveLastBiometricHint({
+        userId: session.user.id,
+        email: session.user.email,
+        fullName: session.user.fullName,
+        deviceId: enrolled.deviceId,
+      });
       setPassword("");
-      setNotice("Đã kích hoạt xác thực Sinh trắc học (Vân tay / Khuôn mặt) cho thiết bị này.");
+      setBiometricPasswordOpen(false);
+      setNotice("Đã kích hoạt xác thực Sinh trắc học (Vân tay / Khuôn mặt / PIN) cho thiết bị này.");
       await loadCredentials();
-    } catch (biometricError: unknown) {
-      setError(getMessage(biometricError, "Không thể kích hoạt xác thực Sinh trắc học."));
+    } catch (biometricErrorValue: unknown) {
+      const msg = getMessage(biometricErrorValue, "Không thể kích hoạt xác thực Sinh trắc học.");
+      setError(msg);
+      setBiometricError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -500,13 +520,34 @@ export function MfaMethodsScreen() {
                 </View>
               ))
             )}
+            {biometricPasswordOpen ? (
+              <TextField
+                autoCapitalize="none"
+                label="Mật khẩu hiện tại để xác nhận"
+                onChangeText={(value) => {
+                  setPassword(value);
+                  setBiometricError(undefined);
+                }}
+                placeholder="Nhập mật khẩu tài khoản"
+                secureTextEntry
+                testID="mfa-biometric-password"
+                value={password}
+              />
+            ) : null}
+            {biometricError ? (
+              <Text accessibilityLiveRegion="polite" style={styles.error}>
+                {biometricError}
+              </Text>
+            ) : null}
             <Button
               disabled={isLoading}
-              icon="shield"
+              icon="fingerprint"
               label={
                 activeBiometricCredentials.length > 0
                   ? "Cập nhật lại Sinh trắc học thiết bị"
-                  : "Kích hoạt Sinh trắc học"
+                  : biometricPasswordOpen
+                    ? "Xác nhận & Kích hoạt Sinh trắc học"
+                    : "Kích hoạt Sinh trắc học"
               }
               onPress={() => void handleEnrollBiometric()}
               testID="mfa-biometric-enroll"

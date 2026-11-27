@@ -99,6 +99,34 @@ export function login(
   }, isLoginResponse);
 }
 
+export function beginBiometricLoginChallenge(
+  request: { email: string },
+  options: AuthRequestOptions,
+): Promise<AuthChallengeResponse> {
+  return requestJson<AuthChallengeResponse>("/auth/mfa/biometric/login/challenge", {
+    method: "POST",
+    body: { email: requireNonEmpty(request.email, "email") },
+    headers: createDeviceHeaders(options),
+  }, isAuthChallengeResponse);
+}
+
+export function verifyBiometricLogin(
+  request: { challengeId: string; proof: string },
+  options: AuthRequestOptions,
+): Promise<LoginResponse> {
+  return requestJson<LoginResponse>("/auth/mfa/biometric/login/verify", {
+    method: "POST",
+    body: {
+      challengeId: requireNonEmpty(request.challengeId, "challengeId"),
+      proof: requireNonEmpty(request.proof, "proof"),
+    },
+    headers: {
+      ...createDeviceHeaders(options),
+      "X-Device-Name": `NOVA App (${Platform.OS})`,
+    },
+  }, isLoginResponse);
+}
+
 export function register(
   request: RegisterRequest,
   options: AuthRequestOptions,

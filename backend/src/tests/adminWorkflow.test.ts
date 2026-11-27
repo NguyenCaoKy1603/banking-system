@@ -59,14 +59,41 @@ test("new staff requests reject the retired role codes", async () => {
   }
 });
 
-test("Operations cannot approve funding; an Admin approval executes once", async () => {
+test("Operations cannot approve staff disable; an Admin approval executes once", async () => {
   const { repository, actions } = await fixture();
-  const created = await actions.create({ subject: operations, actionType: "SIMULATION_FUNDING", targetType: "ACCOUNT", targetId: account.id, body: { amountMinor: "100000", ticketReference: "TEST-1", reasonCode: "PROJECT_TEST_FUNDING", description: "test" }, idempotencyKey: "funding-idempotency-1", traceId: "trace-1" });
-  await assert.rejects(() => actions.approve({ subject: { ...operations, stepUpVerifiedAt: new Date().toISOString() }, requestId: created.id, body: { fingerprint: created.requestFingerprint, reasonCode: "CHECK" }, traceId: "trace-2" }), { code: "ADMIN_PERMISSION_DENIED" });
-  const approved = await actions.approve({ subject: control, requestId: created.id, body: { fingerprint: created.requestFingerprint, reasonCode: "CHECK" }, traceId: "trace-3" });
-  assert.equal(approved.status, "SUCCEEDED");
+  const targetStaff: StaffRecord = {
+    id: "staff-target-1",
+    employeeCode: "EMP-900",
+    emailNormalized: "target@example.test",
+    displayName: "Target Staff",
+    passwordSalt: null,
+    passwordDigest: null,
+    status: "ACTIVE",
+    authorizationVersion: 1,
+    passwordChangedAt: null,
+    mfaEnrolledAt: null,
+    lastLoginAt: null,
+    createdAt: new Date().toISOString(),
+    roles: [{ role: "OPERATIONS", environmentScope: "preview", expiresAt: null }],
+  };
+  const staffRepo = new InMemoryAdminRepository({ accounts: [account], staff: [targetStaff] });
+  await staffRepo.initialize();
+  const staffActions = new AdminActionEngine(staffRepo);
+  try {
+    const created = await staffActions.create({ subject: { ...control, stepUpVerifiedAt: null, mfaVerifiedAt: null }, actionType: "STAFF_DISABLE", targetType: "STAFF", targetId: targetStaff.id, body: { ticketReference: "TEST-1", reasonCode: "STAFF_DISABLE_REVIEW", description: "test" }, idempotencyKey: "staff-disable-idempotency-1", traceId: "trace-1" });
+    await assert.rejects(() => staffActions.approve({ subject: { ...operations, stepUpVerifiedAt: new Date().toISOString() }, requestId: created.id, body: { fingerprint: created.requestFingerprint, reasonCode: "CHECK" }, traceId: "trace-2" }), { code: "ADMIN_PERMISSION_DENIED" });
+    const approved = await staffActions.approve({ subject: control, requestId: created.id, body: { fingerprint: created.requestFingerprint, reasonCode: "CHECK" }, traceId: "trace-3" });
+    assert.equal(approved.status, "SUCCEEDED");
+    assert.equal((await staffRepo.findStaffById(targetStaff.id))?.status, "DISABLED");
+  } finally {
+    await staffRepo.close();
+  }
+
+  const fundingCreated = await actions.create({ subject: operations, actionType: "SIMULATION_FUNDING", targetType: "ACCOUNT", targetId: account.id, body: { amountMinor: "100000", ticketReference: "TEST-1", reasonCode: "PROJECT_TEST_FUNDING", description: "test" }, idempotencyKey: "funding-idempotency-1", traceId: "trace-1" });
+  const fundingApproved = await actions.approve({ subject: control, requestId: fundingCreated.id, body: { fingerprint: fundingCreated.requestFingerprint, reasonCode: "CHECK" }, traceId: "trace-3" });
+  assert.equal(fundingApproved.status, "SUCCEEDED");
   assert.equal((await repository.findAccount(account.id))?.availableMinor, "100000");
-  const replay = await actions.approve({ subject: control, requestId: created.id, body: { fingerprint: created.requestFingerprint, version: approved.version, reasonCode: "CHECK" }, traceId: "trace-4" });
+  const replay = await actions.approve({ subject: control, requestId: fundingCreated.id, body: { fingerprint: fundingCreated.requestFingerprint, version: fundingApproved.version, reasonCode: "CHECK" }, traceId: "trace-4" });
   assert.equal(replay.status, "SUCCEEDED");
   assert.equal((await repository.findAccount(account.id))?.availableMinor, "100000");
 });
@@ -115,7 +142,37 @@ test("Operations cannot bypass Maker-Checker with client-supplied directExecutio
     accessVersion: 1,
     createdAt: new Date().toISOString(),
   };
-  const repository = new InMemoryAdminRepository({ accounts: [account], customers: [customer] });
+  const repository = new InMemoryAdminRepository({
+    accounts: [account],
+    customers: [customer],
+    applications: [
+      {
+        id: "kyc-app-1",
+        applicationType: "KYC",
+        customerId: customer.id,
+        status: "SUBMITTED",
+        version: 1,
+        requestFingerprint: "kyc-fp-1",
+        assignedStaffId: null,
+        decisionReasonCode: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: "credit-app-1",
+        applicationType: "CREDIT",
+        customerId: customer.id,
+        status: "SUBMITTED",
+        version: 1,
+        requestFingerprint: "credit-fp-1",
+        assignedStaffId: null,
+        requestedLimitMinor: "20000000",
+        decisionReasonCode: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  });
   await repository.initialize();
   const actions = new AdminActionEngine(repository);
   try {
@@ -160,7 +217,7 @@ test("Operations cannot bypass Maker-Checker with client-supplied directExecutio
   }
 });
 
-test("when ADMIN_DIRECT_EXECUTION=true, Operations still stays PENDING_APPROVAL while MFA-verified Admin with approval permission can direct-execute", async () => {
+test("when ADMIN_DIRECT_EXECUTION=true, Operations direct-executes operational actions while governance actions still require MFA Admin", async () => {
   const previousDirectExec = process.env.ADMIN_DIRECT_EXECUTION;
   process.env.ADMIN_DIRECT_EXECUTION = "true";
   const customer: CustomerSummary = {
@@ -172,12 +229,42 @@ test("when ADMIN_DIRECT_EXECUTION=true, Operations still stays PENDING_APPROVAL 
     accessVersion: 1,
     createdAt: new Date().toISOString(),
   };
-  const repository = new InMemoryAdminRepository({ accounts: [account], customers: [customer] });
+  const repository = new InMemoryAdminRepository({
+    accounts: [account],
+    customers: [customer],
+    applications: [
+      {
+        id: "kyc-app-1",
+        applicationType: "KYC",
+        customerId: customer.id,
+        status: "SUBMITTED",
+        version: 1,
+        requestFingerprint: "kyc-fp-1",
+        assignedStaffId: null,
+        decisionReasonCode: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: "credit-app-1",
+        applicationType: "CREDIT",
+        customerId: customer.id,
+        status: "SUBMITTED",
+        version: 1,
+        requestFingerprint: "credit-fp-1",
+        assignedStaffId: null,
+        requestedLimitMinor: "20000000",
+        decisionReasonCode: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  });
   await repository.initialize();
   const actions = new AdminActionEngine(repository);
   try {
     const opsFunding = await actions.create({
-      subject: { ...operations, mfaVerifiedAt: new Date().toISOString(), stepUpVerifiedAt: new Date().toISOString() },
+      subject: operations,
       actionType: "SIMULATION_FUNDING",
       targetType: "ACCOUNT",
       targetId: account.id,
@@ -185,14 +272,14 @@ test("when ADMIN_DIRECT_EXECUTION=true, Operations still stays PENDING_APPROVAL 
         amountMinor: "500000",
         ticketReference: "DIRECT-OPS-1",
         reasonCode: "ACCOUNT_FUNDING",
-        description: "Ops must still require Admin approval",
+        description: "Ops direct-executes operational funding",
         directExecution: true,
       },
       idempotencyKey: "direct-ops-funding-1",
       traceId: "trace-direct-ops-1",
     });
-    assert.equal(opsFunding.status, "PENDING_APPROVAL");
-    assert.equal((await repository.findAccount(account.id))?.availableMinor, "0");
+    assert.equal(opsFunding.status, "SUCCEEDED");
+    assert.equal((await repository.findAccount(account.id))?.availableMinor, "500000");
 
     const adminWithoutMfa: AdminSubject = {
       staffId: "admin-no-mfa",
@@ -229,6 +316,41 @@ test("when ADMIN_DIRECT_EXECUTION=true, Operations still stays PENDING_APPROVAL 
     });
     assert.equal(adminLock.status, "SUCCEEDED");
     assert.equal((await repository.findCustomer(customer.id))?.accessStatus, "LOCKED");
+
+    const kycAction = await actions.create({
+      subject: operations,
+      actionType: "KYC_DECISION",
+      targetType: "KYC_APPLICATION",
+      targetId: "kyc-app-1",
+      body: {
+        decision: "APPROVED",
+        reasonCode: "KYC_VERIFIED",
+        ticketReference: "OPS-KYC-1",
+        description: "Operations direct KYC approval",
+        directExecution: true,
+      },
+      idempotencyKey: "direct-ops-kyc-1",
+      traceId: "trace-direct-ops-kyc",
+    });
+    assert.equal(kycAction.status, "SUCCEEDED");
+
+    const creditAction = await actions.create({
+      subject: operations,
+      actionType: "CREDIT_DECISION",
+      targetType: "CREDIT_APPLICATION",
+      targetId: "credit-app-1",
+      body: {
+        decision: "PENDING_ACTIVATION",
+        approvedLimitMinor: "20000000",
+        reasonCode: "CREDIT_POLICY_PASSED",
+        ticketReference: "OPS-CREDIT-1",
+        description: "Operations direct credit approval",
+        directExecution: true,
+      },
+      idempotencyKey: "direct-ops-credit-1",
+      traceId: "trace-direct-ops-credit",
+    });
+    assert.equal(creditAction.status, "SUCCEEDED");
   } finally {
     if (previousDirectExec === undefined) delete process.env.ADMIN_DIRECT_EXECUTION;
     else process.env.ADMIN_DIRECT_EXECUTION = previousDirectExec;

@@ -1,6 +1,6 @@
 # PROJECT_CONTEXT — Banking System / NOVA
 
-> Cập nhật hiện hành. Repository: `banking-system`. Branch: `main`.
+> Cập nhật hiện hành (2026-11-26). Repository: `banking-system`. Branch đang làm việc: `Duong`.
 
 Dự án là **reference implementation** cho ứng dụng ngân hàng di động NOVA, vận hành bằng dữ liệu tổng hợp và tiền ảo trong môi trường local preview. Mục tiêu là minh họa cách tổ chức các luồng Mobile, Customer API, Admin API, PostgreSQL relational persistence, idempotency, MFA và outbox worker.
 

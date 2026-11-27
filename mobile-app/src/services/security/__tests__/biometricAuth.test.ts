@@ -7,7 +7,14 @@ import {
 } from "@/services/security/biometricAuth";
 
 jest.mock("expo-local-authentication", () => ({
+  SecurityLevel: {
+    NONE: 0,
+    SECRET: 1,
+    BIOMETRIC_WEAK: 2,
+    BIOMETRIC_STRONG: 3,
+  },
   authenticateAsync: jest.fn(),
+  getEnrolledLevelAsync: jest.fn(),
   hasHardwareAsync: jest.fn(),
   isEnrolledAsync: jest.fn(),
 }));
@@ -19,8 +26,11 @@ describe("biometricAuth", () => {
     jest.resetAllMocks();
   });
 
-  it("từ chối khi thiết bị không có phần cứng sinh trắc học", async () => {
+  it("từ chối khi thiết bị không có phần cứng sinh trắc học và chưa đặt mã PIN", async () => {
     mockedLocalAuthentication.hasHardwareAsync.mockResolvedValue(false);
+    mockedLocalAuthentication.getEnrolledLevelAsync.mockResolvedValue(
+      LocalAuthentication.SecurityLevel.NONE,
+    );
 
     await expect(
       requestBiometricAuthentication("Xác thực"),
@@ -28,14 +38,36 @@ describe("biometricAuth", () => {
     expect(mockedLocalAuthentication.isEnrolledAsync).not.toHaveBeenCalled();
   });
 
-  it("từ chối khi chưa có dữ liệu sinh trắc học được enroll", async () => {
+  it("từ chối khi chưa có sinh trắc học và chưa có mã PIN thiết bị", async () => {
     mockedLocalAuthentication.hasHardwareAsync.mockResolvedValue(true);
     mockedLocalAuthentication.isEnrolledAsync.mockResolvedValue(false);
+    mockedLocalAuthentication.getEnrolledLevelAsync.mockResolvedValue(
+      LocalAuthentication.SecurityLevel.NONE,
+    );
 
     await expect(
       requestBiometricAuthentication("Xác thực"),
     ).rejects.toThrow("Thiết bị chưa sẵn sàng");
     expect(mockedLocalAuthentication.authenticateAsync).not.toHaveBeenCalled();
+  });
+
+  it("cho phép xác thực bằng mã PIN thiết bị khi chưa enroll vân tay/khuôn mặt", async () => {
+    mockedLocalAuthentication.hasHardwareAsync.mockResolvedValue(true);
+    mockedLocalAuthentication.isEnrolledAsync.mockResolvedValue(false);
+    mockedLocalAuthentication.getEnrolledLevelAsync.mockResolvedValue(
+      LocalAuthentication.SecurityLevel.SECRET,
+    );
+    mockedLocalAuthentication.authenticateAsync.mockResolvedValue({
+      success: true,
+    });
+
+    await expect(
+      requestBiometricAuthentication("Xác thực bằng PIN"),
+    ).resolves.toBeUndefined();
+    expect(mockedLocalAuthentication.authenticateAsync).toHaveBeenCalledWith({
+      cancelLabel: "Hủy",
+      promptMessage: "Xác thực bằng PIN",
+    });
   });
 
   it("gọi native prompt và hoàn tất khi xác thực thành công", async () => {

@@ -88,7 +88,7 @@ export function Transfers({ items, anomalies = [], onReload, onFilterChange, loa
     };
 
     try {
-      const result = await adminFetch<{ action: { id: string } }>(path, {
+      const result = await adminFetch<{ action: { id: string; status?: string } }>(path, {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey(`transfer-${operation}`) },
         body: JSON.stringify(body),
@@ -96,7 +96,9 @@ export function Transfers({ items, anomalies = [], onReload, onFilterChange, loa
 
       setActiveOperation(null);
       setSuccessNotice(
-        `Đã thực hiện thao tác ${operation.toUpperCase()} cho giao dịch ${item.reference} thành công. Hệ thống Core Banking đã xử lý và ghi sổ trực tiếp!`
+        result.action?.status === "SUCCEEDED"
+          ? `Đã thực hiện thao tác ${operation.toUpperCase()} cho giao dịch ${item.reference} thành công. Hệ thống Core Banking đã xử lý và ghi sổ trực tiếp!`
+          : `Đã tạo yêu cầu ${operation.toUpperCase()} cho giao dịch ${item.reference} (Mã: ${result.action?.id ?? "Mới"}). Chờ ADMIN phê duyệt trong Approval Inbox.`
       );
       await onReload();
     } catch (caught) {

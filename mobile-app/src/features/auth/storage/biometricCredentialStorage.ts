@@ -17,6 +17,16 @@ export type StoredBiometricCredential = {
   enrolledAt: string;
 };
 
+export type StoredBiometricHint = {
+  userId: string;
+  email: string;
+  fullName: string;
+  deviceId: string;
+};
+
+const BIOMETRIC_HINT_PREFIX = "banking.biometric.hint.v1";
+const webHintMemoryStore = new Map<string, StoredBiometricHint>();
+
 const webMemoryStore = new Map<string, StoredBiometricCredential>();
 let mutationQueue: Promise<void> = Promise.resolve();
 
@@ -126,6 +136,86 @@ export function clearBiometricCredential(
     const storageKey = await resolveStorageKey(userId, deviceId);
     if (Platform.OS === "web") {
       webMemoryStore.delete(storageKey);
+      return;
+    }
+
+    await SecureStore.deleteItemAsync(storageKey, SECURE_STORE_OPTIONS);
+  });
+}
+
+function isStoredBiometricHint(value: unknown): value is StoredBiometricHint {
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value.userId) &&
+    isNonEmptyString(value.email) &&
+    typeof value.fullName === "string" &&
+    isNonEmptyString(value.deviceId)
+  );
+}
+
+async function resolveHintStorageKey(deviceId: string): Promise<string> {
+  return createSecureStoreScopedKey(BIOMETRIC_HINT_PREFIX, "last", deviceId);
+}
+
+export function saveLastBiometricHint(hint: StoredBiometricHint): Promise<void> {
+  if (!isStoredBiometricHint(hint)) {
+    return Promise.reject(new TypeError("Biometric hint record is invalid."));
+  }
+
+  return enqueueMutation(async () => {
+    const storageKey = await resolveHintStorageKey(hint.deviceId);
+    if (Platform.OS === "web") {
+      webHintMemoryStore.set(storageKey, { ...hint });
+      return;
+    }
+
+    await SecureStore.setItemAsync(
+      storageKey,
+      JSON.stringify(hint),
+      SECURE_STORE_OPTIONS,
+    );
+  });
+}
+
+export function loadLastBiometricHint(
+  deviceId: string,
+): Promise<StoredBiometricHint | null> {
+  if (!isNonEmptyString(deviceId)) {
+    return Promise.resolve(null);
+  }
+
+  return enqueueMutation(async () => {
+    const storageKey = await resolveHintStorageKey(deviceId);
+    if (Platform.OS === "web") {
+      const record = webHintMemoryStore.get(storageKey);
+      return record ? { ...record } : null;
+    }
+
+    const raw = await SecureStore.getItemAsync(storageKey, SECURE_STORE_OPTIONS);
+    if (!raw) {
+      return null;
+    }
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!isStoredBiometricHint(parsed) || parsed.deviceId !== deviceId.trim()) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  });
+}
+
+export function clearLastBiometricHint(deviceId: string): Promise<void> {
+  if (!isNonEmptyString(deviceId)) {
+    return Promise.resolve();
+  }
+
+  return enqueueMutation(async () => {
+    const storageKey = await resolveHintStorageKey(deviceId);
+    if (Platform.OS === "web") {
+      webHintMemoryStore.delete(storageKey);
       return;
     }
 

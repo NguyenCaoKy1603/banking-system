@@ -14,6 +14,7 @@ export type AppIconName =
   | "devices"
   | "eye"
   | "eyeOff"
+  | "fingerprint"
   | "history"
   | "home"
   | "lock"
@@ -66,6 +67,20 @@ function getIcon(name: AppIconName): ReactNode {
       return <><Path d="M3 12a9 9 0 1 0 2.6-6.4L3 8" /><Polyline points="3,3 3,8 8,8" /><Path d="M12 7v5l3 2" /></>;
     case "shield":
       return <><Path d="M12 3 5 6v5c0 4.7 2.6 8 7 10 4.4-2 7-5.3 7-10V6l-7-3Z" /><Polyline points="9,12 11,14 15.5,9.5" /></>;
+    case "fingerprint":
+      return (
+        <>
+          <Path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4" />
+          <Path d="M14 13.12c0 2.38 0 6.38-1 8.88" />
+          <Path d="M17.29 21.02c.12-.6.43-2.3.5-3.02" />
+          <Path d="M2 12a10 10 0 0 1 18-6" />
+          <Path d="M2 16h.01" />
+          <Path d="M21.8 16c.2-2 .131-5.354 0-6" />
+          <Path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2" />
+          <Path d="M8.65 22c.21-.66.45-1.32.57-2" />
+          <Path d="M9 6.8a6 6 0 0 1 9 5.2v2" />
+        </>
+      );
     case "users":
       return <><Circle cx="9" cy="8" r="3" /><Path d="M3.5 19c.6-3.7 2.5-5.5 5.5-5.5s5 1.8 5.5 5.5" /><Path d="M15 5.5a3 3 0 0 1 0 5.5M16 14c2.5.5 4 2.2 4.5 5" /></>;
     case "logout":

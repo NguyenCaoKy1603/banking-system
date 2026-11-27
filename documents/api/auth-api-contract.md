@@ -215,6 +215,17 @@ type LoginResponse = {
 backward compatibility của reference sandbox; các OTP/TOTP challenge còn lại là step-up cho giao
 dịch hoặc thao tác bảo mật sau khi đã đăng nhập.
 
+### 4.1 Đăng nhập nhanh bằng Sinh trắc học / Mã PIN thiết bị (DRAFT Reference Extension)
+
+Khi thiết bị đã kích hoạt khóa `BIOMETRIC` (qua `POST /auth/mfa/biometric/enroll` sau đăng nhập), Mobile lưu `biometricSecret` gắn thiết bị và thông tin gợi ý tài khoản gần nhất (`userId`, `email`, `fullName`) trong `SecureStore` (**tuyệt đối không lưu mật khẩu**). Ở màn hình Đăng nhập, luồng đăng nhập nhanh gồm 2 bước pre-auth:
+
+1. **`POST /auth/mfa/biometric/login/challenge`** (yêu cầu header `X-Device-ID` và body `{ "email": "string" }`):
+   - Kiểm tra tài khoản không bị khóa (`LOCKED`) và có khóa `BIOMETRIC` đang `ACTIVE` khớp `(customerId, deviceId)`.
+   - Trả `200 OK` với `AuthChallengeResponse` (`purpose: "LOGIN"`, `method: "BIOMETRIC"`).
+2. **`POST /auth/mfa/biometric/login/verify`** (yêu cầu header `X-Device-ID`, `X-Device-Name` tùy chọn, và body `{ "challengeId": "string", "proof": "biometric-v1.<sha256>" }`):
+   - Sau khi OS xác thực người dùng thành công (Vân tay, Face ID/Face Unlock, hoặc Mã PIN khóa màn hình `SecurityLevel.SECRET`), Mobile ký SHA-256 theo ngữ cảnh `(biometricSecret, challengeId, deviceId, "LOGIN")`.
+   - Server giải mã khóa tương ứng, kiểm chứng chữ ký hằng thời gian, tiêu thụ challenge một lần và trả `200 OK` với `LoginResponse` mới.
+
 ## 5. Bảo mật và phạm vi Mobile
 
 - Production chỉ gọi API qua HTTPS.

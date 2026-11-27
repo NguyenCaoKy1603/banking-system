@@ -512,9 +512,6 @@ export function Approvals({ actions, onReload, loading }: ApprovalsProps) {
                       style={{ fontSize: "1.25rem", letterSpacing: "0.25em", textAlign: "center", fontWeight: 700, background: "#fff" }}
                     />
                   </label>
-                  <small style={{ color: "#2563eb", display: "block", marginTop: "6px" }}>
-                    💡 Gợi ý kiểm thử: Chạy lệnh <code>node backend/scripts/get-admin-totp.cjs</code> để lấy mã TOTP 6 số ngay lập tức.
-                  </small>
                 </div>
               ) : null}
 

@@ -137,6 +137,7 @@ export class RelationalHttpBoundary {
       const sessionRoutes =
         (verb === "POST" && segments.length === 2 && ["login", "verify", "refresh", "logout"].includes(segments[1] ?? "")) ||
         (verb === "POST" && segments.length === 2 && segments[1] === "logout-all") ||
+        (verb === "POST" && segments.length === 5 && segments[1] === "mfa" && segments[2] === "biometric" && segments[3] === "login" && ["challenge", "verify"].includes(segments[4] ?? "")) ||
         (verb === "POST" && segments.length === 3 && segments[1] === "password" && ["change", "forgot", "reset"].includes(segments[2] ?? "")) ||
         (verb === "GET" && segments.length === 2 && segments[1] === "devices") ||
         (verb === "DELETE" && segments.length === 3 && segments[1] === "devices");
@@ -228,6 +229,10 @@ export class RelationalHttpBoundary {
 
   loginPasswordOnly(email: string, password: string, deviceId: string): Promise<AuthUser> {
     return this.auth.loginPasswordOnly(email, password, deviceId);
+  }
+
+  findCustomerIdByEmail(email: string): Promise<string | null> {
+    return this.auth.findCustomerIdByEmail(email);
   }
 
   beginRegistration(input: RegistrationBeginInput, deviceId: string, mfaService: PersistentMfaService, networkFingerprint: string): Promise<MfaChallengeResponse> {

@@ -186,6 +186,80 @@ export async function loginController(
   );
 }
 
+export async function beginBiometricLoginChallengeController(
+  request: IncomingMessage,
+  response: ServerResponse,
+  body: unknown,
+  options: HttpOptions,
+  relationalAuth: RelationalHttpBoundary | undefined,
+  traceId: string,
+): Promise<void> {
+  if (!options.mfaService) {
+    throw invalidRequest("Biometric login service is not configured.");
+  }
+  const data = requireObject(body);
+  const email = typeof data.email === "string" ? data.email.trim().toLowerCase() : "";
+  if (!email) {
+    throw invalidRequest("Email is required for biometric login.", { email: "Email must be a non-empty string." });
+  }
+  const deviceId = requireDeviceId(request);
+  const customerId = relationalAuth ? await relationalAuth.findCustomerIdByEmail(email) : null;
+  if (!customerId) {
+    throw unauthorized("Biometric login credential is invalid or not enrolled for this device.");
+  }
+  if (options.customerAccessStatus && (await options.customerAccessStatus(customerId)) === "LOCKED") {
+    throw unauthorized("Customer access is locked by the control plane.");
+  }
+  const challenge = await options.mfaService.beginBiometricChallenge({
+    customerId,
+    deviceId,
+    purpose: "LOGIN",
+    networkFingerprint: getMfaClientAddress(request),
+  });
+  writeResponse(response, 200, traceId, challenge);
+}
+
+export async function verifyBiometricLoginController(
+  request: IncomingMessage,
+  response: ServerResponse,
+  body: unknown,
+  options: HttpOptions,
+  system: BankingSystem,
+  relationalAuth: RelationalHttpBoundary | undefined,
+  traceId: string,
+): Promise<void> {
+  if (!options.mfaService) {
+    throw invalidRequest("Biometric login service is not configured.");
+  }
+  const data = requireObject(body);
+  const challengeId = typeof data.challengeId === "string" ? data.challengeId.trim() : "";
+  const proof = typeof data.proof === "string" ? data.proof.trim() : "";
+  if (!challengeId || !proof) {
+    throw invalidRequest("challengeId and proof are required.");
+  }
+  const deviceId = requireDeviceId(request);
+  const result = await options.mfaService.verifyChallenge({
+    challengeId,
+    deviceId,
+    proof,
+    purpose: "LOGIN",
+  });
+  if (!result.customerId) {
+    throw unauthorized("Biometric login user binding is invalid.");
+  }
+  if (options.customerAccessStatus && (await options.customerAccessStatus(result.customerId)) === "LOCKED") {
+    throw unauthorized("Customer access is locked by the control plane.");
+  }
+  writeResponse(
+    response,
+    200,
+    traceId,
+    relationalAuth
+      ? await relationalAuth.issueMfaSession(result.customerId, deviceId, extractDeviceName(request))
+      : system.issueMfaSession(result.customerId, deviceId, extractDeviceName(request)),
+  );
+}
+
 export async function verifyLoginController(
   request: IncomingMessage,
   response: ServerResponse,

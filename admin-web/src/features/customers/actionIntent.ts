@@ -204,7 +204,7 @@ export function startIntentSubmit<TPayload extends Record<string, unknown>>(
  */
 export function isValidActionResponse(
   result: unknown
-): result is { action: { id: string } } | { actionId: string } {
+): result is { action: { id: string; status?: string } } | { actionId: string } {
   if (!result || typeof result !== "object") return false;
   const res = result as Record<string, unknown>;
   if (typeof res.actionId === "string" && res.actionId.trim().length > 0) return true;
